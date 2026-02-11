@@ -1,0 +1,21 @@
+# dependencies
+node_modules/
+**/node_modules/
+
+# build outputs
+dist/
+**/dist/
+*.tsbuildinfo
+
+# environment
+.env
+.env.*
+
+# local data
+apps/backend/data/
+!apps/backend/data/
+!apps/backend/data/.gitkeep
+
+# logs and os files
+npm-debug.log*
+.DS_Store
