@@ -1,0 +1,36 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: apps/backend/Dockerfile
+    container_name: orquestrador-backend
+    environment:
+      NODE_ENV: production
+      PORT: "4000"
+    volumes:
+      - orquestrador_data:/app/apps/backend/data
+    restart: unless-stopped
+    networks:
+      - orquestrador_net
+
+  frontend:
+    build:
+      context: .
+      dockerfile: apps/frontend/Dockerfile
+      args:
+        VITE_API_BASE_URL: /api
+    container_name: orquestrador-frontend
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+    networks:
+      - orquestrador_net
+
+volumes:
+  orquestrador_data:
+
+networks:
+  orquestrador_net:
+    driver: bridge
