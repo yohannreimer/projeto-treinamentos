@@ -1,42 +1,50 @@
-# Deploy na VPS (Hostinger + Portainer)
+# Deploy na VPS (Hostinger + Portainer em Swarm)
 
-## 1) Pré-requisitos
-- VPS com Docker e Portainer funcionando.
-- Projeto disponível em um repositório Git.
-- Portas liberadas no firewall: `8080` (app) e `9443` (Portainer).
+## 1) O que mudou
+O Portainer em modo Swarm nao aceita `build`, `restart` e `container_name` na stack.
+Por isso, a stack agora usa imagens prontas no GHCR:
+- `ghcr.io/<usuario>/orquestrador-backend`
+- `ghcr.io/<usuario>/orquestrador-frontend`
 
-## 2) Arquivos de deploy
-Este projeto já possui:
-- `docker-compose.portainer.yml`
-- `apps/backend/Dockerfile`
-- `apps/frontend/Dockerfile`
-- `apps/frontend/nginx.conf`
+## 2) Publicar imagens automaticamente (GitHub Actions)
+1. No GitHub, abra o repositório.
+2. Va em `Actions` e rode o workflow `Publish Docker Images` (ou faca push na `main`).
+3. Aguarde concluir com sucesso.
 
-## 3) Criar Stack no Portainer
-1. Acesse Portainer.
-2. Clique em `Stacks`.
-3. Clique em `Add stack`.
-4. Nome: `orquestrador`.
-5. Escolha `Repository` (Git) e informe:
-   - URL do repositório
-   - branch (ex: `main`)
-   - Compose path: `docker-compose.portainer.yml`
-6. Clique em `Deploy the stack`.
+Isso gera as imagens no GHCR com tags:
+- `latest`
+- `<sha-do-commit>`
 
-## 4) Acesso ao sistema
+## 3) Configurar stack no Portainer
+1. Portainer -> `Stacks` -> `Add stack`.
+2. Nome: `orquestrador`.
+3. Build method: `Repository`.
+4. Informe:
+   - URL do repo
+   - branch: `main`
+   - compose path: `docker-compose.portainer.yml`
+5. Em `Environment variables`, adicione:
+   - `GHCR_OWNER=<seu_usuario_github_em_minusculo>`
+   - `IMAGE_TAG=latest`
+6. Clique `Deploy the stack`.
+
+## 4) Se der erro de permissao no GHCR
+Se as imagens estiverem privadas, faca um destes:
+- tornar os packages GHCR publicos, ou
+- configurar Registry no Portainer com token do GitHub (PAT com `read:packages`).
+
+## 5) Acesso ao sistema
 - URL: `http://IP_DA_VPS:8080`
-- Login atual (hardcoded no frontend):
+- Login atual:
   - usuario: `holand`
   - senha: `Holand2026!@#`
 
-## 5) Persistencia dos dados
-- O SQLite fica no volume Docker nomeado `orquestrador_data`.
-- Arquivo principal do banco: `app.db` (dentro do volume).
-- Mesmo reiniciando containers, os dados continuam salvos.
+## 6) Persistencia dos dados
+- O banco SQLite fica no volume `orquestrador_data`.
+- Arquivo dentro do volume: `app.db`.
+- Reiniciar stack nao apaga dados.
 
-## 6) Backup manual
-No terminal da VPS:
-
+## 7) Backup manual
 ```bash
 mkdir -p /root/backups-orquestrador
 docker run --rm \
@@ -45,8 +53,7 @@ docker run --rm \
   alpine sh -c "cp /from/app.db /to/app-$(date +%F-%H%M).db"
 ```
 
-## 7) Atualizar versao
-1. Suba alteracoes no Git.
-2. No Portainer, abra a stack `orquestrador`.
-3. Clique em `Pull and redeploy`.
-
+## 8) Atualizar versao
+1. Push no GitHub.
+2. Aguarde o workflow publicar novas imagens.
+3. No Portainer, `Pull and redeploy` da stack.
