@@ -7,7 +7,7 @@ services:
     volumes:
       - orquestrador_data:/app/apps/backend/data
     networks:
-      - orquestrador_net
+      - orquestrador_swarm_net
     deploy:
       restart_policy:
         condition: on-failure
@@ -17,7 +17,7 @@ services:
     ports:
       - "8080:80"
     networks:
-      - orquestrador_net
+      - orquestrador_swarm_net
     deploy:
       restart_policy:
         condition: on-failure
@@ -26,5 +26,6 @@ volumes:
   orquestrador_data:
 
 networks:
-  orquestrador_net:
+  orquestrador_swarm_net:
     driver: overlay
+    attachable: true
