@@ -38,12 +38,13 @@ const CURRENT_MODULES = [
   { code: '020302050', name: "Acompanhamento TopSolid'Cam (interno)", category: 'Consultoria', duration_days: 2, is_mandatory: 0 },
   { code: '960001010', name: 'Instalação / Configuração', category: 'Instalação', duration_days: 1, is_mandatory: 1 }
 ];
+const DESTRUCTIVE_CONFIRMATION_PHRASE = 'APAGAR_BASE_TOTAL';
 
 export function AdminPage() {
   const [data, setData] = useState<any>(null);
   const [moduleQuery, setModuleQuery] = useState('');
   const [filePath, setFilePath] = useState('/Users/yohannreimer/Downloads/Planejamento_Jornada_Treinamentos_v3.xlsx');
-  const [resetData, setResetData] = useState(true);
+  const [resetData, setResetData] = useState(false);
   const [message, setMessage] = useState('');
   const [loadingImport, setLoadingImport] = useState(false);
 
@@ -115,13 +116,34 @@ export function AdminPage() {
     setPrereqIds((selectedModule.prerequisites ?? []).map((item) => item.id));
   }, [selectedModuleId, selectedModule]);
 
+  function askDestructiveConfirmation(actionName: string): string | null {
+    const typed = window.prompt(
+      `Ação destrutiva: ${actionName}.\nDigite exatamente ${DESTRUCTIVE_CONFIRMATION_PHRASE} para confirmar.`
+    );
+    if (!typed) {
+      setMessage('Ação cancelada.');
+      return null;
+    }
+    if (typed.trim() !== DESTRUCTIVE_CONFIRMATION_PHRASE) {
+      setMessage(`Confirmação inválida. Digite exatamente ${DESTRUCTIVE_CONFIRMATION_PHRASE}.`);
+      return null;
+    }
+    return typed.trim();
+  }
+
   async function handleImport() {
     setLoadingImport(true);
     setMessage('');
     try {
+      const confirmationPhrase = resetData
+        ? askDestructiveConfirmation('Limpar toda a base antes da importação')
+        : null;
+      if (resetData && !confirmationPhrase) return;
+
       const response = await api.importWorkbook({
         file_path: filePath,
-        reset_data: resetData
+        reset_data: resetData,
+        confirmation_phrase: confirmationPhrase ?? undefined
       }) as any;
       setMessage(`Importação concluída: ${JSON.stringify(response.summary)}`);
       loadCatalog();
@@ -206,7 +228,12 @@ export function AdminPage() {
     setLoadingRealScenario(true);
     setMessage('');
     try {
-      const response = await api.bootstrapRealScenario() as any;
+      const confirmationPhrase = askDestructiveConfirmation('Aplicar cenário real (substitui toda a base atual)');
+      if (!confirmationPhrase) return;
+
+      const response = await api.bootstrapRealScenario({
+        confirmation_phrase: confirmationPhrase
+      }) as any;
       setMessage(`Cenário real aplicado: ${JSON.stringify(response.summary)}`);
       loadCatalog();
     } catch (error) {
@@ -277,6 +304,11 @@ export function AdminPage() {
                 <input type="checkbox" checked={resetData} onChange={(e) => setResetData(e.target.checked)} />
                 Limpar dados antes de importar
               </label>
+              {resetData ? (
+                <p className="warn-text" style={{ margin: 0 }}>
+                  Confirmação forte obrigatória: digite {DESTRUCTIVE_CONFIRMATION_PHRASE}.
+                </p>
+              ) : null}
               <button type="button" onClick={handleImport} disabled={loadingImport}>
                 {loadingImport ? 'Importando...' : 'Importar planilha'}
               </button>

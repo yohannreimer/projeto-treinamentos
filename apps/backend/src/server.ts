@@ -17,6 +17,7 @@ app.use(express.json());
 const PORT = Number(process.env.PORT ?? 4000);
 const INSTALLATION_CODES = ['960001010', 'MOD-01'] as const;
 const DEFAULT_WORKBOOK_PATH = '/Users/yohannreimer/Downloads/Planejamento_Jornada_Treinamentos_v3.xlsx';
+const DESTRUCTIVE_CONFIRMATION_PHRASE = 'APAGAR_BASE_TOTAL';
 
 const cohortBlockSchema = z.object({
   module_id: z.string(),
@@ -172,6 +173,10 @@ function moduleExistsInCohort(cohortId: string, moduleId: string): boolean {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function hasDestructiveConfirmation(confirmationPhrase?: string): boolean {
+  return confirmationPhrase?.trim() === DESTRUCTIVE_CONFIRMATION_PHRASE;
 }
 
 function slugify(value: string): string {
@@ -2260,7 +2265,20 @@ app.post('/admin/bootstrap-current-data', (req, res) => {
   }
 });
 
-app.post('/admin/bootstrap-real-scenario', (_req, res) => {
+app.post('/admin/bootstrap-real-scenario', (req, res) => {
+  const schema = z.object({
+    confirmation_phrase: z.string().optional()
+  });
+  const parsed = schema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json(parsed.error.flatten());
+  }
+  if (!hasDestructiveConfirmation(parsed.data.confirmation_phrase)) {
+    return res.status(400).json({
+      message: `Confirmação obrigatória ausente. Digite exatamente ${DESTRUCTIVE_CONFIRMATION_PHRASE} para prosseguir.`
+    });
+  }
+
   const clients = [
     'Krah do Brasil',
     'Magui Dispositivos',
@@ -2538,7 +2556,8 @@ app.post('/admin/bootstrap-real-scenario', (_req, res) => {
 app.post('/admin/import-workbook', (req, res) => {
   const schema = z.object({
     file_path: z.string().optional(),
-    reset_data: z.boolean().optional()
+    reset_data: z.boolean().optional(),
+    confirmation_phrase: z.string().optional()
   });
 
   const parsed = schema.safeParse(req.body ?? {});
@@ -2551,9 +2570,15 @@ app.post('/admin/import-workbook', (req, res) => {
   if (!fs.existsSync(absolutePath)) {
     return res.status(404).json({ message: 'Arquivo nao encontrado', file_path: absolutePath });
   }
+  const shouldResetData = parsed.data.reset_data ?? false;
+  if (shouldResetData && !hasDestructiveConfirmation(parsed.data.confirmation_phrase)) {
+    return res.status(400).json({
+      message: `Confirmação obrigatória ausente. Digite exatamente ${DESTRUCTIVE_CONFIRMATION_PHRASE} para limpar e importar.`
+    });
+  }
 
   try {
-    const summary = importWorkbook(absolutePath, { resetData: parsed.data.reset_data ?? true });
+    const summary = importWorkbook(absolutePath, { resetData: shouldResetData });
     return res.json({ ok: true, summary });
   } catch (error) {
     return res.status(500).json({ message: 'Falha ao importar planilha', detail: errorMessage(error) });

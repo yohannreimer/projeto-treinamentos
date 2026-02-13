@@ -209,12 +209,12 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload)
     }),
-  bootstrapRealScenario: () =>
+  bootstrapRealScenario: (payload?: { confirmation_phrase?: string }) =>
     req('/admin/bootstrap-real-scenario', {
       method: 'POST',
-      body: JSON.stringify({})
+      body: JSON.stringify(payload ?? {})
     }),
-  importWorkbook: (payload: { file_path?: string; reset_data?: boolean }) =>
+  importWorkbook: (payload: { file_path?: string; reset_data?: boolean; confirmation_phrase?: string }) =>
     req('/admin/import-workbook', {
       method: 'POST',
       body: JSON.stringify(payload)
