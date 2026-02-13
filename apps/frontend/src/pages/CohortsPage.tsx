@@ -5,6 +5,7 @@ import type { Cohort, Module } from '../types';
 import { Section } from '../components/Section';
 import { StatusChip } from '../components/StatusChip';
 import { statusLabel } from '../utils/labels';
+import { askDestructiveConfirmation } from '../utils/destructive';
 
 type BlockDraft = {
   key: string;
@@ -334,11 +335,14 @@ export function CohortsPage() {
   }
 
   async function deleteCohort(cohort: Cohort) {
-    const ok = window.confirm(`Excluir ${cohort.code} - ${cohort.name}?`);
-    if (!ok) return;
+    const confirmationPhrase = askDestructiveConfirmation(`Excluir turma ${cohort.code} - ${cohort.name}`);
+    if (!confirmationPhrase) {
+      setMessage('Ação cancelada.');
+      return;
+    }
 
     try {
-      await api.deleteCohort(cohort.id);
+      await api.deleteCohort(cohort.id, confirmationPhrase);
       setMessage('Turma excluída com sucesso.');
 
       const refreshed = await loadAll();

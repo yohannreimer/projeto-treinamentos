@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { api } from '../services/api';
 import { Section } from '../components/Section';
 import type { LicenseProgram } from '../types';
+import { askDestructiveConfirmation } from '../utils/destructive';
 
 export function LicenseProgramsPage() {
   const [rows, setRows] = useState<LicenseProgram[]>([]);
@@ -72,14 +73,17 @@ export function LicenseProgramsPage() {
   }
 
   async function deleteProgram(row: LicenseProgram) {
-    const ok = window.confirm(`Excluir programa "${row.name}"?`);
-    if (!ok) return;
+    const confirmationPhrase = askDestructiveConfirmation(`Excluir programa "${row.name}"`);
+    if (!confirmationPhrase) {
+      setMessage('Ação cancelada.');
+      return;
+    }
 
     setError('');
     setMessage('');
 
     try {
-      await api.deleteLicenseProgram(row.id);
+      await api.deleteLicenseProgram(row.id, confirmationPhrase);
       setMessage('Programa excluído.');
       if (editingId === row.id) {
         resetForm();

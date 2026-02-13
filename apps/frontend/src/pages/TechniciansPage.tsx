@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { api } from '../services/api';
 import { Section } from '../components/Section';
 import { StatusChip } from '../components/StatusChip';
+import { askDestructiveConfirmation } from '../utils/destructive';
 
 function monthRange(month: string) {
   const [year, mon] = month.split('-').map(Number);
@@ -120,12 +121,15 @@ export function TechniciansPage() {
 
   async function deleteSelectedTechnician() {
     if (!selectedTech) return;
-    const ok = window.confirm(`Excluir técnico "${selectedTech.name}"?`);
-    if (!ok) return;
+    const confirmationPhrase = askDestructiveConfirmation(`Excluir técnico "${selectedTech.name}"`);
+    if (!confirmationPhrase) {
+      setMessage('Ação cancelada.');
+      return;
+    }
     setError('');
     setMessage('');
     try {
-      await api.deleteTechnician(selectedTech.id);
+      await api.deleteTechnician(selectedTech.id, confirmationPhrase);
       setMessage('Técnico excluído com sucesso.');
       setSelectedId('');
       await loadBase();

@@ -1,6 +1,16 @@
 const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
 const BASE_URL = env?.VITE_API_BASE_URL ?? `http://${window.location.hostname}:4000`;
 
+function withConfirmation(path: string, confirmationPhrase?: string): string {
+  const normalized = confirmationPhrase?.trim();
+  if (!normalized) {
+    return path;
+  }
+
+  const separator = path.includes('?') ? '&' : '?';
+  return `${path}${separator}confirmation_phrase=${encodeURIComponent(normalized)}`;
+}
+
 async function req<T = any>(path: string, init?: RequestInit): Promise<T> {
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), 10000);
@@ -61,8 +71,8 @@ export const api = {
     }),
   updateCohort: (id: string, payload: unknown) =>
     req(`/cohorts/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
-  deleteCohort: (id: string) =>
-    req(`/cohorts/${id}`, { method: 'DELETE' }),
+  deleteCohort: (id: string, confirmation_phrase?: string) =>
+    req(withConfirmation(`/cohorts/${id}`, confirmation_phrase), { method: 'DELETE' }),
   allocationSuggestions: (cohortId: string, moduleId: string) =>
     req(`/cohorts/${cohortId}/suggestions/${moduleId}`),
   createAllocation: (payload: unknown) =>
@@ -91,8 +101,8 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload)
     }),
-  deleteCompany: (id: string) =>
-    req(`/companies/${id}`, {
+  deleteCompany: (id: string, confirmation_phrase?: string) =>
+    req(withConfirmation(`/companies/${id}`, confirmation_phrase), {
       method: 'DELETE'
     }),
   companyById: (id: string) => req(`/companies/${id}`),
@@ -107,8 +117,8 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(payload)
     }),
-  deleteLicenseProgram: (id: string) =>
-    req(`/license-programs/${id}`, {
+  deleteLicenseProgram: (id: string, confirmation_phrase?: string) =>
+    req(withConfirmation(`/license-programs/${id}`, confirmation_phrase), {
       method: 'DELETE'
     }),
   licenses: () => req('/licenses'),
@@ -122,8 +132,8 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(payload)
     }),
-  deleteLicense: (id: string) =>
-    req(`/licenses/${id}`, {
+  deleteLicense: (id: string, confirmation_phrase?: string) =>
+    req(withConfirmation(`/licenses/${id}`, confirmation_phrase), {
       method: 'DELETE'
     }),
   renewLicense: (id: string) =>
@@ -157,8 +167,8 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(payload)
     }),
-  deleteTechnician: (id: string) =>
-    req(`/technicians/${id}`, {
+  deleteTechnician: (id: string, confirmation_phrase?: string) =>
+    req(withConfirmation(`/technicians/${id}`, confirmation_phrase), {
       method: 'DELETE'
     }),
   technicianCalendar: (id: string, params?: { date_from?: string; date_to?: string }) => {
@@ -190,11 +200,12 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(payload)
     }),
-  deleteAdminModule: (id: string) =>
-    req(`/admin/modules/${id}`, {
+  deleteAdminModule: (id: string, confirmation_phrase?: string) =>
+    req(withConfirmation(`/admin/modules/${id}`, confirmation_phrase), {
       method: 'DELETE'
     }),
   bootstrapCurrentData: (payload: {
+    confirmation_phrase?: string;
     clients: string[];
     modules: Array<{
       code: string;

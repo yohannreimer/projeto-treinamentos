@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
 import type { LicenseProgram, LicenseRow } from '../types';
 import { Section } from '../components/Section';
+import { askDestructiveConfirmation } from '../utils/destructive';
 
 type RenewalCycle = 'Mensal' | 'Anual';
 
@@ -179,14 +180,19 @@ export function LicensesPage() {
   }
 
   async function deleteLicense(row: LicenseRow) {
-    const ok = window.confirm(`Excluir licença "${row.program_name}" (ID ${row.license_identifier}) de ${row.company_name}?`);
-    if (!ok) return;
+    const confirmationPhrase = askDestructiveConfirmation(
+      `Excluir licença "${row.program_name}" (ID ${row.license_identifier}) de ${row.company_name}`
+    );
+    if (!confirmationPhrase) {
+      setMessage('Ação cancelada.');
+      return;
+    }
 
     setError('');
     setMessage('');
 
     try {
-      await api.deleteLicense(row.id);
+      await api.deleteLicense(row.id, confirmationPhrase);
       setMessage('Licença excluída.');
       if (editingId === row.id) {
         resetForm();

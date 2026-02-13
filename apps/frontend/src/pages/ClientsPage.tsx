@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { api } from '../services/api';
 import { Section } from '../components/Section';
 import { StatusChip } from '../components/StatusChip';
+import { askDestructiveConfirmation } from '../utils/destructive';
 
 export function ClientsPage() {
   const [rows, setRows] = useState<any[]>([]);
@@ -56,14 +57,17 @@ export function ClientsPage() {
   }
 
   async function deleteClient(id: string, name: string) {
-    const ok = window.confirm(`Excluir cliente "${name}"?`);
-    if (!ok) return;
+    const confirmationPhrase = askDestructiveConfirmation(`Excluir cliente "${name}"`);
+    if (!confirmationPhrase) {
+      setMessage('Ação cancelada.');
+      return;
+    }
 
     setError('');
     setMessage('');
 
     try {
-      await api.deleteCompany(id);
+      await api.deleteCompany(id, confirmationPhrase);
       setMessage('Cliente excluído com sucesso.');
       load();
     } catch (err) {

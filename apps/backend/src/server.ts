@@ -179,6 +179,37 @@ function hasDestructiveConfirmation(confirmationPhrase?: string): boolean {
   return confirmationPhrase?.trim() === DESTRUCTIVE_CONFIRMATION_PHRASE;
 }
 
+function getConfirmationPhraseFromRequest(req: express.Request): string | undefined {
+  const queryPhrase = typeof req.query.confirmation_phrase === 'string'
+    ? req.query.confirmation_phrase
+    : undefined;
+  const headerPhrase = typeof req.headers['x-confirmation-phrase'] === 'string'
+    ? req.headers['x-confirmation-phrase']
+    : undefined;
+  const bodyPhrase = req.body && typeof req.body === 'object' && !Array.isArray(req.body)
+    ? (req.body as Record<string, unknown>).confirmation_phrase
+    : undefined;
+
+  return typeof bodyPhrase === 'string'
+    ? bodyPhrase
+    : queryPhrase ?? headerPhrase;
+}
+
+function requireDestructiveConfirmation(
+  req: express.Request,
+  res: express.Response,
+  actionLabel: string
+): boolean {
+  if (hasDestructiveConfirmation(getConfirmationPhraseFromRequest(req))) {
+    return true;
+  }
+
+  res.status(400).json({
+    message: `Confirmação obrigatória ausente para ${actionLabel}. Digite exatamente ${DESTRUCTIVE_CONFIRMATION_PHRASE}.`
+  });
+  return false;
+}
+
 function slugify(value: string): string {
   return value
     .toLowerCase()
@@ -866,6 +897,10 @@ app.patch('/cohorts/:id', (req, res) => {
 });
 
 app.delete('/cohorts/:id', (req, res) => {
+  if (!requireDestructiveConfirmation(req, res, 'excluir turma')) {
+    return;
+  }
+
   const exists = db.prepare('select id from cohort where id = ?').get(req.params.id) as { id: string } | undefined;
   if (!exists) {
     return res.status(404).json({ message: 'Turma não encontrada' });
@@ -1333,6 +1368,10 @@ app.post('/companies', (req, res) => {
 });
 
 app.delete('/companies/:id', (req, res) => {
+  if (!requireDestructiveConfirmation(req, res, 'excluir cliente')) {
+    return;
+  }
+
   const exists = db.prepare('select id from company where id = ?').get(req.params.id) as { id: string } | undefined;
   if (!exists) {
     return res.status(404).json({ message: 'Cliente não encontrado' });
@@ -1552,6 +1591,10 @@ app.patch('/license-programs/:id', (req, res) => {
 });
 
 app.delete('/license-programs/:id', (req, res) => {
+  if (!requireDestructiveConfirmation(req, res, 'excluir programa de licença')) {
+    return;
+  }
+
   const exists = db.prepare('select id from license_program where id = ?').get(req.params.id) as { id: string } | undefined;
   if (!exists) {
     return res.status(404).json({ message: 'Programa não encontrado' });
@@ -1759,6 +1802,10 @@ app.patch('/licenses/:id', (req, res) => {
 });
 
 app.delete('/licenses/:id', (req, res) => {
+  if (!requireDestructiveConfirmation(req, res, 'excluir licença')) {
+    return;
+  }
+
   const exists = db.prepare('select id from company_license where id = ?').get(req.params.id) as { id: string } | undefined;
   if (!exists) {
     return res.status(404).json({ message: 'Licença não encontrada' });
@@ -1900,6 +1947,10 @@ app.patch('/technicians/:id', (req, res) => {
 });
 
 app.delete('/technicians/:id', (req, res) => {
+  if (!requireDestructiveConfirmation(req, res, 'excluir técnico')) {
+    return;
+  }
+
   const exists = db.prepare('select id from technician where id = ?').get(req.params.id) as { id: string } | undefined;
   if (!exists) {
     return res.status(404).json({ message: 'Técnico não encontrado' });
@@ -2145,6 +2196,10 @@ app.put('/admin/modules/:id/prerequisites', (req, res) => {
 });
 
 app.delete('/admin/modules/:id', (req, res) => {
+  if (!requireDestructiveConfirmation(req, res, 'excluir módulo')) {
+    return;
+  }
+
   const module = db.prepare('select id, code, name from module_template where id = ?').get(req.params.id) as
     | { id: string; code: string; name: string }
     | undefined;
@@ -2178,6 +2233,7 @@ app.delete('/admin/modules/:id', (req, res) => {
 
 app.post('/admin/bootstrap-current-data', (req, res) => {
   const schema = z.object({
+    confirmation_phrase: z.string().optional(),
     clients: z.array(z.string().min(2)).default([]),
     modules: z.array(z.object({
       code: z.string().min(3),
@@ -2192,6 +2248,12 @@ app.post('/admin/bootstrap-current-data', (req, res) => {
   const parsed = schema.safeParse(req.body ?? {});
   if (!parsed.success) {
     return res.status(400).json(parsed.error.flatten());
+  }
+
+  if (!hasDestructiveConfirmation(parsed.data.confirmation_phrase)) {
+    return res.status(400).json({
+      message: `Confirmação obrigatória ausente. Digite exatamente ${DESTRUCTIVE_CONFIRMATION_PHRASE} para aplicar base atual.`
+    });
   }
 
   const { clients, modules } = parsed.data;

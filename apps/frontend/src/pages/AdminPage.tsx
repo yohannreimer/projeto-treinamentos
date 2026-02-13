@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../services/api';
 import { Section } from '../components/Section';
+import { askDestructiveConfirmation, DESTRUCTIVE_CONFIRMATION_PHRASE } from '../utils/destructive';
 
 type ModuleCatalog = {
   id: string;
@@ -38,8 +39,6 @@ const CURRENT_MODULES = [
   { code: '020302050', name: "Acompanhamento TopSolid'Cam (interno)", category: 'Consultoria', duration_days: 2, is_mandatory: 0 },
   { code: '960001010', name: 'Instalação / Configuração', category: 'Instalação', duration_days: 1, is_mandatory: 1 }
 ];
-const DESTRUCTIVE_CONFIRMATION_PHRASE = 'APAGAR_BASE_TOTAL';
-
 export function AdminPage() {
   const [data, setData] = useState<any>(null);
   const [moduleQuery, setModuleQuery] = useState('');
@@ -116,21 +115,6 @@ export function AdminPage() {
     setPrereqIds((selectedModule.prerequisites ?? []).map((item) => item.id));
   }, [selectedModuleId, selectedModule]);
 
-  function askDestructiveConfirmation(actionName: string): string | null {
-    const typed = window.prompt(
-      `Ação destrutiva: ${actionName}.\nDigite exatamente ${DESTRUCTIVE_CONFIRMATION_PHRASE} para confirmar.`
-    );
-    if (!typed) {
-      setMessage('Ação cancelada.');
-      return null;
-    }
-    if (typed.trim() !== DESTRUCTIVE_CONFIRMATION_PHRASE) {
-      setMessage(`Confirmação inválida. Digite exatamente ${DESTRUCTIVE_CONFIRMATION_PHRASE}.`);
-      return null;
-    }
-    return typed.trim();
-  }
-
   async function handleImport() {
     setLoadingImport(true);
     setMessage('');
@@ -138,7 +122,10 @@ export function AdminPage() {
       const confirmationPhrase = resetData
         ? askDestructiveConfirmation('Limpar toda a base antes da importação')
         : null;
-      if (resetData && !confirmationPhrase) return;
+      if (resetData && !confirmationPhrase) {
+        setMessage('Ação cancelada.');
+        return;
+      }
 
       const response = await api.importWorkbook({
         file_path: filePath,
@@ -211,7 +198,14 @@ export function AdminPage() {
     setLoadingBootstrap(true);
     setMessage('');
     try {
+      const confirmationPhrase = askDestructiveConfirmation('Aplicar base atual (upsert de clientes e módulos)');
+      if (!confirmationPhrase) {
+        setMessage('Ação cancelada.');
+        return;
+      }
+
       const response = await api.bootstrapCurrentData({
+        confirmation_phrase: confirmationPhrase,
         clients: CURRENT_CLIENTS,
         modules: CURRENT_MODULES
       }) as any;
@@ -229,7 +223,10 @@ export function AdminPage() {
     setMessage('');
     try {
       const confirmationPhrase = askDestructiveConfirmation('Aplicar cenário real (substitui toda a base atual)');
-      if (!confirmationPhrase) return;
+      if (!confirmationPhrase) {
+        setMessage('Ação cancelada.');
+        return;
+      }
 
       const response = await api.bootstrapRealScenario({
         confirmation_phrase: confirmationPhrase
@@ -245,12 +242,15 @@ export function AdminPage() {
 
   async function deleteSelectedModule() {
     if (!selectedModule) return;
-    const ok = window.confirm(`Excluir módulo ${selectedModule.code} - ${selectedModule.name}?`);
-    if (!ok) return;
+    const confirmationPhrase = askDestructiveConfirmation(`Excluir módulo ${selectedModule.code} - ${selectedModule.name}`);
+    if (!confirmationPhrase) {
+      setMessage('Ação cancelada.');
+      return;
+    }
 
     setMessage('');
     try {
-      await api.deleteAdminModule(selectedModule.id);
+      await api.deleteAdminModule(selectedModule.id, confirmationPhrase);
       setMessage('Módulo excluído com sucesso.');
       loadCatalog();
     } catch (error) {
