@@ -364,7 +364,8 @@ body {
   padding: 9px 10px;
   text-align: left;
   vertical-align: middle;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .table tbody tr {
@@ -392,6 +393,7 @@ body {
 .table-sort-btn {
   display: inline-flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 4px;
   border: none;
   background: transparent;
@@ -401,6 +403,7 @@ body {
   letter-spacing: inherit;
   text-transform: inherit;
   padding: 0;
+  white-space: nowrap;
 }
 
 .table-sort-btn:hover {
@@ -1298,6 +1301,64 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   min-height: 176px;
 }
 
+/* Técnicos */
+.technicians-list-table {
+  table-layout: fixed;
+}
+
+.technicians-list-table th:nth-child(1),
+.technicians-list-table td:nth-child(1) {
+  width: 22%;
+}
+
+.technicians-list-table th:nth-child(2),
+.technicians-list-table td:nth-child(2) {
+  width: 14%;
+}
+
+.technicians-list-table th:nth-child(3),
+.technicians-list-table td:nth-child(3) {
+  width: 64%;
+}
+
+.technicians-name-cell {
+  font-weight: 600;
+}
+
+.technicians-load-cell {
+  text-align: center;
+  font-weight: 700;
+  color: #284d72;
+}
+
+.technicians-skills-cell {
+  vertical-align: top;
+}
+
+.technicians-skill-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.technicians-skill-pill {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid #cddcf1;
+  background: #f2f7ff;
+  color: #224467;
+  font-size: 0.77rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.technicians-check-grid {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
 @media (max-width: 1160px) {
   .two-col { grid-template-columns: 1fr; }
   .calendar-content-grid { grid-template-columns: 1fr; }
@@ -1363,5 +1424,8 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   .timeline-notes-input {
     width: 100%;
     min-width: 0;
+  }
+  .technicians-list-table {
+    table-layout: auto;
   }
 }

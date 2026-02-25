@@ -204,7 +204,7 @@ export function TechniciansPage() {
   }
 
   return (
-    <div className="page">
+    <div className="page technicians-page">
       <header className="page-header"><h1>Técnicos</h1></header>
       {error ? <p className="error">{error}</p> : null}
       {message ? <p className="info">{message}</p> : null}
@@ -225,7 +225,7 @@ export function TechniciansPage() {
 
       <div className="two-col">
         <Section title="Lista e carga">
-          <table className="table">
+          <table className="table table-hover technicians-list-table">
             <thead><tr>
               <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('name')}>Nome{sortIndicator('name')}</button></th>
               <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('monthly_load')}>Carga no mês{sortIndicator('monthly_load')}</button></th>
@@ -234,9 +234,21 @@ export function TechniciansPage() {
             <tbody>
               {sortedTechs.map((tech) => (
                 <tr key={tech.id} onClick={() => setSelectedId(tech.id)} className={selectedId === tech.id ? 'row-selected' : ''}>
-                  <td>{tech.name}</td>
-                  <td>{tech.monthly_load}</td>
-                  <td>{(tech.skills ?? []).map((skill: any) => skill.name).join(', ') || '-'}</td>
+                  <td className="technicians-name-cell">{tech.name}</td>
+                  <td className="technicians-load-cell">{tech.monthly_load}</td>
+                  <td className="technicians-skills-cell">
+                    {(tech.skills ?? []).length === 0 ? (
+                      <span className="muted">-</span>
+                    ) : (
+                      <div className="technicians-skill-list">
+                        {(tech.skills ?? []).map((skill: any) => (
+                          <span key={`${tech.id}-${skill.code}`} className="technicians-skill-pill" title={skill.name}>
+                            {moduleShortLabel(skill.name)}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -245,7 +257,7 @@ export function TechniciansPage() {
 
         <Section title="Editar capacitações">
           <p><strong>Técnico selecionado:</strong> {selectedTech?.name ?? '-'}</p>
-          <div className="check-grid">
+          <div className="check-grid technicians-check-grid">
             {modules.map((module) => (
               <label key={module.id}>
                 <input
