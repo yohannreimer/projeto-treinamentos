@@ -3,10 +3,13 @@ import { api } from '../services/api';
 import { Section } from '../components/Section';
 import type { LicenseProgram } from '../types';
 import { askDestructiveConfirmation } from '../utils/destructive';
+type ProgramSortKey = 'name' | 'usage_count';
 
 export function LicenseProgramsPage() {
   const [rows, setRows] = useState<LicenseProgram[]>([]);
   const [query, setQuery] = useState('');
+  const [sortKey, setSortKey] = useState<ProgramSortKey>('name');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
 
@@ -29,6 +32,32 @@ export function LicenseProgramsPage() {
     const normalized = query.toLowerCase();
     return rows.filter((row) => `${row.name} ${row.notes ?? ''}`.toLowerCase().includes(normalized));
   }, [rows, query]);
+
+  const ordered = useMemo(() => {
+    const list = [...filtered];
+    list.sort((a, b) => {
+      const direction = sortDirection === 'asc' ? 1 : -1;
+      if (sortKey === 'usage_count') {
+        return (Number(a.usage_count ?? 0) - Number(b.usage_count ?? 0)) * direction;
+      }
+      return String(a.name ?? '').localeCompare(String(b.name ?? '')) * direction;
+    });
+    return list;
+  }, [filtered, sortKey, sortDirection]);
+
+  function toggleSort(nextKey: ProgramSortKey) {
+    if (sortKey === nextKey) {
+      setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+      return;
+    }
+    setSortKey(nextKey);
+    setSortDirection(nextKey === 'name' ? 'asc' : 'desc');
+  }
+
+  function sortIndicator(nextKey: ProgramSortKey) {
+    if (sortKey !== nextKey) return '';
+    return sortDirection === 'asc' ? ' ↑' : ' ↓';
+  }
 
   function resetForm() {
     setEditingId(null);
@@ -148,14 +177,14 @@ export function LicenseProgramsPage() {
         <table className="table table-hover table-tight">
           <thead>
             <tr>
-              <th>Programa</th>
+              <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('name')}>Programa{sortIndicator('name')}</button></th>
               <th>Observações</th>
-              <th>Em uso</th>
+              <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('usage_count')}>Em uso{sortIndicator('usage_count')}</button></th>
               <th>Ações</th>
             </tr>
           </thead>
           <tbody>
-            {filtered.map((row) => (
+            {ordered.map((row) => (
               <tr key={row.id}>
                 <td><strong>{row.name}</strong></td>
                 <td>{row.notes || '—'}</td>

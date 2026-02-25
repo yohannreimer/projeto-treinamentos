@@ -18,6 +18,8 @@ export type Cohort = {
   technician_name?: string;
   status: string;
   capacity_companies: number;
+  period?: 'Integral' | 'Meio_periodo';
+  delivery_mode?: 'Online' | 'Presencial' | 'Hibrida';
   notes: string | null;
   occupancy?: number;
   participant_names?: string;
@@ -43,6 +45,7 @@ export type LicenseRow = {
   program_id: string | null;
   program_name: string;
   user_name: string;
+  module_ids: string[];
   module_list: string;
   license_identifier: string;
   renewal_cycle: 'Mensal' | 'Anual';

@@ -36,9 +36,14 @@ export function initDb() {
     create table if not exists company (
       id text primary key,
       name text not null unique,
-      status text not null default 'Ativo',
+      status text not null default 'Em_treinamento',
       notes text,
-      priority integer not null default 0
+      priority integer not null default 0,
+      priority_level text not null default 'Normal',
+      contact_name text,
+      contact_phone text,
+      contact_email text,
+      modality text not null default 'Turma_Online'
     );
 
     create table if not exists company_module_progress (
@@ -48,6 +53,8 @@ export function initDb() {
       status text not null default 'Nao_iniciado',
       notes text,
       completed_at text,
+      custom_duration_days integer,
+      custom_units integer,
       unique(company_id, module_id),
       foreign key(company_id) references company(id) on delete cascade,
       foreign key(module_id) references module_template(id) on delete cascade
@@ -84,6 +91,8 @@ export function initDb() {
       technician_id text,
       status text not null default 'Planejada',
       capacity_companies integer not null,
+      period text not null default 'Integral',
+      delivery_mode text not null default 'Online',
       notes text,
       foreign key(technician_id) references technician(id) on delete set null
     );
@@ -163,6 +172,14 @@ export function initDb() {
       foreign key(company_id) references company(id) on delete cascade
     );
 
+    create table if not exists company_license_module (
+      license_id text not null,
+      module_id text not null,
+      primary key (license_id, module_id),
+      foreign key(license_id) references company_license(id) on delete cascade,
+      foreign key(module_id) references module_template(id) on delete cascade
+    );
+
     create table if not exists license_program (
       id text primary key,
       name text not null unique,
@@ -170,9 +187,33 @@ export function initDb() {
       created_at text not null,
       updated_at text not null
     );
+
+    create table if not exists recruitment_candidate (
+      id text primary key,
+      name text not null,
+      process_status text not null default 'Em_processo',
+      stage text not null default 'Triagem',
+      strengths text,
+      concerns text,
+      specialties text,
+      equipment_notes text,
+      career_plan text,
+      notes text,
+      created_at text not null,
+      updated_at text not null
+    );
   `);
 
   ensureColumn('company', 'priority', 'priority integer not null default 0');
+  ensureColumn('company', 'priority_level', "priority_level text not null default 'Normal'");
+  ensureColumn('company', 'contact_name', 'contact_name text');
+  ensureColumn('company', 'contact_phone', 'contact_phone text');
+  ensureColumn('company', 'contact_email', 'contact_email text');
+  ensureColumn('company', 'modality', "modality text not null default 'Turma_Online'");
+  ensureColumn('company_module_progress', 'custom_duration_days', 'custom_duration_days integer');
+  ensureColumn('company_module_progress', 'custom_units', 'custom_units integer');
+  ensureColumn('cohort', 'period', "period text not null default 'Integral'");
+  ensureColumn('cohort', 'delivery_mode', "delivery_mode text not null default 'Online'");
   ensureColumn(
     'cohort_allocation',
     'override_installation_prereq',
@@ -296,6 +337,8 @@ export function seedDb() {
 
 export function clearAllData() {
   db.exec(`
+    delete from recruitment_candidate;
+    delete from company_license_module;
     delete from company_license;
     delete from license_program;
     delete from company_optional_progress;

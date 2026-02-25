@@ -24,8 +24,12 @@ type CohortCalendarOccurrence = Cohort & {
   day_index: number;
   total_business_days: number;
 };
+type DaySortKey = 'name' | 'technician_name' | 'participant_names' | 'status';
+type SortDirection = 'asc' | 'desc';
 
 const statuses = ['Planejada', 'Aguardando_quorum', 'Confirmada', 'Concluida', 'Cancelada'];
+const periodOptions = ['Integral', 'Meio_periodo'] as const;
+const deliveryModeOptions = ['Online', 'Presencial', 'Hibrida'] as const;
 const weekDays = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'];
 
 const fixedBrazilHolidays = [
@@ -224,12 +228,16 @@ export function CalendarPage() {
   const [statusFilter, setStatusFilter] = useState('');
   const [technicianFilter, setTechnicianFilter] = useState('');
   const [message, setMessage] = useState('');
+  const [daySortKey, setDaySortKey] = useState<DaySortKey>('name');
+  const [daySortDirection, setDaySortDirection] = useState<SortDirection>('asc');
 
   const [code, setCode] = useState('');
   const [name, setName] = useState('Nova turma');
   const [technicianId, setTechnicianId] = useState('');
   const [capacity, setCapacity] = useState(8);
   const [status, setStatus] = useState('Planejada');
+  const [period, setPeriod] = useState<(typeof periodOptions)[number]>('Integral');
+  const [deliveryMode, setDeliveryMode] = useState<(typeof deliveryModeOptions)[number]>('Online');
   const [notes, setNotes] = useState('');
   const [blocks, setBlocks] = useState<BlockDraft[]>([]);
   const [isCheckingTechnicianConflict, setIsCheckingTechnicianConflict] = useState(false);
@@ -327,12 +335,65 @@ export function CalendarPage() {
 
   const monthCells = useMemo(() => buildMonthGrid(month, holidaysMap), [month, holidaysMap]);
 
+  const monthMetrics = useMemo(() => {
+    const monthDates = Object.keys(eventsByDate).filter((date) => date.slice(0, 7) === month);
+    const totalOccurrences = monthDates.reduce((sum, date) => sum + (eventsByDate[date]?.length ?? 0), 0);
+    const activeCohortIds = new Set<string>();
+    const activeTechnicians = new Set<string>();
+
+    monthDates.forEach((date) => {
+      (eventsByDate[date] ?? []).forEach((event) => {
+        activeCohortIds.add(event.id);
+        if (event.technician_name) activeTechnicians.add(event.technician_name);
+      });
+    });
+
+    const monthBusinessDays = monthCells.filter((cell) => cell.inMonth && !cell.isWeekend).length;
+    const busyBusinessDays = monthCells.filter(
+      (cell) => cell.inMonth && !cell.isWeekend && (eventsByDate[cell.date]?.length ?? 0) > 0
+    ).length;
+
+    return {
+      totalOccurrences,
+      activeCohorts: activeCohortIds.size,
+      activeTechnicians: activeTechnicians.size,
+      monthBusinessDays,
+      busyBusinessDays
+    };
+  }, [eventsByDate, month, monthCells]);
+
   const selectedDayEvents = useMemo(() => {
-    return (eventsByDate[selectedDate] ?? []).sort((a, b) => {
+    const direction = daySortDirection === 'asc' ? 1 : -1;
+    return [...(eventsByDate[selectedDate] ?? [])].sort((a, b) => {
+      switch (daySortKey) {
+        case 'name': {
+          const compare = String(a.name ?? '').localeCompare(String(b.name ?? ''));
+          if (compare !== 0) return compare * direction;
+          break;
+        }
+        case 'technician_name': {
+          const compare = String(a.technician_name ?? '').localeCompare(String(b.technician_name ?? ''));
+          if (compare !== 0) return compare * direction;
+          break;
+        }
+        case 'participant_names': {
+          const leftCount = splitPipeList(a.participant_names).length;
+          const rightCount = splitPipeList(b.participant_names).length;
+          if (leftCount !== rightCount) return (leftCount - rightCount) * direction;
+          break;
+        }
+        case 'status': {
+          const compare = String(a.status ?? '').localeCompare(String(b.status ?? ''));
+          if (compare !== 0) return compare * direction;
+          break;
+        }
+        default:
+          break;
+      }
       if (a.code === b.code) return a.day_index - b.day_index;
       return a.code.localeCompare(b.code);
     });
-  }, [eventsByDate, selectedDate]);
+  }, [eventsByDate, selectedDate, daySortKey, daySortDirection]);
 
   const statusOptions = useMemo(() => Array.from(new Set(rows.map((r) => r.status))).sort(), [rows]);
   const technicianOptions = useMemo(
@@ -364,6 +425,20 @@ export function CalendarPage() {
         duration_days: moduleDurationById(modules, fallbackModuleId)
       }
     ]);
+  }
+
+  function toggleDaySort(nextKey: DaySortKey) {
+    if (daySortKey === nextKey) {
+      setDaySortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+      return;
+    }
+    setDaySortKey(nextKey);
+    setDaySortDirection('asc');
+  }
+
+  function daySortIndicator(nextKey: DaySortKey) {
+    if (daySortKey !== nextKey) return '';
+    return daySortDirection === 'asc' ? ' ↑' : ' ↓';
   }
 
   function updateBlock(key: string, patch: Partial<BlockDraft>) {
@@ -466,6 +541,8 @@ export function CalendarPage() {
         technician_id: technicianId || null,
         status,
         capacity_companies: Math.max(1, Number(capacity) || 1),
+        period,
+        delivery_mode: deliveryMode,
         notes: notes.trim() || null,
         blocks: payloadBlocks()
       });
@@ -479,6 +556,8 @@ export function CalendarPage() {
       setTechnicianId('');
       setCapacity(8);
       setStatus('Planejada');
+      setPeriod('Integral');
+      setDeliveryMode('Online');
       if (refreshed.modules.length > 0) {
         setBlocks([
           {
@@ -501,40 +580,43 @@ export function CalendarPage() {
       </header>
       {message ? <p className="info">{message}</p> : null}
 
-      <Section title="Controles do calendário">
+      <Section title="Controles do calendário" className="calendar-controls-panel">
         <div className="calendar-toolbar">
-          <div className="actions">
-            <button type="button" onClick={() => setMonth(prevMonth(month))}>Mês anterior</button>
-            <button
-              type="button"
-              onClick={() => {
-                const currentMonth = new Date().toISOString().slice(0, 7);
-                const today = toDateIso(new Date());
-                setMonth(currentMonth);
-                setSelectedDate(today);
-                setIsDayPanelOpen(true);
-              }}
-            >
-              Hoje
-            </button>
-            <button type="button" onClick={() => setMonth(nextMonth(month))}>Próximo mês</button>
-            <button type="button" onClick={() => setIsDayPanelOpen(true)}>
-              Abrir painel do dia {selectedDate}
-            </button>
+          <div className="calendar-toolbar-main">
+            <h3 className="month-title">{monthLabel(month)}</h3>
+            <div className="actions">
+              <button type="button" onClick={() => setMonth(prevMonth(month))}>Mês anterior</button>
+              <button
+                type="button"
+                onClick={() => {
+                  const currentMonth = new Date().toISOString().slice(0, 7);
+                  const today = toDateIso(new Date());
+                  setMonth(currentMonth);
+                  setSelectedDate(today);
+                  setIsDayPanelOpen(true);
+                }}
+              >
+                Hoje
+              </button>
+              <button type="button" onClick={() => setMonth(nextMonth(month))}>Próximo mês</button>
+              <button type="button" onClick={() => setIsDayPanelOpen(true)}>
+                Abrir painel do dia {selectedDate}
+              </button>
+            </div>
           </div>
-          <div className="actions">
-            <label>
+          <div className="calendar-toolbar-filters">
+            <label className="calendar-filter-field">
               Ir para mês
               <input type="month" value={month} onChange={(event) => setMonth(event.target.value)} />
             </label>
-            <label>
+            <label className="calendar-filter-field">
               Técnico
               <select value={technicianFilter} onChange={(event) => setTechnicianFilter(event.target.value)}>
                 <option value="">Todos</option>
                 {technicianOptions.map((item) => <option key={item} value={item}>{item}</option>)}
               </select>
             </label>
-            <label>
+            <label className="calendar-filter-field">
               Status
               <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
                 <option value="">Todos</option>
@@ -542,7 +624,25 @@ export function CalendarPage() {
               </select>
             </label>
           </div>
-          <h3 className="month-title">{monthLabel(month)}</h3>
+
+          <div className="calendar-metrics-grid">
+            <article className="calendar-metric-card">
+              <span>Turmas ativas no mês</span>
+              <strong>{monthMetrics.activeCohorts}</strong>
+            </article>
+            <article className="calendar-metric-card">
+              <span>Ocupações em dias úteis</span>
+              <strong>{monthMetrics.totalOccurrences}</strong>
+            </article>
+            <article className="calendar-metric-card">
+              <span>Dias úteis com turma</span>
+              <strong>{monthMetrics.busyBusinessDays}/{monthMetrics.monthBusinessDays}</strong>
+            </article>
+            <article className="calendar-metric-card">
+              <span>Técnicos em agenda</span>
+              <strong>{monthMetrics.activeTechnicians}</strong>
+            </article>
+          </div>
         </div>
 
         <div className="calendar-holidays-bar">
@@ -559,7 +659,7 @@ export function CalendarPage() {
         </div>
       </Section>
 
-      <Section title="Visão mensal">
+      <Section title="Visão mensal" className="calendar-month-panel">
         <div className="calendar-grid-head">
           {weekDays.map((day) => <div key={day} className="calendar-head-cell">{day}</div>)}
         </div>
@@ -622,10 +722,13 @@ export function CalendarPage() {
                         </p>
                         <p className="calendar-event-meta">Técnico: {event.technician_name ?? '-'}</p>
                         <p className="calendar-event-meta">Dia {event.day_index}/{event.total_business_days}</p>
-                        <p className="calendar-event-meta" title={collapseList(moduleNames, 10)}>
+                        <p className="calendar-event-meta">
+                          {statusLabel(event.delivery_mode ?? 'Online')} · {statusLabel(event.period ?? 'Integral')}
+                        </p>
+                        <p className="calendar-event-meta calendar-ops-only" title={collapseList(moduleNames, 10)}>
                           Módulos: {collapseList(moduleNames, 2)}
                         </p>
-                        <p className="calendar-event-meta" title={collapseList(participants, 20)}>
+                        <p className="calendar-event-meta calendar-ops-only" title={collapseList(participants, 20)}>
                           Participantes: {collapseList(participants, 2)}
                         </p>
                       </div>
@@ -666,10 +769,10 @@ export function CalendarPage() {
                   <table className="table table-hover table-tight">
                     <thead>
                       <tr>
-                        <th>Turma</th>
-                        <th>Técnico</th>
-                        <th>Participantes</th>
-                        <th>Status</th>
+                        <th><button type="button" className="table-sort-btn" onClick={() => toggleDaySort('name')}>Turma{daySortIndicator('name')}</button></th>
+                        <th><button type="button" className="table-sort-btn" onClick={() => toggleDaySort('technician_name')}>Técnico{daySortIndicator('technician_name')}</button></th>
+                        <th className="calendar-ops-only"><button type="button" className="table-sort-btn" onClick={() => toggleDaySort('participant_names')}>Participantes{daySortIndicator('participant_names')}</button></th>
+                        <th><button type="button" className="table-sort-btn" onClick={() => toggleDaySort('status')}>Status{daySortIndicator('status')}</button></th>
                       </tr>
                     </thead>
                     <tbody>
@@ -681,7 +784,7 @@ export function CalendarPage() {
                         >
                           <td>{event.name} (dia {event.day_index}/{event.total_business_days})</td>
                           <td>{event.technician_name ?? '-'}</td>
-                          <td title={collapseList(splitPipeList(event.participant_names), 100)}>
+                          <td className="calendar-ops-only" title={collapseList(splitPipeList(event.participant_names), 100)}>
                             {collapseList(splitPipeList(event.participant_names), 3)}
                           </td>
                           <td><StatusChip value={event.status} /></td>
@@ -696,6 +799,7 @@ export function CalendarPage() {
                     <div className="stack">
                       <p><strong>{detail.code} - {detail.name}</strong></p>
                       <p>Início: {detail.start_date} | Técnico: {detail.technician_name ?? '-'}</p>
+                      <p>Formato: {statusLabel(detail.delivery_mode ?? 'Online')} · {statusLabel(detail.period ?? 'Integral')}</p>
                       <p>Capacidade: {detail.capacity_companies}</p>
                       <StatusChip value={detail.status} />
 
@@ -755,6 +859,20 @@ export function CalendarPage() {
                   <label>Status
                     <select value={status} onChange={(event) => setStatus(event.target.value)}>
                       {statuses.map((item) => <option key={item} value={item}>{statusLabel(item)}</option>)}
+                    </select>
+                  </label>
+                  <label>Período
+                    <select value={period} onChange={(event) => setPeriod(event.target.value as (typeof periodOptions)[number])}>
+                      {periodOptions.map((option) => (
+                        <option key={option} value={option}>{statusLabel(option)}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>Formato
+                    <select value={deliveryMode} onChange={(event) => setDeliveryMode(event.target.value as (typeof deliveryModeOptions)[number])}>
+                      {deliveryModeOptions.map((option) => (
+                        <option key={option} value={option}>{statusLabel(option)}</option>
+                      ))}
                     </select>
                   </label>
                   {technicianId && status !== 'Cancelada' ? (

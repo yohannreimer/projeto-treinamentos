@@ -38,6 +38,9 @@ type CohortDetail = Cohort & {
 };
 
 const statuses = ['Planejada', 'Aguardando_quorum', 'Confirmada', 'Concluida', 'Cancelada'];
+const periodOptions = ['Integral', 'Meio_periodo'] as const;
+const deliveryModeOptions = ['Online', 'Presencial', 'Hibrida'] as const;
+type CohortSortKey = 'code' | 'start_date' | 'delivery_mode' | 'technician_name' | 'status';
 
 function randomKey() {
   return Math.random().toString(36).slice(2, 10);
@@ -72,6 +75,8 @@ export function CohortsPage() {
   const [companies, setCompanies] = useState<Array<{ id: string; name: string }>>([]);
 
   const [query, setQuery] = useState('');
+  const [sortKey, setSortKey] = useState<CohortSortKey>('start_date');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingDetail, setEditingDetail] = useState<CohortDetail | null>(null);
@@ -85,6 +90,8 @@ export function CohortsPage() {
   const [technicianId, setTechnicianId] = useState('');
   const [capacity, setCapacity] = useState(8);
   const [status, setStatus] = useState('Planejada');
+  const [period, setPeriod] = useState<(typeof periodOptions)[number]>('Integral');
+  const [deliveryMode, setDeliveryMode] = useState<(typeof deliveryModeOptions)[number]>('Online');
   const [notes, setNotes] = useState('');
   const [blocks, setBlocks] = useState<BlockDraft[]>([]);
 
@@ -164,6 +171,8 @@ export function CohortsPage() {
     setTechnicianId('');
     setCapacity(8);
     setStatus('Planejada');
+    setPeriod('Integral');
+    setDeliveryMode('Online');
     setNotes('');
     setBlocks(firstModule ? [{ key: randomKey(), module_id: firstModule.id, duration_days: firstModule.duration_days || 1 }] : []);
 
@@ -205,6 +214,39 @@ export function CohortsPage() {
       `${item.code} ${item.name} ${item.technician_name ?? ''}`.toLowerCase().includes(normalized)
     );
   }, [cohorts, query]);
+
+  const ordered = useMemo(() => {
+    const rows = [...filtered];
+    rows.sort((a, b) => {
+      const direction = sortDirection === 'asc' ? 1 : -1;
+      if (sortKey === 'start_date') {
+        return String(a.start_date).localeCompare(String(b.start_date)) * direction;
+      }
+      if (sortKey === 'delivery_mode') {
+        const left = `${statusLabel(a.delivery_mode ?? 'Online')} ${statusLabel(a.period ?? 'Integral')}`;
+        const right = `${statusLabel(b.delivery_mode ?? 'Online')} ${statusLabel(b.period ?? 'Integral')}`;
+        return left.localeCompare(right) * direction;
+      }
+      const left = String((a as any)[sortKey] ?? '');
+      const right = String((b as any)[sortKey] ?? '');
+      return left.localeCompare(right) * direction;
+    });
+    return rows;
+  }, [filtered, sortKey, sortDirection]);
+
+  function toggleSort(nextKey: CohortSortKey) {
+    if (sortKey === nextKey) {
+      setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+      return;
+    }
+    setSortKey(nextKey);
+    setSortDirection(nextKey === 'start_date' ? 'asc' : 'desc');
+  }
+
+  function sortIndicator(nextKey: CohortSortKey) {
+    if (sortKey !== nextKey) return '';
+    return sortDirection === 'asc' ? ' ↑' : ' ↓';
+  }
 
   const blockPreview = useMemo(() => toBlockPayload(blocks), [blocks]);
 
@@ -320,6 +362,8 @@ export function CohortsPage() {
       setTechnicianId(detail.technician_id ?? '');
       setCapacity(detail.capacity_companies);
       setStatus(detail.status);
+      setPeriod((detail.period ?? 'Integral') as (typeof periodOptions)[number]);
+      setDeliveryMode((detail.delivery_mode ?? 'Online') as (typeof deliveryModeOptions)[number]);
       setNotes(detail.notes ?? '');
       setBlocks((detail.blocks ?? []).map((block) => ({
         key: randomKey(),
@@ -466,6 +510,8 @@ export function CohortsPage() {
       technician_id: technicianId || null,
       status,
       capacity_companies: Math.max(1, Number(capacity) || 1),
+      period,
+      delivery_mode: deliveryMode,
       notes: notes.trim() || null,
       blocks: blockPreview
     };
@@ -521,63 +567,74 @@ export function CohortsPage() {
         </article>
       </div>
 
-      <Section
-        title="Turmas cadastradas"
-        action={
-          <div className="actions">
-            <input
-              placeholder="Buscar por código, nome ou técnico"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-            />
-            <button
-              type="button"
-              onClick={() => {
-                setShowForm(true);
-                resetForm(modules, cohorts);
-              }}
-            >
-              Criar turma
-            </button>
-          </div>
-        }
-      >
-        <table className="table table-hover">
-          <thead>
-            <tr>
-              <th>Turma</th>
-              <th>Data de início</th>
-              <th>Técnico</th>
-              <th>Status</th>
-              <th>Ações</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map((cohort) => (
-              <tr key={cohort.id} className={editingId === cohort.id ? 'row-selected' : ''}>
-                <td>
-                  <strong>{cohort.code}</strong>
-                  <div>{cohort.name}</div>
-                </td>
-                <td>{cohort.start_date}</td>
-                <td>{cohort.technician_name ?? 'Sem técnico'}</td>
-                <td><StatusChip value={cohort.status} /></td>
-                <td className="actions">
-                  <button type="button" onClick={() => startEdit(cohort.id)}>Editar</button>
-                  <button type="button" onClick={() => deleteCohort(cohort)}>Excluir</button>
-                  <Link to={`/turmas/${cohort.id}`}>Abrir</Link>
-                </td>
+      <div className={`cohorts-workspace ${showForm ? 'is-editing' : ''}`}>
+        <Section
+          title="Turmas cadastradas"
+          className="cohorts-list-panel"
+          action={
+            <div className="actions actions-stretch">
+              <input
+                placeholder="Buscar por código, nome ou técnico"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  setShowForm(true);
+                  resetForm(modules, cohorts);
+                }}
+              >
+                Criar turma
+              </button>
+            </div>
+          }
+        >
+          <table className="table table-hover">
+            <thead>
+              <tr>
+                <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('code')}>Turma{sortIndicator('code')}</button></th>
+                <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('start_date')}>Data de início{sortIndicator('start_date')}</button></th>
+                <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('delivery_mode')}>Formato{sortIndicator('delivery_mode')}</button></th>
+                <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('technician_name')}>Técnico{sortIndicator('technician_name')}</button></th>
+                <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('status')}>Status{sortIndicator('status')}</button></th>
+                <th>Ações</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </Section>
+            </thead>
+            <tbody>
+              {ordered.map((cohort) => (
+                <tr key={cohort.id} className={editingId === cohort.id ? 'row-selected' : ''}>
+                  <td>
+                    <strong>{cohort.code}</strong>
+                    <div>{cohort.name}</div>
+                  </td>
+                  <td>{cohort.start_date}</td>
+                  <td>{statusLabel(cohort.delivery_mode ?? 'Online')} · {statusLabel(cohort.period ?? 'Integral')}</td>
+                  <td>{cohort.technician_name ?? 'Sem técnico'}</td>
+                  <td><StatusChip value={cohort.status} /></td>
+                  <td className="actions">
+                    <button type="button" onClick={() => startEdit(cohort.id)}>Editar</button>
+                    <button type="button" onClick={() => deleteCohort(cohort)}>Excluir</button>
+                    <Link to={`/turmas/${cohort.id}`}>Abrir</Link>
+                  </td>
+                </tr>
+              ))}
+              {ordered.length === 0 ? (
+                <tr>
+                  <td colSpan={6}>
+                    <p className="muted">Nenhuma turma encontrada para o filtro informado.</p>
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </Section>
 
-      {showForm ? (
-        <Section title={editingId ? `Editar turma ${code}` : 'Criar nova turma'}>
-          <form className="form form-spacious" onSubmit={submit}>
+        {showForm ? (
+          <Section title={editingId ? `Editar turma ${code}` : 'Criar nova turma'} className="cohorts-editor-panel">
+            <form className="form form-spacious" onSubmit={submit}>
             <div className="wizard-step">
-              <h3>1. Informações principais</h3>
+              <h3 className="wizard-step-title"><span className="step-index">1</span>Informações principais</h3>
               <div className="three-col">
                 <label>
                   Código
@@ -619,6 +676,24 @@ export function CohortsPage() {
                     ))}
                   </select>
                 </label>
+                <label>
+                  Período
+                  <select value={period} onChange={(event) => setPeriod(event.target.value as (typeof periodOptions)[number])}>
+                    {periodOptions.map((option) => (
+                      <option key={option} value={option}>{statusLabel(option)}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="three-col">
+                <label>
+                  Formato da turma
+                  <select value={deliveryMode} onChange={(event) => setDeliveryMode(event.target.value as (typeof deliveryModeOptions)[number])}>
+                    {deliveryModeOptions.map((option) => (
+                      <option key={option} value={option}>{statusLabel(option)}</option>
+                    ))}
+                  </select>
+                </label>
               </div>
               {technicianId && status !== 'Cancelada' ? (
                 <div className="form-subcard">
@@ -645,45 +720,47 @@ export function CohortsPage() {
             </div>
 
             <div className="wizard-step">
-              <h3>2. Sequência de módulos da turma</h3>
+              <h3 className="wizard-step-title"><span className="step-index">2</span>Sequência de módulos da turma</h3>
               <p className="muted">A ordem abaixo define automaticamente o início de cada módulo em diárias úteis.</p>
               <div className="stack">
                 {blocks.map((block, index) => (
-                  <div key={block.key} className="form-subcard block-card">
-                    <strong>Bloco {index + 1}</strong>
-                    <label>
-                      Módulo
-                      <select
-                        value={block.module_id}
-                        onChange={(event) => {
-                          const nextModuleId = event.target.value;
-                          updateBlock(block.key, {
-                            module_id: nextModuleId,
-                            duration_days: moduleDurationById(modules, nextModuleId)
-                          });
-                        }}
-                      >
-                        {modules.map((module) => (
-                          <option key={module.id} value={module.id}>
-                            {moduleShortLabel(module.name)}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      Diárias
-                      <input
-                        type="number"
-                        min={1}
-                        value={block.duration_days}
-                        onChange={(event) => {
-                          updateBlock(block.key, { duration_days: Math.max(1, Number(event.target.value) || 1) });
-                        }}
-                      />
-                    </label>
-                    <button type="button" onClick={() => removeBlock(block.key)} disabled={blocks.length <= 1}>
-                      Remover bloco
-                    </button>
+                  <div key={block.key} className="form-subcard cohort-block-card">
+                    <strong className="cohort-block-title">Bloco {index + 1}</strong>
+                    <div className="cohort-block-grid">
+                      <label>
+                        Módulo
+                        <select
+                          value={block.module_id}
+                          onChange={(event) => {
+                            const nextModuleId = event.target.value;
+                            updateBlock(block.key, {
+                              module_id: nextModuleId,
+                              duration_days: moduleDurationById(modules, nextModuleId)
+                            });
+                          }}
+                        >
+                          {modules.map((module) => (
+                            <option key={module.id} value={module.id}>
+                              {moduleShortLabel(module.name)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        Diárias
+                        <input
+                          type="number"
+                          min={1}
+                          value={block.duration_days}
+                          onChange={(event) => {
+                            updateBlock(block.key, { duration_days: Math.max(1, Number(event.target.value) || 1) });
+                          }}
+                        />
+                      </label>
+                      <button type="button" onClick={() => removeBlock(block.key)} disabled={blocks.length <= 1}>
+                        Remover bloco
+                      </button>
+                    </div>
                   </div>
                 ))}
                 <button type="button" onClick={addBlock}>Adicionar bloco</button>
@@ -691,7 +768,7 @@ export function CohortsPage() {
             </div>
 
             <div className="wizard-step">
-              <h3>3. Prévia da sequência</h3>
+              <h3 className="wizard-step-title"><span className="step-index">3</span>Prévia da sequência</h3>
               <table className="table table-tight">
                 <thead>
                   <tr>
@@ -722,10 +799,10 @@ export function CohortsPage() {
 
             {editingId && editingDetail ? (
               <div className="wizard-step">
-                <h3>4. Participantes (por módulo de entrada)</h3>
+                <h3 className="wizard-step-title"><span className="step-index">4</span>Participantes por módulo de entrada</h3>
                 <p className="muted">Você escolhe o módulo de entrada e os módulos que o cliente vai fazer. O sistema calcula os dias sozinho.</p>
 
-                <div className="three-col">
+                <div className="allocation-head-grid">
                   <label>
                     Cliente
                     <select
@@ -838,7 +915,7 @@ export function CohortsPage() {
                           <td>
                             <StatusChip value={allocation.status} />
                             {allocation.override_installation_prereq ? (
-                              <p className="muted" style={{ marginTop: '4px' }}>
+                              <p className="muted allocation-override-note">
                                 Override MOD-01: {allocation.override_reason ?? 'Sem justificativa'}
                               </p>
                             ) : null}
@@ -862,7 +939,7 @@ export function CohortsPage() {
               </div>
             ) : null}
 
-            <div className="actions">
+            <div className="actions form-footer-actions">
               <button type="submit" disabled={isCheckingTechnicianConflict || hasTechnicianConflict}>
                 {editingId ? 'Salvar alterações' : 'Salvar turma'}
               </button>
@@ -876,9 +953,10 @@ export function CohortsPage() {
                 Cancelar
               </button>
             </div>
-          </form>
-        </Section>
-      ) : null}
+            </form>
+          </Section>
+        ) : null}
+      </div>
     </div>
   );
 }

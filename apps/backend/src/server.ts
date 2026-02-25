@@ -13,11 +13,26 @@ seedDb();
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use((_req, _res, next) => {
+  try {
+    syncConfirmedCohortExecutions();
+  } catch (error) {
+    console.error('Erro ao sincronizar execucao automatica de turmas:', errorMessage(error));
+  }
+  next();
+});
 
 const PORT = Number(process.env.PORT ?? 4000);
 const INSTALLATION_CODES = ['960001010', 'MOD-01'] as const;
 const DEFAULT_WORKBOOK_PATH = '/Users/yohannreimer/Downloads/Planejamento_Jornada_Treinamentos_v3.xlsx';
 const DESTRUCTIVE_CONFIRMATION_PHRASE = 'APAGAR_BASE_TOTAL';
+const COMPANY_STATUS_VALUES = ['Ativo', 'Inativo', 'Em_treinamento', 'Finalizado'] as const;
+const COMPANY_PRIORITY_VALUES = ['Alta', 'Normal', 'Baixa', 'Parado', 'Aguardando_liberacao'] as const;
+const COMPANY_MODALITY_VALUES = ['Turma_Online', 'Exclusivo_Online', 'Presencial'] as const;
+const COHORT_PERIOD_VALUES = ['Integral', 'Meio_periodo'] as const;
+const COHORT_DELIVERY_MODE_VALUES = ['Online', 'Presencial', 'Hibrida'] as const;
+const RECRUITMENT_STAGE_VALUES = ['Triagem', 'Primeira_entrevista', 'Segunda_fase', 'Final'] as const;
+const RECRUITMENT_STATUS_VALUES = ['Em_processo', 'Stand_by', 'Aprovado', 'Reprovado', 'Banco_de_talentos'] as const;
 
 const cohortBlockSchema = z.object({
   module_id: z.string(),
@@ -33,6 +48,8 @@ const createCohortSchema = z.object({
   technician_id: z.string().optional().nullable(),
   status: z.enum(['Planejada', 'Aguardando_quorum', 'Confirmada', 'Concluida', 'Cancelada']).default('Planejada'),
   capacity_companies: z.number().int().positive(),
+  period: z.enum(COHORT_PERIOD_VALUES).default('Integral'),
+  delivery_mode: z.enum(COHORT_DELIVERY_MODE_VALUES).default('Online'),
   notes: z.string().optional().nullable(),
   blocks: z.array(cohortBlockSchema).min(1)
 });
@@ -44,6 +61,8 @@ const updateCohortSchema = z.object({
   technician_id: z.string().nullable().optional(),
   status: z.enum(['Planejada', 'Aguardando_quorum', 'Confirmada', 'Concluida', 'Cancelada']).optional(),
   capacity_companies: z.number().int().positive().optional(),
+  period: z.enum(COHORT_PERIOD_VALUES).optional(),
+  delivery_mode: z.enum(COHORT_DELIVERY_MODE_VALUES).optional(),
   notes: z.string().nullable().optional(),
   blocks: z.array(cohortBlockSchema).min(1).optional()
 });
@@ -75,11 +94,20 @@ const licenseCreateSchema = z.object({
   company_id: z.string(),
   program_id: z.string(),
   user_name: z.string().min(1),
-  module_list: z.string().min(1),
+  module_list: z.string().min(1).optional(),
+  module_ids: z.array(z.string()).optional(),
   license_identifier: z.string().min(1),
   renewal_cycle: z.enum(['Mensal', 'Anual']).default('Mensal'),
   expires_at: z.string().min(10),
   notes: z.string().nullable().optional()
+}).superRefine((data, context) => {
+  if ((data.module_ids?.length ?? 0) === 0 && !data.module_list?.trim()) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['module_ids'],
+      message: 'Informe ao menos um módulo da licença.'
+    });
+  }
 });
 
 const licenseUpdateSchema = z.object({
@@ -87,6 +115,7 @@ const licenseUpdateSchema = z.object({
   program_id: z.string().optional(),
   user_name: z.string().min(1).optional(),
   module_list: z.string().min(1).optional(),
+  module_ids: z.array(z.string()).optional(),
   license_identifier: z.string().min(1).optional(),
   renewal_cycle: z.enum(['Mensal', 'Anual']).optional(),
   expires_at: z.string().min(10).optional(),
@@ -210,6 +239,123 @@ function requireDestructiveConfirmation(
   return false;
 }
 
+function normalizeToken(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/(^_|_$)/g, '');
+}
+
+function normalizeCompanyStatus(status?: string | null): (typeof COMPANY_STATUS_VALUES)[number] {
+  const normalized = normalizeToken(status ?? '');
+  if (normalized === 'ativo') return 'Ativo';
+  if (normalized === 'inativo') return 'Inativo';
+  if (normalized === 'em_treinamento') return 'Em_treinamento';
+  if (normalized === 'finalizado') return 'Finalizado';
+  return 'Em_treinamento';
+}
+
+function normalizeCompanyPriorityLevel(level?: string | null): (typeof COMPANY_PRIORITY_VALUES)[number] {
+  const normalized = normalizeToken(level ?? '');
+  if (normalized === 'alta') return 'Alta';
+  if (normalized === 'normal') return 'Normal';
+  if (normalized === 'baixa') return 'Baixa';
+  if (normalized === 'parado') return 'Parado';
+  if (normalized === 'aguardando_liberacao') return 'Aguardando_liberacao';
+  return 'Normal';
+}
+
+function normalizeCompanyModality(modality?: string | null): (typeof COMPANY_MODALITY_VALUES)[number] {
+  const normalized = normalizeToken(modality ?? '');
+  if (normalized === 'turma_online') return 'Turma_Online';
+  if (normalized === 'exclusivo_online') return 'Exclusivo_Online';
+  if (normalized === 'presencial') return 'Presencial';
+  return 'Turma_Online';
+}
+
+function normalizeCompanyPriorityScore(priorityLevel: string): number {
+  const level = normalizeCompanyPriorityLevel(priorityLevel);
+  if (level === 'Alta') return 100;
+  if (level === 'Normal') return 70;
+  if (level === 'Baixa') return 40;
+  if (level === 'Parado') return 10;
+  return 0;
+}
+
+function priorityLevelFromNumeric(priority: number): (typeof COMPANY_PRIORITY_VALUES)[number] {
+  if (priority >= 85) return 'Alta';
+  if (priority >= 55) return 'Normal';
+  if (priority >= 25) return 'Baixa';
+  if (priority >= 10) return 'Parado';
+  return 'Aguardando_liberacao';
+}
+
+function resolveModuleNamesByIds(moduleIds: string[]): Map<string, string> {
+  if (moduleIds.length === 0) {
+    return new Map();
+  }
+
+  const placeholders = moduleIds.map(() => '?').join(',');
+  const rows = db.prepare(`
+    select id, name
+    from module_template
+    where id in (${placeholders})
+  `).all(...moduleIds) as Array<{ id: string; name: string }>;
+
+  return new Map(rows.map((row) => [row.id, row.name]));
+}
+
+function normalizeLicenseModuleSelection(payload: {
+  module_ids?: string[];
+  module_list?: string;
+}): {
+  moduleIds: string[];
+  moduleListText: string;
+} {
+  const rawModuleIds = (payload.module_ids ?? [])
+    .map((moduleId) => moduleId.trim())
+    .filter(Boolean);
+  const uniqueModuleIds = Array.from(new Set(rawModuleIds));
+
+  if (uniqueModuleIds.length > 0) {
+    const moduleNameById = resolveModuleNamesByIds(uniqueModuleIds);
+    if (moduleNameById.size !== uniqueModuleIds.length) {
+      throw new Error('Um ou mais módulos de licença não foram encontrados.');
+    }
+
+    const moduleListText = uniqueModuleIds
+      .map((moduleId) => moduleNameById.get(moduleId) ?? moduleId)
+      .join(' | ');
+
+    return {
+      moduleIds: uniqueModuleIds,
+      moduleListText
+    };
+  }
+
+  return {
+    moduleIds: [],
+    moduleListText: payload.module_list?.trim() ?? ''
+  };
+}
+
+function syncLicenseModules(licenseId: string, moduleIds: string[]) {
+  db.prepare('delete from company_license_module where license_id = ?').run(licenseId);
+  if (moduleIds.length === 0) {
+    return;
+  }
+
+  const insert = db.prepare(`
+    insert into company_license_module (license_id, module_id)
+    values (?, ?)
+  `);
+  moduleIds.forEach((moduleId) => {
+    insert.run(licenseId, moduleId);
+  });
+}
+
 function slugify(value: string): string {
   return value
     .toLowerCase()
@@ -309,6 +455,63 @@ function cohortBusinessDates(
     dates.push(addBusinessDays(startDate, day));
   }
   return dates;
+}
+
+function syncConfirmedCohortExecutions() {
+  const todayIso = nowDateIso();
+  const candidates = db.prepare(`
+    select
+      a.id as allocation_id,
+      a.company_id,
+      a.module_id,
+      a.entry_day,
+      c.start_date
+    from cohort_allocation a
+    join cohort c on c.id = a.cohort_id
+    where c.status in ('Confirmada', 'Concluida')
+      and a.status in ('Previsto', 'Confirmado')
+  `).all() as Array<{
+    allocation_id: string;
+    company_id: string;
+    module_id: string;
+    entry_day: number;
+    start_date: string;
+  }>;
+
+  if (candidates.length === 0) return;
+
+  const markExecuted = db.prepare(`
+    update cohort_allocation
+    set status = 'Executado',
+      executed_at = coalesce(executed_at, ?)
+    where id = ?
+      and status in ('Previsto', 'Confirmado')
+  `);
+
+  const upsertProgress = db.prepare(`
+    insert into company_module_progress (id, company_id, module_id, status, completed_at)
+    values (?, ?, ?, 'Concluido', ?)
+    on conflict(company_id, module_id) do update set
+      status = 'Concluido',
+      completed_at = case
+        when company_module_progress.completed_at is null then excluded.completed_at
+        when date(company_module_progress.completed_at) <= date(excluded.completed_at) then excluded.completed_at
+        else company_module_progress.completed_at
+      end
+  `);
+
+  const tx = db.transaction(() => {
+    candidates.forEach((candidate) => {
+      const dayOffset = Math.max(0, Number(candidate.entry_day || 1) - 1);
+      const executionDate = addBusinessDays(candidate.start_date, dayOffset);
+      if (executionDate > todayIso) return;
+
+      markExecuted.run(executionDate, candidate.allocation_id);
+      upsertProgress.run(uuid('prog'), candidate.company_id, candidate.module_id, executionDate);
+    });
+  });
+
+  tx();
 }
 
 function formatDatePtBr(dateIso: string): string {
@@ -488,7 +691,8 @@ app.get('/dashboard', (_req, res) => {
     from company c
     join company_module_progress cmp on cmp.company_id = c.id
     join module_template mt on mt.id = cmp.module_id
-    where mt.code <> ?
+    where c.status in ('Ativo', 'Em_treinamento')
+      and mt.code <> ?
       and cmp.status in ('Planejado','Em_execucao')
       and not exists (
         select 1 from company_module_progress cmp2
@@ -530,7 +734,7 @@ app.get('/dashboard', (_req, res) => {
         end
       ) as ready
     from module_template mt
-    join company c on c.status = 'Ativo'
+    join company c on c.status in ('Ativo', 'Em_treinamento')
     left join company_module_progress cmp on cmp.company_id = c.id and cmp.module_id = mt.id
     left join company_module_activation cma on cma.company_id = c.id and cma.module_id = mt.id
     group by mt.id
@@ -734,8 +938,8 @@ app.post('/cohorts', (req, res) => {
 
   const tx = db.transaction(() => {
     db.prepare(`
-      insert into cohort (id, code, name, start_date, technician_id, status, capacity_companies, notes)
-      values (?, ?, ?, ?, ?, ?, ?, ?)
+      insert into cohort (id, code, name, start_date, technician_id, status, capacity_companies, period, delivery_mode, notes)
+      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       cohortId,
       payload.code.toUpperCase(),
@@ -744,6 +948,8 @@ app.post('/cohorts', (req, res) => {
       payload.technician_id ?? null,
       payload.status,
       payload.capacity_companies,
+      payload.period,
+      payload.delivery_mode,
       payload.notes ?? null
     );
 
@@ -1213,7 +1419,7 @@ app.get('/cohorts/:id/suggestions/:moduleId', (req, res) => {
   const installationLabel = installationModule?.code ?? INSTALLATION_CODES[0];
 
   const rows = db.prepare(`
-    select c.id, c.name, c.priority,
+    select c.id, c.name, c.priority_level, c.priority,
       coalesce(cmp.status, 'Nao_iniciado') as module_status,
       (
         select max(completed_at)
@@ -1244,7 +1450,7 @@ app.get('/cohorts/:id/suggestions/:moduleId', (req, res) => {
     from company c
     left join company_module_progress cmp on cmp.company_id = c.id and cmp.module_id = ?
     left join company_module_activation cma on cma.company_id = c.id and cma.module_id = ?
-    where c.status = 'Ativo'
+    where c.status in ('Ativo', 'Em_treinamento')
       and coalesce(cma.is_enabled, 1) = 1
       and coalesce(cmp.status, 'Nao_iniciado') <> 'Concluido'
       and not exists (
@@ -1257,7 +1463,14 @@ app.get('/cohorts/:id/suggestions/:moduleId', (req, res) => {
       )
     order by
       can_execute desc,
-      c.priority desc,
+      case c.priority_level
+        when 'Alta' then 5
+        when 'Normal' then 4
+        when 'Baixa' then 3
+        when 'Parado' then 2
+        when 'Aguardando_liberacao' then 1
+        else 0
+      end desc,
       case when last_completed_at is null then 0 else 1 end asc,
       date(last_completed_at) asc,
       c.name asc
@@ -1280,9 +1493,15 @@ app.get('/cohorts/:id/suggestions/:moduleId', (req, res) => {
   return res.json({ entry_day_suggested: block?.start_day_offset ?? 1, companies: rows });
 });
 
-app.get('/companies', (_req, res) => {
+app.get('/companies', (req, res) => {
+  const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
+  const statusFilter = typeof req.query.status === 'string' ? req.query.status : '';
+  const priorityFilter = typeof req.query.priority_level === 'string' ? req.query.priority_level : '';
+  const modalityFilter = typeof req.query.modality === 'string' ? req.query.modality : '';
+
   const rows = db.prepare(`
-    select c.id, c.name, c.status, c.priority, c.notes,
+    select c.id, c.name, c.status, c.priority_level, c.notes,
+      c.contact_name, c.contact_phone, c.contact_email, c.modality,
       sum(case when coalesce(cma.is_enabled, 1) = 1 then 1 else 0 end) as total_modules,
       sum(
         case
@@ -1309,14 +1528,47 @@ app.get('/companies', (_req, res) => {
     cross join module_template mt
     left join company_module_progress cmp on cmp.company_id = c.id and cmp.module_id = mt.id
     left join company_module_activation cma on cma.company_id = c.id and cma.module_id = mt.id
+    where (
+      ? = ''
+      or lower(c.name) like '%' || lower(?) || '%'
+      or lower(coalesce(c.contact_name, '')) like '%' || lower(?) || '%'
+      or lower(coalesce(c.contact_email, '')) like '%' || lower(?) || '%'
+    )
+      and (? = '' or c.status = ?)
+      and (? = '' or c.priority_level = ?)
+      and (? = '' or c.modality = ?)
     group by c.id
-    order by c.name asc
-  `).all() as Array<{
+    order by
+      case c.priority_level
+        when 'Alta' then 5
+        when 'Normal' then 4
+        when 'Baixa' then 3
+        when 'Parado' then 2
+        when 'Aguardando_liberacao' then 1
+        else 0
+      end desc,
+      c.name asc
+  `).all(
+    search,
+    search,
+    search,
+    search,
+    statusFilter,
+    statusFilter,
+    priorityFilter,
+    priorityFilter,
+    modalityFilter,
+    modalityFilter
+  ) as Array<{
     id: string;
     name: string;
     status: string;
-    priority: number;
+    priority_level: string;
     notes: string | null;
+    contact_name: string | null;
+    contact_phone: string | null;
+    contact_email: string | null;
+    modality: string;
     total_modules: number;
     modules_completed: number;
     next_module_code: string | null;
@@ -1332,6 +1584,7 @@ app.get('/companies', (_req, res) => {
     const hasInstallation = installationId ? (!installationEnabled || hasModuleCompleted(row.id, installationId)) : true;
     return {
       ...row,
+      priority: normalizeCompanyPriorityScore(row.priority_level),
       completion_percent: row.total_modules === 0 ? 0 : Number(((row.modules_completed / row.total_modules) * 100).toFixed(1)),
       next_module_name: row.next_module_ref?.split('|').slice(1).join('|') ?? null,
       alert: hasInstallation ? null : `Falta ${installationCode}`
@@ -1344,9 +1597,13 @@ app.get('/companies', (_req, res) => {
 app.post('/companies', (req, res) => {
   const schema = z.object({
     name: z.string().min(2),
-    status: z.enum(['Ativo', 'Inativo']).default('Ativo'),
+    status: z.enum(COMPANY_STATUS_VALUES).default('Em_treinamento'),
     notes: z.string().nullable().optional(),
-    priority: z.number().int().min(0).max(100).default(0)
+    priority_level: z.enum(COMPANY_PRIORITY_VALUES).default('Normal'),
+    contact_name: z.string().nullable().optional(),
+    contact_phone: z.string().nullable().optional(),
+    contact_email: z.string().nullable().optional(),
+    modality: z.enum(COMPANY_MODALITY_VALUES).default('Turma_Online')
   });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) {
@@ -1354,11 +1611,23 @@ app.post('/companies', (req, res) => {
   }
 
   const companyId = uuid('comp');
+  const priorityLevel = normalizeCompanyPriorityLevel(parsed.data.priority_level);
   try {
     db.prepare(`
-      insert into company (id, name, status, notes, priority)
-      values (?, ?, ?, ?, ?)
-    `).run(companyId, parsed.data.name.trim(), parsed.data.status, parsed.data.notes ?? null, parsed.data.priority);
+      insert into company (id, name, status, notes, priority, priority_level, contact_name, contact_phone, contact_email, modality)
+      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      companyId,
+      parsed.data.name.trim(),
+      normalizeCompanyStatus(parsed.data.status),
+      parsed.data.notes?.trim() || null,
+      normalizeCompanyPriorityScore(priorityLevel),
+      priorityLevel,
+      parsed.data.contact_name?.trim() || null,
+      parsed.data.contact_phone?.trim() || null,
+      parsed.data.contact_email?.trim() || null,
+      normalizeCompanyModality(parsed.data.modality)
+    );
 
     ensureCompanyDefaultRows(companyId);
     return res.status(201).json({ id: companyId });
@@ -1383,19 +1652,107 @@ app.delete('/companies/:id', (req, res) => {
 
 app.patch('/companies/:id/priority', (req, res) => {
   const schema = z.object({
-    priority: z.number().int().min(0).max(100)
+    priority: z.number().int().min(0).max(100).optional(),
+    priority_level: z.enum(COMPANY_PRIORITY_VALUES).optional()
+  }).superRefine((data, context) => {
+    if (typeof data.priority === 'undefined' && typeof data.priority_level === 'undefined') {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['priority_level'],
+        message: 'Informe prioridade por nível.'
+      });
+    }
   });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json(parsed.error.flatten());
   }
 
-  const result = db.prepare('update company set priority = ? where id = ?').run(parsed.data.priority, req.params.id);
+  const priorityLevel = normalizeCompanyPriorityLevel(
+    parsed.data.priority_level ?? (typeof parsed.data.priority === 'number' ? priorityLevelFromNumeric(parsed.data.priority) : 'Normal')
+  );
+  const result = db.prepare(`
+    update company
+    set priority_level = ?, priority = ?
+    where id = ?
+  `).run(priorityLevel, normalizeCompanyPriorityScore(priorityLevel), req.params.id);
   if (result.changes === 0) {
     return res.status(404).json({ message: 'Empresa nao encontrada' });
   }
 
   return res.json({ ok: true });
+});
+
+app.patch('/companies/:id', (req, res) => {
+  const schema = z.object({
+    name: z.string().min(2).optional(),
+    status: z.enum(COMPANY_STATUS_VALUES).optional(),
+    notes: z.string().nullable().optional(),
+    priority_level: z.enum(COMPANY_PRIORITY_VALUES).optional(),
+    contact_name: z.string().nullable().optional(),
+    contact_phone: z.string().nullable().optional(),
+    contact_email: z.string().nullable().optional(),
+    modality: z.enum(COMPANY_MODALITY_VALUES).optional()
+  });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json(parsed.error.flatten());
+  }
+
+  const payload = parsed.data;
+  const fields: string[] = [];
+  const values: unknown[] = [];
+
+  if (typeof payload.name !== 'undefined') {
+    fields.push('name = ?');
+    values.push(payload.name.trim());
+  }
+  if (typeof payload.status !== 'undefined') {
+    fields.push('status = ?');
+    values.push(normalizeCompanyStatus(payload.status));
+  }
+  if (typeof payload.notes !== 'undefined') {
+    fields.push('notes = ?');
+    values.push(payload.notes?.trim() || null);
+  }
+  if (typeof payload.priority_level !== 'undefined') {
+    const priorityLevel = normalizeCompanyPriorityLevel(payload.priority_level);
+    fields.push('priority_level = ?');
+    values.push(priorityLevel);
+    fields.push('priority = ?');
+    values.push(normalizeCompanyPriorityScore(priorityLevel));
+  }
+  if (typeof payload.contact_name !== 'undefined') {
+    fields.push('contact_name = ?');
+    values.push(payload.contact_name?.trim() || null);
+  }
+  if (typeof payload.contact_phone !== 'undefined') {
+    fields.push('contact_phone = ?');
+    values.push(payload.contact_phone?.trim() || null);
+  }
+  if (typeof payload.contact_email !== 'undefined') {
+    fields.push('contact_email = ?');
+    values.push(payload.contact_email?.trim() || null);
+  }
+  if (typeof payload.modality !== 'undefined') {
+    fields.push('modality = ?');
+    values.push(normalizeCompanyModality(payload.modality));
+  }
+
+  if (fields.length === 0) {
+    return res.json({ ok: true });
+  }
+
+  values.push(req.params.id);
+  try {
+    const result = db.prepare(`update company set ${fields.join(', ')} where id = ?`).run(...values);
+    if (result.changes === 0) {
+      return res.status(404).json({ message: 'Empresa nao encontrada' });
+    }
+    return res.json({ ok: true });
+  } catch (error) {
+    return res.status(400).json({ message: 'Nao foi possivel atualizar cliente', detail: errorMessage(error) });
+  }
 });
 
 app.patch('/companies/:id/modules/:moduleId', (req, res) => {
@@ -1443,12 +1800,63 @@ app.get('/companies/:id', (req, res) => {
     select mt.id as module_id, mt.code, mt.name, mt.category, mt.duration_days,
       coalesce(cmp.status, 'Nao_iniciado') as status,
       cmp.completed_at,
-      coalesce(cma.is_enabled, 1) as is_enabled
+      cmp.notes as progress_notes,
+      cmp.custom_duration_days,
+      cmp.custom_units,
+      coalesce(cmp.custom_duration_days, mt.duration_days) as effective_duration_days,
+      coalesce(cma.is_enabled, 1) as is_enabled,
+      (
+        select a2.cohort_id
+        from cohort_allocation a2
+        join cohort c2 on c2.id = a2.cohort_id
+        where a2.company_id = ?
+          and a2.module_id = mt.id
+          and a2.status <> 'Cancelado'
+        order by date(c2.start_date) desc, c2.code desc
+        limit 1
+      ) as last_cohort_id,
+      (
+        select c2.code
+        from cohort_allocation a2
+        join cohort c2 on c2.id = a2.cohort_id
+        where a2.company_id = ?
+          and a2.module_id = mt.id
+          and a2.status <> 'Cancelado'
+        order by date(c2.start_date) desc, c2.code desc
+        limit 1
+      ) as last_cohort_code,
+      (
+        select c2.name
+        from cohort_allocation a2
+        join cohort c2 on c2.id = a2.cohort_id
+        where a2.company_id = ?
+          and a2.module_id = mt.id
+          and a2.status <> 'Cancelado'
+        order by date(c2.start_date) desc, c2.code desc
+        limit 1
+      ) as last_cohort_name,
+      (
+        select c2.status
+        from cohort_allocation a2
+        join cohort c2 on c2.id = a2.cohort_id
+        where a2.company_id = ?
+          and a2.module_id = mt.id
+          and a2.status <> 'Cancelado'
+        order by date(c2.start_date) desc, c2.code desc
+        limit 1
+      ) as last_cohort_status
     from module_template mt
     left join company_module_progress cmp on cmp.module_id = mt.id and cmp.company_id = ?
     left join company_module_activation cma on cma.module_id = mt.id and cma.company_id = ?
     order by mt.code asc
-  `).all(req.params.id, req.params.id);
+  `).all(
+    req.params.id,
+    req.params.id,
+    req.params.id,
+    req.params.id,
+    req.params.id,
+    req.params.id
+  );
 
   const optionals = db.prepare(`
     select om.id, om.code, om.name, om.category, om.duration_days,
@@ -1460,12 +1868,14 @@ app.get('/companies/:id', (req, res) => {
   `).all(req.params.id);
 
   const history = db.prepare(`
-    select a.id, a.status, a.entry_day, c.name as cohort_name, c.start_date, mt.code as module_code, mt.name as module_name
+    select a.id as allocation_id, a.cohort_id, a.status, a.entry_day, a.executed_at,
+      c.code as cohort_code, c.name as cohort_name, c.status as cohort_status, c.start_date,
+      mt.code as module_code, mt.name as module_name
     from cohort_allocation a
     join cohort c on c.id = a.cohort_id
     join module_template mt on mt.id = a.module_id
     where a.company_id = ?
-    order by date(c.start_date) desc
+    order by date(c.start_date) desc, a.entry_day asc
   `).all(req.params.id);
 
   res.json({ company, timeline, optionals, history });
@@ -1473,9 +1883,25 @@ app.get('/companies/:id', (req, res) => {
 
 app.patch('/companies/:companyId/progress/:moduleId', (req, res) => {
   const schema = z.object({
-    status: z.enum(['Nao_iniciado', 'Planejado', 'Em_execucao', 'Concluido']),
+    status: z.enum(['Nao_iniciado', 'Planejado', 'Em_execucao', 'Concluido']).optional(),
     completed_at: z.string().nullable().optional(),
-    notes: z.string().nullable().optional()
+    notes: z.string().nullable().optional(),
+    custom_duration_days: z.number().int().positive().nullable().optional(),
+    custom_units: z.number().int().nonnegative().nullable().optional()
+  }).superRefine((data, context) => {
+    if (
+      typeof data.status === 'undefined'
+      && typeof data.completed_at === 'undefined'
+      && typeof data.notes === 'undefined'
+      && typeof data.custom_duration_days === 'undefined'
+      && typeof data.custom_units === 'undefined'
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['status'],
+        message: 'Nenhum campo informado para atualização.'
+      });
+    }
   });
 
   const parsed = schema.safeParse(req.body);
@@ -1483,21 +1909,71 @@ app.patch('/companies/:companyId/progress/:moduleId', (req, res) => {
     return res.status(400).json(parsed.error.flatten());
   }
 
-  const status = parsed.data.status as ModuleProgressStatus;
-  const completedAt = status === 'Concluido' ? (parsed.data.completed_at ?? nowDateIso()) : null;
+  const current = db.prepare(`
+    select status, completed_at, notes, custom_duration_days, custom_units
+    from company_module_progress
+    where company_id = ? and module_id = ?
+  `).get(req.params.companyId, req.params.moduleId) as {
+    status: ModuleProgressStatus;
+    completed_at: string | null;
+    notes: string | null;
+    custom_duration_days: number | null;
+    custom_units: number | null;
+  } | undefined;
 
-  if (!hasModuleEnabled(req.params.companyId, req.params.moduleId)) {
+  const nextStatus = (parsed.data.status ?? current?.status ?? 'Nao_iniciado') as ModuleProgressStatus;
+  let nextCompletedAt = current?.completed_at ?? null;
+  if (typeof parsed.data.status !== 'undefined') {
+    nextCompletedAt = nextStatus === 'Concluido'
+      ? (parsed.data.completed_at ?? current?.completed_at ?? nowDateIso())
+      : null;
+  } else if (typeof parsed.data.completed_at !== 'undefined') {
+    nextCompletedAt = parsed.data.completed_at ?? null;
+  }
+
+  const nextNotes = typeof parsed.data.notes !== 'undefined'
+    ? parsed.data.notes ?? null
+    : (current?.notes ?? null);
+  const nextCustomDuration = typeof parsed.data.custom_duration_days !== 'undefined'
+    ? parsed.data.custom_duration_days
+    : (current?.custom_duration_days ?? null);
+  const nextCustomUnits = typeof parsed.data.custom_units !== 'undefined'
+    ? parsed.data.custom_units
+    : (current?.custom_units ?? null);
+
+  if (typeof parsed.data.status !== 'undefined' && !hasModuleEnabled(req.params.companyId, req.params.moduleId)) {
     return res.status(400).json({ message: 'Módulo está desativado para esta empresa.' });
   }
 
   db.prepare(`
-    insert into company_module_progress (id, company_id, module_id, status, completed_at, notes)
-    values (?, ?, ?, ?, ?, ?)
+    insert into company_module_progress (id, company_id, module_id, status, completed_at, notes, custom_duration_days, custom_units)
+    values (?, ?, ?, ?, ?, ?, ?, ?)
     on conflict(company_id, module_id)
-    do update set status = excluded.status, completed_at = excluded.completed_at, notes = excluded.notes
-  `).run(uuid('prog'), req.params.companyId, req.params.moduleId, status, completedAt, parsed.data.notes ?? null);
+    do update set
+      status = excluded.status,
+      completed_at = excluded.completed_at,
+      notes = excluded.notes,
+      custom_duration_days = excluded.custom_duration_days,
+      custom_units = excluded.custom_units
+  `).run(
+    uuid('prog'),
+    req.params.companyId,
+    req.params.moduleId,
+    nextStatus,
+    nextCompletedAt,
+    nextNotes,
+    nextCustomDuration ?? null,
+    nextCustomUnits ?? null
+  );
 
-  res.json({ ok: true });
+  res.json({
+    ok: true,
+    status: nextStatus,
+    completed_at: nextCompletedAt,
+    notes: nextNotes,
+    custom_duration_days: nextCustomDuration,
+    custom_units: nextCustomUnits
+  });
 });
 
 app.get('/license-programs', (_req, res) => {
@@ -1614,6 +2090,18 @@ app.get('/licenses', (_req, res) => {
     select l.id, l.company_id, c.name as company_name,
       l.program_id, coalesce(lp.name, l.name) as program_name,
       l.user_name, l.module_list, l.license_identifier,
+      (
+        select group_concat(clm.module_id, '|')
+        from company_license_module clm
+        where clm.license_id = l.id
+      ) as module_ids_raw,
+      (
+        select group_concat(mt.name, ' | ')
+        from company_license_module clm2
+        join module_template mt on mt.id = clm2.module_id
+        where clm2.license_id = l.id
+        order by mt.code asc
+      ) as module_list_from_modules,
       l.renewal_cycle, l.expires_at, l.notes, l.last_renewed_at, l.created_at, l.updated_at
     from company_license l
     join company c on c.id = l.company_id
@@ -1628,6 +2116,8 @@ app.get('/licenses', (_req, res) => {
     user_name: string | null;
     module_list: string | null;
     license_identifier: string | null;
+    module_ids_raw: string | null;
+    module_list_from_modules: string | null;
     renewal_cycle: 'Mensal' | 'Anual';
     expires_at: string;
     notes: string | null;
@@ -1656,7 +2146,10 @@ app.get('/licenses', (_req, res) => {
     return {
       ...row,
       user_name: row.user_name ?? '',
-      module_list: row.module_list ?? '',
+      module_ids: row.module_ids_raw
+        ? row.module_ids_raw.split('|').map((item) => item.trim()).filter(Boolean)
+        : [],
+      module_list: row.module_list_from_modules ?? row.module_list ?? '',
       license_identifier: row.license_identifier ?? '',
       alert_window_days: alertWindowDays,
       days_until_expiration: daysUntilExpiration,
@@ -1695,30 +2188,38 @@ app.post('/licenses', (req, res) => {
   if (!program) {
     return res.status(404).json({ message: 'Programa não encontrado' });
   }
+  const moduleSelection = normalizeLicenseModuleSelection({
+    module_ids: payload.module_ids,
+    module_list: payload.module_list
+  });
 
   const nowIso = nowDateIso();
   const id = uuid('lic');
   try {
-    db.prepare(`
-      insert into company_license (
-        id, company_id, name, program_id, user_name, module_list, license_identifier,
-        renewal_cycle, expires_at, notes, last_renewed_at, created_at, updated_at
-      )
-      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, null, ?, ?)
-    `).run(
-      id,
-      payload.company_id,
-      program.name,
-      payload.program_id,
-      payload.user_name.trim(),
-      payload.module_list.trim(),
-      payload.license_identifier.trim(),
-      payload.renewal_cycle,
-      payload.expires_at,
-      payload.notes ?? null,
-      nowIso,
-      nowIso
-    );
+    const tx = db.transaction(() => {
+      db.prepare(`
+        insert into company_license (
+          id, company_id, name, program_id, user_name, module_list, license_identifier,
+          renewal_cycle, expires_at, notes, last_renewed_at, created_at, updated_at
+        )
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, null, ?, ?)
+      `).run(
+        id,
+        payload.company_id,
+        program.name,
+        payload.program_id,
+        payload.user_name.trim(),
+        moduleSelection.moduleListText,
+        payload.license_identifier.trim(),
+        payload.renewal_cycle,
+        payload.expires_at,
+        payload.notes ?? null,
+        nowIso,
+        nowIso
+      );
+      syncLicenseModules(id, moduleSelection.moduleIds);
+    });
+    tx();
     return res.status(201).json({ id });
   } catch (error) {
     return res.status(400).json({ message: 'Não foi possível cadastrar licença', detail: errorMessage(error) });
@@ -1743,6 +2244,17 @@ app.patch('/licenses/:id', (req, res) => {
     }
   }
 
+  let moduleSelection: { moduleIds: string[]; moduleListText: string } | null = null;
+  if (typeof parsed.data.module_ids !== 'undefined' || typeof parsed.data.module_list !== 'undefined') {
+    if ((parsed.data.module_ids?.length ?? 0) === 0 && !parsed.data.module_list?.trim()) {
+      return res.status(400).json({ message: 'Informe ao menos um módulo da licença.' });
+    }
+    moduleSelection = normalizeLicenseModuleSelection({
+      module_ids: parsed.data.module_ids,
+      module_list: parsed.data.module_list
+    });
+  }
+
   const fields: string[] = [];
   const values: unknown[] = [];
 
@@ -1764,9 +2276,9 @@ app.patch('/licenses/:id', (req, res) => {
     fields.push('user_name = ?');
     values.push(parsed.data.user_name.trim());
   }
-  if (typeof parsed.data.module_list !== 'undefined') {
+  if (moduleSelection) {
     fields.push('module_list = ?');
-    values.push(parsed.data.module_list.trim());
+    values.push(moduleSelection.moduleListText);
   }
   if (typeof parsed.data.license_identifier !== 'undefined') {
     fields.push('license_identifier = ?');
@@ -1794,7 +2306,13 @@ app.patch('/licenses/:id', (req, res) => {
   values.push(req.params.id);
 
   try {
-    db.prepare(`update company_license set ${fields.join(', ')} where id = ?`).run(...values);
+    const tx = db.transaction(() => {
+      db.prepare(`update company_license set ${fields.join(', ')} where id = ?`).run(...values);
+      if (moduleSelection) {
+        syncLicenseModules(req.params.id, moduleSelection.moduleIds);
+      }
+    });
+    tx();
     return res.json({ ok: true });
   } catch (error) {
     return res.status(400).json({ message: 'Não foi possível atualizar licença', detail: errorMessage(error) });
@@ -2058,6 +2576,161 @@ app.patch('/technicians/:id/skills', (req, res) => {
   res.json({ ok: true });
 });
 
+app.get('/recruitment/candidates', (_req, res) => {
+  const rows = db.prepare(`
+    select id, name, process_status, stage, strengths, concerns, specialties,
+      equipment_notes, career_plan, notes, created_at, updated_at
+    from recruitment_candidate
+    order by
+      case process_status
+        when 'Aprovado' then 1
+        when 'Em_processo' then 2
+        when 'Stand_by' then 3
+        when 'Banco_de_talentos' then 4
+        when 'Reprovado' then 5
+        else 9
+      end asc,
+      date(updated_at) desc,
+      name asc
+  `).all();
+  res.json(rows);
+});
+
+app.post('/recruitment/candidates', (req, res) => {
+  const schema = z.object({
+    name: z.string().min(2),
+    process_status: z.enum(RECRUITMENT_STATUS_VALUES).default('Em_processo'),
+    stage: z.enum(RECRUITMENT_STAGE_VALUES).default('Triagem'),
+    strengths: z.string().nullable().optional(),
+    concerns: z.string().nullable().optional(),
+    specialties: z.string().nullable().optional(),
+    equipment_notes: z.string().nullable().optional(),
+    career_plan: z.string().nullable().optional(),
+    notes: z.string().nullable().optional()
+  });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json(parsed.error.flatten());
+  }
+
+  const id = uuid('cand');
+  const nowIso = nowDateIso();
+  try {
+    db.prepare(`
+      insert into recruitment_candidate (
+        id, name, process_status, stage, strengths, concerns, specialties,
+        equipment_notes, career_plan, notes, created_at, updated_at
+      )
+      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      parsed.data.name.trim(),
+      parsed.data.process_status,
+      parsed.data.stage,
+      parsed.data.strengths?.trim() || null,
+      parsed.data.concerns?.trim() || null,
+      parsed.data.specialties?.trim() || null,
+      parsed.data.equipment_notes?.trim() || null,
+      parsed.data.career_plan?.trim() || null,
+      parsed.data.notes?.trim() || null,
+      nowIso,
+      nowIso
+    );
+    return res.status(201).json({ id });
+  } catch (error) {
+    return res.status(400).json({ message: 'Não foi possível cadastrar candidato', detail: errorMessage(error) });
+  }
+});
+
+app.patch('/recruitment/candidates/:id', (req, res) => {
+  const schema = z.object({
+    name: z.string().min(2).optional(),
+    process_status: z.enum(RECRUITMENT_STATUS_VALUES).optional(),
+    stage: z.enum(RECRUITMENT_STAGE_VALUES).optional(),
+    strengths: z.string().nullable().optional(),
+    concerns: z.string().nullable().optional(),
+    specialties: z.string().nullable().optional(),
+    equipment_notes: z.string().nullable().optional(),
+    career_plan: z.string().nullable().optional(),
+    notes: z.string().nullable().optional()
+  });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json(parsed.error.flatten());
+  }
+
+  const fields: string[] = [];
+  const values: unknown[] = [];
+  if (typeof parsed.data.name !== 'undefined') {
+    fields.push('name = ?');
+    values.push(parsed.data.name.trim());
+  }
+  if (typeof parsed.data.process_status !== 'undefined') {
+    fields.push('process_status = ?');
+    values.push(parsed.data.process_status);
+  }
+  if (typeof parsed.data.stage !== 'undefined') {
+    fields.push('stage = ?');
+    values.push(parsed.data.stage);
+  }
+  if (typeof parsed.data.strengths !== 'undefined') {
+    fields.push('strengths = ?');
+    values.push(parsed.data.strengths?.trim() || null);
+  }
+  if (typeof parsed.data.concerns !== 'undefined') {
+    fields.push('concerns = ?');
+    values.push(parsed.data.concerns?.trim() || null);
+  }
+  if (typeof parsed.data.specialties !== 'undefined') {
+    fields.push('specialties = ?');
+    values.push(parsed.data.specialties?.trim() || null);
+  }
+  if (typeof parsed.data.equipment_notes !== 'undefined') {
+    fields.push('equipment_notes = ?');
+    values.push(parsed.data.equipment_notes?.trim() || null);
+  }
+  if (typeof parsed.data.career_plan !== 'undefined') {
+    fields.push('career_plan = ?');
+    values.push(parsed.data.career_plan?.trim() || null);
+  }
+  if (typeof parsed.data.notes !== 'undefined') {
+    fields.push('notes = ?');
+    values.push(parsed.data.notes?.trim() || null);
+  }
+
+  if (fields.length === 0) {
+    return res.json({ ok: true });
+  }
+
+  fields.push('updated_at = ?');
+  values.push(nowDateIso());
+  values.push(req.params.id);
+
+  try {
+    const result = db.prepare(`update recruitment_candidate set ${fields.join(', ')} where id = ?`).run(...values);
+    if (result.changes === 0) {
+      return res.status(404).json({ message: 'Candidato não encontrado' });
+    }
+    return res.json({ ok: true });
+  } catch (error) {
+    return res.status(400).json({ message: 'Não foi possível atualizar candidato', detail: errorMessage(error) });
+  }
+});
+
+app.delete('/recruitment/candidates/:id', (req, res) => {
+  if (!requireDestructiveConfirmation(req, res, 'excluir candidato')) {
+    return;
+  }
+
+  const exists = db.prepare('select id from recruitment_candidate where id = ?').get(req.params.id) as { id: string } | undefined;
+  if (!exists) {
+    return res.status(404).json({ message: 'Candidato não encontrado' });
+  }
+
+  db.prepare('delete from recruitment_candidate where id = ?').run(req.params.id);
+  return res.json({ ok: true });
+});
+
 app.get('/admin/catalog', (_req, res) => {
   res.json(getAdminCatalog());
 });
@@ -2263,11 +2936,15 @@ app.post('/admin/bootstrap-current-data', (req, res) => {
     progress_rows_created: 0
   };
 
-  const tx = db.transaction(() => {
-    const upsertCompany = db.prepare(`
-      insert into company (id, name, status, notes, priority)
-      values (?, ?, 'Ativo', null, 0)
-      on conflict(name) do update set status = 'Ativo'
+    const tx = db.transaction(() => {
+      const upsertCompany = db.prepare(`
+      insert into company (id, name, status, notes, priority, priority_level, modality)
+      values (?, ?, 'Em_treinamento', null, 70, 'Normal', 'Turma_Online')
+      on conflict(name) do update set
+        status = 'Em_treinamento',
+        priority = 70,
+        priority_level = 'Normal',
+        modality = 'Turma_Online'
     `);
 
     const upsertModule = db.prepare(`
@@ -2475,8 +3152,8 @@ app.post('/admin/bootstrap-real-scenario', (req, res) => {
     clearAllData();
 
     const insertCompany = db.prepare(`
-      insert into company (id, name, status, notes, priority)
-      values (?, ?, 'Ativo', null, 0)
+      insert into company (id, name, status, notes, priority, priority_level, modality)
+      values (?, ?, 'Em_treinamento', null, 70, 'Normal', 'Turma_Online')
     `);
     const insertTechnician = db.prepare(`
       insert into technician (id, name, availability_notes)

@@ -10,6 +10,7 @@ import { ClientDetailPage } from './pages/ClientDetailPage';
 import { TechniciansPage } from './pages/TechniciansPage';
 import { LicensesPage } from './pages/LicensesPage';
 import { LicenseProgramsPage } from './pages/LicenseProgramsPage';
+import { RecruitmentPage } from './pages/RecruitmentPage';
 import { LoginPage } from './pages/LoginPage';
 import { AdminPage } from './pages/AdminPage';
 
@@ -50,6 +51,7 @@ export function App() {
         <Route path="/clientes" element={<ClientsPage />} />
         <Route path="/clientes/:id" element={<ClientDetailPage />} />
         <Route path="/tecnicos" element={<TechniciansPage />} />
+        <Route path="/processos-seletivos" element={<RecruitmentPage />} />
         <Route path="/licencas" element={<LicensesPage />} />
         <Route path="/licencas/programas" element={<LicenseProgramsPage />} />
         <Route path="/admin" element={<AdminPage />} />

@@ -19,6 +19,9 @@ function moduleShortLabel(name: string): string {
     .trim();
 }
 
+type TechSortKey = 'name' | 'monthly_load';
+type TechCalendarSortKey = 'start_date' | 'code' | 'occupancy' | 'status';
+
 export function TechniciansPage() {
   const [techs, setTechs] = useState<any[]>([]);
   const [modules, setModules] = useState<any[]>([]);
@@ -30,6 +33,10 @@ export function TechniciansPage() {
   const [error, setError] = useState('');
   const [newName, setNewName] = useState('');
   const [newNotes, setNewNotes] = useState('');
+  const [sortKey, setSortKey] = useState<TechSortKey>('name');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+  const [calendarSortKey, setCalendarSortKey] = useState<TechCalendarSortKey>('start_date');
+  const [calendarSortDirection, setCalendarSortDirection] = useState<'asc' | 'desc'>('asc');
 
   async function loadBase() {
     const [technicianRows, moduleRows] = await Promise.all([api.technicians(), api.modules()]);
@@ -75,6 +82,64 @@ export function TechniciansPage() {
     () => techs.find((item) => item.id === selectedId),
     [techs, selectedId]
   );
+
+  const sortedTechs = useMemo(() => {
+    const rows = [...techs];
+    rows.sort((a, b) => {
+      const direction = sortDirection === 'asc' ? 1 : -1;
+      if (sortKey === 'monthly_load') {
+        return (Number(a.monthly_load ?? 0) - Number(b.monthly_load ?? 0)) * direction;
+      }
+      return String(a.name ?? '').localeCompare(String(b.name ?? '')) * direction;
+    });
+    return rows;
+  }, [techs, sortKey, sortDirection]);
+
+  const sortedCalendarRows = useMemo(() => {
+    const rows = [...calendarRows];
+    rows.sort((a, b) => {
+      const direction = calendarSortDirection === 'asc' ? 1 : -1;
+      if (calendarSortKey === 'start_date') {
+        return String(a.start_date ?? '').localeCompare(String(b.start_date ?? '')) * direction;
+      }
+      if (calendarSortKey === 'occupancy') {
+        return ((Number(a.occupancy ?? 0) - Number(b.occupancy ?? 0)) * direction);
+      }
+      if (calendarSortKey === 'code') {
+        return String(a.code ?? '').localeCompare(String(b.code ?? '')) * direction;
+      }
+      return String(a.status ?? '').localeCompare(String(b.status ?? '')) * direction;
+    });
+    return rows;
+  }, [calendarRows, calendarSortKey, calendarSortDirection]);
+
+  function toggleSort(nextKey: TechSortKey) {
+    if (sortKey === nextKey) {
+      setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+      return;
+    }
+    setSortKey(nextKey);
+    setSortDirection(nextKey === 'name' ? 'asc' : 'desc');
+  }
+
+  function toggleCalendarSort(nextKey: TechCalendarSortKey) {
+    if (calendarSortKey === nextKey) {
+      setCalendarSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+      return;
+    }
+    setCalendarSortKey(nextKey);
+    setCalendarSortDirection(nextKey === 'start_date' ? 'asc' : 'desc');
+  }
+
+  function sortIndicator(nextKey: TechSortKey) {
+    if (sortKey !== nextKey) return '';
+    return sortDirection === 'asc' ? ' ↑' : ' ↓';
+  }
+
+  function calendarSortIndicator(nextKey: TechCalendarSortKey) {
+    if (calendarSortKey !== nextKey) return '';
+    return calendarSortDirection === 'asc' ? ' ↑' : ' ↓';
+  }
 
   function toggleModule(moduleId: string) {
     setSelectedSkills((prev) => (prev.includes(moduleId)
@@ -161,9 +226,13 @@ export function TechniciansPage() {
       <div className="two-col">
         <Section title="Lista e carga">
           <table className="table">
-            <thead><tr><th>Nome</th><th>Carga no mês</th><th>Capacitações</th></tr></thead>
+            <thead><tr>
+              <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('name')}>Nome{sortIndicator('name')}</button></th>
+              <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('monthly_load')}>Carga no mês{sortIndicator('monthly_load')}</button></th>
+              <th>Capacitações</th>
+            </tr></thead>
             <tbody>
-              {techs.map((tech) => (
+              {sortedTechs.map((tech) => (
                 <tr key={tech.id} onClick={() => setSelectedId(tech.id)} className={selectedId === tech.id ? 'row-selected' : ''}>
                   <td>{tech.name}</td>
                   <td>{tech.monthly_load}</td>
@@ -204,9 +273,15 @@ export function TechniciansPage() {
         </div>
         {calendarRows.length === 0 ? <p>Sem turmas para este técnico no período.</p> : (
           <table className="table">
-            <thead><tr><th>Data</th><th>Turma</th><th>Blocos</th><th>Ocupação</th><th>Status</th></tr></thead>
+            <thead><tr>
+              <th><button type="button" className="table-sort-btn" onClick={() => toggleCalendarSort('start_date')}>Data{calendarSortIndicator('start_date')}</button></th>
+              <th><button type="button" className="table-sort-btn" onClick={() => toggleCalendarSort('code')}>Turma{calendarSortIndicator('code')}</button></th>
+              <th>Blocos</th>
+              <th><button type="button" className="table-sort-btn" onClick={() => toggleCalendarSort('occupancy')}>Ocupação{calendarSortIndicator('occupancy')}</button></th>
+              <th><button type="button" className="table-sort-btn" onClick={() => toggleCalendarSort('status')}>Status{calendarSortIndicator('status')}</button></th>
+            </tr></thead>
             <tbody>
-              {calendarRows.map((cohort) => (
+              {sortedCalendarRows.map((cohort) => (
                 <tr key={cohort.id}>
                   <td>{cohort.start_date}</td>
                   <td>{cohort.code} - {cohort.name}</td>

@@ -14,6 +14,7 @@ type ModuleCatalog = {
   is_mandatory: number;
   prerequisites: Array<{ id: string; code: string; name: string }>;
 };
+type AdminModuleSortKey = 'code' | 'name' | 'category' | 'duration_days' | 'is_mandatory';
 
 const CURRENT_CLIENTS = [
   'Krah do Brasil',
@@ -42,6 +43,8 @@ const CURRENT_MODULES = [
 export function AdminPage() {
   const [data, setData] = useState<any>(null);
   const [moduleQuery, setModuleQuery] = useState('');
+  const [sortKey, setSortKey] = useState<AdminModuleSortKey>('code');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [filePath, setFilePath] = useState('/Users/yohannreimer/Downloads/Planejamento_Jornada_Treinamentos_v3.xlsx');
   const [resetData, setResetData] = useState(false);
   const [message, setMessage] = useState('');
@@ -95,6 +98,32 @@ export function AdminPage() {
       `${module.code} ${module.name} ${module.category}`.toLowerCase().includes(normalized)
     );
   }, [modules, moduleQuery]);
+
+  const orderedModules = useMemo(() => {
+    const list = [...filteredModules];
+    list.sort((a, b) => {
+      const direction = sortDirection === 'asc' ? 1 : -1;
+      if (sortKey === 'duration_days' || sortKey === 'is_mandatory') {
+        return ((Number((a as any)[sortKey] ?? 0) - Number((b as any)[sortKey] ?? 0)) * direction);
+      }
+      return String((a as any)[sortKey] ?? '').localeCompare(String((b as any)[sortKey] ?? '')) * direction;
+    });
+    return list;
+  }, [filteredModules, sortKey, sortDirection]);
+
+  function toggleSort(nextKey: AdminModuleSortKey) {
+    if (sortKey === nextKey) {
+      setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+      return;
+    }
+    setSortKey(nextKey);
+    setSortDirection(nextKey === 'code' || nextKey === 'name' || nextKey === 'category' ? 'asc' : 'desc');
+  }
+
+  function sortIndicator(nextKey: AdminModuleSortKey) {
+    if (sortKey !== nextKey) return '';
+    return sortDirection === 'asc' ? ' ↑' : ' ↓';
+  }
 
   const stats = useMemo(() => {
     const total = modules.length;
@@ -298,14 +327,14 @@ export function AdminPage() {
           </button>
           <div className="form-subcard">
             <strong>Importação por planilha</strong>
-            <div className="form" style={{ marginTop: '8px' }}>
+            <div className="form admin-import-form">
               <input value={filePath} onChange={(e) => setFilePath(e.target.value)} />
               <label>
                 <input type="checkbox" checked={resetData} onChange={(e) => setResetData(e.target.checked)} />
                 Limpar dados antes de importar
               </label>
               {resetData ? (
-                <p className="warn-text" style={{ margin: 0 }}>
+                <p className="warn-text admin-warning-note">
                   Confirmação forte obrigatória: digite {DESTRUCTIVE_CONFIRMATION_PHRASE}.
                 </p>
               ) : null}
@@ -319,7 +348,7 @@ export function AdminPage() {
 
       <div className="two-col">
         <Section title="Módulos da jornada">
-          <div className="form" style={{ marginBottom: '10px' }}>
+          <div className="form admin-search-row">
             <input
               placeholder="Buscar módulo por código, nome ou categoria"
               value={moduleQuery}
@@ -329,15 +358,15 @@ export function AdminPage() {
           <table className="table table-hover">
             <thead>
               <tr>
-                <th>Código</th>
-                <th>Nome</th>
-                <th>Categoria</th>
-                <th>Duração</th>
-                <th>Obrigatório</th>
+                <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('code')}>Código{sortIndicator('code')}</button></th>
+                <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('name')}>Nome{sortIndicator('name')}</button></th>
+                <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('category')}>Categoria{sortIndicator('category')}</button></th>
+                <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('duration_days')}>Duração{sortIndicator('duration_days')}</button></th>
+                <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('is_mandatory')}>Obrigatório{sortIndicator('is_mandatory')}</button></th>
               </tr>
             </thead>
             <tbody>
-              {filteredModules.map((module) => (
+              {orderedModules.map((module) => (
                 <tr
                   key={module.id}
                   onClick={() => setSelectedModuleId(module.id)}
@@ -404,7 +433,7 @@ export function AdminPage() {
 
               <div className="form-subcard">
                 <strong>Pré-requisitos</strong>
-                <div className="check-grid" style={{ marginTop: '10px' }}>
+                <div className="check-grid admin-prereq-grid">
                   {modules
                     .filter((module) => module.id !== selectedModule.id)
                     .map((module) => (

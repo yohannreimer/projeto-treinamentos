@@ -6,6 +6,7 @@ import { Section } from '../components/Section';
 import { askDestructiveConfirmation } from '../utils/destructive';
 
 type RenewalCycle = 'Mensal' | 'Anual';
+type LicenseSortKey = 'company_name' | 'program_name' | 'user_name' | 'license_identifier' | 'renewal_cycle' | 'expires_at' | 'alert_level';
 
 type LicenseAlertsResponse = {
   rows: LicenseRow[];
@@ -26,6 +27,12 @@ function renewalLabel(cycle: RenewalCycle): string {
   return cycle === 'Anual' ? 'Anual' : 'Mensal';
 }
 
+function alertRank(level: string): number {
+  if (level === 'Expirada') return 3;
+  if (level === 'Atenção') return 2;
+  return 1;
+}
+
 export function LicensesPage() {
   const navigate = useNavigate();
   const [rows, setRows] = useState<LicenseRow[]>([]);
@@ -37,26 +44,32 @@ export function LicensesPage() {
   });
   const [companies, setCompanies] = useState<Array<{ id: string; name: string }>>([]);
   const [programs, setPrograms] = useState<LicenseProgram[]>([]);
+  const [modules, setModules] = useState<Array<{ id: string; code: string; name: string }>>([]);
 
   const [query, setQuery] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [sortKey, setSortKey] = useState<LicenseSortKey>('expires_at');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+  const [attentionSortKey, setAttentionSortKey] = useState<LicenseSortKey>('expires_at');
+  const [attentionSortDirection, setAttentionSortDirection] = useState<'asc' | 'desc'>('asc');
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [companyId, setCompanyId] = useState('');
   const [programId, setProgramId] = useState('');
   const [userName, setUserName] = useState('');
-  const [moduleList, setModuleList] = useState('');
+  const [selectedModuleIds, setSelectedModuleIds] = useState<string[]>([]);
   const [licenseIdentifier, setLicenseIdentifier] = useState('');
   const [renewalCycle, setRenewalCycle] = useState<RenewalCycle>('Mensal');
   const [expiresAt, setExpiresAt] = useState(new Date().toISOString().slice(0, 10));
   const [notes, setNotes] = useState('');
 
   async function load() {
-    const [licensesResponse, companiesResponse, programsResponse] = await Promise.all([
+    const [licensesResponse, companiesResponse, programsResponse, modulesResponse] = await Promise.all([
       api.licenses(),
       api.companies(),
-      api.licensePrograms()
+      api.licensePrograms(),
+      api.modules()
     ]);
 
     const payload = licensesResponse as LicenseAlertsResponse;
@@ -68,6 +81,11 @@ export function LicensesPage() {
       ...program,
       usage_count: Number(program.usage_count ?? 0)
     }));
+    const moduleRows = (modulesResponse as Array<{ id: string; code: string; name: string }>).map((module) => ({
+      id: module.id,
+      code: module.code,
+      name: module.name
+    }));
 
     setRows(payload.rows ?? []);
     setAlerts(payload.alerts ?? {
@@ -78,6 +96,7 @@ export function LicensesPage() {
     });
     setCompanies(companyRows);
     setPrograms(programRows);
+    setModules(moduleRows);
 
     if (!companyId && companyRows.length > 0) {
       setCompanyId(companyRows[0].id);
@@ -106,10 +125,72 @@ export function LicensesPage() {
     [alerts]
   );
 
+  const sortedAttentionRows = useMemo(() => {
+    const list = [...attentionRows];
+    list.sort((a, b) => {
+      const direction = attentionSortDirection === 'asc' ? 1 : -1;
+      if (attentionSortKey === 'expires_at') {
+        return String(a.expires_at).localeCompare(String(b.expires_at)) * direction;
+      }
+      if (attentionSortKey === 'alert_level') {
+        return (alertRank(a.alert_level) - alertRank(b.alert_level)) * direction;
+      }
+      const left = String((a as any)[attentionSortKey] ?? '');
+      const right = String((b as any)[attentionSortKey] ?? '');
+      return left.localeCompare(right) * direction;
+    });
+    return list;
+  }, [attentionRows, attentionSortKey, attentionSortDirection]);
+
+  const sortedFiltered = useMemo(() => {
+    const list = [...filtered];
+    list.sort((a, b) => {
+      const direction = sortDirection === 'asc' ? 1 : -1;
+      if (sortKey === 'expires_at') {
+        return String(a.expires_at).localeCompare(String(b.expires_at)) * direction;
+      }
+      if (sortKey === 'alert_level') {
+        return (alertRank(a.alert_level) - alertRank(b.alert_level)) * direction;
+      }
+      const left = String((a as any)[sortKey] ?? '');
+      const right = String((b as any)[sortKey] ?? '');
+      return left.localeCompare(right) * direction;
+    });
+    return list;
+  }, [filtered, sortKey, sortDirection]);
+
+  function toggleSort(nextKey: LicenseSortKey) {
+    if (sortKey === nextKey) {
+      setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+      return;
+    }
+    setSortKey(nextKey);
+    setSortDirection(nextKey === 'expires_at' ? 'asc' : 'desc');
+  }
+
+  function toggleAttentionSort(nextKey: LicenseSortKey) {
+    if (attentionSortKey === nextKey) {
+      setAttentionSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+      return;
+    }
+    setAttentionSortKey(nextKey);
+    setAttentionSortDirection(nextKey === 'expires_at' ? 'asc' : 'desc');
+  }
+
+  function sortIndicator(nextKey: LicenseSortKey) {
+    if (sortKey !== nextKey) return '';
+    return sortDirection === 'asc' ? ' ↑' : ' ↓';
+  }
+
+  function attentionSortIndicator(nextKey: LicenseSortKey) {
+    if (attentionSortKey !== nextKey) return '';
+    return attentionSortDirection === 'asc' ? ' ↑' : ' ↓';
+  }
+
   function resetForm() {
     setEditingId(null);
     setUserName('');
-    setModuleList('');
+    setSelectedModuleIds([]);
     setLicenseIdentifier('');
     setRenewalCycle('Mensal');
     setExpiresAt(new Date().toISOString().slice(0, 10));
@@ -121,7 +202,7 @@ export function LicensesPage() {
     setCompanyId(row.company_id);
     setProgramId(row.program_id ?? '');
     setUserName(row.user_name);
-    setModuleList(row.module_list);
+    setSelectedModuleIds(row.module_ids ?? []);
     setLicenseIdentifier(row.license_identifier);
     setRenewalCycle(row.renewal_cycle);
     setExpiresAt(row.expires_at);
@@ -129,7 +210,7 @@ export function LicensesPage() {
   }
 
   async function submitLicense() {
-    if (!companyId || !programId || !userName.trim() || !moduleList.trim() || !licenseIdentifier.trim() || !expiresAt) {
+    if (!companyId || !programId || !userName.trim() || selectedModuleIds.length === 0 || !licenseIdentifier.trim() || !expiresAt) {
       setError('Preencha os campos obrigatórios: Cliente, Programa, Usuário, Módulos, ID e Vencimento.');
       return;
     }
@@ -141,7 +222,7 @@ export function LicensesPage() {
       company_id: companyId,
       program_id: programId,
       user_name: userName.trim(),
-      module_list: moduleList.trim(),
+      module_ids: selectedModuleIds,
       license_identifier: licenseIdentifier.trim(),
       renewal_cycle: renewalCycle,
       expires_at: expiresAt,
@@ -201,6 +282,14 @@ export function LicensesPage() {
     } catch (err) {
       setError((err as Error).message);
     }
+  }
+
+  function toggleLicenseModule(moduleId: string) {
+    setSelectedModuleIds((prev) => (
+      prev.includes(moduleId)
+        ? prev.filter((id) => id !== moduleId)
+        : [...prev, moduleId]
+    ));
   }
 
   return (
@@ -272,15 +361,23 @@ export function LicensesPage() {
             </label>
           </div>
 
-          <div className="three-col">
-            <label>
-              Módulos
-              <input
-                value={moduleList}
-                onChange={(event) => setModuleList(event.target.value)}
-                placeholder="Ex.: Design + CAM 2D"
-              />
-            </label>
+          <label className="licenses-modules-field">
+            Módulos da licença
+            <div className="check-grid licenses-modules-grid">
+              {modules.map((module) => (
+                <label key={module.id}>
+                  <input
+                    type="checkbox"
+                    checked={selectedModuleIds.includes(module.id)}
+                    onChange={() => toggleLicenseModule(module.id)}
+                  />
+                  {module.name}
+                </label>
+              ))}
+            </div>
+          </label>
+
+          <div className="licenses-meta-grid">
             <label>
               ID da licença
               <input
@@ -325,16 +422,16 @@ export function LicensesPage() {
           <table className="table table-hover">
             <thead>
               <tr>
-                <th>Cliente</th>
-                <th>Programa</th>
-                <th>Usuário</th>
-                <th>ID</th>
-                <th>Vencimento</th>
-                <th>Aviso</th>
+                <th><button type="button" className="table-sort-btn" onClick={() => toggleAttentionSort('company_name')}>Cliente{attentionSortIndicator('company_name')}</button></th>
+                <th><button type="button" className="table-sort-btn" onClick={() => toggleAttentionSort('program_name')}>Programa{attentionSortIndicator('program_name')}</button></th>
+                <th><button type="button" className="table-sort-btn" onClick={() => toggleAttentionSort('user_name')}>Usuário{attentionSortIndicator('user_name')}</button></th>
+                <th><button type="button" className="table-sort-btn" onClick={() => toggleAttentionSort('license_identifier')}>ID{attentionSortIndicator('license_identifier')}</button></th>
+                <th><button type="button" className="table-sort-btn" onClick={() => toggleAttentionSort('expires_at')}>Vencimento{attentionSortIndicator('expires_at')}</button></th>
+                <th><button type="button" className="table-sort-btn" onClick={() => toggleAttentionSort('alert_level')}>Aviso{attentionSortIndicator('alert_level')}</button></th>
               </tr>
             </thead>
             <tbody>
-              {attentionRows.map((row) => (
+              {sortedAttentionRows.map((row) => (
                 <tr key={`alert-${row.id}`}>
                   <td>{row.company_name}</td>
                   <td>{row.program_name}</td>
@@ -345,7 +442,7 @@ export function LicensesPage() {
                     {row.alert_level === 'Expirada'
                       ? <span className="chip chip-cancelada">Expirada</span>
                       : <span className="chip chip-aguardando-quorum">Atenção</span>}
-                    <div className="muted" style={{ marginTop: 4 }}>{row.warning_message}</div>
+                    <div className="muted warning-copy">{row.warning_message}</div>
                   </td>
                 </tr>
               ))}
@@ -367,19 +464,19 @@ export function LicensesPage() {
         <table className="table table-hover table-tight">
           <thead>
             <tr>
-              <th>Cliente</th>
-              <th>Programa</th>
-              <th>Usuário</th>
+              <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('company_name')}>Cliente{sortIndicator('company_name')}</button></th>
+              <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('program_name')}>Programa{sortIndicator('program_name')}</button></th>
+              <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('user_name')}>Usuário{sortIndicator('user_name')}</button></th>
               <th>Módulos</th>
-              <th>ID</th>
-              <th>Tipo</th>
-              <th>Vencimento</th>
-              <th>Status</th>
+              <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('license_identifier')}>ID{sortIndicator('license_identifier')}</button></th>
+              <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('renewal_cycle')}>Tipo{sortIndicator('renewal_cycle')}</button></th>
+              <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('expires_at')}>Vencimento{sortIndicator('expires_at')}</button></th>
+              <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('alert_level')}>Status{sortIndicator('alert_level')}</button></th>
               <th>Ações</th>
             </tr>
           </thead>
           <tbody>
-            {filtered.map((row) => (
+            {sortedFiltered.map((row) => (
               <tr key={row.id}>
                 <td>{row.company_name}</td>
                 <td>{row.program_name}</td>

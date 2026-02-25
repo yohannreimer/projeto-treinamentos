@@ -4,12 +4,18 @@ import { api } from '../services/api';
 import type { DashboardResponse } from '../types';
 import { KpiCard } from '../components/KpiCard';
 import { Section } from '../components/Section';
+type PendingSortKey = 'name' | 'pending' | 'ready';
+type TechSortKey = 'name' | 'cohorts_in_month';
 
 export function DashboardPage() {
   const [data, setData] = useState<DashboardResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [moduleQuery, setModuleQuery] = useState('');
   const [techQuery, setTechQuery] = useState('');
+  const [pendingSortKey, setPendingSortKey] = useState<PendingSortKey>('pending');
+  const [pendingSortDirection, setPendingSortDirection] = useState<'asc' | 'desc'>('desc');
+  const [techSortKey, setTechSortKey] = useState<TechSortKey>('cohorts_in_month');
+  const [techSortDirection, setTechSortDirection] = useState<'asc' | 'desc'>('desc');
 
   useEffect(() => {
     api.dashboard().then(setData).catch((err: Error) => setError(err.message));
@@ -24,6 +30,45 @@ export function DashboardPage() {
   const techRows = data.load_by_technician.filter((row) =>
     row.name.toLowerCase().includes(techQuery.toLowerCase())
   );
+
+  const orderedPendingRows = [...pendingRows].sort((a, b) => {
+    const direction = pendingSortDirection === 'asc' ? 1 : -1;
+    if (pendingSortKey === 'pending' || pendingSortKey === 'ready') {
+      return ((a[pendingSortKey] - b[pendingSortKey]) * direction);
+    }
+    return `${a.code} ${a.name}`.localeCompare(`${b.code} ${b.name}`) * direction;
+  });
+
+  const orderedTechRows = [...techRows].sort((a, b) => {
+    const direction = techSortDirection === 'asc' ? 1 : -1;
+    if (techSortKey === 'cohorts_in_month') {
+      return (a.cohorts_in_month - b.cohorts_in_month) * direction;
+    }
+    return a.name.localeCompare(b.name) * direction;
+  });
+
+  function togglePendingSort(nextKey: PendingSortKey) {
+    if (pendingSortKey === nextKey) {
+      setPendingSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+      return;
+    }
+    setPendingSortKey(nextKey);
+    setPendingSortDirection(nextKey === 'name' ? 'asc' : 'desc');
+  }
+
+  function toggleTechSort(nextKey: TechSortKey) {
+    if (techSortKey === nextKey) {
+      setTechSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+      return;
+    }
+    setTechSortKey(nextKey);
+    setTechSortDirection(nextKey === 'name' ? 'asc' : 'desc');
+  }
+
+  function sortIndicator(activeKey: string, currentKey: string, direction: 'asc' | 'desc') {
+    if (activeKey !== currentKey) return '';
+    return direction === 'asc' ? ' ↑' : ' ↓';
+  }
 
   return (
     <div className="page">
@@ -47,9 +92,14 @@ export function DashboardPage() {
           />
         }>
           <table className="table">
-            <thead><tr><th>Módulo</th><th>Pendências</th><th>Prontas</th><th></th></tr></thead>
+            <thead><tr>
+              <th><button type="button" className="table-sort-btn" onClick={() => togglePendingSort('name')}>Módulo{sortIndicator('name', pendingSortKey, pendingSortDirection)}</button></th>
+              <th><button type="button" className="table-sort-btn" onClick={() => togglePendingSort('pending')}>Pendências{sortIndicator('pending', pendingSortKey, pendingSortDirection)}</button></th>
+              <th><button type="button" className="table-sort-btn" onClick={() => togglePendingSort('ready')}>Prontas{sortIndicator('ready', pendingSortKey, pendingSortDirection)}</button></th>
+              <th></th>
+            </tr></thead>
             <tbody>
-              {pendingRows.map((row) => (
+              {orderedPendingRows.map((row) => (
                 <tr key={row.code}>
                   <td>{row.code} - {row.name}</td>
                   <td>{row.pending}</td>
@@ -71,9 +121,12 @@ export function DashboardPage() {
           />
         }>
           <table className="table">
-            <thead><tr><th>Técnico</th><th>Turmas no mês</th></tr></thead>
+            <thead><tr>
+              <th><button type="button" className="table-sort-btn" onClick={() => toggleTechSort('name')}>Técnico{sortIndicator('name', techSortKey, techSortDirection)}</button></th>
+              <th><button type="button" className="table-sort-btn" onClick={() => toggleTechSort('cohorts_in_month')}>Turmas no mês{sortIndicator('cohorts_in_month', techSortKey, techSortDirection)}</button></th>
+            </tr></thead>
             <tbody>
-              {techRows.map((row) => (
+              {orderedTechRows.map((row) => (
                 <tr key={row.id}><td>{row.name}</td><td>{row.cohorts_in_month}</td></tr>
               ))}
             </tbody>

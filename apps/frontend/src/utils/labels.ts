@@ -14,7 +14,30 @@ export function statusLabel(value: string): string {
     Em_execucao: 'Em execução',
     Concluido: 'Concluído',
     Ativo: 'Ativo',
-    Inativo: 'Inativo'
+    Inativo: 'Inativo',
+    Em_treinamento: 'Em treinamento',
+    Finalizado: 'Finalizado',
+    Alta: 'Alta',
+    Normal: 'Normal',
+    Baixa: 'Baixa',
+    Parado: 'Parado',
+    Aguardando_liberacao: 'Aguardando liberação',
+    Turma_Online: 'Turma online',
+    Exclusivo_Online: 'Exclusivo online',
+    Presencial: 'Presencial',
+    Integral: 'Integral',
+    Meio_periodo: 'Meio período',
+    Online: 'Online',
+    Hibrida: 'Híbrida',
+    Em_processo: 'Em processo',
+    Stand_by: 'Stand by',
+    Aprovado: 'Aprovado',
+    Reprovado: 'Reprovado',
+    Banco_de_talentos: 'Banco de talentos',
+    Triagem: 'Triagem',
+    Primeira_entrevista: 'Primeira entrevista',
+    Segunda_fase: 'Segunda fase',
+    Final: 'Final'
   };
   return labels[value] ?? value.replace(/_/g, ' ');
 }

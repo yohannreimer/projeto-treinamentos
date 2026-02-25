@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import { api } from '../services/api';
 import { StatusChip } from '../components/StatusChip';
 import { Section } from '../components/Section';
+import { statusLabel } from '../utils/labels';
 
 function modulesFromEntry(blocks: any[], entryModuleId: string): string[] {
   const entry = blocks.find((block) => block.module_id === entryModuleId);
@@ -22,6 +23,8 @@ export function CohortDetailPage() {
   const [suggestions, setSuggestions] = useState<any>(null);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [allocationSortKey, setAllocationSortKey] = useState<'company_name' | 'entry_day' | 'status'>('entry_day');
+  const [allocationSortDirection, setAllocationSortDirection] = useState<'asc' | 'desc'>('asc');
 
   function load() {
     if (!id) return;
@@ -73,6 +76,32 @@ export function CohortDetailPage() {
       return acc;
     }, {});
   }, [data]);
+
+  function sortedAllocations(allocations: any[]) {
+    const rows = [...allocations];
+    rows.sort((a, b) => {
+      const direction = allocationSortDirection === 'asc' ? 1 : -1;
+      if (allocationSortKey === 'entry_day') {
+        return (Number(a.entry_day ?? 0) - Number(b.entry_day ?? 0)) * direction;
+      }
+      return String(a[allocationSortKey] ?? '').localeCompare(String(b[allocationSortKey] ?? '')) * direction;
+    });
+    return rows;
+  }
+
+  function toggleAllocationSort(nextKey: 'company_name' | 'entry_day' | 'status') {
+    if (allocationSortKey === nextKey) {
+      setAllocationSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+      return;
+    }
+    setAllocationSortKey(nextKey);
+    setAllocationSortDirection(nextKey === 'entry_day' ? 'asc' : 'desc');
+  }
+
+  function allocationSortIndicator(nextKey: 'company_name' | 'entry_day' | 'status') {
+    if (allocationSortKey !== nextKey) return '';
+    return allocationSortDirection === 'asc' ? ' ↑' : ' ↓';
+  }
 
   const selectedBlocks = useMemo(() => {
     if (!data?.blocks) return [];
@@ -154,6 +183,7 @@ export function CohortDetailPage() {
         <Section title="Dados gerais">
           <p><strong>Início:</strong> {data.start_date}</p>
           <p><strong>Técnico:</strong> {data.technician_name ?? '-'}</p>
+          <p><strong>Formato:</strong> {statusLabel(data.delivery_mode ?? 'Online')} · {statusLabel(data.period ?? 'Integral')}</p>
           <p><strong>Capacidade:</strong> {data.capacity_companies}</p>
           <StatusChip value={data.status} />
 
@@ -246,16 +276,21 @@ export function CohortDetailPage() {
           <div key={moduleCode} className="allocation-group">
             <h3>{moduleCode}</h3>
             <table className="table">
-              <thead><tr><th>Empresa</th><th>Dia de entrada</th><th>Status</th><th>Ações</th></tr></thead>
+              <thead><tr>
+                <th><button type="button" className="table-sort-btn" onClick={() => toggleAllocationSort('company_name')}>Empresa{allocationSortIndicator('company_name')}</button></th>
+                <th><button type="button" className="table-sort-btn" onClick={() => toggleAllocationSort('entry_day')}>Dia de entrada{allocationSortIndicator('entry_day')}</button></th>
+                <th><button type="button" className="table-sort-btn" onClick={() => toggleAllocationSort('status')}>Status{allocationSortIndicator('status')}</button></th>
+                <th>Ações</th>
+              </tr></thead>
               <tbody>
-                {(allocations as any[]).map((a) => (
+                {sortedAllocations(allocations as any[]).map((a) => (
                   <tr key={a.id}>
                     <td>{a.company_name}</td>
                     <td>{a.entry_day}</td>
                     <td>
                       <StatusChip value={a.status} />
                       {a.override_installation_prereq ? (
-                        <p style={{ marginTop: '6px', fontSize: '0.8rem' }}>
+                        <p className="allocation-override-note">
                           Override MOD-01: {a.override_reason ?? 'Sem justificativa'}
                         </p>
                       ) : null}

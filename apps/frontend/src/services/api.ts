@@ -101,6 +101,11 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload)
     }),
+  updateCompany: (id: string, payload: unknown) =>
+    req(`/companies/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload)
+    }),
   deleteCompany: (id: string, confirmation_phrase?: string) =>
     req(withConfirmation(`/companies/${id}`, confirmation_phrase), {
       method: 'DELETE'
@@ -146,7 +151,7 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(payload)
     }),
-  updateCompanyPriority: (id: string, payload: { priority: number }) =>
+  updateCompanyPriority: (id: string, payload: { priority?: number; priority_level?: string }) =>
     req(`/companies/${id}/priority`, {
       method: 'PATCH',
       body: JSON.stringify(payload)
@@ -182,6 +187,21 @@ export const api = {
     req(`/technicians/${id}/skills`, {
       method: 'PATCH',
       body: JSON.stringify(payload)
+    }),
+  recruitmentCandidates: () => req('/recruitment/candidates'),
+  createRecruitmentCandidate: (payload: unknown) =>
+    req('/recruitment/candidates', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  updateRecruitmentCandidate: (id: string, payload: unknown) =>
+    req(`/recruitment/candidates/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload)
+    }),
+  deleteRecruitmentCandidate: (id: string, confirmation_phrase?: string) =>
+    req(withConfirmation(`/recruitment/candidates/${id}`, confirmation_phrase), {
+      method: 'DELETE'
     }),
   modules: () => req('/modules'),
   catalog: () => req('/admin/catalog'),
