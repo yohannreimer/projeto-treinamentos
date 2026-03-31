@@ -139,7 +139,9 @@ const kanbanCardCreateSchema = z.object({
   description: z.string().nullable().optional(),
   column_id: z.string().min(1),
   client_name: z.string().max(120).nullable().optional(),
+  license_name: z.string().max(180).nullable().optional(),
   module_name: z.string().max(180).nullable().optional(),
+  technician_id: z.string().nullable().optional(),
   priority: z.enum(KANBAN_CARD_PRIORITY_VALUES).optional(),
   due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   attachment_image_data_url: kanbanCardImageSchema.nullable().optional()
@@ -151,7 +153,9 @@ const kanbanCardUpdateSchema = z.object({
   column_id: z.string().min(1).optional(),
   position: z.number().int().min(0).optional(),
   client_name: z.string().max(120).nullable().optional(),
+  license_name: z.string().max(180).nullable().optional(),
   module_name: z.string().max(180).nullable().optional(),
+  technician_id: z.string().nullable().optional(),
   priority: z.enum(KANBAN_CARD_PRIORITY_VALUES).optional(),
   due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   attachment_image_data_url: kanbanCardImageSchema.nullable().optional()
@@ -2805,7 +2809,9 @@ app.get('/implementation/kanban', (_req, res) => {
       description,
       column_id,
       client_name,
+      license_name,
       module_name,
+      technician_id,
       priority,
       due_date,
       attachment_image_data_url,
@@ -2820,7 +2826,9 @@ app.get('/implementation/kanban', (_req, res) => {
     description: string | null;
     column_id: string | null;
     client_name: string | null;
+    license_name: string | null;
     module_name: string | null;
+    technician_id: string | null;
     priority: string;
     due_date: string | null;
     attachment_image_data_url: string | null;
@@ -2848,6 +2856,12 @@ app.post('/implementation/kanban/cards', (req, res) => {
   if (!column) {
     return res.status(404).json({ message: 'Coluna não encontrada.' });
   }
+  if (payload.technician_id) {
+    const technician = db.prepare('select id from technician where id = ?').get(payload.technician_id) as { id: string } | undefined;
+    if (!technician) {
+      return res.status(404).json({ message: 'Técnico não encontrado.' });
+    }
+  }
 
   const cardId = uuid('kbn');
   const nowIso = nowDateIso();
@@ -2859,17 +2873,19 @@ app.post('/implementation/kanban/cards', (req, res) => {
 
   db.prepare(`
     insert into implementation_kanban_card (
-      id, title, description, status, column_id, client_name, module_name, priority, due_date,
+      id, title, description, status, column_id, client_name, license_name, module_name, technician_id, priority, due_date,
       attachment_image_data_url, position, created_at, updated_at
     )
-    values (?, ?, ?, 'Todo', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    values (?, ?, ?, 'Todo', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     cardId,
     payload.title.trim(),
     payload.description?.trim() || null,
     payload.column_id,
     payload.client_name?.trim() || null,
+    payload.license_name?.trim() || null,
     payload.module_name?.trim() || null,
+    payload.technician_id?.trim() || null,
     payload.priority ?? 'Normal',
     payload.due_date ?? null,
     payload.attachment_image_data_url ?? null,
@@ -2920,9 +2936,24 @@ app.patch('/implementation/kanban/cards/:id', (req, res) => {
     fields.push('client_name = ?');
     values.push(payload.client_name?.trim() || null);
   }
+  if (Object.prototype.hasOwnProperty.call(payload, 'license_name')) {
+    fields.push('license_name = ?');
+    values.push(payload.license_name?.trim() || null);
+  }
   if (Object.prototype.hasOwnProperty.call(payload, 'module_name')) {
     fields.push('module_name = ?');
     values.push(payload.module_name?.trim() || null);
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'technician_id')) {
+    const technicianId = payload.technician_id?.trim() || null;
+    if (technicianId) {
+      const technician = db.prepare('select id from technician where id = ?').get(technicianId) as { id: string } | undefined;
+      if (!technician) {
+        return res.status(404).json({ message: 'Técnico não encontrado.' });
+      }
+    }
+    fields.push('technician_id = ?');
+    values.push(technicianId);
   }
   if (typeof payload.priority === 'string') {
     fields.push('priority = ?');

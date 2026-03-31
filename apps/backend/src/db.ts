@@ -212,7 +212,9 @@ export function initDb() {
       status text not null default 'Todo',
       column_id text,
       client_name text,
+      license_name text,
       module_name text,
+      technician_id text,
       priority text not null default 'Normal',
       due_date text,
       attachment_image_data_url text,
@@ -257,7 +259,9 @@ export function initDb() {
   ensureColumn('technician', 'hourly_cost', 'hourly_cost real');
   ensureColumn('implementation_kanban_card', 'column_id', 'column_id text');
   ensureColumn('implementation_kanban_card', 'client_name', 'client_name text');
+  ensureColumn('implementation_kanban_card', 'license_name', 'license_name text');
   ensureColumn('implementation_kanban_card', 'module_name', 'module_name text');
+  ensureColumn('implementation_kanban_card', 'technician_id', 'technician_id text');
   ensureColumn('implementation_kanban_card', 'priority', "priority text not null default 'Normal'");
   ensureColumn('implementation_kanban_card', 'due_date', 'due_date text');
   ensureColumn('implementation_kanban_card', 'attachment_image_data_url', 'attachment_image_data_url text');

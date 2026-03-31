@@ -15,7 +15,8 @@ type KanbanCard = {
   description: string | null;
   column_id: string | null;
   client_name: string | null;
-  module_name: string | null;
+  license_name: string | null;
+  technician_id: string | null;
   priority: KanbanPriority;
   due_date: string | null;
   attachment_image_data_url: string | null;
@@ -51,7 +52,8 @@ type CardDetailDraft = {
   title: string;
   description: string;
   client_name: string;
-  module_name: string;
+  license_name: string;
+  technician_id: string;
   priority: KanbanPriority;
   due_date: string;
   attachment_image_data_url: string | null;
@@ -62,7 +64,12 @@ type ClientOption = {
   name: string;
 };
 
-type ModuleOption = {
+type LicenseProgramOption = {
+  id: string;
+  name: string;
+};
+
+type TechnicianOption = {
   id: string;
   name: string;
 };
@@ -73,7 +80,8 @@ function cardDetailFromCard(card: KanbanCard): Exclude<CardDetailDraft, null> {
     title: card.title,
     description: card.description ?? '',
     client_name: card.client_name ?? '',
-    module_name: card.module_name ?? '',
+    license_name: card.license_name ?? '',
+    technician_id: card.technician_id ?? '',
     priority: card.priority ?? 'Normal',
     due_date: card.due_date ?? '',
     attachment_image_data_url: card.attachment_image_data_url ?? null
@@ -104,7 +112,8 @@ export function ImplementationPage() {
   const [isConfigCollapsed, setIsConfigCollapsed] = useState(true);
 
   const [clientOptions, setClientOptions] = useState<ClientOption[]>([]);
-  const [moduleOptions, setModuleOptions] = useState<ModuleOption[]>([]);
+  const [licenseProgramOptions, setLicenseProgramOptions] = useState<LicenseProgramOption[]>([]);
+  const [technicianOptions, setTechnicianOptions] = useState<TechnicianOption[]>([]);
 
   const [cardDetail, setCardDetail] = useState<CardDetailDraft>(null);
   const [isSavingCardDetail, setIsSavingCardDetail] = useState(false);
@@ -119,17 +128,22 @@ export function ImplementationPage() {
   }
 
   async function loadOptions() {
-    const [companies, modules] = await Promise.all([
+    const [companies, licensePrograms, technicians] = await Promise.all([
       api.companies() as Promise<Array<{ id: string; name: string }>>,
-      api.modules() as Promise<Array<{ id: string; name: string }>>
+      api.licensePrograms() as Promise<Array<{ id: string; name: string }>>,
+      api.technicians() as Promise<Array<{ id: string; name: string }>>
     ]);
 
     setClientOptions((companies ?? [])
       .map((company) => ({ id: company.id, name: company.name }))
       .sort((a, b) => a.name.localeCompare(b.name)));
 
-    setModuleOptions((modules ?? [])
-      .map((module) => ({ id: module.id, name: module.name }))
+    setLicenseProgramOptions((licensePrograms ?? [])
+      .map((program) => ({ id: program.id, name: program.name }))
+      .sort((a, b) => a.name.localeCompare(b.name)));
+
+    setTechnicianOptions((technicians ?? [])
+      .map((technician) => ({ id: technician.id, name: technician.name }))
       .sort((a, b) => a.name.localeCompare(b.name)));
   }
 
@@ -351,7 +365,8 @@ export function ImplementationPage() {
         title: cardDetail.title.trim(),
         description: cardDetail.description.trim() || null,
         client_name: cardDetail.client_name.trim() || null,
-        module_name: cardDetail.module_name.trim() || null,
+        license_name: cardDetail.license_name.trim() || null,
+        technician_id: cardDetail.technician_id || null,
         priority: cardDetail.priority,
         due_date: cardDetail.due_date || null,
         attachment_image_data_url: cardDetail.attachment_image_data_url ?? null
@@ -393,6 +408,10 @@ export function ImplementationPage() {
   const totalCards = useMemo(
     () => columns.reduce((acc, column) => acc + column.cards.length, 0),
     [columns]
+  );
+  const technicianNameById = useMemo(
+    () => new Map(technicianOptions.map((technician) => [technician.id, technician.name])),
+    [technicianOptions]
   );
 
   return (
@@ -453,12 +472,6 @@ export function ImplementationPage() {
           <option key={company.id} value={company.name} />
         ))}
       </datalist>
-      <datalist id="kanban-module-options">
-        {moduleOptions.map((module) => (
-          <option key={module.id} value={module.name} />
-        ))}
-      </datalist>
-
       <section className="kanban-workspace-shell">
         <DragDropContext onDragEnd={onDragEnd}>
         <Droppable droppableId="kanban-columns" direction="horizontal" type="COLUMN">
@@ -542,7 +555,12 @@ export function ImplementationPage() {
                                       {card.description ? <p>{card.description}</p> : null}
                                       <div className="kanban-card-meta">
                                         {card.client_name ? <span className="kanban-meta-pill">Cliente: {card.client_name}</span> : null}
-                                        {card.module_name ? <span className="kanban-meta-pill">Módulo: {card.module_name}</span> : null}
+                                        {card.license_name ? <span className="kanban-meta-pill">Licença/App: {card.license_name}</span> : null}
+                                        {card.technician_id ? (
+                                          <span className="kanban-meta-pill">
+                                            Técnico: {technicianNameById.get(card.technician_id) ?? card.technician_id}
+                                          </span>
+                                        ) : null}
                                         <span className={`chip chip-${(card.priority ?? 'Normal').toLowerCase()}`}>{card.priority ?? 'Normal'}</span>
                                         {card.due_date ? <span className="kanban-meta-pill">Entrega: {formatDateBr(card.due_date)}</span> : null}
                                       </div>
@@ -615,12 +633,28 @@ export function ImplementationPage() {
                   />
                 </label>
                 <label>
-                  Módulo
-                  <input
-                    value={cardDetail.module_name}
-                    onChange={(event) => setCardDetail((prev) => (prev ? { ...prev, module_name: event.target.value } : prev))}
-                    list="kanban-module-options"
-                  />
+                  Licença/App
+                  <select
+                    value={cardDetail.license_name}
+                    onChange={(event) => setCardDetail((prev) => (prev ? { ...prev, license_name: event.target.value } : prev))}
+                  >
+                    <option value="">Sem licença vinculada</option>
+                    {licenseProgramOptions.map((program) => (
+                      <option key={program.id} value={program.name}>{program.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Técnico responsável (opcional)
+                  <select
+                    value={cardDetail.technician_id}
+                    onChange={(event) => setCardDetail((prev) => (prev ? { ...prev, technician_id: event.target.value } : prev))}
+                  >
+                    <option value="">Sem técnico responsável</option>
+                    {technicianOptions.map((technician) => (
+                      <option key={technician.id} value={technician.id}>{technician.name}</option>
+                    ))}
+                  </select>
                 </label>
                 <label>
                   Prioridade

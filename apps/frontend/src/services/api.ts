@@ -194,7 +194,9 @@ export const api = {
     description?: string | null;
     column_id: string;
     client_name?: string | null;
+    license_name?: string | null;
     module_name?: string | null;
+    technician_id?: string | null;
     priority?: 'Alta' | 'Normal' | 'Baixa' | 'Critica';
     due_date?: string | null;
     attachment_image_data_url?: string | null;
@@ -209,7 +211,9 @@ export const api = {
     column_id?: string;
     position?: number;
     client_name?: string | null;
+    license_name?: string | null;
     module_name?: string | null;
+    technician_id?: string | null;
     priority?: 'Alta' | 'Normal' | 'Baixa' | 'Critica';
     due_date?: string | null;
     attachment_image_data_url?: string | null;
