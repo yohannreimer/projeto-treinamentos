@@ -8,6 +8,7 @@ type KanbanPriority = 'Alta' | 'Normal' | 'Baixa' | 'Critica';
 
 const KANBAN_PRIORITY_OPTIONS: KanbanPriority[] = ['Alta', 'Normal', 'Baixa', 'Critica'];
 const KANBAN_IMAGE_MAX_BYTES = 750_000;
+const KANBAN_FILTERS_COLLAPSED_STORAGE_KEY = 'orquestrador_kanban_filters_collapsed_v1';
 
 type KanbanCard = {
   id: string;
@@ -110,6 +111,11 @@ export function ImplementationPage() {
   const [newColumnTitle, setNewColumnTitle] = useState('');
   const [newColumnColor, setNewColumnColor] = useState('#7b8ea8');
   const [isConfigCollapsed, setIsConfigCollapsed] = useState(true);
+  const [isFiltersCollapsed, setIsFiltersCollapsed] = useState<boolean>(() => {
+    const saved = window.localStorage.getItem(KANBAN_FILTERS_COLLAPSED_STORAGE_KEY);
+    if (saved === '0') return false;
+    return true;
+  });
 
   const [clientOptions, setClientOptions] = useState<ClientOption[]>([]);
   const [licenseProgramOptions, setLicenseProgramOptions] = useState<LicenseProgramOption[]>([]);
@@ -119,6 +125,11 @@ export function ImplementationPage() {
   const [isSavingCardDetail, setIsSavingCardDetail] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [filterClientName, setFilterClientName] = useState('');
+  const [filterTechnicianId, setFilterTechnicianId] = useState('');
+  const [filterPriority, setFilterPriority] = useState<'ALL' | KanbanPriority>('ALL');
+  const [filterDueFrom, setFilterDueFrom] = useState('');
+  const [filterDueTo, setFilterDueTo] = useState('');
 
   async function loadBoard() {
     const response = await api.implementationKanban() as { columns: KanbanColumn[] };
@@ -150,6 +161,10 @@ export function ImplementationPage() {
   useEffect(() => {
     Promise.all([loadBoard(), loadOptions()]).catch((err: Error) => setError(err.message));
   }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(KANBAN_FILTERS_COLLAPSED_STORAGE_KEY, isFiltersCollapsed ? '1' : '0');
+  }, [isFiltersCollapsed]);
 
   function getDraft(columnId: string): ColumnDraft {
     return columnDrafts[columnId] ?? defaultColumnDraft;
@@ -413,6 +428,89 @@ export function ImplementationPage() {
     () => new Map(technicianOptions.map((technician) => [technician.id, technician.name])),
     [technicianOptions]
   );
+  const hasActiveFilters = Boolean(
+    filterClientName || filterTechnicianId || filterPriority !== 'ALL' || filterDueFrom || filterDueTo
+  );
+
+  function cardMatchesFilters(card: KanbanCard): boolean {
+    if (filterClientName && (card.client_name ?? '') !== filterClientName) {
+      return false;
+    }
+    if (filterTechnicianId === '__none__') {
+      if (card.technician_id) return false;
+    } else if (filterTechnicianId && (card.technician_id ?? '') !== filterTechnicianId) {
+      return false;
+    }
+    if (filterPriority !== 'ALL' && card.priority !== filterPriority) {
+      return false;
+    }
+    if (filterDueFrom) {
+      if (!card.due_date || card.due_date < filterDueFrom) {
+        return false;
+      }
+    }
+    if (filterDueTo) {
+      if (!card.due_date || card.due_date > filterDueTo) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  const visibleColumns = useMemo(
+    () => columns.map((column) => ({
+      ...column,
+      cards: column.cards.filter(cardMatchesFilters)
+    })),
+    [columns, filterClientName, filterTechnicianId, filterPriority, filterDueFrom, filterDueTo]
+  );
+
+  const visibleCardsCount = useMemo(
+    () => visibleColumns.reduce((acc, column) => acc + column.cards.length, 0),
+    [visibleColumns]
+  );
+
+  function clearFilters() {
+    setFilterClientName('');
+    setFilterTechnicianId('');
+    setFilterPriority('ALL');
+    setFilterDueFrom('');
+    setFilterDueTo('');
+  }
+
+  function applyQuickView(view: 'all' | 'high' | 'no_technician' | 'due_7_days') {
+    const today = new Date();
+    const todayIso = today.toISOString().slice(0, 10);
+    const nextWeek = new Date(today);
+    nextWeek.setDate(nextWeek.getDate() + 7);
+    const nextWeekIso = nextWeek.toISOString().slice(0, 10);
+
+    if (view === 'all') {
+      clearFilters();
+      return;
+    }
+    if (view === 'high') {
+      setFilterPriority('Alta');
+      setFilterClientName('');
+      setFilterTechnicianId('');
+      setFilterDueFrom('');
+      setFilterDueTo('');
+      return;
+    }
+    if (view === 'no_technician') {
+      setFilterTechnicianId('__none__');
+      setFilterClientName('');
+      setFilterPriority('ALL');
+      setFilterDueFrom('');
+      setFilterDueTo('');
+      return;
+    }
+    setFilterDueFrom(todayIso);
+    setFilterDueTo(nextWeekIso);
+    setFilterClientName('');
+    setFilterTechnicianId('');
+    setFilterPriority('ALL');
+  }
 
   return (
     <div className="page implementation-page">
@@ -428,13 +526,22 @@ export function ImplementationPage() {
         title="Adicionar coluna"
         className="kanban-config-panel"
         action={(
-          <button
-            type="button"
-            className="kanban-collapse-config-btn"
-            onClick={() => setIsConfigCollapsed((prev) => !prev)}
-          >
-            {isConfigCollapsed ? 'Expandir' : 'Minimizar'}
-          </button>
+          <div className="kanban-section-actions">
+            <button
+              type="button"
+              className="kanban-collapse-config-btn"
+              onClick={() => setIsConfigCollapsed((prev) => !prev)}
+            >
+              {isConfigCollapsed ? 'Expandir coluna' : 'Minimizar coluna'}
+            </button>
+            <button
+              type="button"
+              className="kanban-collapse-config-btn"
+              onClick={() => setIsFiltersCollapsed((prev) => !prev)}
+            >
+              {isFiltersCollapsed ? `Abrir filtros${hasActiveFilters ? ' • ativos' : ''}` : 'Minimizar filtros'}
+            </button>
+          </div>
         )}
       >
         <div className="form kanban-config-form">
@@ -467,6 +574,65 @@ export function ImplementationPage() {
         </div>
       </Section>
 
+      {!isFiltersCollapsed ? (
+        <Section title="Views e filtros" className="kanban-config-panel">
+          <div className="form kanban-config-form">
+            <div className="kanban-filters-grid">
+              <label>
+                Cliente
+                <select value={filterClientName} onChange={(event) => setFilterClientName(event.target.value)}>
+                  <option value="">Todos os clientes</option>
+                  {clientOptions.map((company) => (
+                    <option key={company.id} value={company.name}>{company.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Técnico
+                <select value={filterTechnicianId} onChange={(event) => setFilterTechnicianId(event.target.value)}>
+                  <option value="">Todos os técnicos</option>
+                  <option value="__none__">Sem técnico</option>
+                  {technicianOptions.map((technician) => (
+                    <option key={technician.id} value={technician.id}>{technician.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Prioridade
+                <select
+                  value={filterPriority}
+                  onChange={(event) => setFilterPriority(event.target.value as 'ALL' | KanbanPriority)}
+                >
+                  <option value="ALL">Todas</option>
+                  {KANBAN_PRIORITY_OPTIONS.map((priority) => (
+                    <option key={priority} value={priority}>{priority}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Entrega de
+                <input type="date" value={filterDueFrom} onChange={(event) => setFilterDueFrom(event.target.value)} />
+              </label>
+              <label>
+                Entrega até
+                <input type="date" value={filterDueTo} onChange={(event) => setFilterDueTo(event.target.value)} />
+              </label>
+            </div>
+            <div className="actions actions-compact">
+              <button type="button" onClick={() => applyQuickView('all')}>View: Tudo</button>
+              <button type="button" onClick={() => applyQuickView('high')}>View: Prioridade alta</button>
+              <button type="button" onClick={() => applyQuickView('no_technician')}>View: Sem técnico</button>
+              <button type="button" onClick={() => applyQuickView('due_7_days')}>View: Entrega 7 dias</button>
+              <button type="button" onClick={clearFilters}>Limpar filtros</button>
+            </div>
+            <p className="form-hint">
+              Exibindo {visibleCardsCount} de {totalCards} cartão(ões).
+              {hasActiveFilters ? ' Filtro ativo: arrastar cartões fica desativado para evitar reordenação parcial.' : ''}
+            </p>
+          </div>
+        </Section>
+      ) : null}
+
       <datalist id="kanban-client-options">
         {clientOptions.map((company) => (
           <option key={company.id} value={company.name} />
@@ -477,10 +643,15 @@ export function ImplementationPage() {
         <Droppable droppableId="kanban-columns" direction="horizontal" type="COLUMN">
           {(boardProvided) => (
             <div ref={boardProvided.innerRef} {...boardProvided.droppableProps} className="kanban-board">
-              {columns.map((column, columnIndex) => {
+              {visibleColumns.map((column, columnIndex) => {
                 const draft = getDraft(column.id);
                 return (
-                  <Draggable key={column.id} draggableId={`column-${column.id}`} index={columnIndex}>
+                  <Draggable
+                    key={column.id}
+                    draggableId={`column-${column.id}`}
+                    index={columnIndex}
+                    isDragDisabled={hasActiveFilters}
+                  >
                     {(columnProvided, columnSnapshot) => (
                       <section
                         ref={columnProvided.innerRef}
@@ -530,7 +701,7 @@ export function ImplementationPage() {
                           </div>
                         ) : null}
 
-                        <Droppable droppableId={column.id} type="CARD">
+                        <Droppable droppableId={column.id} type="CARD" isDropDisabled={hasActiveFilters}>
                           {(provided, snapshot) => (
                             <div
                               ref={provided.innerRef}
@@ -543,7 +714,7 @@ export function ImplementationPage() {
                                 </div>
                               ) : null}
                               {column.cards.map((card, index) => (
-                                <Draggable key={card.id} draggableId={card.id} index={index}>
+                                <Draggable key={card.id} draggableId={card.id} index={index} isDragDisabled={hasActiveFilters}>
                                   {(dragProvided, dragSnapshot) => (
                                     <article
                                       ref={dragProvided.innerRef}

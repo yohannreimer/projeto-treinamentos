@@ -1641,6 +1641,13 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   align-items: end;
 }
 
+.kanban-filters-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(150px, 1fr));
+  gap: 10px;
+  align-items: end;
+}
+
 .kanban-collapse-config-btn {
   min-height: 30px;
   padding: 5px 11px;
@@ -1648,6 +1655,12 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   background: #f4f8fd;
   border-color: #bfcee0;
   color: #2f4a68;
+}
+
+.kanban-section-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .kanban-column {
@@ -2067,6 +2080,9 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   .licenses-modules-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .kanban-config-grid {
     grid-template-columns: 1fr 110px;
+  }
+  .kanban-filters-grid {
+    grid-template-columns: 1fr 1fr;
   }
   .kanban-detail-grid { grid-template-columns: 1fr; }
   .calendar-overlay-grid { grid-template-columns: 1fr; }
