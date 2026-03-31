@@ -112,6 +112,12 @@ function fullDateLabel(dateIso: string): string {
   return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
+function shortDateLabel(dateIso: string): string {
+  const [year, month, day] = dateIso.split('-').map(Number);
+  if (!year || !month || !day) return dateIso;
+  return new Date(year, month - 1, day).toLocaleDateString('pt-BR');
+}
+
 function prevMonth(month: string): string {
   const [year, mon] = month.split('-').map(Number);
   const date = new Date(year, mon - 2, 1);
@@ -213,6 +219,16 @@ function moduleDurationById(modules: Module[], moduleId: string): number {
   return Math.max(1, Number(duration) || 1);
 }
 
+function suggestedCohortCode(rows: Cohort[]): string {
+  const maxNumeric = rows.reduce((acc, row) => {
+    const match = String(row.code ?? '').toUpperCase().match(/^TUR-(\d+)$/);
+    if (!match) return acc;
+    const numeric = Number(match[1]);
+    return Number.isFinite(numeric) ? Math.max(acc, numeric) : acc;
+  }, 0);
+  return `TUR-${String(maxNumeric + 1).padStart(3, '0')}`;
+}
+
 export function CalendarPage() {
   const [rows, setRows] = useState<Cohort[]>([]);
   const [modules, setModules] = useState<Module[]>([]);
@@ -262,8 +278,7 @@ export function CalendarPage() {
 
   useEffect(() => {
     loadAll().then(({ rows: loadedRows, modules: loadedModules }) => {
-      const next = loadedRows.length + 1;
-      setCode(`TUR-${String(next).padStart(3, '0')}`);
+      setCode(suggestedCohortCode(loadedRows));
       if (loadedModules.length > 0) {
         setBlocks([
           {
@@ -549,8 +564,7 @@ export function CalendarPage() {
 
       setMessage('Turma criada no calendário.');
       const refreshed = await loadAll();
-      const next = refreshed.rows.length + 1;
-      setCode(`TUR-${String(next).padStart(3, '0')}`);
+      setCode(suggestedCohortCode(refreshed.rows));
       setName('Nova turma');
       setNotes('');
       setTechnicianId('');
@@ -584,7 +598,7 @@ export function CalendarPage() {
         <div className="calendar-toolbar">
           <div className="calendar-toolbar-main">
             <h3 className="month-title">{monthLabel(month)}</h3>
-            <div className="actions">
+            <div className="actions actions-compact">
               <button type="button" onClick={() => setMonth(prevMonth(month))}>Mês anterior</button>
               <button
                 type="button"
@@ -798,13 +812,13 @@ export function CalendarPage() {
                   {!detail ? <p>Clique em uma turma para abrir os detalhes completos.</p> : (
                     <div className="stack">
                       <p><strong>{detail.code} - {detail.name}</strong></p>
-                      <p>Início: {detail.start_date} | Técnico: {detail.technician_name ?? '-'}</p>
+                      <p>Início: {shortDateLabel(detail.start_date)} | Técnico: {detail.technician_name ?? '-'}</p>
                       <p>Formato: {statusLabel(detail.delivery_mode ?? 'Online')} · {statusLabel(detail.period ?? 'Integral')}</p>
                       <p>Capacidade: {detail.capacity_companies}</p>
                       <StatusChip value={detail.status} />
 
                       <h3>Linha do tempo de módulos</h3>
-                      <table className="table table-tight">
+                      <table className="table table-hover table-tight">
                         <thead><tr><th>Ordem</th><th>Módulo</th><th>Início</th><th>Duração</th></tr></thead>
                         <tbody>
                           {detail.blocks.map((block: any) => (
@@ -819,7 +833,7 @@ export function CalendarPage() {
                       </table>
 
                       <h3>Participantes alocados</h3>
-                      <table className="table table-tight">
+                      <table className="table table-hover table-tight">
                         <thead><tr><th>Empresa</th><th>Módulo</th><th>Dia de entrada</th><th>Status</th></tr></thead>
                         <tbody>
                           {detail.allocations.map((allocation: any) => (
@@ -840,6 +854,7 @@ export function CalendarPage() {
               <section className="calendar-overlay-col">
                 <h3>Criar turma em {selectedDate}</h3>
                 <div className="form form-spacious">
+                  <p className="form-hint">Defina os blocos; o sistema calcula a sequência por dias úteis automaticamente.</p>
                   <label>Código<input value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} /></label>
                   <label>Nome<input value={name} onChange={(event) => setName(event.target.value)} /></label>
                   <label>Técnico

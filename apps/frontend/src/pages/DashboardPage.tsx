@@ -91,7 +91,9 @@ export function DashboardPage() {
             onChange={(e) => setModuleQuery(e.target.value)}
           />
         }>
-          <table className="table">
+          <p className="form-hint">Ordene por nome, pendências ou prontas para priorizar abertura de novas turmas.</p>
+          <div className="table-wrap">
+          <table className="table table-hover table-tight">
             <thead><tr>
               <th><button type="button" className="table-sort-btn" onClick={() => togglePendingSort('name')}>Módulo{sortIndicator('name', pendingSortKey, pendingSortDirection)}</button></th>
               <th><button type="button" className="table-sort-btn" onClick={() => togglePendingSort('pending')}>Pendências{sortIndicator('pending', pendingSortKey, pendingSortDirection)}</button></th>
@@ -104,13 +106,14 @@ export function DashboardPage() {
                   <td>{row.code} - {row.name}</td>
                   <td>{row.pending}</td>
                   <td>{row.ready}</td>
-                  <td>
-                    <Link to={`/turmas?module=${encodeURIComponent(row.code)}`}>Criar turma</Link>
+                  <td className="actions actions-compact">
+                    <Link className="action-link-button" to={`/turmas?module=${encodeURIComponent(row.code)}`}>Criar turma</Link>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+          </div>
         </Section>
 
         <Section title="Gargalo por técnico" action={
@@ -120,7 +123,9 @@ export function DashboardPage() {
             onChange={(e) => setTechQuery(e.target.value)}
           />
         }>
-          <table className="table">
+          <p className="form-hint">Acompanhe a carga mensal para evitar sobreposição de turmas no mesmo técnico.</p>
+          <div className="table-wrap">
+          <table className="table table-hover table-tight">
             <thead><tr>
               <th><button type="button" className="table-sort-btn" onClick={() => toggleTechSort('name')}>Técnico{sortIndicator('name', techSortKey, techSortDirection)}</button></th>
               <th><button type="button" className="table-sort-btn" onClick={() => toggleTechSort('cohorts_in_month')}>Turmas no mês{sortIndicator('cohorts_in_month', techSortKey, techSortDirection)}</button></th>
@@ -131,6 +136,7 @@ export function DashboardPage() {
               ))}
             </tbody>
           </table>
+          </div>
         </Section>
       </div>
     </div>

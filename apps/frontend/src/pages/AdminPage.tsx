@@ -318,6 +318,7 @@ export function AdminPage() {
       </div>
 
       <Section title="Carga de base e importação">
+        <p className="form-hint">Use estas ações com cuidado. Operações de carga e bootstrap podem sobrescrever dados operacionais atuais.</p>
         <div className="three-col">
           <button type="button" onClick={bootstrapCurrentData} disabled={loadingBootstrap}>
             {loadingBootstrap ? 'Aplicando base...' : 'Aplicar clientes + módulos atuais'}
@@ -355,7 +356,8 @@ export function AdminPage() {
               onChange={(e) => setModuleQuery(e.target.value)}
             />
           </div>
-          <table className="table table-hover">
+          <div className="table-wrap">
+          <table className="table table-hover table-tight">
             <thead>
               <tr>
                 <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('code')}>Código{sortIndicator('code')}</button></th>
@@ -381,12 +383,14 @@ export function AdminPage() {
               ))}
             </tbody>
           </table>
+          </div>
         </Section>
 
         <Section title="Editor do módulo selecionado">
           {!selectedModule ? <p>Selecione um módulo na lista para editar.</p> : null}
           {selectedModule ? (
             <div className="form form-spacious">
+              <p className="form-hint">O valor de diárias aqui vira padrão para novos blocos de turma e pode ser sobrescrito na turma.</p>
               <div className="three-col">
                 <label>
                   Código
@@ -449,7 +453,7 @@ export function AdminPage() {
                 </div>
               </div>
 
-              <div className="actions">
+              <div className="actions actions-compact">
                 <button type="button" onClick={saveModule}>Salvar módulo</button>
                 <button type="button" onClick={deleteSelectedModule}>Excluir módulo</button>
               </div>
@@ -460,6 +464,7 @@ export function AdminPage() {
 
       <Section title="Criar novo módulo">
         <div className="form form-spacious">
+          <p className="form-hint">Novos módulos entram no catálogo e ficam disponíveis em Administração, Turmas e Licenças.</p>
           <div className="three-col">
             <label>
               Código

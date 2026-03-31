@@ -188,6 +188,66 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(payload)
     }),
+  implementationKanban: () => req('/implementation/kanban'),
+  createImplementationKanbanCard: (payload: {
+    title: string;
+    description?: string | null;
+    column_id: string;
+    client_name?: string | null;
+    module_name?: string | null;
+    priority?: 'Alta' | 'Normal' | 'Baixa' | 'Critica';
+    due_date?: string | null;
+    attachment_image_data_url?: string | null;
+  }) =>
+    req('/implementation/kanban/cards', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  updateImplementationKanbanCard: (id: string, payload: {
+    title?: string;
+    description?: string | null;
+    column_id?: string;
+    position?: number;
+    client_name?: string | null;
+    module_name?: string | null;
+    priority?: 'Alta' | 'Normal' | 'Baixa' | 'Critica';
+    due_date?: string | null;
+    attachment_image_data_url?: string | null;
+  }) =>
+    req(`/implementation/kanban/cards/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload)
+    }),
+  reorderImplementationKanban: (payload: {
+    columns: Array<{ column_id: string; card_ids: string[] }>;
+  }) =>
+    req('/implementation/kanban/reorder', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  createImplementationKanbanColumn: (payload: { title: string; color?: string }) =>
+    req('/implementation/kanban/columns', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  updateImplementationKanbanColumn: (id: string, payload: { title?: string; color?: string; position?: number }) =>
+    req(`/implementation/kanban/columns/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload)
+    }),
+  reorderImplementationKanbanColumns: (payload: { column_ids: string[] }) =>
+    req('/implementation/kanban/columns/reorder', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  deleteImplementationKanbanColumn: (id: string, confirmation_phrase?: string) =>
+    req(withConfirmation(`/implementation/kanban/columns/${id}`, confirmation_phrase), {
+      method: 'DELETE'
+    }),
+  deleteImplementationKanbanCard: (id: string, confirmation_phrase?: string) =>
+    req(withConfirmation(`/implementation/kanban/cards/${id}`, confirmation_phrase), {
+      method: 'DELETE'
+    }),
   recruitmentCandidates: () => req('/recruitment/candidates'),
   createRecruitmentCandidate: (payload: unknown) =>
     req('/recruitment/candidates', {

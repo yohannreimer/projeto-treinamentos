@@ -13,6 +13,12 @@ function modulesFromEntry(blocks: any[], entryModuleId: string): string[] {
     .map((block) => block.module_id);
 }
 
+function formatDateBr(dateIso: string): string {
+  const [year, month, day] = dateIso.split('-').map(Number);
+  if (!year || !month || !day) return dateIso;
+  return new Date(year, month - 1, day).toLocaleDateString('pt-BR');
+}
+
 export function CohortDetailPage() {
   const { id } = useParams();
   const [data, setData] = useState<any>(null);
@@ -181,7 +187,7 @@ export function CohortDetailPage() {
       <>
       <div className="two-col">
         <Section title="Dados gerais">
-          <p><strong>Início:</strong> {data.start_date}</p>
+          <p><strong>Início:</strong> {formatDateBr(data.start_date)}</p>
           <p><strong>Técnico:</strong> {data.technician_name ?? '-'}</p>
           <p><strong>Formato:</strong> {statusLabel(data.delivery_mode ?? 'Online')} · {statusLabel(data.period ?? 'Integral')}</p>
           <p><strong>Capacidade:</strong> {data.capacity_companies}</p>
@@ -197,6 +203,7 @@ export function CohortDetailPage() {
 
         <Section title="Alocar empresa por módulo">
           <div className="form">
+            <p className="form-hint">Escolha o módulo de entrada e marque os módulos desejados. Os dias são calculados automaticamente pela sequência da turma.</p>
             <label>Módulo de entrada
               <select
                 value={entryModule}
@@ -275,7 +282,8 @@ export function CohortDetailPage() {
         {Object.entries(grouped).map(([moduleCode, allocations]) => (
           <div key={moduleCode} className="allocation-group">
             <h3>{moduleCode}</h3>
-            <table className="table">
+            <div className="table-wrap">
+            <table className="table table-hover table-tight">
               <thead><tr>
                 <th><button type="button" className="table-sort-btn" onClick={() => toggleAllocationSort('company_name')}>Empresa{allocationSortIndicator('company_name')}</button></th>
                 <th><button type="button" className="table-sort-btn" onClick={() => toggleAllocationSort('entry_day')}>Dia de entrada{allocationSortIndicator('entry_day')}</button></th>
@@ -295,7 +303,7 @@ export function CohortDetailPage() {
                         </p>
                       ) : null}
                     </td>
-                    <td className="actions">
+                    <td className="actions actions-compact">
                       <button onClick={() => updateStatus(a.id, 'Confirmado')}>Confirmar</button>
                       <button onClick={() => updateStatus(a.id, 'Executado')}>Executado</button>
                       <button onClick={() => updateStatus(a.id, 'Cancelado')}>Cancelar</button>
@@ -304,6 +312,7 @@ export function CohortDetailPage() {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
         ))}
       </Section>

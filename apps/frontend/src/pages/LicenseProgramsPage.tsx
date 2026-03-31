@@ -135,6 +135,7 @@ export function LicenseProgramsPage() {
 
       <Section title={editingId ? 'Editar programa' : 'Novo programa'}>
         <div className="form">
+          <p className="form-hint">Use o catálogo de programas para padronizar nomes e eliminar variações de digitação no cadastro de licenças.</p>
           <div className="two-col">
             <label>
               Nome do programa
@@ -153,7 +154,7 @@ export function LicenseProgramsPage() {
               />
             </label>
           </div>
-          <div className="actions">
+          <div className="actions actions-compact">
             <button type="button" onClick={submitProgram}>
               {editingId ? 'Salvar alterações' : 'Adicionar programa'}
             </button>
@@ -189,7 +190,7 @@ export function LicenseProgramsPage() {
                 <td><strong>{row.name}</strong></td>
                 <td>{row.notes || '—'}</td>
                 <td>{row.usage_count}</td>
-                <td className="actions">
+                <td className="actions actions-compact">
                   <button type="button" onClick={() => editProgram(row)}>Editar</button>
                   <button
                     type="button"

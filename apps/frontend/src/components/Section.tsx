@@ -10,7 +10,7 @@ export function Section({
     <section className={`panel ${className ?? ''}`.trim()}>
       <header className="panel-header">
         <h2>{title}</h2>
-        {action}
+        {action ? <div className="panel-header-actions">{action}</div> : null}
       </header>
       <div className="panel-content">{children}</div>
     </section>

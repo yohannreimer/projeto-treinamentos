@@ -25,6 +25,8 @@ export function statusLabel(value: string): string {
     Turma_Online: 'Turma online',
     Exclusivo_Online: 'Exclusivo online',
     Presencial: 'Presencial',
+    Nosso: 'Nosso',
+    Terceiro: 'Terceiro',
     Integral: 'Integral',
     Meio_periodo: 'Meio período',
     Online: 'Online',

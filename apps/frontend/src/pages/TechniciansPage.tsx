@@ -19,7 +19,7 @@ function moduleShortLabel(name: string): string {
     .trim();
 }
 
-type TechSortKey = 'name' | 'monthly_load';
+type TechSortKey = 'name' | 'monthly_load' | 'hourly_cost';
 type TechCalendarSortKey = 'start_date' | 'code' | 'occupancy' | 'status';
 
 export function TechniciansPage() {
@@ -33,6 +33,10 @@ export function TechniciansPage() {
   const [error, setError] = useState('');
   const [newName, setNewName] = useState('');
   const [newNotes, setNewNotes] = useState('');
+  const [newHourlyCost, setNewHourlyCost] = useState('');
+  const [selectedName, setSelectedName] = useState('');
+  const [selectedAvailabilityNotes, setSelectedAvailabilityNotes] = useState('');
+  const [selectedHourlyCost, setSelectedHourlyCost] = useState('');
   const [sortKey, setSortKey] = useState<TechSortKey>('name');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [calendarSortKey, setCalendarSortKey] = useState<TechCalendarSortKey>('start_date');
@@ -71,6 +75,13 @@ export function TechniciansPage() {
       })
       .filter(Boolean);
     setSelectedSkills(normalizedSkills);
+    setSelectedName(selected?.name ?? '');
+    setSelectedAvailabilityNotes(selected?.availability_notes ?? '');
+    setSelectedHourlyCost(
+      selected?.hourly_cost == null || Number.isNaN(Number(selected.hourly_cost))
+        ? ''
+        : String(Number(selected.hourly_cost))
+    );
   }, [selectedId, techs, modules]);
 
   useEffect(() => {
@@ -89,6 +100,9 @@ export function TechniciansPage() {
       const direction = sortDirection === 'asc' ? 1 : -1;
       if (sortKey === 'monthly_load') {
         return (Number(a.monthly_load ?? 0) - Number(b.monthly_load ?? 0)) * direction;
+      }
+      if (sortKey === 'hourly_cost') {
+        return (Number(a.hourly_cost ?? 0) - Number(b.hourly_cost ?? 0)) * direction;
       }
       return String(a.name ?? '').localeCompare(String(b.name ?? '')) * direction;
     });
@@ -170,10 +184,12 @@ export function TechniciansPage() {
     try {
       const response = await api.createTechnician({
         name: newName.trim(),
-        availability_notes: newNotes.trim() || null
+        availability_notes: newNotes.trim() || null,
+        hourly_cost: newHourlyCost.trim() ? Number(newHourlyCost) : null
       }) as any;
       setNewName('');
       setNewNotes('');
+      setNewHourlyCost('');
       setMessage('Técnico adicionado com sucesso.');
       await loadBase();
       if (response?.id) {
@@ -203,6 +219,34 @@ export function TechniciansPage() {
     }
   }
 
+  async function saveTechnicianReference() {
+    if (!selectedId) return;
+    if (!selectedName.trim()) {
+      setError('Informe o nome do técnico.');
+      return;
+    }
+
+    const normalizedHourlyCost = selectedHourlyCost.trim() === '' ? null : Number(selectedHourlyCost);
+    if (normalizedHourlyCost !== null && (Number.isNaN(normalizedHourlyCost) || normalizedHourlyCost < 0)) {
+      setError('Custo/h inválido.');
+      return;
+    }
+
+    setError('');
+    setMessage('');
+    try {
+      await api.updateTechnician(selectedId, {
+        name: selectedName.trim(),
+        availability_notes: selectedAvailabilityNotes.trim() || null,
+        hourly_cost: normalizedHourlyCost
+      });
+      setMessage('Referências do técnico atualizadas.');
+      await loadBase();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
   return (
     <div className="page technicians-page">
       <header className="page-header"><h1>Técnicos</h1></header>
@@ -210,7 +254,8 @@ export function TechniciansPage() {
       {message ? <p className="info">{message}</p> : null}
 
       <Section title="Adicionar técnico">
-        <div className="form">
+        <div className="form form-spacious">
+          <p className="form-hint">Cadastre o técnico e depois marque as capacitações no painel ao lado.</p>
           <label>
             Nome
             <input value={newName} onChange={(event) => setNewName(event.target.value)} />
@@ -219,16 +264,29 @@ export function TechniciansPage() {
             Observações de disponibilidade
             <input value={newNotes} onChange={(event) => setNewNotes(event.target.value)} />
           </label>
+          <label>
+            Custo/h (R$)
+            <input
+              type="number"
+              min={0}
+              step="0.01"
+              value={newHourlyCost}
+              onChange={(event) => setNewHourlyCost(event.target.value)}
+              placeholder="Ex.: 180.00"
+            />
+          </label>
           <button type="button" onClick={createTechnician}>Adicionar técnico</button>
         </div>
       </Section>
 
       <div className="two-col">
         <Section title="Lista e carga">
-          <table className="table table-hover technicians-list-table">
+          <div className="table-wrap">
+          <table className="table table-hover table-tight technicians-list-table">
             <thead><tr>
               <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('name')}>Nome{sortIndicator('name')}</button></th>
               <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('monthly_load')}>Carga no mês{sortIndicator('monthly_load')}</button></th>
+              <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('hourly_cost')}>Custo/h{sortIndicator('hourly_cost')}</button></th>
               <th>Capacitações</th>
             </tr></thead>
             <tbody>
@@ -236,6 +294,7 @@ export function TechniciansPage() {
                 <tr key={tech.id} onClick={() => setSelectedId(tech.id)} className={selectedId === tech.id ? 'row-selected' : ''}>
                   <td className="technicians-name-cell">{tech.name}</td>
                   <td className="technicians-load-cell">{tech.monthly_load}</td>
+                  <td>{tech.hourly_cost == null ? '-' : `R$ ${Number(tech.hourly_cost).toFixed(2)}`}</td>
                   <td className="technicians-skills-cell">
                     {(tech.skills ?? []).length === 0 ? (
                       <span className="muted">-</span>
@@ -251,40 +310,102 @@ export function TechniciansPage() {
                   </td>
                 </tr>
               ))}
+              {sortedTechs.length === 0 ? (
+                <tr>
+                  <td colSpan={4}>
+                    <p className="muted">Nenhum técnico cadastrado.</p>
+                  </td>
+                </tr>
+              ) : null}
             </tbody>
           </table>
+          </div>
         </Section>
 
         <Section title="Editar capacitações">
-          <p><strong>Técnico selecionado:</strong> {selectedTech?.name ?? '-'}</p>
-          <div className="check-grid technicians-check-grid">
-            {modules.map((module) => (
-              <label key={module.id}>
-                <input
-                  type="checkbox"
-                  checked={selectedSkills.includes(module.id)}
-                  onChange={() => toggleModule(module.id)}
-                />
-                {module.name}
-              </label>
-            ))}
-          </div>
-          <div className="actions">
-            <button type="button" onClick={saveSkills}>Salvar capacitações</button>
-            <button type="button" onClick={deleteSelectedTechnician} disabled={!selectedTech}>Excluir técnico</button>
-          </div>
+          {!selectedTech ? (
+            <div className="technicians-empty-state">
+              <strong>Selecione um técnico na lista</strong>
+              <p className="muted">Após selecionar, você consegue editar custo/h, disponibilidade e capacitações.</p>
+            </div>
+          ) : (
+            <>
+              <div className="technicians-selected-meta">
+                <span className="chip chip-confirmada">{selectedTech.name}</span>
+                <span className="chip">Carga no mês: {selectedTech.monthly_load}</span>
+                <span className="chip">Custo/h: {selectedTech.hourly_cost == null ? '-' : `R$ ${Number(selectedTech.hourly_cost).toFixed(2)}`}</span>
+              </div>
+
+              <div className="form-subcard">
+                <strong>Dados do técnico</strong>
+                <div className="technicians-reference-grid">
+                  <label>
+                    Nome
+                    <input
+                      value={selectedName}
+                      onChange={(event) => setSelectedName(event.target.value)}
+                    />
+                  </label>
+                  <label>
+                    Custo/h (R$)
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={selectedHourlyCost}
+                      onChange={(event) => setSelectedHourlyCost(event.target.value)}
+                      placeholder="Ex.: 180.00"
+                    />
+                  </label>
+                  <label>
+                    Observações de disponibilidade
+                    <input
+                      value={selectedAvailabilityNotes}
+                      onChange={(event) => setSelectedAvailabilityNotes(event.target.value)}
+                    />
+                  </label>
+                </div>
+              </div>
+
+              <div className="form-subcard">
+                <strong>Capacitações do técnico</strong>
+                <div className="check-grid technicians-check-grid">
+                  {modules.map((module) => (
+                    <label key={module.id} className="technicians-skill-option">
+                      <input
+                        type="checkbox"
+                        checked={selectedSkills.includes(module.id)}
+                        onChange={() => toggleModule(module.id)}
+                        disabled={!selectedTech}
+                      />
+                      <span>{module.name}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div className="actions actions-compact">
+                <button type="button" onClick={saveTechnicianReference}>Salvar referências</button>
+                <button type="button" onClick={saveSkills} disabled={!selectedTech}>Salvar capacitações</button>
+                <button type="button" onClick={deleteSelectedTechnician}>Excluir técnico</button>
+              </div>
+            </>
+          )}
         </Section>
       </div>
 
-      <Section title="Calendário individual do técnico">
-        <div className="actions">
+      <Section
+        title="Calendário individual do técnico"
+        action={(
           <label>
             Mês
             <input type="month" value={month} onChange={(event) => setMonth(event.target.value)} />
           </label>
-        </div>
+        )}
+      >
         {calendarRows.length === 0 ? <p>Sem turmas para este técnico no período.</p> : (
-          <table className="table">
+          <div className="table-wrap">
+          <table className="table table-tight">
             <thead><tr>
               <th><button type="button" className="table-sort-btn" onClick={() => toggleCalendarSort('start_date')}>Data{calendarSortIndicator('start_date')}</button></th>
               <th><button type="button" className="table-sort-btn" onClick={() => toggleCalendarSort('code')}>Turma{calendarSortIndicator('code')}</button></th>
@@ -312,6 +433,7 @@ export function TechniciansPage() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </Section>
     </div>

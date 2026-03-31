@@ -44,7 +44,6 @@ export function LicensesPage() {
   });
   const [companies, setCompanies] = useState<Array<{ id: string; name: string }>>([]);
   const [programs, setPrograms] = useState<LicenseProgram[]>([]);
-  const [modules, setModules] = useState<Array<{ id: string; code: string; name: string }>>([]);
 
   const [query, setQuery] = useState('');
   const [message, setMessage] = useState('');
@@ -56,20 +55,18 @@ export function LicensesPage() {
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [companyId, setCompanyId] = useState('');
-  const [programId, setProgramId] = useState('');
   const [userName, setUserName] = useState('');
-  const [selectedModuleIds, setSelectedModuleIds] = useState<string[]>([]);
+  const [selectedProgramNames, setSelectedProgramNames] = useState<string[]>([]);
   const [licenseIdentifier, setLicenseIdentifier] = useState('');
   const [renewalCycle, setRenewalCycle] = useState<RenewalCycle>('Mensal');
   const [expiresAt, setExpiresAt] = useState(new Date().toISOString().slice(0, 10));
   const [notes, setNotes] = useState('');
 
   async function load() {
-    const [licensesResponse, companiesResponse, programsResponse, modulesResponse] = await Promise.all([
+    const [licensesResponse, companiesResponse, programsResponse] = await Promise.all([
       api.licenses(),
       api.companies(),
-      api.licensePrograms(),
-      api.modules()
+      api.licensePrograms()
     ]);
 
     const payload = licensesResponse as LicenseAlertsResponse;
@@ -81,11 +78,6 @@ export function LicensesPage() {
       ...program,
       usage_count: Number(program.usage_count ?? 0)
     }));
-    const moduleRows = (modulesResponse as Array<{ id: string; code: string; name: string }>).map((module) => ({
-      id: module.id,
-      code: module.code,
-      name: module.name
-    }));
 
     setRows(payload.rows ?? []);
     setAlerts(payload.alerts ?? {
@@ -96,13 +88,9 @@ export function LicensesPage() {
     });
     setCompanies(companyRows);
     setPrograms(programRows);
-    setModules(moduleRows);
 
     if (!companyId && companyRows.length > 0) {
       setCompanyId(companyRows[0].id);
-    }
-    if (!programId && programRows.length > 0) {
-      setProgramId(programRows[0].id);
     }
   }
 
@@ -190,7 +178,7 @@ export function LicensesPage() {
   function resetForm() {
     setEditingId(null);
     setUserName('');
-    setSelectedModuleIds([]);
+    setSelectedProgramNames([]);
     setLicenseIdentifier('');
     setRenewalCycle('Mensal');
     setExpiresAt(new Date().toISOString().slice(0, 10));
@@ -200,9 +188,13 @@ export function LicensesPage() {
   function editLicense(row: LicenseRow) {
     setEditingId(row.id);
     setCompanyId(row.company_id);
-    setProgramId(row.program_id ?? '');
     setUserName(row.user_name);
-    setSelectedModuleIds(row.module_ids ?? []);
+    const parsedProgramNames = row.module_list
+      .split('|')
+      .map((item) => item.trim())
+      .filter(Boolean);
+    const knownProgramNames = parsedProgramNames.filter((name) => programs.some((program) => program.name === name));
+    setSelectedProgramNames(knownProgramNames.length > 0 ? knownProgramNames : [row.program_name].filter((name) => programs.some((program) => program.name === name)));
     setLicenseIdentifier(row.license_identifier);
     setRenewalCycle(row.renewal_cycle);
     setExpiresAt(row.expires_at);
@@ -210,19 +202,29 @@ export function LicensesPage() {
   }
 
   async function submitLicense() {
-    if (!companyId || !programId || !userName.trim() || selectedModuleIds.length === 0 || !licenseIdentifier.trim() || !expiresAt) {
-      setError('Preencha os campos obrigatórios: Cliente, Programa, Usuário, Módulos, ID e Vencimento.');
+    if (!companyId || !userName.trim() || selectedProgramNames.length === 0 || !licenseIdentifier.trim() || !expiresAt) {
+      setError('Preencha os campos obrigatórios: Cliente, Usuário, Programas da licença, ID e Vencimento.');
       return;
     }
 
     setError('');
     setMessage('');
 
+    const normalizedProgramNames = Array.from(new Set(selectedProgramNames.map((name) => name.trim()).filter(Boolean)));
+    const selectedProgramRows = normalizedProgramNames
+      .map((name) => programs.find((program) => program.name === name))
+      .filter((program): program is LicenseProgram => Boolean(program));
+    if (selectedProgramRows.length === 0) {
+      setError('Selecione ao menos um programa válido da lista.');
+      return;
+    }
+    const primaryProgramId = selectedProgramRows[0].id;
+
     const payload = {
       company_id: companyId,
-      program_id: programId,
+      program_id: primaryProgramId,
       user_name: userName.trim(),
-      module_ids: selectedModuleIds,
+      module_list: selectedProgramRows.map((program) => program.name).join(' | '),
       license_identifier: licenseIdentifier.trim(),
       renewal_cycle: renewalCycle,
       expires_at: expiresAt,
@@ -284,11 +286,11 @@ export function LicensesPage() {
     }
   }
 
-  function toggleLicenseModule(moduleId: string) {
-    setSelectedModuleIds((prev) => (
-      prev.includes(moduleId)
-        ? prev.filter((id) => id !== moduleId)
-        : [...prev, moduleId]
+  function toggleLicenseProgram(programName: string) {
+    setSelectedProgramNames((prev) => (
+      prev.includes(programName)
+        ? prev.filter((name) => name !== programName)
+        : [...prev, programName]
     ));
   }
 
@@ -296,7 +298,7 @@ export function LicensesPage() {
     <div className="page licenses-page">
       <header className="page-header">
         <h1>Licenças</h1>
-        <p>Gestão por cliente com dados completos de usuário, módulos, ID da licença e vencimento.</p>
+        <p>Gestão por cliente com dados completos de usuário, programas da licença, ID da licença e vencimento.</p>
       </header>
 
       {error ? <p className="error">{error}</p> : null}
@@ -336,7 +338,8 @@ export function LicensesPage() {
         )}
       >
         <div className="form form-spacious">
-          <div className="three-col">
+          <p className="form-hint">Preencha cliente e usuário. O programa principal será o primeiro item marcado em Programas da licença.</p>
+          <div className="two-col">
             <label>
               Cliente
               <select value={companyId} onChange={(event) => setCompanyId(event.target.value)}>
@@ -347,31 +350,22 @@ export function LicensesPage() {
               </select>
             </label>
             <label>
-              Programa
-              <select value={programId} onChange={(event) => setProgramId(event.target.value)}>
-                <option value="">Selecione</option>
-                {programs.map((program) => (
-                  <option key={program.id} value={program.id}>{program.name}</option>
-                ))}
-              </select>
-            </label>
-            <label>
               Usuário
               <input value={userName} onChange={(event) => setUserName(event.target.value)} placeholder="Nome do usuário" />
             </label>
           </div>
 
           <label className="licenses-modules-field">
-            Módulos da licença
+            Programas da licença
             <div className="check-grid licenses-modules-grid">
-              {modules.map((module) => (
-                <label key={module.id}>
+              {programs.map((program) => (
+                <label key={program.id} className="licenses-program-option">
                   <input
                     type="checkbox"
-                    checked={selectedModuleIds.includes(module.id)}
-                    onChange={() => toggleLicenseModule(module.id)}
+                    checked={selectedProgramNames.includes(program.name)}
+                    onChange={() => toggleLicenseProgram(program.name)}
                   />
-                  {module.name}
+                  {program.name}
                 </label>
               ))}
             </div>
@@ -419,7 +413,8 @@ export function LicensesPage() {
 
       <Section title="Avisos de renovação">
         {alerts.total_attention === 0 ? <p>Nenhum aviso pendente no momento.</p> : (
-          <table className="table table-hover">
+          <div className="table-wrap table-wrap-wide">
+          <table className="table table-hover table-tight">
             <thead>
               <tr>
                 <th><button type="button" className="table-sort-btn" onClick={() => toggleAttentionSort('company_name')}>Cliente{attentionSortIndicator('company_name')}</button></th>
@@ -448,6 +443,7 @@ export function LicensesPage() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </Section>
 
@@ -455,19 +451,20 @@ export function LicensesPage() {
         title="Base de licenças"
         action={
           <input
-            placeholder="Buscar por cliente, programa, usuário, módulos, ID..."
+            placeholder="Buscar por cliente, programa, usuário, programas, ID..."
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />
         }
       >
+        <div className="table-wrap table-wrap-wide">
         <table className="table table-hover table-tight">
           <thead>
             <tr>
               <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('company_name')}>Cliente{sortIndicator('company_name')}</button></th>
               <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('program_name')}>Programa{sortIndicator('program_name')}</button></th>
               <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('user_name')}>Usuário{sortIndicator('user_name')}</button></th>
-              <th>Módulos</th>
+              <th>Programas</th>
               <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('license_identifier')}>ID{sortIndicator('license_identifier')}</button></th>
               <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('renewal_cycle')}>Tipo{sortIndicator('renewal_cycle')}</button></th>
               <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('expires_at')}>Vencimento{sortIndicator('expires_at')}</button></th>
@@ -490,7 +487,7 @@ export function LicensesPage() {
                   {row.alert_level === 'Atenção' ? <span className="chip chip-aguardando-quorum">Atenção</span> : null}
                   {row.alert_level === 'Expirada' ? <span className="chip chip-cancelada">Expirada</span> : null}
                 </td>
-                <td className="actions">
+                <td className="actions actions-compact">
                   <button type="button" onClick={() => renewLicense(row)}>
                     {row.renewal_cycle === 'Anual' ? 'Renovar +1 ano' : 'Renovar +30 dias'}
                   </button>
@@ -501,6 +498,7 @@ export function LicensesPage() {
             ))}
           </tbody>
         </table>
+        </div>
       </Section>
     </div>
   );

@@ -43,7 +43,8 @@ export function initDb() {
       contact_name text,
       contact_phone text,
       contact_email text,
-      modality text not null default 'Turma_Online'
+      modality text not null default 'Turma_Online',
+      is_third_party integer not null default 0
     );
 
     create table if not exists company_module_progress (
@@ -72,7 +73,8 @@ export function initDb() {
     create table if not exists technician (
       id text primary key,
       name text not null,
-      availability_notes text
+      availability_notes text,
+      hourly_cost real
     );
 
     create table if not exists technician_skill (
@@ -202,6 +204,32 @@ export function initDb() {
       created_at text not null,
       updated_at text not null
     );
+
+    create table if not exists implementation_kanban_card (
+      id text primary key,
+      title text not null,
+      description text,
+      status text not null default 'Todo',
+      column_id text,
+      client_name text,
+      module_name text,
+      priority text not null default 'Normal',
+      due_date text,
+      attachment_image_data_url text,
+      position integer not null default 0,
+      created_at text not null,
+      updated_at text not null,
+      foreign key(column_id) references implementation_kanban_column(id) on delete set null
+    );
+
+    create table if not exists implementation_kanban_column (
+      id text primary key,
+      title text not null,
+      color text,
+      position integer not null default 0,
+      created_at text not null,
+      updated_at text not null
+    );
   `);
 
   ensureColumn('company', 'priority', 'priority integer not null default 0');
@@ -210,6 +238,7 @@ export function initDb() {
   ensureColumn('company', 'contact_phone', 'contact_phone text');
   ensureColumn('company', 'contact_email', 'contact_email text');
   ensureColumn('company', 'modality', "modality text not null default 'Turma_Online'");
+  ensureColumn('company', 'is_third_party', 'is_third_party integer not null default 0');
   ensureColumn('company_module_progress', 'custom_duration_days', 'custom_duration_days integer');
   ensureColumn('company_module_progress', 'custom_units', 'custom_units integer');
   ensureColumn('cohort', 'period', "period text not null default 'Integral'");
@@ -225,6 +254,54 @@ export function initDb() {
   ensureColumn('company_license', 'user_name', 'user_name text');
   ensureColumn('company_license', 'module_list', 'module_list text');
   ensureColumn('company_license', 'license_identifier', 'license_identifier text');
+  ensureColumn('technician', 'hourly_cost', 'hourly_cost real');
+  ensureColumn('implementation_kanban_card', 'column_id', 'column_id text');
+  ensureColumn('implementation_kanban_card', 'client_name', 'client_name text');
+  ensureColumn('implementation_kanban_card', 'module_name', 'module_name text');
+  ensureColumn('implementation_kanban_card', 'priority', "priority text not null default 'Normal'");
+  ensureColumn('implementation_kanban_card', 'due_date', 'due_date text');
+  ensureColumn('implementation_kanban_card', 'attachment_image_data_url', 'attachment_image_data_url text');
+
+  const nowIso = new Date().toISOString().slice(0, 10);
+  const defaultKanbanColumns: Array<{ id: string; title: string; color: string; position: number }> = [
+    { id: 'kcol-todo', title: 'A fazer', color: '#7b8ea8', position: 0 },
+    { id: 'kcol-doing', title: 'Em andamento', color: '#b17613', position: 1 },
+    { id: 'kcol-done', title: 'Concluído', color: '#1c8b61', position: 2 }
+  ];
+  const existingColumnCount = db.prepare('select count(*) as count from implementation_kanban_column').get() as { count: number };
+  if (existingColumnCount.count === 0) {
+    const insertColumn = db.prepare(`
+      insert into implementation_kanban_column (id, title, color, position, created_at, updated_at)
+      values (?, ?, ?, ?, ?, ?)
+    `);
+    defaultKanbanColumns.forEach((column) => {
+      insertColumn.run(column.id, column.title, column.color, column.position, nowIso, nowIso);
+    });
+  }
+
+  const statusToColumnId: Record<string, string> = {
+    Todo: 'kcol-todo',
+    Doing: 'kcol-doing',
+    Done: 'kcol-done'
+  };
+  const cardsWithoutColumn = db.prepare(`
+    select id, status
+    from implementation_kanban_card
+    where column_id is null or trim(column_id) = ''
+  `).all() as Array<{ id: string; status: string }>;
+  if (cardsWithoutColumn.length > 0) {
+    const firstColumn = db.prepare(`
+      select id
+      from implementation_kanban_column
+      order by position asc, created_at asc
+      limit 1
+    `).get() as { id: string } | undefined;
+    const fallbackColumnId = firstColumn?.id ?? 'kcol-todo';
+    const updateCardColumn = db.prepare('update implementation_kanban_card set column_id = ? where id = ?');
+    cardsWithoutColumn.forEach((card) => {
+      updateCardColumn.run(statusToColumnId[card.status] ?? fallbackColumnId, card.id);
+    });
+  }
 
   const licenseProgramCount = db.prepare('select count(*) as count from license_program').get() as { count: number };
   if (licenseProgramCount.count === 0) {
@@ -337,6 +414,8 @@ export function seedDb() {
 
 export function clearAllData() {
   db.exec(`
+    delete from implementation_kanban_card;
+    delete from implementation_kanban_column;
     delete from recruitment_candidate;
     delete from company_license_module;
     delete from company_license;

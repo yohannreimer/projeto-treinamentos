@@ -12,7 +12,7 @@ seedDb();
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '5mb' }));
 app.use((_req, _res, next) => {
   try {
     syncConfirmedCohortExecutions();
@@ -29,10 +29,22 @@ const DESTRUCTIVE_CONFIRMATION_PHRASE = 'APAGAR_BASE_TOTAL';
 const COMPANY_STATUS_VALUES = ['Ativo', 'Inativo', 'Em_treinamento', 'Finalizado'] as const;
 const COMPANY_PRIORITY_VALUES = ['Alta', 'Normal', 'Baixa', 'Parado', 'Aguardando_liberacao'] as const;
 const COMPANY_MODALITY_VALUES = ['Turma_Online', 'Exclusivo_Online', 'Presencial'] as const;
+const COMPANY_RELATION_VALUES = ['Nosso', 'Terceiro'] as const;
 const COHORT_PERIOD_VALUES = ['Integral', 'Meio_periodo'] as const;
 const COHORT_DELIVERY_MODE_VALUES = ['Online', 'Presencial', 'Hibrida'] as const;
 const RECRUITMENT_STAGE_VALUES = ['Triagem', 'Primeira_entrevista', 'Segunda_fase', 'Final'] as const;
 const RECRUITMENT_STATUS_VALUES = ['Em_processo', 'Stand_by', 'Aprovado', 'Reprovado', 'Banco_de_talentos'] as const;
+const KANBAN_CARD_PRIORITY_VALUES = ['Alta', 'Normal', 'Baixa', 'Critica'] as const;
+const IMPLEMENTATION_KANBAN_DEFAULT_COLUMNS = [
+  { id: 'kcol-todo', title: 'A fazer', color: '#7b8ea8' },
+  { id: 'kcol-doing', title: 'Em andamento', color: '#b17613' },
+  { id: 'kcol-done', title: 'Concluído', color: '#1c8b61' }
+] as const;
+
+const kanbanCardImageSchema = z
+  .string()
+  .max(3_000_000)
+  .refine((value) => value.startsWith('data:image/'), 'Anexo deve ser uma imagem válida em data URL.');
 
 const cohortBlockSchema = z.object({
   module_id: z.string(),
@@ -120,6 +132,53 @@ const licenseUpdateSchema = z.object({
   renewal_cycle: z.enum(['Mensal', 'Anual']).optional(),
   expires_at: z.string().min(10).optional(),
   notes: z.string().nullable().optional()
+});
+
+const kanbanCardCreateSchema = z.object({
+  title: z.string().min(1).max(160),
+  description: z.string().nullable().optional(),
+  column_id: z.string().min(1),
+  client_name: z.string().max(120).nullable().optional(),
+  module_name: z.string().max(180).nullable().optional(),
+  priority: z.enum(KANBAN_CARD_PRIORITY_VALUES).optional(),
+  due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  attachment_image_data_url: kanbanCardImageSchema.nullable().optional()
+});
+
+const kanbanCardUpdateSchema = z.object({
+  title: z.string().min(1).max(160).optional(),
+  description: z.string().nullable().optional(),
+  column_id: z.string().min(1).optional(),
+  position: z.number().int().min(0).optional(),
+  client_name: z.string().max(120).nullable().optional(),
+  module_name: z.string().max(180).nullable().optional(),
+  priority: z.enum(KANBAN_CARD_PRIORITY_VALUES).optional(),
+  due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  attachment_image_data_url: kanbanCardImageSchema.nullable().optional()
+});
+
+const kanbanBoardReorderSchema = z.object({
+  columns: z.array(
+    z.object({
+      column_id: z.string().min(1),
+      card_ids: z.array(z.string())
+    })
+  ).min(1)
+});
+
+const kanbanColumnCreateSchema = z.object({
+  title: z.string().min(1).max(80),
+  color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional()
+});
+
+const kanbanColumnUpdateSchema = z.object({
+  title: z.string().min(1).max(80).optional(),
+  color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  position: z.number().int().min(0).optional()
+});
+
+const kanbanColumnReorderSchema = z.object({
+  column_ids: z.array(z.string()).min(1)
 });
 
 function getInstallationModule(): { id: string; code: string } | null {
@@ -273,6 +332,80 @@ function normalizeCompanyModality(modality?: string | null): (typeof COMPANY_MOD
   if (normalized === 'exclusivo_online') return 'Exclusivo_Online';
   if (normalized === 'presencial') return 'Presencial';
   return 'Turma_Online';
+}
+
+function normalizeCompanyRelation(relation?: string | null): (typeof COMPANY_RELATION_VALUES)[number] {
+  const normalized = normalizeToken(relation ?? '');
+  if (normalized === 'terceiro') return 'Terceiro';
+  if (normalized === 'nosso') return 'Nosso';
+  return 'Nosso';
+}
+
+function cohortCodeExists(code: string, excludeCohortId?: string): boolean {
+  if (!code.trim()) return false;
+  if (excludeCohortId) {
+    const row = db.prepare(`
+      select 1 as ok
+      from cohort
+      where upper(code) = upper(?) and id <> ?
+      limit 1
+    `).get(code.trim(), excludeCohortId) as { ok: number } | undefined;
+    return Boolean(row?.ok);
+  }
+  const row = db.prepare(`
+    select 1 as ok
+    from cohort
+    where upper(code) = upper(?)
+    limit 1
+  `).get(code.trim()) as { ok: number } | undefined;
+  return Boolean(row?.ok);
+}
+
+function nextAutoCohortCode(): string {
+  const rows = db.prepare(`
+    select code
+    from cohort
+    where upper(code) like 'TUR-%'
+  `).all() as Array<{ code: string }>;
+
+  let maxNumeric = 0;
+  rows.forEach((row) => {
+    const match = row.code.toUpperCase().match(/^TUR-(\d+)$/);
+    if (!match) return;
+    const numeric = Number(match[1]);
+    if (Number.isFinite(numeric)) {
+      maxNumeric = Math.max(maxNumeric, numeric);
+    }
+  });
+
+  let next = maxNumeric + 1;
+  let candidate = `TUR-${String(next).padStart(3, '0')}`;
+  while (cohortCodeExists(candidate)) {
+    next += 1;
+    candidate = `TUR-${String(next).padStart(3, '0')}`;
+  }
+
+  return candidate;
+}
+
+function resolveUniqueCohortCode(requestedCode: string, excludeCohortId?: string): string {
+  const normalized = requestedCode.trim().toUpperCase();
+  if (!cohortCodeExists(normalized, excludeCohortId)) {
+    return normalized;
+  }
+
+  const turMatch = normalized.match(/^TUR-(\d+)$/);
+  if (turMatch) {
+    return nextAutoCohortCode();
+  }
+
+  let suffix = 2;
+  let candidate = `${normalized}-${suffix}`;
+  while (cohortCodeExists(candidate, excludeCohortId)) {
+    suffix += 1;
+    candidate = `${normalized}-${suffix}`;
+  }
+  return candidate;
 }
 
 function normalizeCompanyPriorityScore(priorityLevel: string): number {
@@ -935,6 +1068,7 @@ app.post('/cohorts', (req, res) => {
   }
 
   const cohortId = uuid('coh');
+  const resolvedCode = resolveUniqueCohortCode(payload.code);
 
   const tx = db.transaction(() => {
     db.prepare(`
@@ -942,7 +1076,7 @@ app.post('/cohorts', (req, res) => {
       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       cohortId,
-      payload.code.toUpperCase(),
+      resolvedCode,
       payload.name,
       payload.start_date,
       payload.technician_id ?? null,
@@ -972,7 +1106,7 @@ app.post('/cohorts', (req, res) => {
 
   try {
     tx();
-    return res.status(201).json({ id: cohortId });
+    return res.status(201).json({ id: cohortId, code: resolvedCode });
   } catch (err) {
     return res.status(400).json({ message: 'Erro ao criar turma', detail: errorMessage(err) });
   }
@@ -1061,8 +1195,13 @@ app.patch('/cohorts/:id', (req, res) => {
 
   Object.entries(payload).forEach(([key, value]) => {
     if (key === 'blocks') return;
+    if (key === 'code' && typeof value === 'string') {
+      fields.push('code = ?');
+      values.push(resolveUniqueCohortCode(value, req.params.id));
+      return;
+    }
     fields.push(`${key} = ?`);
-    values.push(key === 'code' && typeof value === 'string' ? value.toUpperCase() : value);
+    values.push(value);
   });
 
   if (fields.length === 0 && !payload.blocks) {
@@ -1498,9 +1637,15 @@ app.get('/companies', (req, res) => {
   const statusFilter = typeof req.query.status === 'string' ? req.query.status : '';
   const priorityFilter = typeof req.query.priority_level === 'string' ? req.query.priority_level : '';
   const modalityFilter = typeof req.query.modality === 'string' ? req.query.modality : '';
+  const thirdPartyFilterRaw = typeof req.query.is_third_party === 'string' ? req.query.is_third_party.trim() : '';
+  const thirdPartyFilter = thirdPartyFilterRaw === '1' || thirdPartyFilterRaw.toLowerCase() === 'true'
+    ? 1
+    : thirdPartyFilterRaw === '0' || thirdPartyFilterRaw.toLowerCase() === 'false'
+      ? 0
+      : -1;
 
   const rows = db.prepare(`
-    select c.id, c.name, c.status, c.priority_level, c.notes,
+    select c.id, c.name, c.status, c.priority_level, c.notes, c.is_third_party,
       c.contact_name, c.contact_phone, c.contact_email, c.modality,
       sum(case when coalesce(cma.is_enabled, 1) = 1 then 1 else 0 end) as total_modules,
       sum(
@@ -1537,6 +1682,7 @@ app.get('/companies', (req, res) => {
       and (? = '' or c.status = ?)
       and (? = '' or c.priority_level = ?)
       and (? = '' or c.modality = ?)
+      and (? = -1 or c.is_third_party = ?)
     group by c.id
     order by
       case c.priority_level
@@ -1558,13 +1704,16 @@ app.get('/companies', (req, res) => {
     priorityFilter,
     priorityFilter,
     modalityFilter,
-    modalityFilter
+    modalityFilter,
+    thirdPartyFilter,
+    thirdPartyFilter
   ) as Array<{
     id: string;
     name: string;
     status: string;
     priority_level: string;
     notes: string | null;
+    is_third_party: number;
     contact_name: string | null;
     contact_phone: string | null;
     contact_email: string | null;
@@ -1579,11 +1728,12 @@ app.get('/companies', (req, res) => {
   const installationId = installationModule?.id ?? null;
   const installationCode = installationModule?.code ?? INSTALLATION_CODES[0];
 
-  const withAlerts = rows.map((row) => {
+const withAlerts = rows.map((row) => {
     const installationEnabled = installationId ? hasModuleEnabled(row.id, installationId) : true;
     const hasInstallation = installationId ? (!installationEnabled || hasModuleCompleted(row.id, installationId)) : true;
     return {
       ...row,
+      relationship_type: row.is_third_party ? 'Terceiro' : 'Nosso',
       priority: normalizeCompanyPriorityScore(row.priority_level),
       completion_percent: row.total_modules === 0 ? 0 : Number(((row.modules_completed / row.total_modules) * 100).toFixed(1)),
       next_module_name: row.next_module_ref?.split('|').slice(1).join('|') ?? null,
@@ -1603,7 +1753,9 @@ app.post('/companies', (req, res) => {
     contact_name: z.string().nullable().optional(),
     contact_phone: z.string().nullable().optional(),
     contact_email: z.string().nullable().optional(),
-    modality: z.enum(COMPANY_MODALITY_VALUES).default('Turma_Online')
+    modality: z.enum(COMPANY_MODALITY_VALUES).default('Turma_Online'),
+    relationship_type: z.enum(COMPANY_RELATION_VALUES).optional(),
+    is_third_party: z.boolean().optional()
   });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) {
@@ -1614,8 +1766,10 @@ app.post('/companies', (req, res) => {
   const priorityLevel = normalizeCompanyPriorityLevel(parsed.data.priority_level);
   try {
     db.prepare(`
-      insert into company (id, name, status, notes, priority, priority_level, contact_name, contact_phone, contact_email, modality)
-      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      insert into company (
+        id, name, status, notes, priority, priority_level, contact_name, contact_phone, contact_email, modality, is_third_party
+      )
+      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       companyId,
       parsed.data.name.trim(),
@@ -1626,7 +1780,10 @@ app.post('/companies', (req, res) => {
       parsed.data.contact_name?.trim() || null,
       parsed.data.contact_phone?.trim() || null,
       parsed.data.contact_email?.trim() || null,
-      normalizeCompanyModality(parsed.data.modality)
+      normalizeCompanyModality(parsed.data.modality),
+      (typeof parsed.data.is_third_party === 'boolean'
+        ? parsed.data.is_third_party
+        : normalizeCompanyRelation(parsed.data.relationship_type) === 'Terceiro') ? 1 : 0
     );
 
     ensureCompanyDefaultRows(companyId);
@@ -1692,7 +1849,9 @@ app.patch('/companies/:id', (req, res) => {
     contact_name: z.string().nullable().optional(),
     contact_phone: z.string().nullable().optional(),
     contact_email: z.string().nullable().optional(),
-    modality: z.enum(COMPANY_MODALITY_VALUES).optional()
+    modality: z.enum(COMPANY_MODALITY_VALUES).optional(),
+    relationship_type: z.enum(COMPANY_RELATION_VALUES).optional(),
+    is_third_party: z.boolean().optional()
   });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) {
@@ -1737,6 +1896,14 @@ app.patch('/companies/:id', (req, res) => {
   if (typeof payload.modality !== 'undefined') {
     fields.push('modality = ?');
     values.push(normalizeCompanyModality(payload.modality));
+  }
+  if (typeof payload.relationship_type !== 'undefined') {
+    fields.push('is_third_party = ?');
+    values.push(normalizeCompanyRelation(payload.relationship_type) === 'Terceiro' ? 1 : 0);
+  }
+  if (typeof payload.is_third_party === 'boolean') {
+    fields.push('is_third_party = ?');
+    values.push(payload.is_third_party ? 1 : 0);
   }
 
   if (fields.length === 0) {
@@ -1795,6 +1962,10 @@ app.get('/companies/:id', (req, res) => {
   if (!company) {
     return res.status(404).json({ message: 'Empresa nao encontrada' });
   }
+  const companyPayload = {
+    ...(company as Record<string, unknown>),
+    relationship_type: (company as { is_third_party?: number }).is_third_party ? 'Terceiro' : 'Nosso'
+  };
 
   const timeline = db.prepare(`
     select mt.id as module_id, mt.code, mt.name, mt.category, mt.duration_days,
@@ -1878,7 +2049,7 @@ app.get('/companies/:id', (req, res) => {
     order by date(c.start_date) desc, a.entry_day asc
   `).all(req.params.id);
 
-  res.json({ company, timeline, optionals, history });
+  res.json({ company: companyPayload, timeline, optionals, history });
 });
 
 app.patch('/companies/:companyId/progress/:moduleId', (req, res) => {
@@ -2362,7 +2533,7 @@ app.post('/licenses/:id/renew', (req, res) => {
 
 app.get('/technicians', (_req, res) => {
   const rows = db.prepare(`
-    select t.id, t.name, t.availability_notes,
+    select t.id, t.name, t.availability_notes, t.hourly_cost,
       count(c.id) as monthly_load
     from technician t
     left join cohort c on c.technician_id = t.id
@@ -2393,6 +2564,7 @@ app.post('/technicians', (req, res) => {
   const schema = z.object({
     name: z.string().min(2),
     availability_notes: z.string().nullable().optional(),
+    hourly_cost: z.number().min(0).nullable().optional(),
     module_ids: z.array(z.string()).optional()
   });
   const parsed = schema.safeParse(req.body);
@@ -2403,9 +2575,14 @@ app.post('/technicians', (req, res) => {
   const technicianId = uuid('tech');
   const tx = db.transaction(() => {
     db.prepare(`
-      insert into technician (id, name, availability_notes)
-      values (?, ?, ?)
-    `).run(technicianId, parsed.data.name.trim(), parsed.data.availability_notes ?? null);
+      insert into technician (id, name, availability_notes, hourly_cost)
+      values (?, ?, ?, ?)
+    `).run(
+      technicianId,
+      parsed.data.name.trim(),
+      parsed.data.availability_notes ?? null,
+      parsed.data.hourly_cost ?? null
+    );
 
     const insertSkill = db.prepare('insert into technician_skill (technician_id, module_id) values (?, ?)');
     (parsed.data.module_ids ?? []).forEach((moduleId) => {
@@ -2425,6 +2602,7 @@ app.patch('/technicians/:id', (req, res) => {
   const schema = z.object({
     name: z.string().min(2).optional(),
     availability_notes: z.string().nullable().optional(),
+    hourly_cost: z.number().min(0).nullable().optional(),
     module_ids: z.array(z.string()).optional()
   });
   const parsed = schema.safeParse(req.body);
@@ -2447,6 +2625,10 @@ app.patch('/technicians/:id', (req, res) => {
   if (Object.prototype.hasOwnProperty.call(payload, 'availability_notes')) {
     fields.push('availability_notes = ?');
     values.push(payload.availability_notes ?? null);
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'hourly_cost')) {
+    fields.push('hourly_cost = ?');
+    values.push(payload.hourly_cost ?? null);
   }
 
   const tx = db.transaction(() => {
@@ -2574,6 +2756,367 @@ app.patch('/technicians/:id/skills', (req, res) => {
 
   tx();
   res.json({ ok: true });
+});
+
+app.get('/implementation/kanban', (_req, res) => {
+  const columns = db.prepare(`
+    select id, title, color, position, created_at, updated_at
+    from implementation_kanban_column
+    order by position asc, created_at asc
+  `).all() as Array<{
+    id: string;
+    title: string;
+    color: string | null;
+    position: number;
+    created_at: string;
+    updated_at: string;
+  }>;
+
+  if (columns.length === 0) {
+    const nowIso = nowDateIso();
+    const insert = db.prepare(`
+      insert into implementation_kanban_column (id, title, color, position, created_at, updated_at)
+      values (?, ?, ?, ?, ?, ?)
+    `);
+    IMPLEMENTATION_KANBAN_DEFAULT_COLUMNS.forEach((column, index) => {
+      insert.run(column.id, column.title, column.color, index, nowIso, nowIso);
+    });
+  }
+
+  const hydratedColumns = (columns.length === 0
+    ? db.prepare(`
+      select id, title, color, position, created_at, updated_at
+      from implementation_kanban_column
+      order by position asc, created_at asc
+    `).all()
+    : columns) as Array<{
+      id: string;
+      title: string;
+      color: string | null;
+      position: number;
+      created_at: string;
+      updated_at: string;
+    }>;
+
+  const cards = db.prepare(`
+    select
+      id,
+      title,
+      description,
+      column_id,
+      client_name,
+      module_name,
+      priority,
+      due_date,
+      attachment_image_data_url,
+      position,
+      created_at,
+      updated_at
+    from implementation_kanban_card
+    order by position asc, created_at asc
+  `).all() as Array<{
+    id: string;
+    title: string;
+    description: string | null;
+    column_id: string | null;
+    client_name: string | null;
+    module_name: string | null;
+    priority: string;
+    due_date: string | null;
+    attachment_image_data_url: string | null;
+    position: number;
+    created_at: string;
+    updated_at: string;
+  }>;
+
+  res.json({
+    columns: hydratedColumns.map((column) => ({
+      ...column,
+      cards: cards.filter((card) => card.column_id === column.id)
+    }))
+  });
+});
+
+app.post('/implementation/kanban/cards', (req, res) => {
+  const parsed = kanbanCardCreateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json(parsed.error.flatten());
+  }
+
+  const payload = parsed.data;
+  const column = db.prepare('select id from implementation_kanban_column where id = ?').get(payload.column_id) as { id: string } | undefined;
+  if (!column) {
+    return res.status(404).json({ message: 'Coluna não encontrada.' });
+  }
+
+  const cardId = uuid('kbn');
+  const nowIso = nowDateIso();
+  const nextPositionRow = db.prepare(`
+    select coalesce(max(position), -1) + 1 as next_position
+    from implementation_kanban_card
+    where column_id = ?
+  `).get(payload.column_id) as { next_position: number };
+
+  db.prepare(`
+    insert into implementation_kanban_card (
+      id, title, description, status, column_id, client_name, module_name, priority, due_date,
+      attachment_image_data_url, position, created_at, updated_at
+    )
+    values (?, ?, ?, 'Todo', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    cardId,
+    payload.title.trim(),
+    payload.description?.trim() || null,
+    payload.column_id,
+    payload.client_name?.trim() || null,
+    payload.module_name?.trim() || null,
+    payload.priority ?? 'Normal',
+    payload.due_date ?? null,
+    payload.attachment_image_data_url ?? null,
+    nextPositionRow.next_position,
+    nowIso,
+    nowIso
+  );
+
+  return res.status(201).json({ id: cardId });
+});
+
+app.patch('/implementation/kanban/cards/:id', (req, res) => {
+  const parsed = kanbanCardUpdateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json(parsed.error.flatten());
+  }
+
+  const exists = db.prepare('select id from implementation_kanban_card where id = ?').get(req.params.id) as { id: string } | undefined;
+  if (!exists) {
+    return res.status(404).json({ message: 'Card não encontrado' });
+  }
+
+  const payload = parsed.data;
+  const fields: string[] = [];
+  const values: unknown[] = [];
+
+  if (typeof payload.title === 'string') {
+    fields.push('title = ?');
+    values.push(payload.title.trim());
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'description')) {
+    fields.push('description = ?');
+    values.push(payload.description?.trim() || null);
+  }
+  if (typeof payload.column_id === 'string') {
+    const column = db.prepare('select id from implementation_kanban_column where id = ?').get(payload.column_id) as { id: string } | undefined;
+    if (!column) {
+      return res.status(404).json({ message: 'Coluna não encontrada.' });
+    }
+    fields.push('column_id = ?');
+    values.push(payload.column_id);
+  }
+  if (typeof payload.position === 'number') {
+    fields.push('position = ?');
+    values.push(payload.position);
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'client_name')) {
+    fields.push('client_name = ?');
+    values.push(payload.client_name?.trim() || null);
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'module_name')) {
+    fields.push('module_name = ?');
+    values.push(payload.module_name?.trim() || null);
+  }
+  if (typeof payload.priority === 'string') {
+    fields.push('priority = ?');
+    values.push(payload.priority);
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'due_date')) {
+    fields.push('due_date = ?');
+    values.push(payload.due_date ?? null);
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'attachment_image_data_url')) {
+    fields.push('attachment_image_data_url = ?');
+    values.push(payload.attachment_image_data_url ?? null);
+  }
+
+  fields.push('updated_at = ?');
+  values.push(nowDateIso());
+  values.push(req.params.id);
+
+  db.prepare(`update implementation_kanban_card set ${fields.join(', ')} where id = ?`).run(...values);
+  return res.json({ ok: true });
+});
+
+app.post('/implementation/kanban/reorder', (req, res) => {
+  const parsed = kanbanBoardReorderSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json(parsed.error.flatten());
+  }
+
+  const columns = db.prepare('select id from implementation_kanban_column').all() as Array<{ id: string }>;
+  const columnIdSet = new Set(columns.map((column) => column.id));
+  if (parsed.data.columns.some((column) => !columnIdSet.has(column.column_id))) {
+    return res.status(400).json({ message: 'Board inválido: contém coluna inexistente.' });
+  }
+
+  const cards = db.prepare('select id from implementation_kanban_card').all() as Array<{ id: string }>;
+  const cardIdSet = new Set(cards.map((card) => card.id));
+  const providedCardIds = parsed.data.columns.flatMap((column) => column.card_ids);
+  if (providedCardIds.some((cardId) => !cardIdSet.has(cardId))) {
+    return res.status(400).json({ message: 'Board inválido: contém card inexistente.' });
+  }
+  if (new Set(providedCardIds).size !== providedCardIds.length) {
+    return res.status(400).json({ message: 'Board inválido: card duplicado entre colunas.' });
+  }
+
+  const tx = db.transaction(() => {
+    const update = db.prepare(`
+      update implementation_kanban_card
+      set column_id = ?, position = ?, updated_at = ?
+      where id = ?
+    `);
+    const nowIso = nowDateIso();
+    parsed.data.columns.forEach((column) => {
+      column.card_ids.forEach((cardId, index) => {
+        update.run(column.column_id, index, nowIso, cardId);
+      });
+    });
+  });
+
+  tx();
+  return res.json({ ok: true });
+});
+
+app.post('/implementation/kanban/columns', (req, res) => {
+  const parsed = kanbanColumnCreateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json(parsed.error.flatten());
+  }
+
+  const payload = parsed.data;
+  const columnId = uuid('kcol');
+  const nextPosition = db.prepare(`
+    select coalesce(max(position), -1) + 1 as next_position
+    from implementation_kanban_column
+  `).get() as { next_position: number };
+  const nowIso = nowDateIso();
+  db.prepare(`
+    insert into implementation_kanban_column (id, title, color, position, created_at, updated_at)
+    values (?, ?, ?, ?, ?, ?)
+  `).run(
+    columnId,
+    payload.title.trim(),
+    payload.color ?? '#7b8ea8',
+    nextPosition.next_position,
+    nowIso,
+    nowIso
+  );
+
+  return res.status(201).json({ id: columnId });
+});
+
+app.patch('/implementation/kanban/columns/:id', (req, res) => {
+  const parsed = kanbanColumnUpdateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json(parsed.error.flatten());
+  }
+
+  const exists = db.prepare('select id from implementation_kanban_column where id = ?').get(req.params.id) as { id: string } | undefined;
+  if (!exists) {
+    return res.status(404).json({ message: 'Coluna não encontrada.' });
+  }
+
+  const payload = parsed.data;
+  const fields: string[] = [];
+  const values: unknown[] = [];
+  if (typeof payload.title === 'string') {
+    fields.push('title = ?');
+    values.push(payload.title.trim());
+  }
+  if (typeof payload.color === 'string') {
+    fields.push('color = ?');
+    values.push(payload.color);
+  }
+  if (typeof payload.position === 'number') {
+    fields.push('position = ?');
+    values.push(payload.position);
+  }
+  fields.push('updated_at = ?');
+  values.push(nowDateIso());
+  values.push(req.params.id);
+
+  db.prepare(`update implementation_kanban_column set ${fields.join(', ')} where id = ?`).run(...values);
+  return res.json({ ok: true });
+});
+
+app.post('/implementation/kanban/columns/reorder', (req, res) => {
+  const parsed = kanbanColumnReorderSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json(parsed.error.flatten());
+  }
+
+  const columns = db.prepare('select id from implementation_kanban_column').all() as Array<{ id: string }>;
+  const existingColumnIdSet = new Set(columns.map((column) => column.id));
+  if (parsed.data.column_ids.some((columnId) => !existingColumnIdSet.has(columnId))) {
+    return res.status(400).json({ message: 'Ordem inválida: coluna não encontrada.' });
+  }
+  if (new Set(parsed.data.column_ids).size !== parsed.data.column_ids.length) {
+    return res.status(400).json({ message: 'Ordem inválida: coluna duplicada.' });
+  }
+
+  const tx = db.transaction(() => {
+    const update = db.prepare(`
+      update implementation_kanban_column
+      set position = ?, updated_at = ?
+      where id = ?
+    `);
+    const nowIso = nowDateIso();
+    parsed.data.column_ids.forEach((columnId, index) => {
+      update.run(index, nowIso, columnId);
+    });
+  });
+  tx();
+  return res.json({ ok: true });
+});
+
+app.delete('/implementation/kanban/columns/:id', (req, res) => {
+  if (!requireDestructiveConfirmation(req, res, 'excluir coluna do kanban')) {
+    return;
+  }
+
+  const exists = db.prepare('select id from implementation_kanban_column where id = ?').get(req.params.id) as { id: string } | undefined;
+  if (!exists) {
+    return res.status(404).json({ message: 'Coluna não encontrada.' });
+  }
+
+  const cardCount = db.prepare(`
+    select count(*) as count
+    from implementation_kanban_card
+    where column_id = ?
+  `).get(req.params.id) as { count: number };
+  if (cardCount.count > 0) {
+    return res.status(400).json({ message: 'Coluna possui cards. Mova ou exclua os cards antes de remover a coluna.' });
+  }
+
+  const totalColumns = db.prepare('select count(*) as count from implementation_kanban_column').get() as { count: number };
+  if (totalColumns.count <= 1) {
+    return res.status(400).json({ message: 'O kanban precisa de pelo menos uma coluna.' });
+  }
+
+  db.prepare('delete from implementation_kanban_column where id = ?').run(req.params.id);
+  return res.json({ ok: true });
+});
+
+app.delete('/implementation/kanban/cards/:id', (req, res) => {
+  if (!requireDestructiveConfirmation(req, res, 'excluir card do kanban')) {
+    return;
+  }
+
+  const exists = db.prepare('select id from implementation_kanban_card where id = ?').get(req.params.id) as { id: string } | undefined;
+  if (!exists) {
+    return res.status(404).json({ message: 'Card não encontrado' });
+  }
+
+  db.prepare('delete from implementation_kanban_card where id = ?').run(req.params.id);
+  return res.json({ ok: true });
 });
 
 app.get('/recruitment/candidates', (_req, res) => {

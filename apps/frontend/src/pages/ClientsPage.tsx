@@ -8,11 +8,13 @@ import { statusLabel } from '../utils/labels';
 const statusOptions = ['Em_treinamento', 'Finalizado', 'Ativo', 'Inativo'] as const;
 const priorityOptions = ['Alta', 'Normal', 'Baixa', 'Parado', 'Aguardando_liberacao'] as const;
 const modalityOptions = ['Turma_Online', 'Exclusivo_Online', 'Presencial'] as const;
+const relationshipOptions = ['Nosso', 'Terceiro'] as const;
 type SortKey =
   | 'name'
   | 'contact_name'
   | 'contact_email'
   | 'modality'
+  | 'relationship_type'
   | 'completion_percent'
   | 'next_module_name'
   | 'priority_level'
@@ -43,6 +45,7 @@ export function ClientsPage() {
   const [statusFilter, setStatusFilter] = useState('');
   const [priorityFilter, setPriorityFilter] = useState('');
   const [modalityFilter, setModalityFilter] = useState('');
+  const [thirdPartyFilter, setThirdPartyFilter] = useState('');
 
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -53,6 +56,7 @@ export function ClientsPage() {
   const [newContactPhone, setNewContactPhone] = useState('');
   const [newContactEmail, setNewContactEmail] = useState('');
   const [newModality, setNewModality] = useState<(typeof modalityOptions)[number]>('Turma_Online');
+  const [newRelationshipType, setNewRelationshipType] = useState<(typeof relationshipOptions)[number]>('Nosso');
   const [newPriorityLevel, setNewPriorityLevel] = useState<(typeof priorityOptions)[number]>('Normal');
   const [newStatus, setNewStatus] = useState<(typeof statusOptions)[number]>('Em_treinamento');
   const [sortKey, setSortKey] = useState<SortKey>('priority_level');
@@ -72,13 +76,15 @@ export function ClientsPage() {
       if (statusFilter && row.status !== statusFilter) return false;
       if (priorityFilter && row.priority_level !== priorityFilter) return false;
       if (modalityFilter && row.modality !== modalityFilter) return false;
+      if (thirdPartyFilter === '1' && !row.is_third_party) return false;
+      if (thirdPartyFilter === '0' && row.is_third_party) return false;
       if (!normalizedQuery) return true;
 
       return `${row.name} ${row.contact_name ?? ''} ${row.contact_email ?? ''} ${row.contact_phone ?? ''}`
         .toLowerCase()
         .includes(normalizedQuery);
     });
-  }, [rows, query, statusFilter, priorityFilter, modalityFilter]);
+  }, [rows, query, statusFilter, priorityFilter, modalityFilter, thirdPartyFilter]);
 
   const ordered = useMemo(() => {
     const list = [...filtered];
@@ -102,6 +108,7 @@ export function ClientsPage() {
         case 'contact_name':
         case 'contact_email':
         case 'modality':
+        case 'relationship_type':
         case 'status':
         case 'alert': {
           const left = String(a[sortKey] ?? '');
@@ -131,11 +138,12 @@ export function ClientsPage() {
     const inTraining = rows.filter((row) => row.status === 'Em_treinamento' || row.status === 'Ativo').length;
     const finalized = rows.filter((row) => row.status === 'Finalizado').length;
     const blocked = rows.filter((row) => row.alert).length;
+    const thirdParty = rows.filter((row) => Boolean(row.is_third_party)).length;
     const averageCompletion = total > 0
       ? Number((rows.reduce((sum, row) => sum + Number(row.completion_percent ?? 0), 0) / total).toFixed(1))
       : 0;
 
-    return { total, inTraining, finalized, blocked, averageCompletion };
+    return { total, inTraining, finalized, blocked, thirdParty, averageCompletion };
   }, [rows]);
 
   async function createClient() {
@@ -156,12 +164,16 @@ export function ClientsPage() {
         contact_phone: newContactPhone.trim() || null,
         contact_email: newContactEmail.trim() || null,
         modality: newModality
+        ,
+        relationship_type: newRelationshipType,
+        is_third_party: newRelationshipType === 'Terceiro'
       });
       setNewName('');
       setNewContactName('');
       setNewContactPhone('');
       setNewContactEmail('');
       setNewModality('Turma_Online');
+      setNewRelationshipType('Nosso');
       setNewPriorityLevel('Normal');
       setNewStatus('Em_treinamento');
       setMessage('Cliente criado com sucesso.');
@@ -250,11 +262,16 @@ export function ClientsPage() {
           <span>Clientes com alerta</span>
           <strong>{stats.blocked}</strong>
         </article>
+        <article className="mini-stat">
+          <span>Clientes terceiros</span>
+          <strong>{stats.thirdParty}</strong>
+        </article>
       </div>
 
       <div className="clients-tools-grid">
         <Section title="Cadastro de cliente" className="clients-create-panel">
           <div className="form form-spacious">
+            <p className="form-hint">Preencha os dados principais para o planejamento comercial e operacional.</p>
             <div className="three-col">
               <label>
                 Empresa
@@ -300,6 +317,17 @@ export function ClientsPage() {
                 </select>
               </label>
               <label>
+                Tipo de cliente
+                <select
+                  value={newRelationshipType}
+                  onChange={(event) => setNewRelationshipType(event.target.value as (typeof relationshipOptions)[number])}
+                >
+                  {relationshipOptions.map((option) => (
+                    <option key={option} value={option}>{statusLabel(option)}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
                 Prioridade
                 <select value={newPriorityLevel} onChange={(event) => setNewPriorityLevel(event.target.value as (typeof priorityOptions)[number])}>
                   {priorityOptions.map((option) => (
@@ -327,6 +355,7 @@ export function ClientsPage() {
 
         <Section title="Filtros" className="clients-filter-panel">
           <div className="form form-spacious">
+            <p className="form-hint">Filtre rapidamente por status, prioridade, modalidade ou busca textual.</p>
             <label>
               Busca rápida
               <input
@@ -364,6 +393,14 @@ export function ClientsPage() {
                   ))}
                 </select>
               </label>
+              <label>
+                Tipo de cliente
+                <select value={thirdPartyFilter} onChange={(event) => setThirdPartyFilter(event.target.value)}>
+                  <option value="">Todos os tipos</option>
+                  <option value="0">Nosso</option>
+                  <option value="1">Terceiro</option>
+                </select>
+              </label>
             </div>
 
             <div className="actions">
@@ -374,6 +411,7 @@ export function ClientsPage() {
                   setStatusFilter('');
                   setPriorityFilter('');
                   setModalityFilter('');
+                  setThirdPartyFilter('');
                 }}
               >
                 Limpar filtros
@@ -384,6 +422,7 @@ export function ClientsPage() {
       </div>
 
       <Section title="Carteira de clientes" className="clients-table-panel">
+        <div className="table-wrap table-wrap-wide">
         <table className="table table-hover table-tight">
           <thead>
             <tr>
@@ -405,6 +444,11 @@ export function ClientsPage() {
               <th className="clients-ops-only">
                 <button type="button" className="table-sort-btn" onClick={() => toggleSort('modality')}>
                   Modalidade{sortIndicator('modality')}
+                </button>
+              </th>
+              <th className="clients-ops-only">
+                <button type="button" className="table-sort-btn" onClick={() => toggleSort('relationship_type')}>
+                  Tipo cliente{sortIndicator('relationship_type')}
                 </button>
               </th>
               <th>
@@ -455,6 +499,21 @@ export function ClientsPage() {
                     ))}
                   </select>
                 </td>
+                <td className="clients-ops-only">
+                  <select
+                    value={row.is_third_party ? 'Terceiro' : 'Nosso'}
+                    onChange={(event) => patchCompany(
+                      row.id,
+                      { relationship_type: event.target.value, is_third_party: event.target.value === 'Terceiro' },
+                      'Tipo de cliente atualizado.'
+                    )}
+                    disabled={savingId === row.id}
+                  >
+                    {relationshipOptions.map((option) => (
+                      <option key={option} value={option}>{statusLabel(option)}</option>
+                    ))}
+                  </select>
+                </td>
                 <td>{row.completion_percent}%</td>
                 <td>{row.next_module_name ?? row.next_module_code ?? '-'}</td>
                 <td>
@@ -480,7 +539,7 @@ export function ClientsPage() {
                   </select>
                 </td>
                 <td className="clients-ops-only">{row.alert ? <span className="chip chip-aguardando_quorum">{row.alert}</span> : '-'}</td>
-                <td className="actions">
+                <td className="actions actions-compact">
                   <Link to={`/clientes/${row.id}`} className="action-link-button">Abrir perfil</Link>
                   <button type="button" onClick={() => deleteClient(row.id, row.name)}>Excluir</button>
                 </td>
@@ -488,13 +547,14 @@ export function ClientsPage() {
             ))}
             {ordered.length === 0 ? (
               <tr>
-                <td colSpan={10}>
+                <td colSpan={11}>
                   <p className="muted">Nenhum cliente encontrado com os filtros atuais.</p>
                 </td>
               </tr>
             ) : null}
           </tbody>
         </table>
+        </div>
       </Section>
     </div>
   );

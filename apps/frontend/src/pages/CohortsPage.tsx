@@ -58,6 +58,12 @@ function moduleDurationById(modules: Module[], moduleId: string): number {
   return Math.max(1, Number(duration) || 1);
 }
 
+function formatDateBr(dateIso: string): string {
+  const [year, month, day] = dateIso.split('-').map(Number);
+  if (!year || !month || !day) return dateIso;
+  return new Date(year, month - 1, day).toLocaleDateString('pt-BR');
+}
+
 function modulesFromEntry(blocks: CohortBlock[], entryModuleId: string): string[] {
   const entry = blocks.find((block) => block.module_id === entryModuleId);
   if (!entry) return blocks.map((block) => block.module_id);
@@ -106,7 +112,13 @@ export function CohortsPage() {
   const [technicianConflictCohortId, setTechnicianConflictCohortId] = useState<string | null>(null);
 
   function suggestedCode(rows: Cohort[]) {
-    const next = rows.length + 1;
+    const maxNumeric = rows.reduce((acc, row) => {
+      const match = String(row.code ?? '').toUpperCase().match(/^TUR-(\d+)$/);
+      if (!match) return acc;
+      const numeric = Number(match[1]);
+      return Number.isFinite(numeric) ? Math.max(acc, numeric) : acc;
+    }, 0);
+    const next = maxNumeric + 1;
     return `TUR-${String(next).padStart(3, '0')}`;
   }
 
@@ -590,7 +602,8 @@ export function CohortsPage() {
             </div>
           }
         >
-          <table className="table table-hover">
+          <div className="table-wrap">
+          <table className="table table-hover table-tight">
             <thead>
               <tr>
                 <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('code')}>Turma{sortIndicator('code')}</button></th>
@@ -608,14 +621,14 @@ export function CohortsPage() {
                     <strong>{cohort.code}</strong>
                     <div>{cohort.name}</div>
                   </td>
-                  <td>{cohort.start_date}</td>
+                  <td>{formatDateBr(cohort.start_date)}</td>
                   <td>{statusLabel(cohort.delivery_mode ?? 'Online')} · {statusLabel(cohort.period ?? 'Integral')}</td>
                   <td>{cohort.technician_name ?? 'Sem técnico'}</td>
                   <td><StatusChip value={cohort.status} /></td>
-                  <td className="actions">
+                  <td className="actions actions-compact">
                     <button type="button" onClick={() => startEdit(cohort.id)}>Editar</button>
                     <button type="button" onClick={() => deleteCohort(cohort)}>Excluir</button>
-                    <Link to={`/turmas/${cohort.id}`}>Abrir</Link>
+                    <Link to={`/turmas/${cohort.id}`} className="action-link-button">Abrir</Link>
                   </td>
                 </tr>
               ))}
@@ -628,6 +641,7 @@ export function CohortsPage() {
               ) : null}
             </tbody>
           </table>
+          </div>
         </Section>
 
         {showForm ? (
@@ -635,6 +649,7 @@ export function CohortsPage() {
             <form className="form form-spacious" onSubmit={submit}>
             <div className="wizard-step">
               <h3 className="wizard-step-title"><span className="step-index">1</span>Informações principais</h3>
+              <p className="form-hint">Defina dados da turma e valide conflito de agenda antes de salvar.</p>
               <div className="three-col">
                 <label>
                   Código
@@ -769,7 +784,8 @@ export function CohortsPage() {
 
             <div className="wizard-step">
               <h3 className="wizard-step-title"><span className="step-index">3</span>Prévia da sequência</h3>
-              <table className="table table-tight">
+              <div className="table-wrap">
+              <table className="table table-hover table-tight">
                 <thead>
                   <tr>
                     <th>Ordem</th>
@@ -795,6 +811,7 @@ export function CohortsPage() {
                   })}
                 </tbody>
               </table>
+              </div>
             </div>
 
             {editingId && editingDetail ? (
@@ -896,7 +913,8 @@ export function CohortsPage() {
                 {editingDetail.allocations.length === 0 ? (
                   <p>Nenhum cliente alocado ainda nesta turma.</p>
                 ) : (
-                  <table className="table table-tight">
+                  <div className="table-wrap">
+                  <table className="table table-hover table-tight">
                     <thead>
                       <tr>
                         <th>Cliente</th>
@@ -920,7 +938,7 @@ export function CohortsPage() {
                               </p>
                             ) : null}
                           </td>
-                          <td className="actions">
+                          <td className="actions actions-compact">
                             <button type="button" onClick={() => updateAllocationStatus(allocation.id, 'Confirmado')}>
                               Confirmar
                             </button>
@@ -935,6 +953,7 @@ export function CohortsPage() {
                       ))}
                     </tbody>
                   </table>
+                  </div>
                 )}
               </div>
             ) : null}

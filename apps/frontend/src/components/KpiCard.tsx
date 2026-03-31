@@ -5,7 +5,7 @@ export function KpiCard({ title, value, helper }: { title: string; value: ReactN
     <article className="kpi-card">
       <h3>{title}</h3>
       <strong>{value}</strong>
-      {helper ? <p>{helper}</p> : null}
+      {helper ? <p className="kpi-helper">{helper}</p> : null}
     </article>
   );
 }

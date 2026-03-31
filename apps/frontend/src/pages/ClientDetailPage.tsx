@@ -14,6 +14,7 @@ type ModuleEdit = {
 const statusOptions = ['Em_treinamento', 'Finalizado', 'Ativo', 'Inativo'] as const;
 const priorityOptions = ['Alta', 'Normal', 'Baixa', 'Parado', 'Aguardando_liberacao'] as const;
 const modalityOptions = ['Turma_Online', 'Exclusivo_Online', 'Presencial'] as const;
+const relationshipOptions = ['Nosso', 'Terceiro'] as const;
 const progressStatusOptions = ['Nao_iniciado', 'Planejado', 'Em_execucao', 'Concluido'] as const;
 type HistorySortKey = 'cohort_code' | 'start_date' | 'module_code' | 'entry_day' | 'status' | 'cohort_status' | 'executed_at';
 
@@ -28,6 +29,7 @@ export function ClientDetailPage() {
   const [companyStatus, setCompanyStatus] = useState<(typeof statusOptions)[number]>('Em_treinamento');
   const [companyPriority, setCompanyPriority] = useState<(typeof priorityOptions)[number]>('Normal');
   const [companyModality, setCompanyModality] = useState<(typeof modalityOptions)[number]>('Turma_Online');
+  const [companyRelationshipType, setCompanyRelationshipType] = useState<(typeof relationshipOptions)[number]>('Nosso');
   const [contactName, setContactName] = useState('');
   const [contactPhone, setContactPhone] = useState('');
   const [contactEmail, setContactEmail] = useState('');
@@ -62,6 +64,7 @@ export function ClientDetailPage() {
     setCompanyStatus((data.company.status ?? 'Em_treinamento') as (typeof statusOptions)[number]);
     setCompanyPriority((data.company.priority_level ?? 'Normal') as (typeof priorityOptions)[number]);
     setCompanyModality((data.company.modality ?? 'Turma_Online') as (typeof modalityOptions)[number]);
+    setCompanyRelationshipType((data.company.relationship_type ?? (data.company.is_third_party ? 'Terceiro' : 'Nosso')) as (typeof relationshipOptions)[number]);
     setContactName(data.company.contact_name ?? '');
     setContactPhone(data.company.contact_phone ?? '');
     setContactEmail(data.company.contact_email ?? '');
@@ -126,6 +129,9 @@ export function ClientDetailPage() {
         contact_name: contactName.trim() || null,
         contact_phone: contactPhone.trim() || null,
         contact_email: contactEmail.trim() || null
+        ,
+        relationship_type: companyRelationshipType,
+        is_third_party: companyRelationshipType === 'Terceiro'
       });
       setMessage('Dados do cliente atualizados.');
       load();
@@ -233,6 +239,7 @@ export function ClientDetailPage() {
         <>
           <Section title="Dados do cliente">
             <div className="form form-spacious">
+              <p className="form-hint">Perfil comercial e operacional do cliente para planejamento de agenda e progresso da jornada.</p>
               <div className="three-col">
                 <label>
                   Empresa
@@ -278,12 +285,23 @@ export function ClientDetailPage() {
                     ))}
                   </select>
                 </label>
+                <label>
+                  Tipo de cliente
+                  <select
+                    value={companyRelationshipType}
+                    onChange={(event) => setCompanyRelationshipType(event.target.value as (typeof relationshipOptions)[number])}
+                  >
+                    {relationshipOptions.map((option) => (
+                      <option key={option} value={option}>{statusLabel(option)}</option>
+                    ))}
+                  </select>
+                </label>
               </div>
               <label>
                 Observações
                 <textarea rows={2} value={companyNotes} onChange={(event) => setCompanyNotes(event.target.value)} />
               </label>
-              <div className="actions">
+              <div className="actions actions-compact">
                 <button type="button" onClick={saveCompanyProfile} disabled={savingCompany}>
                   {savingCompany ? 'Salvando...' : 'Salvar dados do cliente'}
                 </button>
@@ -375,7 +393,8 @@ export function ClientDetailPage() {
             </Section>
 
             <Section title="Opcionais">
-              <table className="table">
+              <div className="table-wrap">
+              <table className="table table-hover table-tight">
                 <thead><tr><th>Código</th><th>Nome</th><th>Status</th></tr></thead>
                 <tbody>
                   {data.optionals.map((optionalItem: any) => (
@@ -387,11 +406,13 @@ export function ClientDetailPage() {
                   ))}
                 </tbody>
               </table>
+              </div>
             </Section>
           </div>
 
           <Section title="Histórico de turmas">
-            <table className="table">
+            <div className="table-wrap">
+            <table className="table table-hover table-tight">
               <thead><tr>
                 <th><button type="button" className="table-sort-btn" onClick={() => toggleHistorySort('cohort_code')}>Turma{historySortIndicator('cohort_code')}</button></th>
                 <th><button type="button" className="table-sort-btn" onClick={() => toggleHistorySort('start_date')}>Data{historySortIndicator('start_date')}</button></th>
@@ -415,6 +436,7 @@ export function ClientDetailPage() {
                 ))}
               </tbody>
             </table>
+            </div>
           </Section>
         </>
       )}

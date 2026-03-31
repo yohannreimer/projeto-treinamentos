@@ -8,6 +8,7 @@ import { CohortDetailPage } from './pages/CohortDetailPage';
 import { ClientsPage } from './pages/ClientsPage';
 import { ClientDetailPage } from './pages/ClientDetailPage';
 import { TechniciansPage } from './pages/TechniciansPage';
+import { ImplementationPage } from './pages/ImplementationPage';
 import { LicensesPage } from './pages/LicensesPage';
 import { LicenseProgramsPage } from './pages/LicenseProgramsPage';
 import { RecruitmentPage } from './pages/RecruitmentPage';
@@ -51,6 +52,7 @@ export function App() {
         <Route path="/clientes" element={<ClientsPage />} />
         <Route path="/clientes/:id" element={<ClientDetailPage />} />
         <Route path="/tecnicos" element={<TechniciansPage />} />
+        <Route path="/implementacao" element={<ImplementationPage />} />
         <Route path="/processos-seletivos" element={<RecruitmentPage />} />
         <Route path="/licencas" element={<LicensesPage />} />
         <Route path="/licencas/programas" element={<LicenseProgramsPage />} />
