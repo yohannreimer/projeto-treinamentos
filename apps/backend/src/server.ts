@@ -12,7 +12,7 @@ seedDb();
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '5mb' }));
+app.use(express.json({ limit: '15mb' }));
 app.use((_req, _res, next) => {
   try {
     syncConfirmedCohortExecutions();
@@ -35,6 +35,9 @@ const COHORT_DELIVERY_MODE_VALUES = ['Online', 'Presencial', 'Hibrida'] as const
 const RECRUITMENT_STAGE_VALUES = ['Triagem', 'Primeira_entrevista', 'Segunda_fase', 'Final'] as const;
 const RECRUITMENT_STATUS_VALUES = ['Em_processo', 'Stand_by', 'Aprovado', 'Reprovado', 'Banco_de_talentos'] as const;
 const KANBAN_CARD_PRIORITY_VALUES = ['Alta', 'Normal', 'Baixa', 'Critica'] as const;
+const KANBAN_SUBCATEGORY_VALUES = ['Pre_vendas', 'Pos_vendas', 'Suporte', 'Implementacao'] as const;
+const CALENDAR_ACTIVITY_TYPE_VALUES = ['Visita_cliente', 'Pre_vendas', 'Pos_vendas', 'Suporte', 'Implementacao', 'Reuniao', 'Outro'] as const;
+const CALENDAR_ACTIVITY_STATUS_VALUES = ['Planejada', 'Em_andamento', 'Concluida', 'Cancelada'] as const;
 const IMPLEMENTATION_KANBAN_DEFAULT_COLUMNS = [
   { id: 'kcol-todo', title: 'A fazer', color: '#7b8ea8' },
   { id: 'kcol-doing', title: 'Em andamento', color: '#b17613' },
@@ -45,6 +48,11 @@ const kanbanCardImageSchema = z
   .string()
   .max(3_000_000)
   .refine((value) => value.startsWith('data:image/'), 'Anexo deve ser uma imagem válida em data URL.');
+
+const internalDocumentDataUrlSchema = z
+  .string()
+  .max(12_000_000)
+  .refine((value) => /^data:(application\/pdf|image\/[a-zA-Z0-9.+-]+);base64,/.test(value), 'Arquivo inválido.');
 
 const cohortBlockSchema = z.object({
   module_id: z.string(),
@@ -142,6 +150,9 @@ const kanbanCardCreateSchema = z.object({
   license_name: z.string().max(180).nullable().optional(),
   module_name: z.string().max(180).nullable().optional(),
   technician_id: z.string().nullable().optional(),
+  subcategory: z.enum(KANBAN_SUBCATEGORY_VALUES).nullable().optional(),
+  support_resolution: z.string().max(2000).nullable().optional(),
+  support_third_party_notes: z.string().max(2000).nullable().optional(),
   priority: z.enum(KANBAN_CARD_PRIORITY_VALUES).optional(),
   due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   attachment_image_data_url: kanbanCardImageSchema.nullable().optional()
@@ -156,9 +167,51 @@ const kanbanCardUpdateSchema = z.object({
   license_name: z.string().max(180).nullable().optional(),
   module_name: z.string().max(180).nullable().optional(),
   technician_id: z.string().nullable().optional(),
+  subcategory: z.enum(KANBAN_SUBCATEGORY_VALUES).nullable().optional(),
+  support_resolution: z.string().max(2000).nullable().optional(),
+  support_third_party_notes: z.string().max(2000).nullable().optional(),
   priority: z.enum(KANBAN_CARD_PRIORITY_VALUES).optional(),
   due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   attachment_image_data_url: kanbanCardImageSchema.nullable().optional()
+});
+
+const calendarActivityCreateSchema = z.object({
+  title: z.string().min(2).max(160),
+  activity_type: z.enum(CALENDAR_ACTIVITY_TYPE_VALUES).default('Outro'),
+  start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  end_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  all_day: z.boolean().optional().default(true),
+  start_time: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
+  end_time: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
+  technician_id: z.string().nullable().optional(),
+  technician_ids: z.array(z.string()).optional(),
+  company_id: z.string().nullable().optional(),
+  status: z.enum(CALENDAR_ACTIVITY_STATUS_VALUES).optional().default('Planejada'),
+  notes: z.string().max(2000).nullable().optional()
+});
+
+const calendarActivityUpdateSchema = z.object({
+  title: z.string().min(2).max(160).optional(),
+  activity_type: z.enum(CALENDAR_ACTIVITY_TYPE_VALUES).optional(),
+  start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  end_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  all_day: z.boolean().optional(),
+  start_time: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
+  end_time: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
+  technician_id: z.string().nullable().optional(),
+  technician_ids: z.array(z.string()).optional(),
+  company_id: z.string().nullable().optional(),
+  status: z.enum(CALENDAR_ACTIVITY_STATUS_VALUES).optional(),
+  notes: z.string().max(2000).nullable().optional()
+});
+
+const internalDocumentCreateSchema = z.object({
+  title: z.string().min(2).max(180),
+  category: z.string().max(120).nullable().optional(),
+  notes: z.string().max(2000).nullable().optional(),
+  file_name: z.string().min(1).max(200),
+  mime_type: z.string().min(3).max(120),
+  file_data_base64: internalDocumentDataUrlSchema
 });
 
 const kanbanBoardReorderSchema = z.object({
@@ -285,6 +338,19 @@ function getConfirmationPhraseFromRequest(req: express.Request): string | undefi
   return typeof bodyPhrase === 'string'
     ? bodyPhrase
     : queryPhrase ?? headerPhrase;
+}
+
+function decodeDataUrl(dataUrl: string): { mimeType: string; buffer: Buffer } {
+  const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+  if (!match) {
+    throw new Error('Arquivo inválido.');
+  }
+  const mimeType = match[1];
+  const base64 = match[2];
+  return {
+    mimeType,
+    buffer: Buffer.from(base64, 'base64')
+  };
 }
 
 function requireDestructiveConfirmation(
@@ -951,6 +1017,282 @@ app.get('/calendar/cohorts', (_req, res) => {
   `).all();
 
   res.json(rows);
+});
+
+app.get('/calendar/activities', (_req, res) => {
+  const rows = db.prepare(`
+    select ca.*,
+      coalesce((
+        select group_concat(ca2.technician_id, '|')
+        from (
+          select cat.technician_id
+          from calendar_activity_technician cat
+          where cat.activity_id = ca.id
+          order by cat.technician_id asc
+        ) ca2
+      ), '') as technician_ids_raw,
+      coalesce((
+        select group_concat(t2.name, ' | ')
+        from (
+          select t.name
+          from calendar_activity_technician cat
+          join technician t on t.id = cat.technician_id
+          where cat.activity_id = ca.id
+          order by t.name asc
+        ) t2
+      ), '') as technician_names,
+      c.name as company_name
+    from calendar_activity ca
+    left join company c on c.id = ca.company_id
+    order by date(ca.start_date) asc, coalesce(ca.start_time, '00:00') asc, ca.title asc
+  `).all();
+
+  return res.json(rows);
+});
+
+app.post('/calendar/activities', (req, res) => {
+  const parsed = calendarActivityCreateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json(parsed.error.flatten());
+  }
+
+  const payload = parsed.data;
+  const startDate = payload.start_date;
+  const endDate = payload.end_date ?? payload.start_date;
+  const technicianIds = Array.from(new Set((payload.technician_ids ?? [])
+    .concat(payload.technician_id ? [payload.technician_id] : [])
+    .map((item) => item.trim())
+    .filter(Boolean)));
+  if (endDate < startDate) {
+    return res.status(400).json({ message: 'Data final não pode ser menor que a data inicial.' });
+  }
+  if (!payload.all_day && payload.start_time && payload.end_time && payload.end_time < payload.start_time) {
+    return res.status(400).json({ message: 'Hora final não pode ser menor que a hora inicial.' });
+  }
+
+  const technicianExistsStmt = db.prepare('select id from technician where id = ?');
+  for (const technicianId of technicianIds) {
+    const technician = technicianExistsStmt.get(technicianId) as { id: string } | undefined;
+    if (!technician) {
+      return res.status(404).json({ message: 'Técnico não encontrado.' });
+    }
+  }
+  if (payload.company_id) {
+    const company = db.prepare('select id from company where id = ?').get(payload.company_id) as { id: string } | undefined;
+    if (!company) {
+      return res.status(404).json({ message: 'Cliente não encontrado.' });
+    }
+  }
+
+  const activityId = uuid('act');
+  const nowIso = nowDateIso();
+  const tx = db.transaction(() => {
+    db.prepare(`
+      insert into calendar_activity (
+        id, title, activity_type, start_date, end_date, all_day, start_time, end_time,
+        technician_id, company_id, status, notes, created_at, updated_at
+      )
+      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      activityId,
+      payload.title.trim(),
+      payload.activity_type,
+      startDate,
+      endDate,
+      payload.all_day ? 1 : 0,
+      payload.all_day ? null : (payload.start_time ?? null),
+      payload.all_day ? null : (payload.end_time ?? null),
+      technicianIds[0] ?? null,
+      payload.company_id ?? null,
+      payload.status,
+      payload.notes?.trim() || null,
+      nowIso,
+      nowIso
+    );
+
+    const insertTech = db.prepare(`
+      insert into calendar_activity_technician (activity_id, technician_id)
+      values (?, ?)
+    `);
+    technicianIds.forEach((technicianId) => insertTech.run(activityId, technicianId));
+  });
+  tx();
+
+  return res.status(201).json({ id: activityId });
+});
+
+app.patch('/calendar/activities/:id', (req, res) => {
+  const parsed = calendarActivityUpdateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json(parsed.error.flatten());
+  }
+
+  const existing = db.prepare(`
+    select id, start_date, end_date, all_day, start_time, end_time, technician_id
+    from calendar_activity
+    where id = ?
+  `).get(req.params.id) as {
+    id: string;
+    start_date: string;
+    end_date: string;
+    all_day: number;
+    start_time: string | null;
+    end_time: string | null;
+    technician_id: string | null;
+  } | undefined;
+  if (!existing) {
+    return res.status(404).json({ message: 'Atividade não encontrada.' });
+  }
+
+  const payload = parsed.data;
+  const nextStartDate = payload.start_date ?? existing.start_date;
+  const nextEndDate = payload.end_date ?? existing.end_date;
+  if (nextEndDate < nextStartDate) {
+    return res.status(400).json({ message: 'Data final não pode ser menor que a data inicial.' });
+  }
+  const nextAllDay = payload.all_day ?? Boolean(existing.all_day);
+  const nextStartTime = Object.prototype.hasOwnProperty.call(payload, 'start_time')
+    ? payload.start_time ?? null
+    : existing.start_time;
+  const nextEndTime = Object.prototype.hasOwnProperty.call(payload, 'end_time')
+    ? payload.end_time ?? null
+    : existing.end_time;
+  const nextTechnicianIds = payload.technician_ids
+    ? Array.from(new Set(payload.technician_ids.map((item) => item.trim()).filter(Boolean)))
+    : undefined;
+  const hasLegacyTechnicianPatch = Object.prototype.hasOwnProperty.call(payload, 'technician_id');
+  const hasTechnicianPatch = typeof nextTechnicianIds !== 'undefined' || hasLegacyTechnicianPatch;
+  const normalizedLegacyTechnicianId = hasLegacyTechnicianPatch ? (payload.technician_id?.trim() || null) : null;
+  if (!nextAllDay && nextStartTime && nextEndTime && nextEndTime < nextStartTime) {
+    return res.status(400).json({ message: 'Hora final não pode ser menor que a hora inicial.' });
+  }
+
+  const technicianExistsStmt = db.prepare('select id from technician where id = ?');
+  const technicianIdsToValidate = new Set<string>();
+  if (nextTechnicianIds) {
+    nextTechnicianIds.forEach((item) => technicianIdsToValidate.add(item));
+  } else if (normalizedLegacyTechnicianId) {
+    technicianIdsToValidate.add(normalizedLegacyTechnicianId);
+  }
+  for (const technicianId of technicianIdsToValidate) {
+    const technician = technicianExistsStmt.get(technicianId) as { id: string } | undefined;
+    if (!technician) {
+      return res.status(404).json({ message: 'Técnico não encontrado.' });
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'company_id') && payload.company_id) {
+    const company = db.prepare('select id from company where id = ?').get(payload.company_id) as { id: string } | undefined;
+    if (!company) {
+      return res.status(404).json({ message: 'Cliente não encontrado.' });
+    }
+  }
+
+  const fields: string[] = [];
+  const values: unknown[] = [];
+  if (typeof payload.title === 'string') {
+    fields.push('title = ?');
+    values.push(payload.title.trim());
+  }
+  if (typeof payload.activity_type === 'string') {
+    fields.push('activity_type = ?');
+    values.push(payload.activity_type);
+  }
+  if (typeof payload.start_date === 'string') {
+    fields.push('start_date = ?');
+    values.push(payload.start_date);
+  }
+  if (typeof payload.end_date === 'string') {
+    fields.push('end_date = ?');
+    values.push(payload.end_date);
+  }
+  if (typeof payload.all_day === 'boolean') {
+    fields.push('all_day = ?');
+    values.push(payload.all_day ? 1 : 0);
+    if (payload.all_day) {
+      fields.push('start_time = ?');
+      values.push(null);
+      fields.push('end_time = ?');
+      values.push(null);
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'start_time') && !nextAllDay) {
+    fields.push('start_time = ?');
+    values.push(payload.start_time ?? null);
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'end_time') && !nextAllDay) {
+    fields.push('end_time = ?');
+    values.push(payload.end_time ?? null);
+  }
+  if (hasTechnicianPatch) {
+    fields.push('technician_id = ?');
+    if (nextTechnicianIds) {
+      values.push(nextTechnicianIds[0] ?? null);
+    } else {
+      values.push(normalizedLegacyTechnicianId ?? null);
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'company_id')) {
+    fields.push('company_id = ?');
+    values.push(payload.company_id ?? null);
+  }
+  if (typeof payload.status === 'string') {
+    fields.push('status = ?');
+    values.push(payload.status);
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'notes')) {
+    fields.push('notes = ?');
+    values.push(payload.notes?.trim() || null);
+  }
+
+  if (fields.length === 0) {
+    if (nextTechnicianIds) {
+      const tx = db.transaction(() => {
+        db.prepare('delete from calendar_activity_technician where activity_id = ?').run(req.params.id);
+        const insertTech = db.prepare(`
+          insert into calendar_activity_technician (activity_id, technician_id)
+          values (?, ?)
+        `);
+        nextTechnicianIds.forEach((technicianId) => insertTech.run(req.params.id, technicianId));
+      });
+      tx();
+    }
+    return res.json({ ok: true });
+  }
+
+  fields.push('updated_at = ?');
+  values.push(nowDateIso());
+  values.push(req.params.id);
+  const tx = db.transaction(() => {
+    db.prepare(`update calendar_activity set ${fields.join(', ')} where id = ?`).run(...values);
+    if (nextTechnicianIds) {
+      db.prepare('delete from calendar_activity_technician where activity_id = ?').run(req.params.id);
+      const insertTech = db.prepare(`
+        insert into calendar_activity_technician (activity_id, technician_id)
+        values (?, ?)
+      `);
+      nextTechnicianIds.forEach((technicianId) => insertTech.run(req.params.id, technicianId));
+    } else if (hasLegacyTechnicianPatch) {
+      db.prepare('delete from calendar_activity_technician where activity_id = ?').run(req.params.id);
+      if (normalizedLegacyTechnicianId) {
+        db.prepare(`
+          insert into calendar_activity_technician (activity_id, technician_id)
+          values (?, ?)
+        `).run(req.params.id, normalizedLegacyTechnicianId);
+      }
+    }
+  });
+  tx();
+
+  return res.json({ ok: true });
+});
+
+app.delete('/calendar/activities/:id', (req, res) => {
+  const exists = db.prepare('select id from calendar_activity where id = ?').get(req.params.id) as { id: string } | undefined;
+  if (!exists) {
+    return res.status(404).json({ message: 'Atividade não encontrada.' });
+  }
+  db.prepare('delete from calendar_activity where id = ?').run(req.params.id);
+  return res.json({ ok: true });
 });
 
 app.get('/cohorts', (_req, res) => {
@@ -2260,6 +2602,93 @@ app.delete('/license-programs/:id', (req, res) => {
   return res.json({ ok: true });
 });
 
+app.get('/internal-documents', (_req, res) => {
+  const rows = db.prepare(`
+    select id, title, category, notes, file_name, mime_type, file_size_bytes, created_at, updated_at
+    from internal_document
+    order by date(updated_at) desc, title asc
+  `).all();
+  return res.json(rows);
+});
+
+app.post('/internal-documents', (req, res) => {
+  const parsed = internalDocumentCreateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json(parsed.error.flatten());
+  }
+
+  try {
+    const payload = parsed.data;
+    const decoded = decodeDataUrl(payload.file_data_base64);
+    const documentId = uuid('doc');
+    const nowIso = nowDateIso();
+
+    db.prepare(`
+      insert into internal_document (
+        id, title, category, notes, file_name, mime_type, file_data_base64,
+        file_size_bytes, created_at, updated_at
+      )
+      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      documentId,
+      payload.title.trim(),
+      payload.category?.trim() || null,
+      payload.notes?.trim() || null,
+      payload.file_name.trim(),
+      payload.mime_type.trim() || decoded.mimeType,
+      payload.file_data_base64,
+      decoded.buffer.length,
+      nowIso,
+      nowIso
+    );
+
+    return res.status(201).json({ id: documentId });
+  } catch (error) {
+    return res.status(400).json({ message: 'Não foi possível cadastrar documento.', detail: errorMessage(error) });
+  }
+});
+
+app.get('/internal-documents/:id/download', (req, res) => {
+  const row = db.prepare(`
+    select file_name, mime_type, file_data_base64
+    from internal_document
+    where id = ?
+  `).get(req.params.id) as {
+    file_name: string;
+    mime_type: string;
+    file_data_base64: string;
+  } | undefined;
+
+  if (!row) {
+    return res.status(404).json({ message: 'Documento não encontrado.' });
+  }
+
+  try {
+    const decoded = decodeDataUrl(row.file_data_base64);
+    const mimeType = row.mime_type?.trim() || decoded.mimeType || 'application/octet-stream';
+    const encodedFileName = encodeURIComponent(row.file_name);
+    res.setHeader('Content-Type', mimeType);
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodedFileName}`);
+    return res.send(decoded.buffer);
+  } catch (error) {
+    return res.status(500).json({ message: 'Arquivo corrompido.', detail: errorMessage(error) });
+  }
+});
+
+app.delete('/internal-documents/:id', (req, res) => {
+  if (!requireDestructiveConfirmation(req, res, 'excluir documento interno')) {
+    return;
+  }
+
+  const exists = db.prepare('select id from internal_document where id = ?').get(req.params.id) as { id: string } | undefined;
+  if (!exists) {
+    return res.status(404).json({ message: 'Documento não encontrado.' });
+  }
+
+  db.prepare('delete from internal_document where id = ?').run(req.params.id);
+  return res.json({ ok: true });
+});
+
 app.get('/licenses', (_req, res) => {
   const rows = db.prepare(`
     select l.id, l.company_id, c.name as company_name,
@@ -2812,6 +3241,9 @@ app.get('/implementation/kanban', (_req, res) => {
       license_name,
       module_name,
       technician_id,
+      subcategory,
+      support_resolution,
+      support_third_party_notes,
       priority,
       due_date,
       attachment_image_data_url,
@@ -2829,6 +3261,9 @@ app.get('/implementation/kanban', (_req, res) => {
     license_name: string | null;
     module_name: string | null;
     technician_id: string | null;
+    subcategory: (typeof KANBAN_SUBCATEGORY_VALUES)[number] | null;
+    support_resolution: string | null;
+    support_third_party_notes: string | null;
     priority: string;
     due_date: string | null;
     attachment_image_data_url: string | null;
@@ -2837,10 +3272,42 @@ app.get('/implementation/kanban', (_req, res) => {
     updated_at: string;
   }>;
 
+  const columnById = new Map(hydratedColumns.map((column) => [column.id, column]));
+  const today = new Date(`${nowDateIso()}T00:00:00`);
+  const cardsWithSupportAlerts = cards.map((card) => {
+    let support_alert_level: 'none' | 'stale' | 'done' = 'none';
+    let support_alert_message: string | null = null;
+
+    if (card.subcategory === 'Suporte') {
+      const columnTitle = (columnById.get(card.column_id ?? '')?.title ?? '').toLowerCase();
+      const isConcluded = columnTitle.includes('conclu');
+      if (isConcluded) {
+        support_alert_level = 'done';
+        support_alert_message = 'Suporte concluído: valide a documentação de fechamento.';
+      } else {
+        const updatedAt = new Date(`${card.updated_at}T00:00:00`);
+        if (!Number.isNaN(updatedAt.getTime())) {
+          const diffMs = today.getTime() - updatedAt.getTime();
+          const diffDays = Math.floor(diffMs / 86_400_000);
+          if (diffDays >= 2) {
+            support_alert_level = 'stale';
+            support_alert_message = `Suporte sem atualização há ${diffDays} dia(s).`;
+          }
+        }
+      }
+    }
+
+    return {
+      ...card,
+      support_alert_level,
+      support_alert_message
+    };
+  });
+
   res.json({
     columns: hydratedColumns.map((column) => ({
       ...column,
-      cards: cards.filter((card) => card.column_id === column.id)
+      cards: cardsWithSupportAlerts.filter((card) => card.column_id === column.id)
     }))
   });
 });
@@ -2873,10 +3340,11 @@ app.post('/implementation/kanban/cards', (req, res) => {
 
   db.prepare(`
     insert into implementation_kanban_card (
-      id, title, description, status, column_id, client_name, license_name, module_name, technician_id, priority, due_date,
+      id, title, description, status, column_id, client_name, license_name, module_name, technician_id, subcategory,
+      support_resolution, support_third_party_notes, priority, due_date,
       attachment_image_data_url, position, created_at, updated_at
     )
-    values (?, ?, ?, 'Todo', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    values (?, ?, ?, 'Todo', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     cardId,
     payload.title.trim(),
@@ -2886,6 +3354,9 @@ app.post('/implementation/kanban/cards', (req, res) => {
     payload.license_name?.trim() || null,
     payload.module_name?.trim() || null,
     payload.technician_id?.trim() || null,
+    payload.subcategory ?? null,
+    payload.support_resolution?.trim() || null,
+    payload.support_third_party_notes?.trim() || null,
     payload.priority ?? 'Normal',
     payload.due_date ?? null,
     payload.attachment_image_data_url ?? null,
@@ -2954,6 +3425,18 @@ app.patch('/implementation/kanban/cards/:id', (req, res) => {
     }
     fields.push('technician_id = ?');
     values.push(technicianId);
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'subcategory')) {
+    fields.push('subcategory = ?');
+    values.push(payload.subcategory ?? null);
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'support_resolution')) {
+    fields.push('support_resolution = ?');
+    values.push(payload.support_resolution?.trim() || null);
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'support_third_party_notes')) {
+    fields.push('support_third_party_notes = ?');
+    values.push(payload.support_third_party_notes?.trim() || null);
   }
   if (typeof payload.priority === 'string') {
     fields.push('priority = ?');

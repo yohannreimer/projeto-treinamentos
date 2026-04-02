@@ -205,6 +205,46 @@ export function initDb() {
       updated_at text not null
     );
 
+    create table if not exists calendar_activity (
+      id text primary key,
+      title text not null,
+      activity_type text not null default 'Outro',
+      start_date text not null,
+      end_date text not null,
+      all_day integer not null default 1,
+      start_time text,
+      end_time text,
+      technician_id text,
+      company_id text,
+      status text not null default 'Planejada',
+      notes text,
+      created_at text not null,
+      updated_at text not null,
+      foreign key(technician_id) references technician(id) on delete set null,
+      foreign key(company_id) references company(id) on delete set null
+    );
+
+    create table if not exists calendar_activity_technician (
+      activity_id text not null,
+      technician_id text not null,
+      primary key (activity_id, technician_id),
+      foreign key(activity_id) references calendar_activity(id) on delete cascade,
+      foreign key(technician_id) references technician(id) on delete cascade
+    );
+
+    create table if not exists internal_document (
+      id text primary key,
+      title text not null,
+      category text,
+      notes text,
+      file_name text not null,
+      mime_type text not null,
+      file_data_base64 text not null,
+      file_size_bytes integer not null default 0,
+      created_at text not null,
+      updated_at text not null
+    );
+
     create table if not exists implementation_kanban_card (
       id text primary key,
       title text not null,
@@ -215,6 +255,9 @@ export function initDb() {
       license_name text,
       module_name text,
       technician_id text,
+      subcategory text,
+      support_resolution text,
+      support_third_party_notes text,
       priority text not null default 'Normal',
       due_date text,
       attachment_image_data_url text,
@@ -262,9 +305,25 @@ export function initDb() {
   ensureColumn('implementation_kanban_card', 'license_name', 'license_name text');
   ensureColumn('implementation_kanban_card', 'module_name', 'module_name text');
   ensureColumn('implementation_kanban_card', 'technician_id', 'technician_id text');
+  ensureColumn('implementation_kanban_card', 'subcategory', 'subcategory text');
+  ensureColumn('implementation_kanban_card', 'support_resolution', 'support_resolution text');
+  ensureColumn('implementation_kanban_card', 'support_third_party_notes', 'support_third_party_notes text');
   ensureColumn('implementation_kanban_card', 'priority', "priority text not null default 'Normal'");
   ensureColumn('implementation_kanban_card', 'due_date', 'due_date text');
   ensureColumn('implementation_kanban_card', 'attachment_image_data_url', 'attachment_image_data_url text');
+
+  const activitiesWithSingleTechnician = db.prepare(`
+    select id, technician_id
+    from calendar_activity
+    where technician_id is not null and trim(technician_id) <> ''
+  `).all() as Array<{ id: string; technician_id: string }>;
+  const insertActivityTechnician = db.prepare(`
+    insert or ignore into calendar_activity_technician (activity_id, technician_id)
+    values (?, ?)
+  `);
+  activitiesWithSingleTechnician.forEach((row) => {
+    insertActivityTechnician.run(row.id, row.technician_id);
+  });
 
   const nowIso = new Date().toISOString().slice(0, 10);
   const defaultKanbanColumns: Array<{ id: string; title: string; color: string; position: number }> = [
@@ -418,6 +477,9 @@ export function seedDb() {
 
 export function clearAllData() {
   db.exec(`
+    delete from calendar_activity_technician;
+    delete from internal_document;
+    delete from calendar_activity;
     delete from implementation_kanban_card;
     delete from implementation_kanban_column;
     delete from recruitment_candidate;

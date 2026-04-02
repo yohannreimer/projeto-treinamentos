@@ -12,6 +12,7 @@ const items = [
   { to: '/processos-seletivos', label: 'Processos Seletivos' },
   { to: '/licencas', label: 'Licenças' },
   { to: '/licencas/programas', label: 'Programas Licença' },
+  { to: '/documentacao', label: 'Documentação' },
   { to: '/admin', label: 'Administração' }
 ];
 

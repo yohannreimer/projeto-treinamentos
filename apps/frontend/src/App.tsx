@@ -14,6 +14,7 @@ import { LicenseProgramsPage } from './pages/LicenseProgramsPage';
 import { RecruitmentPage } from './pages/RecruitmentPage';
 import { LoginPage } from './pages/LoginPage';
 import { AdminPage } from './pages/AdminPage';
+import { InternalDocsPage } from './pages/InternalDocsPage';
 
 const AUTH_STORAGE_KEY = 'orquestrador_auth_v1';
 const AUTH_USER = 'holand';
@@ -56,6 +57,7 @@ export function App() {
         <Route path="/processos-seletivos" element={<RecruitmentPage />} />
         <Route path="/licencas" element={<LicensesPage />} />
         <Route path="/licencas/programas" element={<LicenseProgramsPage />} />
+        <Route path="/documentacao" element={<InternalDocsPage />} />
         <Route path="/admin" element={<AdminPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

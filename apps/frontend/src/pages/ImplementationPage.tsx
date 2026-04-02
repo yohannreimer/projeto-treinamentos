@@ -5,8 +5,10 @@ import { api } from '../services/api';
 import { askDestructiveConfirmation } from '../utils/destructive';
 
 type KanbanPriority = 'Alta' | 'Normal' | 'Baixa' | 'Critica';
+type KanbanSubcategory = 'Pre_vendas' | 'Pos_vendas' | 'Suporte' | 'Implementacao';
 
 const KANBAN_PRIORITY_OPTIONS: KanbanPriority[] = ['Alta', 'Normal', 'Baixa', 'Critica'];
+const KANBAN_SUBCATEGORY_OPTIONS: KanbanSubcategory[] = ['Pre_vendas', 'Pos_vendas', 'Suporte', 'Implementacao'];
 const KANBAN_IMAGE_MAX_BYTES = 750_000;
 const KANBAN_FILTERS_COLLAPSED_STORAGE_KEY = 'orquestrador_kanban_filters_collapsed_v1';
 
@@ -18,6 +20,11 @@ type KanbanCard = {
   client_name: string | null;
   license_name: string | null;
   technician_id: string | null;
+  subcategory: KanbanSubcategory | null;
+  support_resolution: string | null;
+  support_third_party_notes: string | null;
+  support_alert_level: 'none' | 'stale' | 'done';
+  support_alert_message: string | null;
   priority: KanbanPriority;
   due_date: string | null;
   attachment_image_data_url: string | null;
@@ -55,6 +62,9 @@ type CardDetailDraft = {
   client_name: string;
   license_name: string;
   technician_id: string;
+  subcategory: KanbanSubcategory | '';
+  support_resolution: string;
+  support_third_party_notes: string;
   priority: KanbanPriority;
   due_date: string;
   attachment_image_data_url: string | null;
@@ -83,10 +93,21 @@ function cardDetailFromCard(card: KanbanCard): Exclude<CardDetailDraft, null> {
     client_name: card.client_name ?? '',
     license_name: card.license_name ?? '',
     technician_id: card.technician_id ?? '',
+    subcategory: card.subcategory ?? '',
+    support_resolution: card.support_resolution ?? '',
+    support_third_party_notes: card.support_third_party_notes ?? '',
     priority: card.priority ?? 'Normal',
     due_date: card.due_date ?? '',
     attachment_image_data_url: card.attachment_image_data_url ?? null
   };
+}
+
+function subcategoryLabel(value?: KanbanSubcategory | '' | null): string {
+  if (!value) return '-';
+  if (value === 'Pre_vendas') return 'Pré-vendas';
+  if (value === 'Pos_vendas') return 'Pós-vendas';
+  if (value === 'Implementacao') return 'Implementação';
+  return 'Suporte';
 }
 
 function formatDateBr(dateIso?: string | null): string {
@@ -376,12 +397,16 @@ export function ImplementationPage() {
     setError('');
     setMessage('');
     try {
+      const isSupport = cardDetail.subcategory === 'Suporte';
       await api.updateImplementationKanbanCard(cardDetail.cardId, {
         title: cardDetail.title.trim(),
         description: cardDetail.description.trim() || null,
         client_name: cardDetail.client_name.trim() || null,
         license_name: cardDetail.license_name.trim() || null,
         technician_id: cardDetail.technician_id || null,
+        subcategory: cardDetail.subcategory || null,
+        support_resolution: isSupport ? (cardDetail.support_resolution.trim() || null) : null,
+        support_third_party_notes: isSupport ? (cardDetail.support_third_party_notes.trim() || null) : null,
         priority: cardDetail.priority,
         due_date: cardDetail.due_date || null,
         attachment_image_data_url: cardDetail.attachment_image_data_url ?? null
@@ -469,6 +494,14 @@ export function ImplementationPage() {
     () => visibleColumns.reduce((acc, column) => acc + column.cards.length, 0),
     [visibleColumns]
   );
+  const supportAlerts = useMemo(() => (
+    columns
+      .flatMap((column) => column.cards.map((card) => ({
+        ...card,
+        columnTitle: column.title
+      })))
+      .filter((card) => card.subcategory === 'Suporte' && card.support_alert_level !== 'none')
+  ), [columns]);
 
   function clearFilters() {
     setFilterClientName('');
@@ -521,6 +554,19 @@ export function ImplementationPage() {
 
       {error ? <p className="error">{error}</p> : null}
       {message ? <p className="info">{message}</p> : null}
+      {supportAlerts.length > 0 ? (
+        <Section title="Alertas de suporte" className="kanban-config-panel">
+          <div className="stack">
+            {supportAlerts.map((alert) => (
+              <div key={`support-alert-${alert.id}`} className="kanban-support-alert-row">
+                <strong>{alert.title}</strong>
+                <span>{alert.support_alert_message}</span>
+                <small>Coluna: {alert.columnTitle}</small>
+              </div>
+            ))}
+          </div>
+        </Section>
+      ) : null}
 
       <Section
         title="Adicionar coluna"
@@ -727,10 +773,14 @@ export function ImplementationPage() {
                                       <div className="kanban-card-meta">
                                         {card.client_name ? <span className="kanban-meta-pill">Cliente: {card.client_name}</span> : null}
                                         {card.license_name ? <span className="kanban-meta-pill">Licença/App: {card.license_name}</span> : null}
+                                        {card.subcategory ? <span className="kanban-meta-pill">Subcategoria: {subcategoryLabel(card.subcategory)}</span> : null}
                                         {card.technician_id ? (
                                           <span className="kanban-meta-pill">
                                             Técnico: {technicianNameById.get(card.technician_id) ?? card.technician_id}
                                           </span>
+                                        ) : null}
+                                        {card.support_alert_level !== 'none' ? (
+                                          <span className="kanban-support-alert-pill">{card.support_alert_message}</span>
                                         ) : null}
                                         <span className={`chip chip-${(card.priority ?? 'Normal').toLowerCase()}`}>{card.priority ?? 'Normal'}</span>
                                         {card.due_date ? <span className="kanban-meta-pill">Entrega: {formatDateBr(card.due_date)}</span> : null}
@@ -816,6 +866,18 @@ export function ImplementationPage() {
                   </select>
                 </label>
                 <label>
+                  Subcategoria
+                  <select
+                    value={cardDetail.subcategory}
+                    onChange={(event) => setCardDetail((prev) => (prev ? { ...prev, subcategory: event.target.value as KanbanSubcategory | '' } : prev))}
+                  >
+                    <option value="">Sem subcategoria</option>
+                    {KANBAN_SUBCATEGORY_OPTIONS.map((option) => (
+                      <option key={option} value={option}>{subcategoryLabel(option)}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
                   Técnico responsável (opcional)
                   <select
                     value={cardDetail.technician_id}
@@ -847,6 +909,29 @@ export function ImplementationPage() {
                   />
                 </label>
               </div>
+
+              {cardDetail.subcategory === 'Suporte' ? (
+                <div className="kanban-support-fields">
+                  <label>
+                    Resolução do suporte
+                    <textarea
+                      rows={3}
+                      value={cardDetail.support_resolution}
+                      onChange={(event) => setCardDetail((prev) => (prev ? { ...prev, support_resolution: event.target.value } : prev))}
+                      placeholder="Descreva como o suporte foi resolvido."
+                    />
+                  </label>
+                  <label>
+                    Terceiros / repasse (interno)
+                    <textarea
+                      rows={3}
+                      value={cardDetail.support_third_party_notes}
+                      onChange={(event) => setCardDetail((prev) => (prev ? { ...prev, support_third_party_notes: event.target.value } : prev))}
+                      placeholder="Documente repasses, dependências e devolutivas de terceiros."
+                    />
+                  </label>
+                </div>
+              ) : null}
 
               <div className="kanban-detail-attachment">
                 <label className="kanban-inline-attachment-label">

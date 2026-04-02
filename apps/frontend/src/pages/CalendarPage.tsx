@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
 import type { Cohort, Module } from '../types';
 import { StatusChip } from '../components/StatusChip';
 import { Section } from '../components/Section';
 import { statusLabel } from '../utils/labels';
+import { askDestructiveConfirmation } from '../utils/destructive';
 
 type BlockDraft = {
   key: string;
@@ -24,12 +26,36 @@ type CohortCalendarOccurrence = Cohort & {
   day_index: number;
   total_business_days: number;
 };
+type CalendarActivity = {
+  id: string;
+  title: string;
+  activity_type: 'Visita_cliente' | 'Pre_vendas' | 'Pos_vendas' | 'Suporte' | 'Implementacao' | 'Reuniao' | 'Outro';
+  start_date: string;
+  end_date: string;
+  all_day: number;
+  start_time: string | null;
+  end_time: string | null;
+  technician_ids: string[];
+  technician_names: string[];
+  company_id: string | null;
+  company_name: string | null;
+  status: 'Planejada' | 'Em_andamento' | 'Concluida' | 'Cancelada';
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type CalendarActivityOccurrence = CalendarActivity & {
+  calendar_date: string;
+};
 type DaySortKey = 'name' | 'technician_name' | 'participant_names' | 'status';
 type SortDirection = 'asc' | 'desc';
 
 const statuses = ['Planejada', 'Aguardando_quorum', 'Confirmada', 'Concluida', 'Cancelada'];
 const periodOptions = ['Integral', 'Meio_periodo'] as const;
 const deliveryModeOptions = ['Online', 'Presencial', 'Hibrida'] as const;
+const activityTypeOptions: Array<CalendarActivity['activity_type']> = ['Visita_cliente', 'Pre_vendas', 'Pos_vendas', 'Suporte', 'Implementacao', 'Reuniao', 'Outro'];
+const activityStatusOptions: Array<CalendarActivity['status']> = ['Planejada', 'Em_andamento', 'Concluida', 'Cancelada'];
 const weekDays = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'];
 
 const fixedBrazilHolidays = [
@@ -65,6 +91,16 @@ function addDays(dateIso: string, diff: number): string {
   const date = fromIso(dateIso);
   date.setDate(date.getDate() + diff);
   return toDateIso(date);
+}
+
+function iterateDateRange(startDateIso: string, endDateIso: string): string[] {
+  const dates: string[] = [];
+  let cursor = startDateIso;
+  while (cursor <= endDateIso) {
+    dates.push(cursor);
+    cursor = addDays(cursor, 1);
+  }
+  return dates;
 }
 
 function isWeekendDate(date: Date): boolean {
@@ -230,9 +266,12 @@ function suggestedCohortCode(rows: Cohort[]): string {
 }
 
 export function CalendarPage() {
+  const navigate = useNavigate();
   const [rows, setRows] = useState<Cohort[]>([]);
+  const [activities, setActivities] = useState<CalendarActivity[]>([]);
   const [modules, setModules] = useState<Module[]>([]);
   const [technicians, setTechnicians] = useState<Array<{ id: string; name: string }>>([]);
+  const [companies, setCompanies] = useState<Array<{ id: string; name: string }>>([]);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<any>(null);
@@ -260,16 +299,37 @@ export function CalendarPage() {
   const [hasTechnicianConflict, setHasTechnicianConflict] = useState(false);
   const [technicianConflictMessage, setTechnicianConflictMessage] = useState('');
   const [technicianConflictCohortId, setTechnicianConflictCohortId] = useState<string | null>(null);
+  const [activityTitle, setActivityTitle] = useState('');
+  const [activityType, setActivityType] = useState<CalendarActivity['activity_type']>('Visita_cliente');
+  const [activityCompanyId, setActivityCompanyId] = useState('');
+  const [activityTechnicianIds, setActivityTechnicianIds] = useState<string[]>([]);
+  const [activityStatus, setActivityStatus] = useState<CalendarActivity['status']>('Planejada');
+  const [activityAllDay, setActivityAllDay] = useState(true);
+  const [activityStartDate, setActivityStartDate] = useState(selectedDate);
+  const [activityEndDate, setActivityEndDate] = useState(selectedDate);
+  const [activityStartTime, setActivityStartTime] = useState('');
+  const [activityEndTime, setActivityEndTime] = useState('');
+  const [activityNotes, setActivityNotes] = useState('');
+  const [isActivityFormOpen, setIsActivityFormOpen] = useState(false);
 
   async function loadAll() {
-    const [calendarRows, modulesRows, techRows] = await Promise.all([
+    const [calendarRows, activityRows, modulesRows, techRows, companyRows] = await Promise.all([
       api.calendar(),
+      api.calendarActivities(),
       api.modules(),
-      api.technicians()
+      api.technicians(),
+      api.companies()
     ]);
     setRows(calendarRows as Cohort[]);
+    const normalizedActivities = (activityRows as Array<Record<string, unknown>>).map((row) => ({
+      ...(row as unknown as Omit<CalendarActivity, 'technician_ids' | 'technician_names'>),
+      technician_ids: splitPipeList(String(row.technician_ids_raw ?? '')),
+      technician_names: splitPipeList(String(row.technician_names ?? ''))
+    })) as CalendarActivity[];
+    setActivities(normalizedActivities);
     setModules(modulesRows as Module[]);
     setTechnicians(techRows as Array<{ id: string; name: string }>);
+    setCompanies(companyRows as Array<{ id: string; name: string }>);
     return {
       rows: calendarRows as Cohort[],
       modules: modulesRows as Module[]
@@ -290,8 +350,10 @@ export function CalendarPage() {
       }
     }).catch(() => {
       setRows([]);
+      setActivities([]);
       setModules([]);
       setTechnicians([]);
+      setCompanies([]);
     });
   }, []);
 
@@ -319,7 +381,15 @@ export function CalendarPage() {
     });
   }, [rows, statusFilter, technicianFilter]);
 
-  const eventsByDate = useMemo(() => {
+  const filteredActivities = useMemo(() => {
+    return activities.filter((item) => {
+      if (statusFilter && item.status !== statusFilter) return false;
+      if (technicianFilter && !item.technician_names.includes(technicianFilter)) return false;
+      return true;
+    });
+  }, [activities, statusFilter, technicianFilter]);
+
+  const cohortEventsByDate = useMemo(() => {
     return filteredRows.reduce<Record<string, CohortCalendarOccurrence[]>>((acc, item) => {
       const totalBusinessDays = Math.max(1, Number(item.total_duration_days) || 1);
       for (let dayIndex = 1; dayIndex <= totalBusinessDays; dayIndex += 1) {
@@ -336,6 +406,20 @@ export function CalendarPage() {
     }, {});
   }, [filteredRows]);
 
+  const activitiesByDate = useMemo(() => {
+    return filteredActivities.reduce<Record<string, CalendarActivityOccurrence[]>>((acc, activity) => {
+      const dates = iterateDateRange(activity.start_date, activity.end_date || activity.start_date);
+      dates.forEach((date) => {
+        acc[date] = acc[date] ?? [];
+        acc[date].push({
+          ...activity,
+          calendar_date: date
+        });
+      });
+      return acc;
+    }, {});
+  }, [filteredActivities]);
+
   const holidaysMap = useMemo(
     () => buildBrazilHolidayMap(Number(month.slice(0, 4))),
     [month]
@@ -351,35 +435,47 @@ export function CalendarPage() {
   const monthCells = useMemo(() => buildMonthGrid(month, holidaysMap), [month, holidaysMap]);
 
   const monthMetrics = useMemo(() => {
-    const monthDates = Object.keys(eventsByDate).filter((date) => date.slice(0, 7) === month);
-    const totalOccurrences = monthDates.reduce((sum, date) => sum + (eventsByDate[date]?.length ?? 0), 0);
+    const monthDates = Array.from(
+      new Set([...Object.keys(cohortEventsByDate), ...Object.keys(activitiesByDate)].filter((date) => date.slice(0, 7) === month))
+    );
+    const totalOccurrences = monthDates.reduce(
+      (sum, date) => sum + (cohortEventsByDate[date]?.length ?? 0) + (activitiesByDate[date]?.length ?? 0),
+      0
+    );
     const activeCohortIds = new Set<string>();
+    const activeActivityIds = new Set<string>();
     const activeTechnicians = new Set<string>();
 
     monthDates.forEach((date) => {
-      (eventsByDate[date] ?? []).forEach((event) => {
+      (cohortEventsByDate[date] ?? []).forEach((event) => {
         activeCohortIds.add(event.id);
         if (event.technician_name) activeTechnicians.add(event.technician_name);
+      });
+      (activitiesByDate[date] ?? []).forEach((activity) => {
+        activeActivityIds.add(activity.id);
+        activity.technician_names.forEach((name) => activeTechnicians.add(name));
       });
     });
 
     const monthBusinessDays = monthCells.filter((cell) => cell.inMonth && !cell.isWeekend).length;
     const busyBusinessDays = monthCells.filter(
-      (cell) => cell.inMonth && !cell.isWeekend && (eventsByDate[cell.date]?.length ?? 0) > 0
+      (cell) => cell.inMonth && !cell.isWeekend &&
+        ((cohortEventsByDate[cell.date]?.length ?? 0) + (activitiesByDate[cell.date]?.length ?? 0) > 0)
     ).length;
 
     return {
       totalOccurrences,
       activeCohorts: activeCohortIds.size,
+      activeActivities: activeActivityIds.size,
       activeTechnicians: activeTechnicians.size,
       monthBusinessDays,
       busyBusinessDays
     };
-  }, [eventsByDate, month, monthCells]);
+  }, [cohortEventsByDate, activitiesByDate, month, monthCells]);
 
   const selectedDayEvents = useMemo(() => {
     const direction = daySortDirection === 'asc' ? 1 : -1;
-    return [...(eventsByDate[selectedDate] ?? [])].sort((a, b) => {
+    return [...(cohortEventsByDate[selectedDate] ?? [])].sort((a, b) => {
       switch (daySortKey) {
         case 'name': {
           const compare = String(a.name ?? '').localeCompare(String(b.name ?? ''));
@@ -408,12 +504,27 @@ export function CalendarPage() {
       if (a.code === b.code) return a.day_index - b.day_index;
       return a.code.localeCompare(b.code);
     });
-  }, [eventsByDate, selectedDate, daySortKey, daySortDirection]);
+  }, [cohortEventsByDate, selectedDate, daySortKey, daySortDirection]);
 
-  const statusOptions = useMemo(() => Array.from(new Set(rows.map((r) => r.status))).sort(), [rows]);
+  const selectedDayActivities = useMemo(() => {
+    return [...(activitiesByDate[selectedDate] ?? [])].sort((a, b) => {
+      const leftTime = a.all_day ? '00:00' : (a.start_time ?? '00:00');
+      const rightTime = b.all_day ? '00:00' : (b.start_time ?? '00:00');
+      if (leftTime !== rightTime) return leftTime.localeCompare(rightTime);
+      return a.title.localeCompare(b.title);
+    });
+  }, [activitiesByDate, selectedDate]);
+
+  const statusOptions = useMemo(
+    () => Array.from(new Set([...rows.map((r) => r.status), ...activities.map((r) => r.status)])).sort(),
+    [rows, activities]
+  );
   const technicianOptions = useMemo(
-    () => Array.from(new Set(rows.map((r) => r.technician_name).filter(Boolean) as string[])).sort(),
-    [rows]
+    () => Array.from(new Set([
+      ...rows.map((r) => r.technician_name),
+      ...activities.flatMap((r) => r.technician_names)
+    ].filter(Boolean) as string[])).sort(),
+    [rows, activities]
   );
   const createBlocksPreview = useMemo(() => {
     let day = 1;
@@ -472,12 +583,18 @@ export function CalendarPage() {
     setSelectedDate(date);
     setSelectedId(null);
     setDetail(null);
+    setActivityStartDate(date);
+    setActivityEndDate(date);
+    setIsActivityFormOpen(false);
     setIsDayPanelOpen(true);
   }
 
   function openCohort(event: CohortCalendarOccurrence, date: string) {
     setSelectedId(event.id);
     setSelectedDate(date);
+    setActivityStartDate(date);
+    setActivityEndDate(date);
+    setIsActivityFormOpen(false);
     setIsDayPanelOpen(true);
   }
 
@@ -586,6 +703,79 @@ export function CalendarPage() {
     }
   }
 
+  async function createActivityOnSelectedDay() {
+    if (!selectedDate) return;
+    if (!activityTitle.trim()) {
+      setMessage('Informe o título da atividade.');
+      return;
+    }
+    if (!activityStartDate || !activityEndDate) {
+      setMessage('Informe o período da atividade.');
+      return;
+    }
+    if (activityEndDate < activityStartDate) {
+      setMessage('Data final não pode ser menor que a data inicial.');
+      return;
+    }
+    if (!activityAllDay && activityStartTime && activityEndTime && activityEndTime < activityStartTime) {
+      setMessage('Hora final não pode ser menor que a hora inicial.');
+      return;
+    }
+
+    try {
+      await api.createCalendarActivity({
+        title: activityTitle.trim(),
+        activity_type: activityType,
+        start_date: activityStartDate,
+        end_date: activityEndDate,
+        all_day: activityAllDay,
+        start_time: activityAllDay ? null : (activityStartTime || null),
+        end_time: activityAllDay ? null : (activityEndTime || null),
+        company_id: activityCompanyId || null,
+        technician_ids: activityTechnicianIds,
+        status: activityStatus,
+        notes: activityNotes.trim() || null
+      });
+
+      setMessage('Atividade criada no calendário.');
+      setActivityTitle('');
+      setActivityType('Visita_cliente');
+      setActivityCompanyId('');
+      setActivityTechnicianIds([]);
+      setActivityStatus('Planejada');
+      setActivityAllDay(true);
+      setActivityStartDate(selectedDate);
+      setActivityEndDate(selectedDate);
+      setActivityStartTime('');
+      setActivityEndTime('');
+      setActivityNotes('');
+      setIsActivityFormOpen(false);
+      await loadAll();
+    } catch (error) {
+      setMessage((error as Error).message);
+    }
+  }
+
+  async function deleteActivity(activity: CalendarActivityOccurrence) {
+    const confirmationPhrase = askDestructiveConfirmation(`Excluir atividade "${activity.title}"`);
+    if (!confirmationPhrase) return;
+    try {
+      await api.deleteCalendarActivity(activity.id);
+      setMessage('Atividade excluída.');
+      await loadAll();
+    } catch (error) {
+      setMessage((error as Error).message);
+    }
+  }
+
+  function toggleActivityTechnician(technicianId: string) {
+    setActivityTechnicianIds((prev) => (
+      prev.includes(technicianId)
+        ? prev.filter((item) => item !== technicianId)
+        : [...prev, technicianId]
+    ));
+  }
+
   return (
     <div className="page calendar-page">
       <header className="page-header">
@@ -645,11 +835,15 @@ export function CalendarPage() {
               <strong>{monthMetrics.activeCohorts}</strong>
             </article>
             <article className="calendar-metric-card">
-              <span>Ocupações em dias úteis</span>
+              <span>Atividades extras no mês</span>
+              <strong>{monthMetrics.activeActivities}</strong>
+            </article>
+            <article className="calendar-metric-card">
+              <span>Ocupações no calendário</span>
               <strong>{monthMetrics.totalOccurrences}</strong>
             </article>
             <article className="calendar-metric-card">
-              <span>Dias úteis com turma</span>
+              <span>Dias úteis ocupados</span>
               <strong>{monthMetrics.busyBusinessDays}/{monthMetrics.monthBusinessDays}</strong>
             </article>
             <article className="calendar-metric-card">
@@ -680,10 +874,12 @@ export function CalendarPage() {
 
         <div className="calendar-grid-body">
           {monthCells.map((cell) => {
-            const events = (eventsByDate[cell.date] ?? []).sort((a, b) => {
+            const cohortEvents = (cohortEventsByDate[cell.date] ?? []).sort((a, b) => {
               if (a.code === b.code) return a.day_index - b.day_index;
               return a.code.localeCompare(b.code);
             });
+            const dayActivities = activitiesByDate[cell.date] ?? [];
+            const totalItems = cohortEvents.length + dayActivities.length;
             const isSelected = selectedDate === cell.date;
             const hasHoliday = cell.holidays.length > 0;
 
@@ -703,7 +899,7 @@ export function CalendarPage() {
               >
                 <div className="calendar-day-top">
                   <span className="calendar-day-number">{Number(cell.date.slice(-2))}</span>
-                  <small>{events.length} turma(s)</small>
+                  <small>{totalItems} item(ns)</small>
                 </div>
 
                 {cell.holidays.slice(0, 1).map((holiday) => (
@@ -711,7 +907,7 @@ export function CalendarPage() {
                 ))}
 
                 <div className="calendar-day-events">
-                  {events.slice(0, 3).map((event) => {
+                  {cohortEvents.slice(0, 2).map((event) => {
                     const participants = splitPipeList(event.participant_names);
                     const moduleNames = splitPipeList(event.module_names).map(moduleShortLabel);
                     return (
@@ -748,7 +944,32 @@ export function CalendarPage() {
                       </div>
                     );
                   })}
-                  {events.length > 3 ? <small className="calendar-more">+{events.length - 3} turma(s)</small> : null}
+                  {dayActivities.slice(0, 2).map((activity) => (
+                    <div
+                      key={`activity-${activity.id}-${cell.date}`}
+                      className="calendar-activity-card"
+                      onClick={(domEvent) => {
+                        domEvent.stopPropagation();
+                        openDayPanel(cell.date);
+                      }}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(domEvent) => {
+                        if (domEvent.key === 'Enter' || domEvent.key === ' ') {
+                          domEvent.preventDefault();
+                          openDayPanel(cell.date);
+                        }
+                      }}
+                    >
+                      <p className="calendar-event-title" title={activity.title}>{activity.title}</p>
+                      <p className="calendar-event-meta">{statusLabel(activity.activity_type)}</p>
+                      <p className="calendar-event-meta">Técnicos: {collapseList(activity.technician_names, 2)}</p>
+                      <p className="calendar-event-meta">
+                        {activity.all_day ? 'Dia inteiro' : `${activity.start_time ?? '--:--'}${activity.end_time ? ` - ${activity.end_time}` : ''}`}
+                      </p>
+                    </div>
+                  ))}
+                  {totalItems > 4 ? <small className="calendar-more">+{totalItems - 4} item(ns)</small> : null}
                 </div>
               </div>
             );
@@ -769,7 +990,7 @@ export function CalendarPage() {
             <header className="calendar-overlay-header">
               <div>
                 <h2>{fullDateLabel(selectedDate)}</h2>
-                <p>{selectedDayEvents.length} turma(s) neste dia</p>
+                <p>{selectedDayEvents.length} turma(s) e {selectedDayActivities.length} atividade(s) neste dia</p>
               </div>
               <div className="actions">
                 <button type="button" onClick={() => setIsDayPanelOpen(false)}>Fechar</button>
@@ -802,6 +1023,39 @@ export function CalendarPage() {
                             {collapseList(splitPipeList(event.participant_names), 3)}
                           </td>
                           <td><StatusChip value={event.status} /></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+
+                <h3>Atividades do dia</h3>
+                {selectedDayActivities.length === 0 ? <p>Sem atividades extras neste dia.</p> : (
+                  <table className="table table-hover table-tight">
+                    <thead>
+                      <tr>
+                        <th>Título</th>
+                        <th>Tipo</th>
+                        <th>Técnico</th>
+                        <th>Horário</th>
+                        <th>Status</th>
+                        <th>Ações</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {selectedDayActivities.map((activity) => (
+                        <tr key={`activity-row-${activity.id}-${activity.calendar_date}`}>
+                          <td title={activity.notes ?? undefined}>
+                            {activity.title}
+                            {activity.company_name ? <small className="muted"> · Cliente: {activity.company_name}</small> : null}
+                          </td>
+                          <td>{statusLabel(activity.activity_type)}</td>
+                          <td>{collapseList(activity.technician_names, 3)}</td>
+                          <td>{activity.all_day ? 'Dia inteiro' : `${activity.start_time ?? '--:--'}${activity.end_time ? ` - ${activity.end_time}` : ''}`}</td>
+                          <td><StatusChip value={activity.status} /></td>
+                          <td>
+                            <button type="button" onClick={() => deleteActivity(activity)}>Excluir</button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -852,114 +1106,99 @@ export function CalendarPage() {
               </section>
 
               <section className="calendar-overlay-col">
-                <h3>Criar turma em {selectedDate}</h3>
+                <h3>Ações do dia</h3>
                 <div className="form form-spacious">
-                  <p className="form-hint">Defina os blocos; o sistema calcula a sequência por dias úteis automaticamente.</p>
-                  <label>Código<input value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} /></label>
-                  <label>Nome<input value={name} onChange={(event) => setName(event.target.value)} /></label>
-                  <label>Técnico
-                    <select value={technicianId} onChange={(event) => setTechnicianId(event.target.value)}>
-                      <option value="">Sem técnico</option>
-                      {technicians.map((tech) => <option key={tech.id} value={tech.id}>{tech.name}</option>)}
-                    </select>
-                  </label>
-                  <label>Capacidade
-                    <input
-                      type="number"
-                      min={1}
-                      value={capacity}
-                      onChange={(event) => setCapacity(Math.max(1, Number(event.target.value) || 1))}
-                    />
-                  </label>
-                  <label>Status
-                    <select value={status} onChange={(event) => setStatus(event.target.value)}>
-                      {statuses.map((item) => <option key={item} value={item}>{statusLabel(item)}</option>)}
-                    </select>
-                  </label>
-                  <label>Período
-                    <select value={period} onChange={(event) => setPeriod(event.target.value as (typeof periodOptions)[number])}>
-                      {periodOptions.map((option) => (
-                        <option key={option} value={option}>{statusLabel(option)}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>Formato
-                    <select value={deliveryMode} onChange={(event) => setDeliveryMode(event.target.value as (typeof deliveryModeOptions)[number])}>
-                      {deliveryModeOptions.map((option) => (
-                        <option key={option} value={option}>{statusLabel(option)}</option>
-                      ))}
-                    </select>
-                  </label>
-                  {technicianId && status !== 'Cancelada' ? (
-                    <div className="form-subcard">
-                      {isCheckingTechnicianConflict ? (
-                        <p className="muted">Verificando conflito de agenda do técnico...</p>
-                      ) : hasTechnicianConflict ? (
-                        <div className="stack">
-                          <p className="error">{technicianConflictMessage}</p>
-                          {technicianConflictCohortId ? (
-                            <button type="button" onClick={() => setSelectedId(technicianConflictCohortId)}>
-                              Abrir turma conflitante
-                            </button>
-                          ) : null}
-                        </div>
-                      ) : technicianConflictMessage ? (
-                        <p className="warn-text">{technicianConflictMessage}</p>
-                      ) : (
-                        <p className="ok-text">Agenda do técnico disponível para esta turma.</p>
-                      )}
-                    </div>
-                  ) : null}
-                  <label>Observações
-                    <input value={notes} onChange={(event) => setNotes(event.target.value)} />
-                  </label>
-
-                  <h3>Blocos da turma</h3>
-                  <p className="muted">Ao escolher o módulo, a diária inicial já puxa o valor configurado no Admin.</p>
-                  <div className="stack">
-                    {blocks.map((block, index) => (
-                      <div key={block.key} className="form form-subcard">
-                        <strong>Bloco {index + 1}</strong>
-                        <label>Módulo
-                          <select
-                            value={block.module_id}
-                            onChange={(event) => {
-                              const nextModuleId = event.target.value;
-                              updateBlock(block.key, {
-                                module_id: nextModuleId,
-                                duration_days: moduleDurationById(modules, nextModuleId)
-                              });
-                            }}
-                          >
-                            {modules.map((module) => (
-                              <option key={module.id} value={module.id}>{module.name}</option>
-                            ))}
-                          </select>
-                        </label>
-                        <label>Diárias
-                          <input
-                            type="number"
-                            min={1}
-                            value={block.duration_days}
-                            onChange={(event) => {
-                              updateBlock(block.key, {
-                                duration_days: Math.max(1, Number(event.target.value) || 1)
-                              });
-                            }}
-                          />
-                        </label>
-                        <button type="button" onClick={() => removeBlock(block.key)} disabled={blocks.length <= 1}>
-                          Remover bloco
-                        </button>
-                      </div>
-                    ))}
-                    <button type="button" onClick={addBlock}>Adicionar bloco</button>
+                  <p className="form-hint">
+                    Turmas são criadas e editadas na aba <strong>Turmas</strong>. Aqui no calendário você foca em visualizar agenda
+                    e registrar atividades extras.
+                  </p>
+                  <div className="actions actions-compact">
+                    <button type="button" onClick={() => navigate('/turmas')}>
+                      Ir para Turmas
+                    </button>
+                    <button type="button" onClick={() => setIsActivityFormOpen((prev) => !prev)}>
+                      {isActivityFormOpen ? 'Fechar registro de atividade' : 'Registrar atividade extra'}
+                    </button>
                   </div>
-
-                  <button type="button" onClick={createCohortOnSelectedDay} disabled={isCheckingTechnicianConflict || hasTechnicianConflict}>
-                    Criar turma em {selectedDate}
-                  </button>
                 </div>
+
+                {isActivityFormOpen ? (
+                  <>
+                    <h3>Registrar atividade extra</h3>
+                    <div className="form form-spacious">
+                      <label>Título da atividade
+                        <input value={activityTitle} onChange={(event) => setActivityTitle(event.target.value)} />
+                      </label>
+                      <label>Tipo
+                        <select value={activityType} onChange={(event) => setActivityType(event.target.value as CalendarActivity['activity_type'])}>
+                          {activityTypeOptions.map((option) => (
+                            <option key={option} value={option}>{statusLabel(option)}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <div className="two-col">
+                        <label>Data início
+                          <input type="date" value={activityStartDate} onChange={(event) => setActivityStartDate(event.target.value)} />
+                        </label>
+                        <label>Data fim
+                          <input type="date" value={activityEndDate} onChange={(event) => setActivityEndDate(event.target.value)} />
+                        </label>
+                      </div>
+                      <label>Cliente (opcional)
+                        <select value={activityCompanyId} onChange={(event) => setActivityCompanyId(event.target.value)}>
+                          <option value="">Sem cliente vinculado</option>
+                          {companies.map((company) => (
+                            <option key={company.id} value={company.id}>{company.name}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>Status
+                        <select value={activityStatus} onChange={(event) => setActivityStatus(event.target.value as CalendarActivity['status'])}>
+                          {activityStatusOptions.map((option) => (
+                            <option key={option} value={option}>{statusLabel(option)}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="checkbox-row">
+                        <input
+                          type="checkbox"
+                          checked={activityAllDay}
+                          onChange={(event) => setActivityAllDay(event.target.checked)}
+                        />
+                        Dia inteiro
+                      </label>
+                      {!activityAllDay ? (
+                        <div className="two-col">
+                          <label>Hora início
+                            <input type="time" value={activityStartTime} onChange={(event) => setActivityStartTime(event.target.value)} />
+                          </label>
+                          <label>Hora fim
+                            <input type="time" value={activityEndTime} onChange={(event) => setActivityEndTime(event.target.value)} />
+                          </label>
+                        </div>
+                      ) : null}
+                      <fieldset className="form-subcard">
+                        <legend>Técnicos (opcional, pode marcar mais de um)</legend>
+                        <div className="technicians-skills-grid">
+                          {technicians.map((tech) => (
+                            <label key={`activity-tech-${tech.id}`} className="technicians-skill-option">
+                              <input
+                                type="checkbox"
+                                checked={activityTechnicianIds.includes(tech.id)}
+                                onChange={() => toggleActivityTechnician(tech.id)}
+                              />
+                              <span>{tech.name}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </fieldset>
+                      <label>Observações
+                        <textarea rows={3} value={activityNotes} onChange={(event) => setActivityNotes(event.target.value)} />
+                      </label>
+                      <button type="button" onClick={createActivityOnSelectedDay}>Salvar atividade</button>
+                    </div>
+                  </>
+                ) : null}
               </section>
             </div>
           </div>

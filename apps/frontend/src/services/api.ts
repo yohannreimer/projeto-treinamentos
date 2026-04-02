@@ -49,6 +49,19 @@ async function req<T = any>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   dashboard: () => req('/dashboard'),
   calendar: () => req('/calendar/cohorts'),
+  calendarActivities: () => req('/calendar/activities'),
+  createCalendarActivity: (payload: unknown) =>
+    req('/calendar/activities', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  updateCalendarActivity: (id: string, payload: unknown) =>
+    req(`/calendar/activities/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload)
+    }),
+  deleteCalendarActivity: (id: string) =>
+    req(`/calendar/activities/${id}`, { method: 'DELETE' }),
   cohorts: () => req('/cohorts'),
   cohortById: (id: string) => req(`/cohorts/${id}`),
   createCohort: (payload: unknown) =>
@@ -126,6 +139,17 @@ export const api = {
     req(withConfirmation(`/license-programs/${id}`, confirmation_phrase), {
       method: 'DELETE'
     }),
+  internalDocuments: () => req('/internal-documents'),
+  createInternalDocument: (payload: unknown) =>
+    req('/internal-documents', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  deleteInternalDocument: (id: string, confirmation_phrase?: string) =>
+    req(withConfirmation(`/internal-documents/${id}`, confirmation_phrase), {
+      method: 'DELETE'
+    }),
+  internalDocumentDownloadUrl: (id: string) => `${BASE_URL}/internal-documents/${id}/download`,
   licenses: () => req('/licenses'),
   createLicense: (payload: unknown) =>
     req('/licenses', {
@@ -197,6 +221,9 @@ export const api = {
     license_name?: string | null;
     module_name?: string | null;
     technician_id?: string | null;
+    subcategory?: 'Pre_vendas' | 'Pos_vendas' | 'Suporte' | 'Implementacao' | null;
+    support_resolution?: string | null;
+    support_third_party_notes?: string | null;
     priority?: 'Alta' | 'Normal' | 'Baixa' | 'Critica';
     due_date?: string | null;
     attachment_image_data_url?: string | null;
@@ -214,6 +241,9 @@ export const api = {
     license_name?: string | null;
     module_name?: string | null;
     technician_id?: string | null;
+    subcategory?: 'Pre_vendas' | 'Pos_vendas' | 'Suporte' | 'Implementacao' | null;
+    support_resolution?: string | null;
+    support_third_party_notes?: string | null;
     priority?: 'Alta' | 'Normal' | 'Baixa' | 'Critica';
     due_date?: string | null;
     attachment_image_data_url?: string | null;

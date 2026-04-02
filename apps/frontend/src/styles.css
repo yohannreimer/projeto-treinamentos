@@ -518,6 +518,14 @@ body {
   font-weight: 600;
 }
 
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.83rem;
+  font-weight: 700;
+}
+
 .actions label {
   display: grid;
   gap: 3px;
@@ -1021,7 +1029,7 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 
 .calendar-metrics-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -1205,6 +1213,23 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   border-color: #9ec0ea;
   background: #e6f1ff;
   transform: translateY(-1px);
+}
+
+.calendar-activity-card {
+  width: 100%;
+  border-radius: 9px;
+  background: linear-gradient(180deg, #f4f8ff 0%, #eef4ff 100%);
+  border: 1px solid #d1ddf2;
+  padding: 6px 7px;
+  display: grid;
+  gap: 1px;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.calendar-activity-card:hover {
+  border-color: #afc4e6;
+  background: #e8f1ff;
 }
 
 .calendar-event-title,
@@ -1829,6 +1854,48 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   color: #385273;
   font-size: 0.68rem;
   font-weight: 700;
+}
+
+.kanban-support-alert-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid #efc8cd;
+  background: #fff4f4;
+  color: #8d2b35;
+  font-size: 0.67rem;
+  font-weight: 700;
+}
+
+.kanban-support-alert-row {
+  border: 1px solid #f0d2d7;
+  border-radius: 10px;
+  background: #fff8f8;
+  padding: 8px 10px;
+  display: grid;
+  gap: 3px;
+}
+
+.kanban-support-alert-row strong {
+  font-size: 0.84rem;
+  color: #2b445f;
+}
+
+.kanban-support-alert-row span {
+  font-size: 0.77rem;
+  color: #8d2b35;
+}
+
+.kanban-support-alert-row small {
+  font-size: 0.72rem;
+  color: #647f99;
+}
+
+.kanban-support-fields {
+  display: grid;
+  gap: 10px;
 }
 
 .kanban-card-thumb {
