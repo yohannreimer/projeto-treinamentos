@@ -3338,32 +3338,37 @@ app.post('/implementation/kanban/cards', (req, res) => {
     where column_id = ?
   `).get(payload.column_id) as { next_position: number };
 
-  db.prepare(`
-    insert into implementation_kanban_card (
-      id, title, description, status, column_id, client_name, license_name, module_name, technician_id, subcategory,
-      support_resolution, support_third_party_notes, priority, due_date,
-      attachment_image_data_url, position, created_at, updated_at
-    )
-    values (?, ?, ?, 'Todo', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    cardId,
-    payload.title.trim(),
-    payload.description?.trim() || null,
-    payload.column_id,
-    payload.client_name?.trim() || null,
-    payload.license_name?.trim() || null,
-    payload.module_name?.trim() || null,
-    payload.technician_id?.trim() || null,
-    payload.subcategory ?? null,
-    payload.support_resolution?.trim() || null,
-    payload.support_third_party_notes?.trim() || null,
-    payload.priority ?? 'Normal',
-    payload.due_date ?? null,
-    payload.attachment_image_data_url ?? null,
-    nextPositionRow.next_position,
-    nowIso,
-    nowIso
-  );
+  try {
+    db.prepare(`
+      insert into implementation_kanban_card (
+        id, title, description, status, column_id, client_name, license_name, module_name, technician_id, subcategory,
+        support_resolution, support_third_party_notes, priority, due_date,
+        attachment_image_data_url, position, created_at, updated_at
+      )
+      values (?, ?, ?, 'Todo', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      cardId,
+      payload.title.trim(),
+      payload.description?.trim() || null,
+      payload.column_id,
+      payload.client_name?.trim() || null,
+      payload.license_name?.trim() || null,
+      payload.module_name?.trim() || null,
+      payload.technician_id?.trim() || null,
+      payload.subcategory ?? null,
+      payload.support_resolution?.trim() || null,
+      payload.support_third_party_notes?.trim() || null,
+      payload.priority ?? 'Normal',
+      payload.due_date ?? null,
+      payload.attachment_image_data_url ?? null,
+      nextPositionRow.next_position,
+      nowIso,
+      nowIso
+    );
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : 'Falha ao criar cartão.';
+    return res.status(500).json({ message: 'Erro ao criar cartão.', detail });
+  }
 
   return res.status(201).json({ id: cardId });
 });

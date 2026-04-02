@@ -334,7 +334,7 @@ export function ImplementationPage() {
     }
   }
 
-  async function createCardInColumn(columnId: string) {
+  async function createCardInColumn(columnId: string, openDetailsAfterCreate = true) {
     const draft = getDraft(columnId);
     if (!draft.title.trim()) {
       setError('Informe o título do cartão.');
@@ -356,7 +356,7 @@ export function ImplementationPage() {
       });
       const nextColumns = await loadBoard();
       const createdCard = nextColumns.flatMap((column) => column.cards).find((card) => card.id === created.id);
-      if (createdCard) {
+      if (createdCard && openDetailsAfterCreate) {
         setCardDetail(cardDetailFromCard(createdCard));
         setMessage('Cartão criado. Complete os detalhes no painel lateral.');
       } else {
@@ -741,7 +741,8 @@ export function ImplementationPage() {
                               />
                             </label>
                             <div className="actions actions-compact">
-                              <button type="button" onClick={() => createCardInColumn(column.id)}>Criar e abrir detalhes</button>
+                              <button type="button" onClick={() => createCardInColumn(column.id, false)}>Criar rápido</button>
+                              <button type="button" onClick={() => createCardInColumn(column.id, true)}>Criar e abrir detalhes</button>
                               <button type="button" onClick={() => setDraft(column.id, { isOpen: false })}>Cancelar</button>
                             </div>
                           </div>
