@@ -3290,9 +3290,12 @@ app.get('/implementation/kanban', (_req, res) => {
     if (card.subcategory === 'Suporte') {
       const columnTitle = (columnById.get(card.column_id ?? '')?.title ?? '').toLowerCase();
       const isConcluded = columnTitle.includes('conclu');
+      const hasSupportResolution = Boolean(card.support_resolution?.trim());
       if (isConcluded) {
-        support_alert_level = 'done';
-        support_alert_message = 'Suporte concluído: valide a documentação de fechamento.';
+        if (!hasSupportResolution) {
+          support_alert_level = 'done';
+          support_alert_message = 'Suporte concluído sem resolução registrada.';
+        }
       } else {
         const updatedAt = new Date(`${card.updated_at}T00:00:00`);
         if (!Number.isNaN(updatedAt.getTime())) {
