@@ -36,6 +36,7 @@ const RECRUITMENT_STAGE_VALUES = ['Triagem', 'Primeira_entrevista', 'Segunda_fas
 const RECRUITMENT_STATUS_VALUES = ['Em_processo', 'Stand_by', 'Aprovado', 'Reprovado', 'Banco_de_talentos'] as const;
 const KANBAN_CARD_PRIORITY_VALUES = ['Alta', 'Normal', 'Baixa', 'Critica'] as const;
 const KANBAN_SUBCATEGORY_VALUES = ['Pre_vendas', 'Pos_vendas', 'Suporte', 'Implementacao'] as const;
+const KANBAN_SUPPORT_HANDOFF_VALUES = ['Conosco', 'Sao_Paulo'] as const;
 const CALENDAR_ACTIVITY_TYPE_VALUES = ['Visita_cliente', 'Pre_vendas', 'Pos_vendas', 'Suporte', 'Implementacao', 'Reuniao', 'Outro'] as const;
 const CALENDAR_ACTIVITY_STATUS_VALUES = ['Planejada', 'Em_andamento', 'Concluida', 'Cancelada'] as const;
 const IMPLEMENTATION_KANBAN_DEFAULT_COLUMNS = [
@@ -153,6 +154,8 @@ const kanbanCardCreateSchema = z.object({
   subcategory: z.enum(KANBAN_SUBCATEGORY_VALUES).nullable().optional(),
   support_resolution: z.string().max(2000).nullable().optional(),
   support_third_party_notes: z.string().max(2000).nullable().optional(),
+  support_handoff_target: z.enum(KANBAN_SUPPORT_HANDOFF_VALUES).nullable().optional(),
+  support_handoff_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   priority: z.enum(KANBAN_CARD_PRIORITY_VALUES).optional(),
   due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   attachment_image_data_url: kanbanCardImageSchema.nullable().optional()
@@ -170,6 +173,8 @@ const kanbanCardUpdateSchema = z.object({
   subcategory: z.enum(KANBAN_SUBCATEGORY_VALUES).nullable().optional(),
   support_resolution: z.string().max(2000).nullable().optional(),
   support_third_party_notes: z.string().max(2000).nullable().optional(),
+  support_handoff_target: z.enum(KANBAN_SUPPORT_HANDOFF_VALUES).nullable().optional(),
+  support_handoff_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   priority: z.enum(KANBAN_CARD_PRIORITY_VALUES).optional(),
   due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   attachment_image_data_url: kanbanCardImageSchema.nullable().optional()
@@ -3244,6 +3249,8 @@ app.get('/implementation/kanban', (_req, res) => {
       subcategory,
       support_resolution,
       support_third_party_notes,
+      support_handoff_target,
+      support_handoff_date,
       priority,
       due_date,
       attachment_image_data_url,
@@ -3264,6 +3271,8 @@ app.get('/implementation/kanban', (_req, res) => {
     subcategory: (typeof KANBAN_SUBCATEGORY_VALUES)[number] | null;
     support_resolution: string | null;
     support_third_party_notes: string | null;
+    support_handoff_target: (typeof KANBAN_SUPPORT_HANDOFF_VALUES)[number] | null;
+    support_handoff_date: string | null;
     priority: string;
     due_date: string | null;
     attachment_image_data_url: string | null;
@@ -3332,6 +3341,12 @@ app.post('/implementation/kanban/cards', (req, res) => {
 
   const cardId = uuid('kbn');
   const nowIso = nowDateIso();
+  const supportHandoffTarget = payload.subcategory === 'Suporte'
+    ? (payload.support_handoff_target ?? null)
+    : null;
+  const supportHandoffDate = supportHandoffTarget === 'Sao_Paulo'
+    ? (payload.support_handoff_date ?? nowIso)
+    : null;
   const nextPositionRow = db.prepare(`
     select coalesce(max(position), -1) + 1 as next_position
     from implementation_kanban_card
@@ -3342,14 +3357,15 @@ app.post('/implementation/kanban/cards', (req, res) => {
     db.prepare(`
       insert into implementation_kanban_card (
         id, title, description, status, column_id, client_name, license_name, module_name, technician_id, subcategory,
-        support_resolution, support_third_party_notes, priority, due_date,
+        support_resolution, support_third_party_notes, support_handoff_target, support_handoff_date, priority, due_date,
         attachment_image_data_url, position, created_at, updated_at
       )
-      values (?, ?, ?, 'Todo', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       cardId,
       payload.title.trim(),
       payload.description?.trim() || null,
+      'Todo',
       payload.column_id,
       payload.client_name?.trim() || null,
       payload.license_name?.trim() || null,
@@ -3358,6 +3374,8 @@ app.post('/implementation/kanban/cards', (req, res) => {
       payload.subcategory ?? null,
       payload.support_resolution?.trim() || null,
       payload.support_third_party_notes?.trim() || null,
+      supportHandoffTarget,
+      supportHandoffDate,
       payload.priority ?? 'Normal',
       payload.due_date ?? null,
       payload.attachment_image_data_url ?? null,
@@ -3379,12 +3397,40 @@ app.patch('/implementation/kanban/cards/:id', (req, res) => {
     return res.status(400).json(parsed.error.flatten());
   }
 
-  const exists = db.prepare('select id from implementation_kanban_card where id = ?').get(req.params.id) as { id: string } | undefined;
+  const exists = db.prepare(`
+    select id, subcategory, support_handoff_target, support_handoff_date
+    from implementation_kanban_card
+    where id = ?
+  `).get(req.params.id) as {
+    id: string;
+    subcategory: (typeof KANBAN_SUBCATEGORY_VALUES)[number] | null;
+    support_handoff_target: (typeof KANBAN_SUPPORT_HANDOFF_VALUES)[number] | null;
+    support_handoff_date: string | null;
+  } | undefined;
   if (!exists) {
     return res.status(404).json({ message: 'Card não encontrado' });
   }
 
   const payload = parsed.data;
+  const nextSubcategory = Object.prototype.hasOwnProperty.call(payload, 'subcategory')
+    ? (payload.subcategory ?? null)
+    : (exists.subcategory ?? null);
+  const isSupportCard = nextSubcategory === 'Suporte';
+  const requestedHandoffTarget = Object.prototype.hasOwnProperty.call(payload, 'support_handoff_target')
+    ? (payload.support_handoff_target ?? null)
+    : (exists.support_handoff_target ?? null);
+  const requestedHandoffDate = Object.prototype.hasOwnProperty.call(payload, 'support_handoff_date')
+    ? (payload.support_handoff_date ?? null)
+    : (exists.support_handoff_date ?? null);
+  let normalizedHandoffTarget = isSupportCard ? requestedHandoffTarget : null;
+  let normalizedHandoffDate = isSupportCard ? requestedHandoffDate : null;
+  if (normalizedHandoffTarget === 'Sao_Paulo' && !normalizedHandoffDate) {
+    normalizedHandoffDate = nowDateIso();
+  }
+  if (normalizedHandoffTarget !== 'Sao_Paulo') {
+    normalizedHandoffDate = null;
+  }
+
   const fields: string[] = [];
   const values: unknown[] = [];
 
@@ -3434,6 +3480,12 @@ app.patch('/implementation/kanban/cards/:id', (req, res) => {
   if (Object.prototype.hasOwnProperty.call(payload, 'subcategory')) {
     fields.push('subcategory = ?');
     values.push(payload.subcategory ?? null);
+    if (payload.subcategory !== 'Suporte') {
+      fields.push('support_resolution = ?');
+      values.push(null);
+      fields.push('support_third_party_notes = ?');
+      values.push(null);
+    }
   }
   if (Object.prototype.hasOwnProperty.call(payload, 'support_resolution')) {
     fields.push('support_resolution = ?');
@@ -3442,6 +3494,16 @@ app.patch('/implementation/kanban/cards/:id', (req, res) => {
   if (Object.prototype.hasOwnProperty.call(payload, 'support_third_party_notes')) {
     fields.push('support_third_party_notes = ?');
     values.push(payload.support_third_party_notes?.trim() || null);
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(payload, 'subcategory') ||
+    Object.prototype.hasOwnProperty.call(payload, 'support_handoff_target') ||
+    Object.prototype.hasOwnProperty.call(payload, 'support_handoff_date')
+  ) {
+    fields.push('support_handoff_target = ?');
+    values.push(normalizedHandoffTarget);
+    fields.push('support_handoff_date = ?');
+    values.push(normalizedHandoffDate);
   }
   if (typeof payload.priority === 'string') {
     fields.push('priority = ?');

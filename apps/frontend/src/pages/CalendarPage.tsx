@@ -311,6 +311,7 @@ export function CalendarPage() {
   const [activityEndTime, setActivityEndTime] = useState('');
   const [activityNotes, setActivityNotes] = useState('');
   const [isActivityFormOpen, setIsActivityFormOpen] = useState(false);
+  const [editingActivityId, setEditingActivityId] = useState<string | null>(null);
 
   async function loadAll() {
     const [calendarRows, activityRows, modulesRows, techRows, companyRows] = await Promise.all([
@@ -585,6 +586,7 @@ export function CalendarPage() {
     setDetail(null);
     setActivityStartDate(date);
     setActivityEndDate(date);
+    setEditingActivityId(null);
     setIsActivityFormOpen(false);
     setIsDayPanelOpen(true);
   }
@@ -594,8 +596,24 @@ export function CalendarPage() {
     setSelectedDate(date);
     setActivityStartDate(date);
     setActivityEndDate(date);
+    setEditingActivityId(null);
     setIsActivityFormOpen(false);
     setIsDayPanelOpen(true);
+  }
+
+  function resetActivityForm(baseDate: string) {
+    setActivityTitle('');
+    setActivityType('Visita_cliente');
+    setActivityCompanyId('');
+    setActivityTechnicianIds([]);
+    setActivityStatus('Planejada');
+    setActivityAllDay(true);
+    setActivityStartDate(baseDate);
+    setActivityEndDate(baseDate);
+    setActivityStartTime('');
+    setActivityEndTime('');
+    setActivityNotes('');
+    setEditingActivityId(null);
   }
 
   useEffect(() => {
@@ -703,7 +721,23 @@ export function CalendarPage() {
     }
   }
 
-  async function createActivityOnSelectedDay() {
+  function editActivity(activity: CalendarActivityOccurrence) {
+    setEditingActivityId(activity.id);
+    setActivityTitle(activity.title);
+    setActivityType(activity.activity_type);
+    setActivityCompanyId(activity.company_id ?? '');
+    setActivityTechnicianIds(activity.technician_ids ?? []);
+    setActivityStatus(activity.status);
+    setActivityAllDay(Number(activity.all_day) === 1);
+    setActivityStartDate(activity.start_date);
+    setActivityEndDate(activity.end_date || activity.start_date);
+    setActivityStartTime(activity.start_time ?? '');
+    setActivityEndTime(activity.end_time ?? '');
+    setActivityNotes(activity.notes ?? '');
+    setIsActivityFormOpen(true);
+  }
+
+  async function saveActivityOnSelectedDay() {
     if (!selectedDate) return;
     if (!activityTitle.trim()) {
       setMessage('Informe o título da atividade.');
@@ -723,7 +757,7 @@ export function CalendarPage() {
     }
 
     try {
-      await api.createCalendarActivity({
+      const payload = {
         title: activityTitle.trim(),
         activity_type: activityType,
         start_date: activityStartDate,
@@ -735,20 +769,16 @@ export function CalendarPage() {
         technician_ids: activityTechnicianIds,
         status: activityStatus,
         notes: activityNotes.trim() || null
-      });
+      };
+      if (editingActivityId) {
+        await api.updateCalendarActivity(editingActivityId, payload);
+        setMessage('Atividade atualizada no calendário.');
+      } else {
+        await api.createCalendarActivity(payload);
+        setMessage('Atividade criada no calendário.');
+      }
 
-      setMessage('Atividade criada no calendário.');
-      setActivityTitle('');
-      setActivityType('Visita_cliente');
-      setActivityCompanyId('');
-      setActivityTechnicianIds([]);
-      setActivityStatus('Planejada');
-      setActivityAllDay(true);
-      setActivityStartDate(selectedDate);
-      setActivityEndDate(selectedDate);
-      setActivityStartTime('');
-      setActivityEndTime('');
-      setActivityNotes('');
+      resetActivityForm(selectedDate);
       setIsActivityFormOpen(false);
       await loadAll();
     } catch (error) {
@@ -1054,6 +1084,7 @@ export function CalendarPage() {
                           <td>{activity.all_day ? 'Dia inteiro' : `${activity.start_time ?? '--:--'}${activity.end_time ? ` - ${activity.end_time}` : ''}`}</td>
                           <td><StatusChip value={activity.status} /></td>
                           <td>
+                            <button type="button" onClick={() => editActivity(activity)}>Editar</button>
                             <button type="button" onClick={() => deleteActivity(activity)}>Excluir</button>
                           </td>
                         </tr>
@@ -1116,7 +1147,18 @@ export function CalendarPage() {
                     <button type="button" onClick={() => navigate('/turmas')}>
                       Ir para Turmas
                     </button>
-                    <button type="button" onClick={() => setIsActivityFormOpen((prev) => !prev)}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (isActivityFormOpen) {
+                          setIsActivityFormOpen(false);
+                          setEditingActivityId(null);
+                          return;
+                        }
+                        resetActivityForm(selectedDate);
+                        setIsActivityFormOpen(true);
+                      }}
+                    >
                       {isActivityFormOpen ? 'Fechar registro de atividade' : 'Registrar atividade extra'}
                     </button>
                   </div>
@@ -1124,7 +1166,7 @@ export function CalendarPage() {
 
                 {isActivityFormOpen ? (
                   <>
-                    <h3>Registrar atividade extra</h3>
+                    <h3>{editingActivityId ? 'Editar atividade extra' : 'Registrar atividade extra'}</h3>
                     <div className="form form-spacious">
                       <label>Título da atividade
                         <input value={activityTitle} onChange={(event) => setActivityTitle(event.target.value)} />
@@ -1195,7 +1237,22 @@ export function CalendarPage() {
                       <label>Observações
                         <textarea rows={3} value={activityNotes} onChange={(event) => setActivityNotes(event.target.value)} />
                       </label>
-                      <button type="button" onClick={createActivityOnSelectedDay}>Salvar atividade</button>
+                      <div className="actions actions-compact">
+                        <button type="button" onClick={saveActivityOnSelectedDay}>
+                          {editingActivityId ? 'Salvar alterações' : 'Salvar atividade'}
+                        </button>
+                        {editingActivityId ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              resetActivityForm(selectedDate);
+                              setIsActivityFormOpen(false);
+                            }}
+                          >
+                            Cancelar edição
+                          </button>
+                        ) : null}
+                      </div>
                     </div>
                   </>
                 ) : null}

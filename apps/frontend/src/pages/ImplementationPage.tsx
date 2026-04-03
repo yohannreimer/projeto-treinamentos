@@ -6,6 +6,7 @@ import { askDestructiveConfirmation } from '../utils/destructive';
 
 type KanbanPriority = 'Alta' | 'Normal' | 'Baixa' | 'Critica';
 type KanbanSubcategory = 'Pre_vendas' | 'Pos_vendas' | 'Suporte' | 'Implementacao';
+type KanbanSupportHandoffTarget = 'Conosco' | 'Sao_Paulo';
 
 const KANBAN_PRIORITY_OPTIONS: KanbanPriority[] = ['Alta', 'Normal', 'Baixa', 'Critica'];
 const KANBAN_SUBCATEGORY_OPTIONS: KanbanSubcategory[] = ['Pre_vendas', 'Pos_vendas', 'Suporte', 'Implementacao'];
@@ -23,6 +24,8 @@ type KanbanCard = {
   subcategory: KanbanSubcategory | null;
   support_resolution: string | null;
   support_third_party_notes: string | null;
+  support_handoff_target: KanbanSupportHandoffTarget | null;
+  support_handoff_date: string | null;
   support_alert_level: 'none' | 'stale' | 'done';
   support_alert_message: string | null;
   priority: KanbanPriority;
@@ -65,6 +68,8 @@ type CardDetailDraft = {
   subcategory: KanbanSubcategory | '';
   support_resolution: string;
   support_third_party_notes: string;
+  support_handoff_target: KanbanSupportHandoffTarget | '';
+  support_handoff_date: string;
   priority: KanbanPriority;
   due_date: string;
   attachment_image_data_url: string | null;
@@ -96,6 +101,8 @@ function cardDetailFromCard(card: KanbanCard): Exclude<CardDetailDraft, null> {
     subcategory: card.subcategory ?? '',
     support_resolution: card.support_resolution ?? '',
     support_third_party_notes: card.support_third_party_notes ?? '',
+    support_handoff_target: card.support_handoff_target ?? '',
+    support_handoff_date: card.support_handoff_date ?? '',
     priority: card.priority ?? 'Normal',
     due_date: card.due_date ?? '',
     attachment_image_data_url: card.attachment_image_data_url ?? null
@@ -115,6 +122,14 @@ function formatDateBr(dateIso?: string | null): string {
   const date = new Date(`${dateIso}T00:00:00`);
   if (Number.isNaN(date.getTime())) return dateIso;
   return date.toLocaleDateString('pt-BR');
+}
+
+function todayIsoLocal(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 function toDataUrl(file: File): Promise<string> {
@@ -398,6 +413,12 @@ export function ImplementationPage() {
     setMessage('');
     try {
       const isSupport = cardDetail.subcategory === 'Suporte';
+      const supportHandoffTarget = isSupport
+        ? (cardDetail.support_handoff_target || null)
+        : null;
+      const supportHandoffDate = supportHandoffTarget === 'Sao_Paulo'
+        ? (cardDetail.support_handoff_date || todayIsoLocal())
+        : null;
       await api.updateImplementationKanbanCard(cardDetail.cardId, {
         title: cardDetail.title.trim(),
         description: cardDetail.description.trim() || null,
@@ -406,7 +427,9 @@ export function ImplementationPage() {
         technician_id: cardDetail.technician_id || null,
         subcategory: cardDetail.subcategory || null,
         support_resolution: isSupport ? (cardDetail.support_resolution.trim() || null) : null,
-        support_third_party_notes: isSupport ? (cardDetail.support_third_party_notes.trim() || null) : null,
+        support_third_party_notes: null,
+        support_handoff_target: supportHandoffTarget,
+        support_handoff_date: supportHandoffDate,
         priority: cardDetail.priority,
         due_date: cardDetail.due_date || null,
         attachment_image_data_url: cardDetail.attachment_image_data_url ?? null
@@ -775,6 +798,14 @@ export function ImplementationPage() {
                                         {card.client_name ? <span className="kanban-meta-pill">Cliente: {card.client_name}</span> : null}
                                         {card.license_name ? <span className="kanban-meta-pill">Licença/App: {card.license_name}</span> : null}
                                         {card.subcategory ? <span className="kanban-meta-pill">Subcategoria: {subcategoryLabel(card.subcategory)}</span> : null}
+                                        {card.support_handoff_target ? (
+                                          <span className="kanban-meta-pill">
+                                            Suporte: {card.support_handoff_target === 'Sao_Paulo' ? 'São Paulo' : 'Conosco'}
+                                            {card.support_handoff_target === 'Sao_Paulo' && card.support_handoff_date
+                                              ? ` · ${formatDateBr(card.support_handoff_date)}`
+                                              : ''}
+                                          </span>
+                                        ) : null}
                                         {card.technician_id ? (
                                           <span className="kanban-meta-pill">
                                             Técnico: {technicianNameById.get(card.technician_id) ?? card.technician_id}
@@ -870,7 +901,22 @@ export function ImplementationPage() {
                   Subcategoria
                   <select
                     value={cardDetail.subcategory}
-                    onChange={(event) => setCardDetail((prev) => (prev ? { ...prev, subcategory: event.target.value as KanbanSubcategory | '' } : prev))}
+                    onChange={(event) => {
+                      const nextSubcategory = event.target.value as KanbanSubcategory | '';
+                      setCardDetail((prev) => {
+                        if (!prev) return prev;
+                        if (nextSubcategory === 'Suporte') {
+                          return { ...prev, subcategory: nextSubcategory };
+                        }
+                        return {
+                          ...prev,
+                          subcategory: nextSubcategory,
+                          support_resolution: '',
+                          support_handoff_target: '',
+                          support_handoff_date: ''
+                        };
+                      });
+                    }}
                   >
                     <option value="">Sem subcategoria</option>
                     {KANBAN_SUBCATEGORY_OPTIONS.map((option) => (
@@ -923,14 +969,43 @@ export function ImplementationPage() {
                     />
                   </label>
                   <label>
-                    Terceiros / repasse (interno)
-                    <textarea
-                      rows={3}
-                      value={cardDetail.support_third_party_notes}
-                      onChange={(event) => setCardDetail((prev) => (prev ? { ...prev, support_third_party_notes: event.target.value } : prev))}
-                      placeholder="Documente repasses, dependências e devolutivas de terceiros."
-                    />
+                    Encaminhamento do suporte
+                    <select
+                      value={cardDetail.support_handoff_target}
+                      onChange={(event) => {
+                        const nextTarget = event.target.value as KanbanSupportHandoffTarget | '';
+                        setCardDetail((prev) => {
+                          if (!prev) return prev;
+                          if (nextTarget === 'Sao_Paulo') {
+                            return {
+                              ...prev,
+                              support_handoff_target: 'Sao_Paulo',
+                              support_handoff_date: prev.support_handoff_date || todayIsoLocal()
+                            };
+                          }
+                          if (nextTarget === 'Conosco') {
+                            return {
+                              ...prev,
+                              support_handoff_target: 'Conosco',
+                              support_handoff_date: ''
+                            };
+                          }
+                          return {
+                            ...prev,
+                            support_handoff_target: '',
+                            support_handoff_date: ''
+                          };
+                        });
+                      }}
+                    >
+                      <option value="">Não definido</option>
+                      <option value="Conosco">Conosco</option>
+                      <option value="Sao_Paulo">São Paulo</option>
+                    </select>
                   </label>
+                  {cardDetail.support_handoff_target === 'Sao_Paulo' ? (
+                    <p className="form-hint">Repasse para São Paulo em: <strong>{formatDateBr(cardDetail.support_handoff_date || todayIsoLocal())}</strong></p>
+                  ) : null}
                 </div>
               ) : null}
 

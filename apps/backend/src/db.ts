@@ -258,6 +258,8 @@ export function initDb() {
       subcategory text,
       support_resolution text,
       support_third_party_notes text,
+      support_handoff_target text,
+      support_handoff_date text,
       priority text not null default 'Normal',
       due_date text,
       attachment_image_data_url text,
@@ -308,6 +310,8 @@ export function initDb() {
   ensureColumn('implementation_kanban_card', 'subcategory', 'subcategory text');
   ensureColumn('implementation_kanban_card', 'support_resolution', 'support_resolution text');
   ensureColumn('implementation_kanban_card', 'support_third_party_notes', 'support_third_party_notes text');
+  ensureColumn('implementation_kanban_card', 'support_handoff_target', 'support_handoff_target text');
+  ensureColumn('implementation_kanban_card', 'support_handoff_date', 'support_handoff_date text');
   ensureColumn('implementation_kanban_card', 'priority', "priority text not null default 'Normal'");
   ensureColumn('implementation_kanban_card', 'due_date', 'due_date text');
   ensureColumn('implementation_kanban_card', 'attachment_image_data_url', 'attachment_image_data_url text');

@@ -224,6 +224,8 @@ export const api = {
     subcategory?: 'Pre_vendas' | 'Pos_vendas' | 'Suporte' | 'Implementacao' | null;
     support_resolution?: string | null;
     support_third_party_notes?: string | null;
+    support_handoff_target?: 'Conosco' | 'Sao_Paulo' | null;
+    support_handoff_date?: string | null;
     priority?: 'Alta' | 'Normal' | 'Baixa' | 'Critica';
     due_date?: string | null;
     attachment_image_data_url?: string | null;
@@ -244,6 +246,8 @@ export const api = {
     subcategory?: 'Pre_vendas' | 'Pos_vendas' | 'Suporte' | 'Implementacao' | null;
     support_resolution?: string | null;
     support_third_party_notes?: string | null;
+    support_handoff_target?: 'Conosco' | 'Sao_Paulo' | null;
+    support_handoff_date?: string | null;
     priority?: 'Alta' | 'Normal' | 'Baixa' | 'Critica';
     due_date?: string | null;
     attachment_image_data_url?: string | null;
