@@ -70,6 +70,8 @@ const createCohortSchema = z.object({
   status: z.enum(['Planejada', 'Aguardando_quorum', 'Confirmada', 'Concluida', 'Cancelada']).default('Planejada'),
   capacity_companies: z.number().int().positive(),
   period: z.enum(COHORT_PERIOD_VALUES).default('Integral'),
+  start_time: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
+  end_time: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
   delivery_mode: z.enum(COHORT_DELIVERY_MODE_VALUES).default('Online'),
   notes: z.string().optional().nullable(),
   blocks: z.array(cohortBlockSchema).min(1)
@@ -83,6 +85,8 @@ const updateCohortSchema = z.object({
   status: z.enum(['Planejada', 'Aguardando_quorum', 'Confirmada', 'Concluida', 'Cancelada']).optional(),
   capacity_companies: z.number().int().positive().optional(),
   period: z.enum(COHORT_PERIOD_VALUES).optional(),
+  start_time: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
+  end_time: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
   delivery_mode: z.enum(COHORT_DELIVERY_MODE_VALUES).optional(),
   notes: z.string().nullable().optional(),
   blocks: z.array(cohortBlockSchema).min(1).optional()
@@ -107,6 +111,9 @@ const technicianConflictCheckSchema = z.object({
   technician_id: z.string(),
   start_date: z.string().min(10),
   status: z.enum(['Planejada', 'Aguardando_quorum', 'Confirmada', 'Concluida', 'Cancelada']).default('Planejada'),
+  period: z.enum(COHORT_PERIOD_VALUES).default('Integral'),
+  start_time: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
+  end_time: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
   blocks: z.array(cohortBlockSchema).min(1),
   exclude_cohort_id: z.string().optional()
 });
@@ -732,6 +739,58 @@ function dayDiff(fromIsoDate: string, toIsoDate: string): number {
   return Math.round((to - from) / 86400000);
 }
 
+function timeToMinutes(value?: string | null): number | null {
+  if (!value) return null;
+  const [hourRaw, minuteRaw] = value.split(':');
+  const hour = Number(hourRaw);
+  const minute = Number(minuteRaw);
+  if (!Number.isInteger(hour) || !Number.isInteger(minute)) return null;
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+  return hour * 60 + minute;
+}
+
+function validateCohortTimeWindow(period: (typeof COHORT_PERIOD_VALUES)[number], startTime?: string | null, endTime?: string | null): string | null {
+  if (period !== 'Meio_periodo') return null;
+  if (!startTime || !endTime) {
+    return 'Para turma de meio período, informe horário inicial e final.';
+  }
+  const startMinutes = timeToMinutes(startTime);
+  const endMinutes = timeToMinutes(endTime);
+  if (startMinutes === null || endMinutes === null) {
+    return 'Horário inválido para turma de meio período.';
+  }
+  if (endMinutes <= startMinutes) {
+    return 'Horário final deve ser maior que o horário inicial na turma de meio período.';
+  }
+  return null;
+}
+
+function hasTechnicianPeriodConflict(
+  newPeriod: (typeof COHORT_PERIOD_VALUES)[number],
+  newStartTime: string | null,
+  newEndTime: string | null,
+  existingPeriod: (typeof COHORT_PERIOD_VALUES)[number],
+  existingStartTime: string | null,
+  existingEndTime: string | null
+): boolean {
+  if (newPeriod !== 'Meio_periodo' || existingPeriod !== 'Meio_periodo') {
+    return true;
+  }
+
+  const newStartMinutes = timeToMinutes(newStartTime);
+  const newEndMinutes = timeToMinutes(newEndTime);
+  const existingStartMinutes = timeToMinutes(existingStartTime);
+  const existingEndMinutes = timeToMinutes(existingEndTime);
+  if (
+    newStartMinutes === null || newEndMinutes === null ||
+    existingStartMinutes === null || existingEndMinutes === null
+  ) {
+    return true;
+  }
+
+  return newStartMinutes < existingEndMinutes && existingStartMinutes < newEndMinutes;
+}
+
 function renewalAlertWindowDays(renewalCycle: 'Mensal' | 'Anual'): number {
   return renewalCycle === 'Anual' ? 30 : 7;
 }
@@ -752,12 +811,15 @@ function nextRenewalDate(currentExpiresAt: string, renewalCycle: 'Mensal' | 'Anu
 function findTechnicianConflict(params: {
   technicianId: string;
   startDate: string;
+  period: (typeof COHORT_PERIOD_VALUES)[number];
+  startTime: string | null;
+  endTime: string | null;
   blocks: Array<{ start_day_offset: number; duration_days: number }>;
   excludeCohortId?: string;
 }): { id: string; code: string; name: string; conflictDate: string } | null {
   const rows = params.excludeCohortId
     ? db.prepare(`
-      select id, code, name, start_date
+      select id, code, name, start_date, period, start_time, end_time
       from cohort
       where technician_id = ?
         and status <> 'Cancelada'
@@ -765,14 +827,22 @@ function findTechnicianConflict(params: {
       order by date(start_date) asc
     `).all(params.technicianId, params.excludeCohortId)
     : db.prepare(`
-      select id, code, name, start_date
+      select id, code, name, start_date, period, start_time, end_time
       from cohort
       where technician_id = ?
         and status <> 'Cancelada'
       order by date(start_date) asc
     `).all(params.technicianId);
 
-  const candidateCohorts = rows as Array<{ id: string; code: string; name: string; start_date: string }>;
+  const candidateCohorts = rows as Array<{
+    id: string;
+    code: string;
+    name: string;
+    start_date: string;
+    period: (typeof COHORT_PERIOD_VALUES)[number] | null;
+    start_time: string | null;
+    end_time: string | null;
+  }>;
   const newDateSet = new Set(cohortBusinessDates(params.startDate, params.blocks));
   const selectBlocks = db.prepare(`
     select start_day_offset, duration_days
@@ -784,13 +854,26 @@ function findTechnicianConflict(params: {
   for (const cohort of candidateCohorts) {
     const existingBlocks = selectBlocks.all(cohort.id) as Array<{ start_day_offset: number; duration_days: number }>;
     const existingDates = cohortBusinessDates(cohort.start_date, existingBlocks);
-    const overlap = existingDates.find((dateIso) => newDateSet.has(dateIso));
-    if (overlap) {
+    const overlapDates = existingDates.filter((dateIso) => newDateSet.has(dateIso));
+    if (overlapDates.length === 0) {
+      continue;
+    }
+
+    const hasPeriodConflict = hasTechnicianPeriodConflict(
+      params.period,
+      params.startTime,
+      params.endTime,
+      cohort.period ?? 'Integral',
+      cohort.start_time ?? null,
+      cohort.end_time ?? null
+    );
+
+    if (hasPeriodConflict) {
       return {
         id: cohort.id,
         code: cohort.code,
         name: cohort.name,
-        conflictDate: overlap
+        conflictDate: overlapDates[0]
       };
     }
   }
@@ -1355,6 +1438,10 @@ app.post('/cohorts/check-technician-conflict', (req, res) => {
   } catch (error) {
     return res.status(400).json({ message: errorMessage(error) });
   }
+  const timeWindowError = validateCohortTimeWindow(payload.period, payload.start_time ?? null, payload.end_time ?? null);
+  if (timeWindowError) {
+    return res.status(400).json({ message: timeWindowError });
+  }
 
   if (payload.status === 'Cancelada') {
     return res.json({ has_conflict: false });
@@ -1371,6 +1458,9 @@ app.post('/cohorts/check-technician-conflict', (req, res) => {
   const conflict = findTechnicianConflict({
     technicianId: payload.technician_id,
     startDate: payload.start_date,
+    period: payload.period,
+    startTime: payload.start_time ?? null,
+    endTime: payload.end_time ?? null,
     blocks: payload.blocks,
     excludeCohortId: payload.exclude_cohort_id
   });
@@ -1404,11 +1494,18 @@ app.post('/cohorts', (req, res) => {
   } catch (error) {
     return res.status(400).json({ message: errorMessage(error) });
   }
+  const timeWindowError = validateCohortTimeWindow(payload.period, payload.start_time ?? null, payload.end_time ?? null);
+  if (timeWindowError) {
+    return res.status(400).json({ message: timeWindowError });
+  }
 
   if (payload.technician_id && payload.status !== 'Cancelada') {
     const conflict = findTechnicianConflict({
       technicianId: payload.technician_id,
       startDate: payload.start_date,
+      period: payload.period,
+      startTime: payload.period === 'Meio_periodo' ? (payload.start_time ?? null) : null,
+      endTime: payload.period === 'Meio_periodo' ? (payload.end_time ?? null) : null,
       blocks: payload.blocks
     });
     if (conflict) {
@@ -1423,8 +1520,10 @@ app.post('/cohorts', (req, res) => {
 
   const tx = db.transaction(() => {
     db.prepare(`
-      insert into cohort (id, code, name, start_date, technician_id, status, capacity_companies, period, delivery_mode, notes)
-      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      insert into cohort (
+        id, code, name, start_date, technician_id, status, capacity_companies, period, start_time, end_time, delivery_mode, notes
+      )
+      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       cohortId,
       resolvedCode,
@@ -1434,6 +1533,8 @@ app.post('/cohorts', (req, res) => {
       payload.status,
       payload.capacity_companies,
       payload.period,
+      payload.period === 'Meio_periodo' ? (payload.start_time ?? null) : null,
+      payload.period === 'Meio_periodo' ? (payload.end_time ?? null) : null,
       payload.delivery_mode,
       payload.notes ?? null
     );
@@ -1470,7 +1571,7 @@ app.patch('/cohorts/:id', (req, res) => {
   }
 
   const existing = db.prepare(`
-    select id, technician_id, start_date, status
+    select id, technician_id, start_date, status, period, start_time, end_time
     from cohort
     where id = ?
   `).get(req.params.id) as {
@@ -1478,6 +1579,9 @@ app.patch('/cohorts/:id', (req, res) => {
     technician_id: string | null;
     start_date: string;
     status: string;
+    period: (typeof COHORT_PERIOD_VALUES)[number] | null;
+    start_time: string | null;
+    end_time: string | null;
   } | undefined;
   if (!existing) {
     return res.status(404).json({ message: 'Turma nao encontrada' });
@@ -1520,6 +1624,17 @@ app.patch('/cohorts/:id', (req, res) => {
   const nextTechnicianId = payload.technician_id === undefined ? existing.technician_id : payload.technician_id;
   const nextStartDate = payload.start_date ?? existing.start_date;
   const nextStatus = payload.status ?? existing.status;
+  const nextPeriod = payload.period ?? (existing.period ?? 'Integral');
+  const nextStartTime = Object.prototype.hasOwnProperty.call(payload, 'start_time')
+    ? (payload.start_time ?? null)
+    : (existing.start_time ?? null);
+  const nextEndTime = Object.prototype.hasOwnProperty.call(payload, 'end_time')
+    ? (payload.end_time ?? null)
+    : (existing.end_time ?? null);
+  const timeWindowError = validateCohortTimeWindow(nextPeriod, nextStartTime, nextEndTime);
+  if (timeWindowError) {
+    return res.status(400).json({ message: timeWindowError });
+  }
   const nextBlocks = payload.blocks ?? db.prepare(`
     select start_day_offset, duration_days
     from cohort_module_block
@@ -1531,6 +1646,9 @@ app.patch('/cohorts/:id', (req, res) => {
     const conflict = findTechnicianConflict({
       technicianId: nextTechnicianId,
       startDate: nextStartDate,
+      period: nextPeriod,
+      startTime: nextPeriod === 'Meio_periodo' ? nextStartTime : null,
+      endTime: nextPeriod === 'Meio_periodo' ? nextEndTime : null,
       blocks: nextBlocks,
       excludeCohortId: req.params.id
     });
@@ -1545,7 +1663,7 @@ app.patch('/cohorts/:id', (req, res) => {
   const values: unknown[] = [];
 
   Object.entries(payload).forEach(([key, value]) => {
-    if (key === 'blocks') return;
+    if (key === 'blocks' || key === 'start_time' || key === 'end_time') return;
     if (key === 'code' && typeof value === 'string') {
       fields.push('code = ?');
       values.push(resolveUniqueCohortCode(value, req.params.id));
@@ -1554,6 +1672,20 @@ app.patch('/cohorts/:id', (req, res) => {
     fields.push(`${key} = ?`);
     values.push(value);
   });
+
+  if (Object.prototype.hasOwnProperty.call(payload, 'period') || Object.prototype.hasOwnProperty.call(payload, 'start_time') || Object.prototype.hasOwnProperty.call(payload, 'end_time')) {
+    if (nextPeriod !== 'Meio_periodo') {
+      fields.push('start_time = ?');
+      values.push(null);
+      fields.push('end_time = ?');
+      values.push(null);
+    } else {
+      fields.push('start_time = ?');
+      values.push(nextStartTime);
+      fields.push('end_time = ?');
+      values.push(nextEndTime);
+    }
+  }
 
   if (fields.length === 0 && !payload.blocks) {
     return res.status(200).json({ message: 'Sem alteracoes' });

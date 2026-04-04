@@ -250,6 +250,12 @@ function moduleShortLabel(name: string): string {
     .trim();
 }
 
+function formatCohortSchedule(period?: 'Integral' | 'Meio_periodo', startTime?: string | null, endTime?: string | null): string {
+  if (period !== 'Meio_periodo') return statusLabel(period ?? 'Integral');
+  if (startTime && endTime) return `${statusLabel('Meio_periodo')} (${startTime} - ${endTime})`;
+  return statusLabel('Meio_periodo');
+}
+
 function moduleDurationById(modules: Module[], moduleId: string): number {
   const duration = modules.find((module) => module.id === moduleId)?.duration_days;
   return Math.max(1, Number(duration) || 1);
@@ -963,7 +969,7 @@ export function CalendarPage() {
                         <p className="calendar-event-meta">Técnico: {event.technician_name ?? '-'}</p>
                         <p className="calendar-event-meta">Dia {event.day_index}/{event.total_business_days}</p>
                         <p className="calendar-event-meta">
-                          {statusLabel(event.delivery_mode ?? 'Online')} · {statusLabel(event.period ?? 'Integral')}
+                          {statusLabel(event.delivery_mode ?? 'Online')} · {formatCohortSchedule(event.period, event.start_time, event.end_time)}
                         </p>
                         <p className="calendar-event-meta calendar-ops-only" title={collapseList(moduleNames, 10)}>
                           Módulos: {collapseList(moduleNames, 2)}
@@ -1098,7 +1104,7 @@ export function CalendarPage() {
                     <div className="stack">
                       <p><strong>{detail.code} - {detail.name}</strong></p>
                       <p>Início: {shortDateLabel(detail.start_date)} | Técnico: {detail.technician_name ?? '-'}</p>
-                      <p>Formato: {statusLabel(detail.delivery_mode ?? 'Online')} · {statusLabel(detail.period ?? 'Integral')}</p>
+                      <p>Formato: {statusLabel(detail.delivery_mode ?? 'Online')} · {formatCohortSchedule(detail.period, detail.start_time, detail.end_time)}</p>
                       <p>Capacidade: {detail.capacity_companies}</p>
                       <StatusChip value={detail.status} />
 

@@ -19,6 +19,12 @@ function formatDateBr(dateIso: string): string {
   return new Date(year, month - 1, day).toLocaleDateString('pt-BR');
 }
 
+function formatCohortSchedule(period?: 'Integral' | 'Meio_periodo', startTime?: string | null, endTime?: string | null): string {
+  if (period !== 'Meio_periodo') return statusLabel(period ?? 'Integral');
+  if (startTime && endTime) return `${statusLabel('Meio_periodo')} (${startTime} - ${endTime})`;
+  return statusLabel('Meio_periodo');
+}
+
 export function CohortDetailPage() {
   const { id } = useParams();
   const [data, setData] = useState<any>(null);
@@ -189,7 +195,7 @@ export function CohortDetailPage() {
         <Section title="Dados gerais">
           <p><strong>Início:</strong> {formatDateBr(data.start_date)}</p>
           <p><strong>Técnico:</strong> {data.technician_name ?? '-'}</p>
-          <p><strong>Formato:</strong> {statusLabel(data.delivery_mode ?? 'Online')} · {statusLabel(data.period ?? 'Integral')}</p>
+          <p><strong>Formato:</strong> {statusLabel(data.delivery_mode ?? 'Online')} · {formatCohortSchedule(data.period, data.start_time, data.end_time)}</p>
           <p><strong>Capacidade:</strong> {data.capacity_companies}</p>
           <StatusChip value={data.status} />
 

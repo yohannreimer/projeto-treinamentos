@@ -19,6 +19,8 @@ export type Cohort = {
   status: string;
   capacity_companies: number;
   period?: 'Integral' | 'Meio_periodo';
+  start_time?: string | null;
+  end_time?: string | null;
   delivery_mode?: 'Online' | 'Presencial' | 'Hibrida';
   notes: string | null;
   occupancy?: number;

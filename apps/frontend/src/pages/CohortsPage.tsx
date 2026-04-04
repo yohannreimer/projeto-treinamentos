@@ -64,6 +64,12 @@ function formatDateBr(dateIso: string): string {
   return new Date(year, month - 1, day).toLocaleDateString('pt-BR');
 }
 
+function formatCohortSchedule(period?: 'Integral' | 'Meio_periodo', startTime?: string | null, endTime?: string | null): string {
+  if (period !== 'Meio_periodo') return statusLabel(period ?? 'Integral');
+  if (startTime && endTime) return `${statusLabel('Meio_periodo')} (${startTime} - ${endTime})`;
+  return statusLabel('Meio_periodo');
+}
+
 function modulesFromEntry(blocks: CohortBlock[], entryModuleId: string): string[] {
   const entry = blocks.find((block) => block.module_id === entryModuleId);
   if (!entry) return blocks.map((block) => block.module_id);
@@ -97,6 +103,8 @@ export function CohortsPage() {
   const [capacity, setCapacity] = useState(8);
   const [status, setStatus] = useState('Planejada');
   const [period, setPeriod] = useState<(typeof periodOptions)[number]>('Integral');
+  const [cohortStartTime, setCohortStartTime] = useState('13:30');
+  const [cohortEndTime, setCohortEndTime] = useState('17:00');
   const [deliveryMode, setDeliveryMode] = useState<(typeof deliveryModeOptions)[number]>('Online');
   const [notes, setNotes] = useState('');
   const [blocks, setBlocks] = useState<BlockDraft[]>([]);
@@ -184,6 +192,8 @@ export function CohortsPage() {
     setCapacity(8);
     setStatus('Planejada');
     setPeriod('Integral');
+    setCohortStartTime('13:30');
+    setCohortEndTime('17:00');
     setDeliveryMode('Online');
     setNotes('');
     setBlocks(firstModule ? [{ key: randomKey(), module_id: firstModule.id, duration_days: firstModule.duration_days || 1 }] : []);
@@ -297,6 +307,9 @@ export function CohortsPage() {
       technician_id: technicianId,
       start_date: startDate,
       status,
+      period,
+      start_time: period === 'Meio_periodo' ? cohortStartTime : null,
+      end_time: period === 'Meio_periodo' ? cohortEndTime : null,
       blocks: blockPreview,
       exclude_cohort_id: editingId ?? undefined
     }).then((response: any) => {
@@ -322,7 +335,7 @@ export function CohortsPage() {
     return () => {
       active = false;
     };
-  }, [technicianId, startDate, status, blockPreview, editingId]);
+  }, [technicianId, startDate, status, period, cohortStartTime, cohortEndTime, blockPreview, editingId]);
 
   function addBlock() {
     const fallbackModuleId = modules[0]?.id ?? '';
@@ -375,6 +388,8 @@ export function CohortsPage() {
       setCapacity(detail.capacity_companies);
       setStatus(detail.status);
       setPeriod((detail.period ?? 'Integral') as (typeof periodOptions)[number]);
+      setCohortStartTime(detail.start_time ?? '13:30');
+      setCohortEndTime(detail.end_time ?? '17:00');
       setDeliveryMode((detail.delivery_mode ?? 'Online') as (typeof deliveryModeOptions)[number]);
       setNotes(detail.notes ?? '');
       setBlocks((detail.blocks ?? []).map((block) => ({
@@ -510,6 +525,16 @@ export function CohortsPage() {
       setError('Aguarde a validação da agenda do técnico.');
       return;
     }
+    if (period === 'Meio_periodo') {
+      if (!cohortStartTime || !cohortEndTime) {
+        setError('Para turma de meio período, informe horário inicial e final.');
+        return;
+      }
+      if (cohortEndTime <= cohortStartTime) {
+        setError('Horário final deve ser maior que o horário inicial.');
+        return;
+      }
+    }
     if (hasTechnicianConflict) {
       setError(technicianConflictMessage || 'Conflito de agenda detectado para o técnico.');
       return;
@@ -523,6 +548,8 @@ export function CohortsPage() {
       status,
       capacity_companies: Math.max(1, Number(capacity) || 1),
       period,
+      start_time: period === 'Meio_periodo' ? cohortStartTime : null,
+      end_time: period === 'Meio_periodo' ? cohortEndTime : null,
       delivery_mode: deliveryMode,
       notes: notes.trim() || null,
       blocks: blockPreview
@@ -622,7 +649,7 @@ export function CohortsPage() {
                     <div>{cohort.name}</div>
                   </td>
                   <td>{formatDateBr(cohort.start_date)}</td>
-                  <td>{statusLabel(cohort.delivery_mode ?? 'Online')} · {statusLabel(cohort.period ?? 'Integral')}</td>
+                  <td>{statusLabel(cohort.delivery_mode ?? 'Online')} · {formatCohortSchedule(cohort.period, cohort.start_time, cohort.end_time)}</td>
                   <td>{cohort.technician_name ?? 'Sem técnico'}</td>
                   <td><StatusChip value={cohort.status} /></td>
                   <td className="actions actions-compact">
@@ -699,6 +726,18 @@ export function CohortsPage() {
                     ))}
                   </select>
                 </label>
+                {period === 'Meio_periodo' ? (
+                  <>
+                    <label>
+                      Horário inicial
+                      <input type="time" value={cohortStartTime} onChange={(event) => setCohortStartTime(event.target.value)} />
+                    </label>
+                    <label>
+                      Horário final
+                      <input type="time" value={cohortEndTime} onChange={(event) => setCohortEndTime(event.target.value)} />
+                    </label>
+                  </>
+                ) : null}
               </div>
               <div className="three-col">
                 <label>

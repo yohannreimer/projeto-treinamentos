@@ -94,6 +94,8 @@ export function initDb() {
       status text not null default 'Planejada',
       capacity_companies integer not null,
       period text not null default 'Integral',
+      start_time text,
+      end_time text,
       delivery_mode text not null default 'Online',
       notes text,
       foreign key(technician_id) references technician(id) on delete set null
@@ -289,6 +291,8 @@ export function initDb() {
   ensureColumn('company_module_progress', 'custom_duration_days', 'custom_duration_days integer');
   ensureColumn('company_module_progress', 'custom_units', 'custom_units integer');
   ensureColumn('cohort', 'period', "period text not null default 'Integral'");
+  ensureColumn('cohort', 'start_time', 'start_time text');
+  ensureColumn('cohort', 'end_time', 'end_time text');
   ensureColumn('cohort', 'delivery_mode', "delivery_mode text not null default 'Online'");
   ensureColumn(
     'cohort_allocation',

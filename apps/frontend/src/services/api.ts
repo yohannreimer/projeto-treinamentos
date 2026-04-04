@@ -70,6 +70,9 @@ export const api = {
     technician_id: string;
     start_date: string;
     status: string;
+    period?: 'Integral' | 'Meio_periodo';
+    start_time?: string | null;
+    end_time?: string | null;
     blocks: Array<{
       module_id: string;
       order_in_cohort: number;
