@@ -11,6 +11,8 @@ type ModuleEdit = {
   custom_duration_days: string;
 };
 
+type JourneyFilter = 'all' | 'Concluido' | 'Em_execucao' | 'Planejado' | 'Nao_iniciado';
+
 const statusOptions = ['Em_treinamento', 'Finalizado', 'Ativo', 'Inativo'] as const;
 const priorityOptions = ['Alta', 'Normal', 'Baixa', 'Parado', 'Aguardando_liberacao'] as const;
 const modalityOptions = ['Turma_Online', 'Exclusivo_Online', 'Presencial'] as const;
@@ -20,6 +22,7 @@ type HistorySortKey = 'cohort_code' | 'start_date' | 'module_code' | 'entry_day'
 
 export function ClientDetailPage() {
   const { id } = useParams();
+  const disabledModulesPanelId = 'client-detail-disabled-modules';
   const [data, setData] = useState<any>(null);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -39,6 +42,8 @@ export function ClientDetailPage() {
   const [savingModuleId, setSavingModuleId] = useState<string | null>(null);
   const [historySortKey, setHistorySortKey] = useState<HistorySortKey>('start_date');
   const [historySortDirection, setHistorySortDirection] = useState<'asc' | 'desc'>('desc');
+  const [journeyFilter, setJourneyFilter] = useState<JourneyFilter>('all');
+  const [showDisabledModules, setShowDisabledModules] = useState(false);
 
   function load() {
     if (!id) return;
@@ -55,6 +60,11 @@ export function ClientDetailPage() {
 
   useEffect(() => {
     load();
+  }, [id]);
+
+  useEffect(() => {
+    setJourneyFilter('all');
+    setShowDisabledModules(false);
   }, [id]);
 
   useEffect(() => {
@@ -81,6 +91,46 @@ export function ClientDetailPage() {
   }, [data]);
 
   const timeline = useMemo(() => data?.timeline ?? [], [data]);
+  const activeTimeline = useMemo(
+    () => timeline.filter((item: any) => Boolean(item.is_enabled)),
+    [timeline]
+  );
+  const disabledCount = useMemo(
+    () => timeline.filter((item: any) => !item.is_enabled).length,
+    [timeline]
+  );
+  const disabledTimeline = useMemo(
+    () => timeline.filter((item: any) => !item.is_enabled),
+    [timeline]
+  );
+  const journeyKpis = useMemo(() => {
+    const counts = {
+      Concluido: 0,
+      Em_execucao: 0,
+      Planejado: 0,
+      Nao_iniciado: 0
+    };
+
+    activeTimeline.forEach((item: any) => {
+      if (item.status === 'Concluido') counts.Concluido += 1;
+      else if (item.status === 'Em_execucao') counts.Em_execucao += 1;
+      else if (item.status === 'Planejado') counts.Planejado += 1;
+      else if (item.status === 'Nao_iniciado') counts.Nao_iniciado += 1;
+    });
+
+    return counts;
+  }, [activeTimeline]);
+  const filteredTimeline = useMemo(() => {
+    if (journeyFilter === 'all') return activeTimeline;
+    return activeTimeline.filter((item: any) => item.status === journeyFilter);
+  }, [activeTimeline, journeyFilter]);
+
+  useEffect(() => {
+    if (disabledCount === 0 && showDisabledModules) {
+      setShowDisabledModules(false);
+    }
+  }, [disabledCount, showDisabledModules]);
+
   const sortedHistory = useMemo(() => {
     const rows = [...(data?.history ?? [])];
     rows.sort((a: any, b: any) => {
@@ -311,85 +361,185 @@ export function ClientDetailPage() {
 
           <div className="two-col">
             <Section title="Jornada de módulos">
+              <div className="journey-kpi-strip" role="group" aria-label="Filtro da jornada de módulos">
+                <button
+                  type="button"
+                  className={`journey-kpi-btn ${journeyFilter === 'Concluido' ? 'is-active' : ''}`}
+                  aria-pressed={journeyFilter === 'Concluido'}
+                  onClick={() => setJourneyFilter((prev) => (prev === 'Concluido' ? 'all' : 'Concluido'))}
+                >
+                  Concluído {journeyKpis.Concluido}
+                </button>
+                <button
+                  type="button"
+                  className={`journey-kpi-btn ${journeyFilter === 'Em_execucao' ? 'is-active' : ''}`}
+                  aria-pressed={journeyFilter === 'Em_execucao'}
+                  onClick={() => setJourneyFilter((prev) => (prev === 'Em_execucao' ? 'all' : 'Em_execucao'))}
+                >
+                  Em andamento {journeyKpis.Em_execucao}
+                </button>
+                <button
+                  type="button"
+                  className={`journey-kpi-btn ${journeyFilter === 'Planejado' ? 'is-active' : ''}`}
+                  aria-pressed={journeyFilter === 'Planejado'}
+                  onClick={() => setJourneyFilter((prev) => (prev === 'Planejado' ? 'all' : 'Planejado'))}
+                >
+                  Planejado {journeyKpis.Planejado}
+                </button>
+                <button
+                  type="button"
+                  className={`journey-kpi-btn ${journeyFilter === 'Nao_iniciado' ? 'is-active' : ''}`}
+                  aria-pressed={journeyFilter === 'Nao_iniciado'}
+                  onClick={() => setJourneyFilter((prev) => (prev === 'Nao_iniciado' ? 'all' : 'Nao_iniciado'))}
+                >
+                  Stand-by {journeyKpis.Nao_iniciado}
+                </button>
+                <button
+                  type="button"
+                  className={`journey-kpi-btn ${journeyFilter === 'all' ? 'is-active' : ''}`}
+                  aria-pressed={journeyFilter === 'all'}
+                  onClick={() => setJourneyFilter('all')}
+                >
+                  Todos {activeTimeline.length}
+                </button>
+              </div>
+              <div className="journey-kpi-meta-row">
+                <p className="journey-kpi-meta">
+                  Exibindo {filteredTimeline.length} de {activeTimeline.length} módulos ativos.
+                  {disabledCount > 0 ? ` Desativados: ${disabledCount}.` : ''}
+                </p>
+                {disabledCount > 0 ? (
+                  <button
+                    type="button"
+                    className="journey-kpi-toggle"
+                    aria-expanded={showDisabledModules}
+                    aria-controls={disabledModulesPanelId}
+                    onClick={() => setShowDisabledModules((prev) => !prev)}
+                  >
+                    {showDisabledModules ? 'Ocultar desativados' : 'Gerenciar desativados'}
+                  </button>
+                ) : null}
+              </div>
               <ul className="timeline">
-                {timeline.map((moduleItem: any) => {
-                  const edit = moduleEdits[moduleItem.module_id] ?? {
-                    status: 'Nao_iniciado',
-                    notes: '',
-                    custom_duration_days: ''
-                  };
-                  return (
-                    <li key={moduleItem.module_id} className="timeline-item">
-                      <div className="timeline-copy">
-                        <strong>{moduleItem.code} - {moduleItem.name}</strong>
-                        <p>{moduleItem.category} | padrão: {moduleItem.duration_days} diárias</p>
-                        <p>Planejado para este cliente: {moduleItem.effective_duration_days} diárias</p>
-                        <p>Concluído em: {moduleItem.completed_at ?? '-'}</p>
-                        <p>
-                          Turma vinculada: {moduleItem.last_cohort_code
-                            ? `${moduleItem.last_cohort_code} - ${moduleItem.last_cohort_name ?? ''} (${statusLabel(moduleItem.last_cohort_status ?? 'Planejada')})`
-                            : '-'}
-                        </p>
-                        <p>Módulo para este cliente: {moduleItem.is_enabled ? 'Ativo' : 'Desativado'}</p>
-                      </div>
-                      <div className="actions timeline-actions">
-                        {moduleItem.is_enabled ? <StatusChip value={moduleItem.status} /> : <span className="chip">Desativado</span>}
-                        <select
-                          value={edit.status}
-                          onChange={(event) => updateModuleEdit(moduleItem.module_id, {
-                            status: event.target.value as ModuleEdit['status']
-                          })}
-                          disabled={!moduleItem.is_enabled}
-                        >
-                          {progressStatusOptions.map((option) => (
-                            <option key={option} value={option}>{statusLabel(option)}</option>
-                          ))}
-                        </select>
-                        <input
-                          type="number"
-                          min={1}
-                          placeholder="Diárias custom"
-                          value={edit.custom_duration_days}
-                          onChange={(event) => updateModuleEdit(moduleItem.module_id, { custom_duration_days: event.target.value })}
-                          disabled={!moduleItem.is_enabled}
-                          className="timeline-days-input"
-                        />
-                        <input
-                          placeholder="Observação do módulo"
-                          value={edit.notes}
-                          onChange={(event) => updateModuleEdit(moduleItem.module_id, { notes: event.target.value })}
-                          disabled={!moduleItem.is_enabled}
-                          className="timeline-notes-input"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => saveModuleProgress(moduleItem.module_id)}
-                          disabled={!moduleItem.is_enabled || savingModuleId === moduleItem.module_id}
-                        >
-                          Salvar módulo
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => markDone(moduleItem.module_id)}
-                          disabled={!moduleItem.is_enabled || savingModuleId === moduleItem.module_id}
-                        >
-                          Concluir (Admin)
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => undoDone(moduleItem.module_id)}
-                          disabled={!moduleItem.is_enabled || moduleItem.status !== 'Concluido' || savingModuleId === moduleItem.module_id}
-                        >
-                          Desfazer conclusão
-                        </button>
-                        <button type="button" onClick={() => toggleModule(moduleItem.module_id, Boolean(moduleItem.is_enabled))}>
-                          {moduleItem.is_enabled ? 'Desativar módulo' : 'Ativar módulo'}
-                        </button>
-                      </div>
-                    </li>
-                  );
-                })}
+                {filteredTimeline.length === 0 ? (
+                  <li className="timeline-item">
+                    <div className="timeline-copy">
+                      {activeTimeline.length === 0 ? (
+                        <>
+                          <strong>Não há módulos ativos nesta jornada.</strong>
+                          <p>
+                            {disabledCount > 0
+                              ? 'Todos os módulos estão desativados para este cliente.'
+                              : 'Esta jornada ainda não possui módulos carregados.'}
+                          </p>
+                        </>
+                      ) : (
+                        <>
+                          <strong>Sem módulos neste filtro.</strong>
+                          <p>Altere o chip para visualizar outros módulos ativos nesta jornada.</p>
+                        </>
+                      )}
+                    </div>
+                  </li>
+                ) : (
+                  filteredTimeline.map((moduleItem: any) => {
+                    const edit = moduleEdits[moduleItem.module_id] ?? {
+                      status: 'Nao_iniciado',
+                      notes: '',
+                      custom_duration_days: ''
+                    };
+                    return (
+                      <li key={moduleItem.module_id} className="timeline-item">
+                        <div className="timeline-copy">
+                          <strong>{moduleItem.code} - {moduleItem.name}</strong>
+                          <p>{moduleItem.category} | padrão: {moduleItem.duration_days} diárias</p>
+                          <p>Planejado para este cliente: {moduleItem.effective_duration_days} diárias</p>
+                          <p>Concluído em: {moduleItem.completed_at ?? '-'}</p>
+                          <p>
+                            Turma vinculada: {moduleItem.last_cohort_code
+                              ? `${moduleItem.last_cohort_code} - ${moduleItem.last_cohort_name ?? ''} (${statusLabel(moduleItem.last_cohort_status ?? 'Planejada')})`
+                              : '-'}
+                          </p>
+                          <p>Módulo para este cliente: {moduleItem.is_enabled ? 'Ativo' : 'Desativado'}</p>
+                        </div>
+                        <div className="actions timeline-actions">
+                          {moduleItem.is_enabled ? <StatusChip value={moduleItem.status} /> : <span className="chip">Desativado</span>}
+                          <select
+                            value={edit.status}
+                            onChange={(event) => updateModuleEdit(moduleItem.module_id, {
+                              status: event.target.value as ModuleEdit['status']
+                            })}
+                            disabled={!moduleItem.is_enabled}
+                          >
+                            {progressStatusOptions.map((option) => (
+                              <option key={option} value={option}>{statusLabel(option)}</option>
+                            ))}
+                          </select>
+                          <input
+                            type="number"
+                            min={1}
+                            placeholder="Diárias custom"
+                            value={edit.custom_duration_days}
+                            onChange={(event) => updateModuleEdit(moduleItem.module_id, { custom_duration_days: event.target.value })}
+                            disabled={!moduleItem.is_enabled}
+                            className="timeline-days-input"
+                          />
+                          <input
+                            placeholder="Observação do módulo"
+                            value={edit.notes}
+                            onChange={(event) => updateModuleEdit(moduleItem.module_id, { notes: event.target.value })}
+                            disabled={!moduleItem.is_enabled}
+                            className="timeline-notes-input"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => saveModuleProgress(moduleItem.module_id)}
+                            disabled={!moduleItem.is_enabled || savingModuleId === moduleItem.module_id}
+                          >
+                            Salvar módulo
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => markDone(moduleItem.module_id)}
+                            disabled={!moduleItem.is_enabled || savingModuleId === moduleItem.module_id}
+                          >
+                            Concluir (Admin)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => undoDone(moduleItem.module_id)}
+                            disabled={!moduleItem.is_enabled || moduleItem.status !== 'Concluido' || savingModuleId === moduleItem.module_id}
+                          >
+                            Desfazer conclusão
+                          </button>
+                          <button type="button" onClick={() => toggleModule(moduleItem.module_id, Boolean(moduleItem.is_enabled))}>
+                            {moduleItem.is_enabled ? 'Desativar módulo' : 'Ativar módulo'}
+                          </button>
+                        </div>
+                      </li>
+                    );
+                  })
+                )}
               </ul>
+              {disabledCount > 0 && showDisabledModules ? (
+                <div className="journey-disabled-block" id={disabledModulesPanelId}>
+                  <div className="journey-disabled-list">
+                    {disabledTimeline.map((moduleItem: any) => (
+                      <div key={moduleItem.module_id} className="journey-disabled-item">
+                        <div className="timeline-copy">
+                          <strong>{moduleItem.code} - {moduleItem.name}</strong>
+                          <p>{moduleItem.category} | padrão: {moduleItem.duration_days} diárias</p>
+                        </div>
+                        <div className="actions timeline-actions">
+                          <button type="button" onClick={() => toggleModule(moduleItem.module_id, Boolean(moduleItem.is_enabled))}>
+                            Ativar módulo
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </Section>
 
             <Section title="Opcionais">

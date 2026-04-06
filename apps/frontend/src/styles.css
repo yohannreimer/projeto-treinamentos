@@ -685,6 +685,99 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 
 .stack { display: grid; gap: 8px; }
 
+.journey-kpi-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.journey-kpi-btn {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: linear-gradient(180deg, #ffffff 0%, #f4f8ff 100%);
+  color: #355173;
+  box-shadow: none;
+  padding: 6px 11px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.journey-kpi-btn:hover {
+  border-color: #b9cce3;
+  background: #eef4ff;
+  color: #20456e;
+}
+
+.journey-kpi-btn.is-active {
+  border-color: #0f669f;
+  background: linear-gradient(180deg, #1a7ac0 0%, #0f669f 100%);
+  color: #ffffff;
+  box-shadow: 0 10px 24px rgba(15, 102, 159, 0.18);
+}
+
+.journey-kpi-btn.is-active:hover {
+  border-color: #0f669f;
+  background: linear-gradient(180deg, #1a7ac0 0%, #0f669f 100%);
+  color: #ffffff;
+}
+
+.journey-kpi-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  margin-bottom: 8px;
+}
+
+.journey-kpi-meta {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.journey-kpi-toggle {
+  border: 1px solid #b9cce3;
+  border-radius: 999px;
+  background: #f1f7ff;
+  color: #164a78;
+  box-shadow: none;
+  padding: 6px 10px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.journey-kpi-toggle:hover {
+  border-color: #99b9de;
+  background: #e8f2ff;
+}
+
+.journey-disabled-block {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.journey-disabled-list {
+  display: grid;
+  gap: 8px;
+}
+
+.journey-disabled-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 9px 10px;
+  border: 1px solid #dbe6f4;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+}
+
 .timeline { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
 
 .timeline-item {
@@ -2220,6 +2313,21 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   .timeline-notes-input {
     width: 100%;
     min-width: 0;
+  }
+  .journey-kpi-strip,
+  .journey-kpi-meta-row {
+    gap: 6px;
+  }
+  .journey-kpi-btn,
+  .journey-kpi-toggle {
+    width: auto;
+  }
+  .journey-disabled-item {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+  .journey-disabled-item .actions {
+    justify-content: flex-start;
   }
   .technicians-list-table {
     table-layout: auto;

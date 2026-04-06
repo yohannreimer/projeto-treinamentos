@@ -26,7 +26,8 @@ Classificação de cada módulo ativo do cliente:
 Módulos desativados:
 
 - Não entram nos quatro KPIs principais
-- Aparecem separadamente apenas como contador auxiliar (`Desativados: X`)
+- Aparecem por padrão apenas como contador auxiliar (`Desativados: X`)
+- Podem ser gerenciados sob demanda (ação de abrir/ocultar) para permitir `Ativar módulo` sem poluir a visão principal
 
 ## 3. Solução UX aprovada
 
@@ -44,6 +45,7 @@ Comportamento:
 - Clique no mesmo chip remove filtro
 - Clique em `Todos` limpa qualquer filtro
 - Exibir texto de apoio: `Exibindo X de Y módulos ativos`
+- Se houver desativados, exibir ação compacta `Gerenciar desativados` para abrir uma lista auxiliar de reativação
 
 Diretriz de espaço:
 
