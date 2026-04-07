@@ -28,6 +28,7 @@ export type Cohort = {
   module_codes?: string;
   module_names?: string;
   total_duration_days?: number;
+  schedule_days_raw?: string;
 };
 
 export type Module = {

@@ -62,6 +62,13 @@ const cohortBlockSchema = z.object({
   duration_days: z.number().int().positive()
 });
 
+const cohortScheduleDaySchema = z.object({
+  day_index: z.number().int().positive(),
+  day_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  start_time: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
+  end_time: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional()
+});
+
 const createCohortSchema = z.object({
   code: z.string().min(3),
   name: z.string().min(3),
@@ -72,6 +79,7 @@ const createCohortSchema = z.object({
   period: z.enum(COHORT_PERIOD_VALUES).default('Integral'),
   start_time: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
   end_time: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
+  schedule_days: z.array(cohortScheduleDaySchema).optional(),
   delivery_mode: z.enum(COHORT_DELIVERY_MODE_VALUES).default('Online'),
   notes: z.string().optional().nullable(),
   blocks: z.array(cohortBlockSchema).min(1)
@@ -87,6 +95,7 @@ const updateCohortSchema = z.object({
   period: z.enum(COHORT_PERIOD_VALUES).optional(),
   start_time: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
   end_time: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
+  schedule_days: z.array(cohortScheduleDaySchema).optional(),
   delivery_mode: z.enum(COHORT_DELIVERY_MODE_VALUES).optional(),
   notes: z.string().nullable().optional(),
   blocks: z.array(cohortBlockSchema).min(1).optional()
@@ -114,8 +123,14 @@ const technicianConflictCheckSchema = z.object({
   period: z.enum(COHORT_PERIOD_VALUES).default('Integral'),
   start_time: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
   end_time: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
+  schedule_days: z.array(cohortScheduleDaySchema).optional(),
   blocks: z.array(cohortBlockSchema).min(1),
   exclude_cohort_id: z.string().optional()
+});
+
+const cohortParticipantCreateSchema = z.object({
+  company_id: z.string().min(1),
+  participant_name: z.string().min(3).max(160)
 });
 
 const licenseCreateSchema = z.object({
@@ -658,12 +673,7 @@ function cohortBusinessDates(
   startDate: string,
   blocks: Array<{ start_day_offset: number; duration_days: number }>
 ): string[] {
-  const totalDays = blocks.length === 0
-    ? 1
-    : Math.max(
-      1,
-      ...blocks.map((block) => block.start_day_offset + block.duration_days - 1)
-    );
+  const totalDays = totalCohortDays(blocks);
 
   const dates: string[] = [];
   for (let day = 0; day < totalDays; day += 1) {
@@ -672,11 +682,102 @@ function cohortBusinessDates(
   return dates;
 }
 
+function totalCohortDays(blocks: Array<{ start_day_offset: number; duration_days: number }>): number {
+  return blocks.length === 0
+    ? 1
+    : Math.max(
+      1,
+      ...blocks.map((block) => block.start_day_offset + block.duration_days - 1)
+    );
+}
+
+function normalizeScheduleDays(
+  scheduleDays: Array<{ day_index: number; day_date: string; start_time?: string | null; end_time?: string | null }> | undefined,
+  totalDays: number
+): Array<{ day_index: number; day_date: string; start_time: string | null; end_time: string | null }> | null {
+  if (!scheduleDays || scheduleDays.length === 0) return null;
+  if (scheduleDays.length !== totalDays) return null;
+
+  const seen = new Set<number>();
+  const rows = scheduleDays
+    .map((item) => ({
+      day_index: Number(item.day_index),
+      day_date: item.day_date,
+      start_time: item.start_time ?? null,
+      end_time: item.end_time ?? null
+    }))
+    .sort((a, b) => a.day_index - b.day_index);
+
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    if (!Number.isInteger(row.day_index) || row.day_index < 1) return null;
+    if (seen.has(row.day_index)) return null;
+    seen.add(row.day_index);
+    if (row.day_index !== index + 1) return null;
+  }
+  return rows;
+}
+
+function validateScheduleDays(
+  period: (typeof COHORT_PERIOD_VALUES)[number],
+  blocks: Array<{ start_day_offset: number; duration_days: number }>,
+  scheduleDays: Array<{ day_index: number; day_date: string; start_time?: string | null; end_time?: string | null }> | undefined
+): string | null {
+  if (!scheduleDays || scheduleDays.length === 0) return null;
+  const totalDays = totalCohortDays(blocks);
+  const normalized = normalizeScheduleDays(scheduleDays, totalDays);
+  if (!normalized) {
+    return `Agenda personalizada inválida. Informe exatamente ${totalDays} dia(s), com índice sequencial de 1 até ${totalDays}.`;
+  }
+
+  if (period === 'Meio_periodo') {
+    for (const row of normalized) {
+      if (!row.start_time || !row.end_time) {
+        return `No dia ${row.day_index}, informe horário inicial e final.`;
+      }
+      const startMinutes = timeToMinutes(row.start_time);
+      const endMinutes = timeToMinutes(row.end_time);
+      if (startMinutes === null || endMinutes === null || endMinutes <= startMinutes) {
+        return `No dia ${row.day_index}, o horário final deve ser maior que o inicial.`;
+      }
+    }
+  }
+  return null;
+}
+
+function resolveCohortDateSlots(params: {
+  startDate: string;
+  blocks: Array<{ start_day_offset: number; duration_days: number }>;
+  period: (typeof COHORT_PERIOD_VALUES)[number];
+  startTime: string | null;
+  endTime: string | null;
+  scheduleDays?: Array<{ day_index: number; day_date: string; start_time?: string | null; end_time?: string | null }>;
+}) {
+  const totalDays = totalCohortDays(params.blocks);
+  const normalized = normalizeScheduleDays(params.scheduleDays, totalDays);
+  if (normalized) {
+    return normalized.map((row) => ({
+      day_index: row.day_index,
+      day_date: row.day_date,
+      start_time: row.start_time ?? params.startTime ?? null,
+      end_time: row.end_time ?? params.endTime ?? null
+    }));
+  }
+
+  return Array.from({ length: totalDays }).map((_, index) => ({
+    day_index: index + 1,
+    day_date: addBusinessDays(params.startDate, index),
+    start_time: params.period === 'Meio_periodo' ? params.startTime : null,
+    end_time: params.period === 'Meio_periodo' ? params.endTime : null
+  }));
+}
+
 function syncConfirmedCohortExecutions() {
   const todayIso = nowDateIso();
   const candidates = db.prepare(`
     select
       a.id as allocation_id,
+      a.cohort_id,
       a.company_id,
       a.module_id,
       a.entry_day,
@@ -687,6 +788,7 @@ function syncConfirmedCohortExecutions() {
       and a.status in ('Previsto', 'Confirmado')
   `).all() as Array<{
     allocation_id: string;
+    cohort_id: string;
     company_id: string;
     module_id: string;
     entry_day: number;
@@ -714,11 +816,17 @@ function syncConfirmedCohortExecutions() {
         else company_module_progress.completed_at
       end
   `);
+  const selectScheduleDay = db.prepare(`
+    select day_date
+    from cohort_schedule_day
+    where cohort_id = ? and day_index = ?
+  `);
 
   const tx = db.transaction(() => {
     candidates.forEach((candidate) => {
       const dayOffset = Math.max(0, Number(candidate.entry_day || 1) - 1);
-      const executionDate = addBusinessDays(candidate.start_date, dayOffset);
+      const scheduledDay = selectScheduleDay.get(candidate.cohort_id, dayOffset + 1) as { day_date: string } | undefined;
+      const executionDate = scheduledDay?.day_date ?? addBusinessDays(candidate.start_date, dayOffset);
       if (executionDate > todayIso) return;
 
       markExecuted.run(executionDate, candidate.allocation_id);
@@ -814,6 +922,7 @@ function findTechnicianConflict(params: {
   period: (typeof COHORT_PERIOD_VALUES)[number];
   startTime: string | null;
   endTime: string | null;
+  scheduleDays?: Array<{ day_index: number; day_date: string; start_time?: string | null; end_time?: string | null }>;
   blocks: Array<{ start_day_offset: number; duration_days: number }>;
   excludeCohortId?: string;
 }): { id: string; code: string; name: string; conflictDate: string } | null {
@@ -843,38 +952,73 @@ function findTechnicianConflict(params: {
     start_time: string | null;
     end_time: string | null;
   }>;
-  const newDateSet = new Set(cohortBusinessDates(params.startDate, params.blocks));
+  const newSlots = resolveCohortDateSlots({
+    startDate: params.startDate,
+    blocks: params.blocks,
+    period: params.period,
+    startTime: params.startTime,
+    endTime: params.endTime,
+    scheduleDays: params.scheduleDays
+  });
+  const newSlotByDate = new Map(newSlots.map((slot) => [slot.day_date, slot]));
   const selectBlocks = db.prepare(`
     select start_day_offset, duration_days
     from cohort_module_block
     where cohort_id = ?
     order by order_in_cohort asc
   `);
+  const selectScheduleDays = db.prepare(`
+    select day_index, day_date, start_time, end_time
+    from cohort_schedule_day
+    where cohort_id = ?
+    order by day_index asc
+  `);
 
   for (const cohort of candidateCohorts) {
     const existingBlocks = selectBlocks.all(cohort.id) as Array<{ start_day_offset: number; duration_days: number }>;
-    const existingDates = cohortBusinessDates(cohort.start_date, existingBlocks);
-    const overlapDates = existingDates.filter((dateIso) => newDateSet.has(dateIso));
+    const existingScheduleDays = selectScheduleDays.all(cohort.id) as Array<{
+      day_index: number;
+      day_date: string;
+      start_time: string | null;
+      end_time: string | null;
+    }>;
+    const existingSlots = resolveCohortDateSlots({
+      startDate: cohort.start_date,
+      blocks: existingBlocks,
+      period: cohort.period ?? 'Integral',
+      startTime: cohort.start_time ?? null,
+      endTime: cohort.end_time ?? null,
+      scheduleDays: existingScheduleDays
+    });
+    const overlapDates = existingSlots
+      .map((slot) => slot.day_date)
+      .filter((dateIso) => newSlotByDate.has(dateIso));
     if (overlapDates.length === 0) {
       continue;
     }
 
-    const hasPeriodConflict = hasTechnicianPeriodConflict(
-      params.period,
-      params.startTime,
-      params.endTime,
-      cohort.period ?? 'Integral',
-      cohort.start_time ?? null,
-      cohort.end_time ?? null
-    );
+    for (const overlapDate of overlapDates) {
+      const newSlot = newSlotByDate.get(overlapDate);
+      const existingSlot = existingSlots.find((slot) => slot.day_date === overlapDate);
+      if (!newSlot || !existingSlot) continue;
 
-    if (hasPeriodConflict) {
-      return {
-        id: cohort.id,
-        code: cohort.code,
-        name: cohort.name,
-        conflictDate: overlapDates[0]
-      };
+      const hasPeriodConflict = hasTechnicianPeriodConflict(
+        params.period,
+        newSlot.start_time,
+        newSlot.end_time,
+        cohort.period ?? 'Integral',
+        existingSlot.start_time,
+        existingSlot.end_time
+      );
+
+      if (hasPeriodConflict) {
+        return {
+          id: cohort.id,
+          code: cohort.code,
+          name: cohort.name,
+          conflictDate: overlapDate
+        };
+      }
     }
   }
 
@@ -1098,7 +1242,21 @@ app.get('/calendar/cohorts', (_req, res) => {
         select sum(cmb2.duration_days)
         from cohort_module_block cmb2
         where cmb2.cohort_id = c.id
-      ), 1) as total_duration_days
+      ), 1) as total_duration_days,
+      coalesce((
+        select group_concat(sd_entry, ' || ')
+        from (
+          select printf('%d::%s::%s::%s',
+            csd.day_index,
+            csd.day_date,
+            coalesce(csd.start_time, ''),
+            coalesce(csd.end_time, '')
+          ) as sd_entry
+          from cohort_schedule_day csd
+          where csd.cohort_id = c.id
+          order by csd.day_index asc
+        )
+      ), '') as schedule_days_raw
     from cohort c
     left join technician t on t.id = c.technician_id
     order by date(c.start_date) asc
@@ -1422,8 +1580,21 @@ app.get('/cohorts/:id', (req, res) => {
     where a.cohort_id = ?
     order by a.entry_day asc, c.name asc
   `).all(req.params.id);
+  const schedule_days = db.prepare(`
+    select day_index, day_date, start_time, end_time
+    from cohort_schedule_day
+    where cohort_id = ?
+    order by day_index asc
+  `).all(req.params.id);
+  const participants = db.prepare(`
+    select cp.id, cp.company_id, c.name as company_name, cp.participant_name, cp.created_at
+    from cohort_participant cp
+    join company c on c.id = cp.company_id
+    where cp.cohort_id = ?
+    order by c.name asc, cp.participant_name asc
+  `).all(req.params.id);
 
-  return res.json({ ...cohort, blocks, allocations });
+  return res.json({ ...cohort, blocks, allocations, schedule_days, participants });
 });
 
 app.post('/cohorts/check-technician-conflict', (req, res) => {
@@ -1441,6 +1612,10 @@ app.post('/cohorts/check-technician-conflict', (req, res) => {
   const timeWindowError = validateCohortTimeWindow(payload.period, payload.start_time ?? null, payload.end_time ?? null);
   if (timeWindowError) {
     return res.status(400).json({ message: timeWindowError });
+  }
+  const scheduleDaysError = validateScheduleDays(payload.period, payload.blocks, payload.schedule_days);
+  if (scheduleDaysError) {
+    return res.status(400).json({ message: scheduleDaysError });
   }
 
   if (payload.status === 'Cancelada') {
@@ -1461,6 +1636,7 @@ app.post('/cohorts/check-technician-conflict', (req, res) => {
     period: payload.period,
     startTime: payload.start_time ?? null,
     endTime: payload.end_time ?? null,
+    scheduleDays: payload.schedule_days,
     blocks: payload.blocks,
     excludeCohortId: payload.exclude_cohort_id
   });
@@ -1498,6 +1674,10 @@ app.post('/cohorts', (req, res) => {
   if (timeWindowError) {
     return res.status(400).json({ message: timeWindowError });
   }
+  const scheduleDaysError = validateScheduleDays(payload.period, payload.blocks, payload.schedule_days);
+  if (scheduleDaysError) {
+    return res.status(400).json({ message: scheduleDaysError });
+  }
 
   if (payload.technician_id && payload.status !== 'Cancelada') {
     const conflict = findTechnicianConflict({
@@ -1506,6 +1686,7 @@ app.post('/cohorts', (req, res) => {
       period: payload.period,
       startTime: payload.period === 'Meio_periodo' ? (payload.start_time ?? null) : null,
       endTime: payload.period === 'Meio_periodo' ? (payload.end_time ?? null) : null,
+      scheduleDays: payload.schedule_days,
       blocks: payload.blocks
     });
     if (conflict) {
@@ -1554,6 +1735,23 @@ app.post('/cohorts', (req, res) => {
         block.duration_days
       );
     });
+
+    if (payload.schedule_days && payload.schedule_days.length > 0) {
+      const insertSchedule = db.prepare(`
+        insert into cohort_schedule_day (id, cohort_id, day_index, day_date, start_time, end_time)
+        values (?, ?, ?, ?, ?, ?)
+      `);
+      payload.schedule_days.forEach((day) => {
+        insertSchedule.run(
+          uuid('csd'),
+          cohortId,
+          day.day_index,
+          day.day_date,
+          day.start_time ?? null,
+          day.end_time ?? null
+        );
+      });
+    }
   });
 
   try {
@@ -1588,6 +1786,17 @@ app.patch('/cohorts/:id', (req, res) => {
   }
 
   const payload = parsed.data;
+  const existingScheduleDays = db.prepare(`
+    select day_index, day_date, start_time, end_time
+    from cohort_schedule_day
+    where cohort_id = ?
+    order by day_index asc
+  `).all(req.params.id) as Array<{
+    day_index: number;
+    day_date: string;
+    start_time: string | null;
+    end_time: string | null;
+  }>;
   if (payload.blocks) {
     try {
       validateBlocks(payload.blocks);
@@ -1641,6 +1850,13 @@ app.patch('/cohorts/:id', (req, res) => {
     where cohort_id = ?
     order by order_in_cohort asc
   `).all(req.params.id) as Array<{ start_day_offset: number; duration_days: number }>;
+  const nextScheduleDays = typeof payload.schedule_days !== 'undefined'
+    ? payload.schedule_days
+    : existingScheduleDays;
+  const scheduleDaysError = validateScheduleDays(nextPeriod, nextBlocks, nextScheduleDays);
+  if (scheduleDaysError) {
+    return res.status(400).json({ message: scheduleDaysError });
+  }
 
   if (nextTechnicianId && nextStatus !== 'Cancelada') {
     const conflict = findTechnicianConflict({
@@ -1649,6 +1865,7 @@ app.patch('/cohorts/:id', (req, res) => {
       period: nextPeriod,
       startTime: nextPeriod === 'Meio_periodo' ? nextStartTime : null,
       endTime: nextPeriod === 'Meio_periodo' ? nextEndTime : null,
+      scheduleDays: nextScheduleDays,
       blocks: nextBlocks,
       excludeCohortId: req.params.id
     });
@@ -1663,7 +1880,7 @@ app.patch('/cohorts/:id', (req, res) => {
   const values: unknown[] = [];
 
   Object.entries(payload).forEach(([key, value]) => {
-    if (key === 'blocks' || key === 'start_time' || key === 'end_time') return;
+    if (key === 'blocks' || key === 'start_time' || key === 'end_time' || key === 'schedule_days') return;
     if (key === 'code' && typeof value === 'string') {
       fields.push('code = ?');
       values.push(resolveUniqueCohortCode(value, req.params.id));
@@ -1714,6 +1931,28 @@ app.patch('/cohorts/:id', (req, res) => {
         );
       });
     }
+
+    if (typeof payload.schedule_days !== 'undefined') {
+      db.prepare('delete from cohort_schedule_day where cohort_id = ?').run(req.params.id);
+      if (payload.schedule_days.length > 0) {
+        const insertSchedule = db.prepare(`
+          insert into cohort_schedule_day (id, cohort_id, day_index, day_date, start_time, end_time)
+          values (?, ?, ?, ?, ?, ?)
+        `);
+        payload.schedule_days.forEach((day) => {
+          insertSchedule.run(
+            uuid('csd'),
+            req.params.id,
+            day.day_index,
+            day.day_date,
+            day.start_time ?? null,
+            day.end_time ?? null
+          );
+        });
+      }
+    } else if (payload.blocks) {
+      db.prepare('delete from cohort_schedule_day where cohort_id = ?').run(req.params.id);
+    }
   });
 
   try {
@@ -1735,6 +1974,54 @@ app.delete('/cohorts/:id', (req, res) => {
   }
 
   db.prepare('delete from cohort where id = ?').run(req.params.id);
+  return res.json({ ok: true });
+});
+
+app.post('/cohorts/:id/participants', (req, res) => {
+  const parsed = cohortParticipantCreateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json(parsed.error.flatten());
+  }
+
+  const cohort = db.prepare('select id from cohort where id = ?').get(req.params.id) as { id: string } | undefined;
+  if (!cohort) {
+    return res.status(404).json({ message: 'Turma nao encontrada' });
+  }
+
+  const company = db.prepare('select id from company where id = ?').get(parsed.data.company_id) as { id: string } | undefined;
+  if (!company) {
+    return res.status(404).json({ message: 'Empresa nao encontrada' });
+  }
+
+  try {
+    db.prepare(`
+      insert into cohort_participant (id, cohort_id, company_id, participant_name, created_at)
+      values (?, ?, ?, ?, ?)
+    `).run(
+      uuid('cpt'),
+      req.params.id,
+      parsed.data.company_id,
+      parsed.data.participant_name.trim(),
+      nowDateIso()
+    );
+    return res.status(201).json({ ok: true });
+  } catch (error) {
+    return res.status(400).json({ message: 'Nao foi possivel adicionar participante', detail: errorMessage(error) });
+  }
+});
+
+app.delete('/cohorts/:id/participants/:participantId', (req, res) => {
+  const exists = db.prepare(`
+    select id
+    from cohort_participant
+    where id = ? and cohort_id = ?
+  `).get(req.params.participantId, req.params.id) as { id: string } | undefined;
+
+  if (!exists) {
+    return res.status(404).json({ message: 'Participante nao encontrado na turma.' });
+  }
+
+  db.prepare('delete from cohort_participant where id = ?').run(req.params.participantId);
   return res.json({ ok: true });
 });
 

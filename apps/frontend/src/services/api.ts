@@ -73,6 +73,12 @@ export const api = {
     period?: 'Integral' | 'Meio_periodo';
     start_time?: string | null;
     end_time?: string | null;
+    schedule_days?: Array<{
+      day_index: number;
+      day_date: string;
+      start_time?: string | null;
+      end_time?: string | null;
+    }>;
     blocks: Array<{
       module_id: string;
       order_in_cohort: number;
@@ -89,6 +95,13 @@ export const api = {
     req(`/cohorts/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
   deleteCohort: (id: string, confirmation_phrase?: string) =>
     req(withConfirmation(`/cohorts/${id}`, confirmation_phrase), { method: 'DELETE' }),
+  addCohortParticipant: (cohortId: string, payload: { company_id: string; participant_name: string }) =>
+    req(`/cohorts/${cohortId}/participants`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  deleteCohortParticipant: (cohortId: string, participantId: string) =>
+    req(`/cohorts/${cohortId}/participants/${participantId}`, { method: 'DELETE' }),
   allocationSuggestions: (cohortId: string, moduleId: string) =>
     req(`/cohorts/${cohortId}/suggestions/${moduleId}`),
   createAllocation: (payload: unknown) =>

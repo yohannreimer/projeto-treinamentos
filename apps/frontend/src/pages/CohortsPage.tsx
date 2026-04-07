@@ -24,6 +24,7 @@ type CohortBlock = {
 
 type CohortAllocation = {
   id: string;
+  company_id?: string;
   company_name: string;
   module_name: string;
   entry_day: number;
@@ -35,6 +36,27 @@ type CohortAllocation = {
 type CohortDetail = Cohort & {
   blocks: CohortBlock[];
   allocations: CohortAllocation[];
+  schedule_days?: Array<{
+    day_index: number;
+    day_date: string;
+    start_time: string | null;
+    end_time: string | null;
+  }>;
+  participants?: Array<{
+    id: string;
+    company_id: string;
+    company_name: string;
+    participant_name: string;
+    created_at: string;
+  }>;
+};
+
+type CohortScheduleDayDraft = {
+  key: string;
+  day_index: number;
+  day_date: string;
+  start_time: string;
+  end_time: string;
 };
 
 const statuses = ['Planejada', 'Aguardando_quorum', 'Confirmada', 'Concluida', 'Cancelada'];
@@ -62,6 +84,36 @@ function formatDateBr(dateIso: string): string {
   const [year, month, day] = dateIso.split('-').map(Number);
   if (!year || !month || !day) return dateIso;
   return new Date(year, month - 1, day).toLocaleDateString('pt-BR');
+}
+
+function parseIso(dateIso: string): Date {
+  const [year, month, day] = dateIso.split('-').map(Number);
+  return new Date(year, month - 1, day);
+}
+
+function toIso(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function isWeekend(date: Date): boolean {
+  const weekday = date.getDay();
+  return weekday === 0 || weekday === 6;
+}
+
+function addBusinessDays(dateIso: string, offset: number): string {
+  const date = parseIso(dateIso);
+  while (isWeekend(date)) {
+    date.setDate(date.getDate() + 1);
+  }
+  let moved = 0;
+  while (moved < offset) {
+    date.setDate(date.getDate() + 1);
+    if (!isWeekend(date)) moved += 1;
+  }
+  return toIso(date);
 }
 
 function formatCohortSchedule(period?: 'Integral' | 'Meio_periodo', startTime?: string | null, endTime?: string | null): string {
@@ -108,12 +160,15 @@ export function CohortsPage() {
   const [deliveryMode, setDeliveryMode] = useState<(typeof deliveryModeOptions)[number]>('Online');
   const [notes, setNotes] = useState('');
   const [blocks, setBlocks] = useState<BlockDraft[]>([]);
+  const [scheduleDays, setScheduleDays] = useState<CohortScheduleDayDraft[]>([]);
 
   const [entryModuleId, setEntryModuleId] = useState('');
   const [allocationModuleIds, setAllocationModuleIds] = useState<string[]>([]);
   const [allocationCompanyId, setAllocationCompanyId] = useState('');
   const [allocationNotes, setAllocationNotes] = useState('');
   const [allocationSuggestions, setAllocationSuggestions] = useState<any>(null);
+  const [participantCompanyId, setParticipantCompanyId] = useState('');
+  const [participantName, setParticipantName] = useState('');
   const [isCheckingTechnicianConflict, setIsCheckingTechnicianConflict] = useState(false);
   const [hasTechnicianConflict, setHasTechnicianConflict] = useState(false);
   const [technicianConflictMessage, setTechnicianConflictMessage] = useState('');
@@ -143,6 +198,34 @@ export function CohortsPage() {
       day += duration;
       return payload;
     });
+  }
+
+  function totalDaysFromBlocks(draft: BlockDraft[]) {
+    const payload = toBlockPayload(draft);
+    if (payload.length === 0) return 1;
+    return Math.max(...payload.map((item) => item.start_day_offset + item.duration_days - 1));
+  }
+
+  function buildScheduleDraft(
+    startDateValue: string,
+    totalDays: number,
+    current: CohortScheduleDayDraft[],
+    defaultStartTime: string,
+    defaultEndTime: string
+  ): CohortScheduleDayDraft[] {
+    const currentByIndex = new Map(current.map((item) => [item.day_index, item]));
+    const rows: CohortScheduleDayDraft[] = [];
+    for (let index = 1; index <= totalDays; index += 1) {
+      const existing = currentByIndex.get(index);
+      rows.push({
+        key: existing?.key ?? randomKey(),
+        day_index: index,
+        day_date: existing?.day_date ?? addBusinessDays(startDateValue, index - 1),
+        start_time: existing?.start_time ?? defaultStartTime,
+        end_time: existing?.end_time ?? defaultEndTime
+      });
+    }
+    return rows;
   }
 
   async function loadAll() {
@@ -175,6 +258,15 @@ export function CohortsPage() {
 
     setEntryModuleId(chosenEntryModule);
     setAllocationModuleIds(modulesFromEntry(detail.blocks ?? [], chosenEntryModule));
+    const preferredCompanyId = detail.participants?.[0]?.company_id
+      ?? detail.allocations?.[0]?.company_id
+      ?? '';
+    setParticipantCompanyId((prev) => {
+      if (!prev) return preferredCompanyId;
+      const valid = (detail.allocations ?? []).some((allocation) => allocation.company_id === prev)
+        || (detail.participants ?? []).some((participant) => participant.company_id === prev);
+      return valid ? prev : preferredCompanyId;
+    });
 
     return detail;
   }
@@ -196,7 +288,15 @@ export function CohortsPage() {
     setCohortEndTime('17:00');
     setDeliveryMode('Online');
     setNotes('');
-    setBlocks(firstModule ? [{ key: randomKey(), module_id: firstModule.id, duration_days: firstModule.duration_days || 1 }] : []);
+    const nextBlocks = firstModule ? [{ key: randomKey(), module_id: firstModule.id, duration_days: firstModule.duration_days || 1 }] : [];
+    setBlocks(nextBlocks);
+    setScheduleDays(buildScheduleDraft(
+      new Date().toISOString().slice(0, 10),
+      totalDaysFromBlocks(nextBlocks),
+      [],
+      '13:30',
+      '17:00'
+    ));
 
     setEditingDetail(null);
     setEntryModuleId('');
@@ -204,6 +304,8 @@ export function CohortsPage() {
     setAllocationCompanyId('');
     setAllocationNotes('');
     setAllocationSuggestions(null);
+    setParticipantCompanyId('');
+    setParticipantName('');
     setIsCheckingTechnicianConflict(false);
     setHasTechnicianConflict(false);
     setTechnicianConflictMessage('');
@@ -285,6 +387,40 @@ export function CohortsPage() {
     return rows.find((company: any) => company.id === allocationCompanyId) ?? null;
   }, [allocationSuggestions, allocationCompanyId]);
 
+  const participantsByCompany = useMemo(() => {
+    const rows = editingDetail?.participants ?? [];
+    return rows.reduce<Record<string, Array<{ id: string; name: string; company_name: string }>>>((acc, row) => {
+      const key = row.company_id;
+      acc[key] = acc[key] ?? [];
+      acc[key].push({ id: row.id, name: row.participant_name, company_name: row.company_name });
+      return acc;
+    }, {});
+  }, [editingDetail]);
+
+  const reportPreview = useMemo(() => {
+    if (!editingDetail || !participantCompanyId) return '';
+    const companyParticipants = participantsByCompany[participantCompanyId] ?? [];
+    const companyName = companyParticipants[0]?.company_name
+      ?? companies.find((company) => company.id === participantCompanyId)?.name
+      ?? '-';
+    const moduleNames = (editingDetail.blocks ?? []).map((block) => moduleShortLabel(block.module_name));
+    const totalDays = totalDaysFromBlocks((editingDetail.blocks ?? []).map((block) => ({
+      key: block.id,
+      module_id: block.module_id,
+      duration_days: block.duration_days
+    })));
+    return [
+      `Empresa: ${companyName}`,
+      '',
+      'Participantes:',
+      ...(companyParticipants.length > 0 ? companyParticipants.map((item) => `- ${item.name}`) : ['- (sem participantes cadastrados)']),
+      '',
+      `Treinamento: ${moduleNames.join(' + ') || '-'}`,
+      `Instrutor: ${editingDetail.technician_name ?? '-'}`,
+      `Carga Horária: ${totalDays} diária(s) (8h*${totalDays})`
+    ].join('\n');
+  }, [editingDetail, participantCompanyId, participantsByCompany, companies]);
+
   const stats = useMemo(() => {
     const open = cohorts.filter((cohort) => ['Planejada', 'Aguardando_quorum', 'Confirmada'].includes(cohort.status)).length;
     const confirmed = cohorts.filter((cohort) => cohort.status === 'Confirmada').length;
@@ -310,6 +446,12 @@ export function CohortsPage() {
       period,
       start_time: period === 'Meio_periodo' ? cohortStartTime : null,
       end_time: period === 'Meio_periodo' ? cohortEndTime : null,
+      schedule_days: scheduleDays.map((day) => ({
+        day_index: day.day_index,
+        day_date: day.day_date,
+        start_time: day.start_time || null,
+        end_time: day.end_time || null
+      })),
       blocks: blockPreview,
       exclude_cohort_id: editingId ?? undefined
     }).then((response: any) => {
@@ -335,7 +477,12 @@ export function CohortsPage() {
     return () => {
       active = false;
     };
-  }, [technicianId, startDate, status, period, cohortStartTime, cohortEndTime, blockPreview, editingId]);
+  }, [technicianId, startDate, status, period, cohortStartTime, cohortEndTime, scheduleDays, blockPreview, editingId]);
+
+  useEffect(() => {
+    const totalDays = totalDaysFromBlocks(blocks);
+    setScheduleDays((prev) => buildScheduleDraft(startDate, totalDays, prev, cohortStartTime, cohortEndTime));
+  }, [startDate, blocks, cohortStartTime, cohortEndTime]);
 
   function addBlock() {
     const fallbackModuleId = modules[0]?.id ?? '';
@@ -392,13 +539,30 @@ export function CohortsPage() {
       setCohortEndTime(detail.end_time ?? '17:00');
       setDeliveryMode((detail.delivery_mode ?? 'Online') as (typeof deliveryModeOptions)[number]);
       setNotes(detail.notes ?? '');
-      setBlocks((detail.blocks ?? []).map((block) => ({
+      const nextBlocks = (detail.blocks ?? []).map((block) => ({
         key: randomKey(),
         module_id: block.module_id,
         duration_days: Number(block.duration_days) || 1
-      })));
+      }));
+      setBlocks(nextBlocks);
+      const persistedSchedule = (detail.schedule_days ?? []).map((day) => ({
+        key: randomKey(),
+        day_index: Number(day.day_index),
+        day_date: day.day_date,
+        start_time: day.start_time ?? '',
+        end_time: day.end_time ?? ''
+      }));
+      setScheduleDays(buildScheduleDraft(
+        detail.start_date,
+        totalDaysFromBlocks(nextBlocks),
+        persistedSchedule,
+        detail.start_time ?? '13:30',
+        detail.end_time ?? '17:00'
+      ));
       setAllocationCompanyId('');
       setAllocationNotes('');
+      setParticipantCompanyId(detail.allocations?.[0]?.company_id ?? '');
+      setParticipantName('');
       setShowForm(true);
     } catch (err) {
       setError((err as Error).message);
@@ -495,6 +659,42 @@ export function CohortsPage() {
     }
   }
 
+  async function addParticipant() {
+    if (!editingId) return;
+    if (!participantCompanyId) {
+      setError('Selecione a empresa para cadastrar participante.');
+      return;
+    }
+    if (!participantName.trim()) {
+      setError('Informe o nome do participante.');
+      return;
+    }
+    try {
+      await api.addCohortParticipant(editingId, {
+        company_id: participantCompanyId,
+        participant_name: participantName.trim()
+      });
+      setParticipantName('');
+      await loadCohortDetail(editingId);
+      setMessage('Participante adicionado.');
+      setError('');
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
+  async function removeParticipant(participantId: string) {
+    if (!editingId) return;
+    try {
+      await api.deleteCohortParticipant(editingId, participantId);
+      await loadCohortDetail(editingId);
+      setMessage('Participante removido.');
+      setError('');
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setError('');
@@ -535,6 +735,21 @@ export function CohortsPage() {
         return;
       }
     }
+    if (scheduleDays.length !== totalDaysFromBlocks(blocks)) {
+      setError('Agenda personalizada inválida. Atualize as datas da turma.');
+      return;
+    }
+    if (scheduleDays.some((day) => !day.day_date)) {
+      setError('Preencha a data de todos os dias da agenda personalizada.');
+      return;
+    }
+    if (period === 'Meio_periodo') {
+      const invalidTimeDay = scheduleDays.find((day) => !day.start_time || !day.end_time || day.end_time <= day.start_time);
+      if (invalidTimeDay) {
+        setError(`Verifique o horário do dia ${invalidTimeDay.day_index}.`);
+        return;
+      }
+    }
     if (hasTechnicianConflict) {
       setError(technicianConflictMessage || 'Conflito de agenda detectado para o técnico.');
       return;
@@ -550,6 +765,12 @@ export function CohortsPage() {
       period,
       start_time: period === 'Meio_periodo' ? cohortStartTime : null,
       end_time: period === 'Meio_periodo' ? cohortEndTime : null,
+      schedule_days: scheduleDays.map((day) => ({
+        day_index: day.day_index,
+        day_date: day.day_date,
+        start_time: period === 'Meio_periodo' ? (day.start_time || null) : null,
+        end_time: period === 'Meio_periodo' ? (day.end_time || null) : null
+      })),
       delivery_mode: deliveryMode,
       notes: notes.trim() || null,
       blocks: blockPreview
@@ -851,6 +1072,65 @@ export function CohortsPage() {
                 </tbody>
               </table>
               </div>
+              <div className="form-subcard">
+                <strong>Agenda personalizada por dia</strong>
+                <p className="muted">Você pode definir dias não sequenciais e horário de cada dia.</p>
+                <div className="table-wrap">
+                  <table className="table table-hover table-tight">
+                    <thead>
+                      <tr>
+                        <th>Dia</th>
+                        <th>Data</th>
+                        <th>Início</th>
+                        <th>Fim</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {scheduleDays.map((day) => (
+                        <tr key={day.key}>
+                          <td>Dia {day.day_index}</td>
+                          <td>
+                            <input
+                              type="date"
+                              value={day.day_date}
+                              onChange={(event) => {
+                                const nextDate = event.target.value;
+                                setScheduleDays((prev) => prev.map((item) => (
+                                  item.key === day.key ? { ...item, day_date: nextDate } : item
+                                )));
+                              }}
+                            />
+                          </td>
+                          <td>
+                            <input
+                              type="time"
+                              value={day.start_time}
+                              onChange={(event) => {
+                                const nextValue = event.target.value;
+                                setScheduleDays((prev) => prev.map((item) => (
+                                  item.key === day.key ? { ...item, start_time: nextValue } : item
+                                )));
+                              }}
+                            />
+                          </td>
+                          <td>
+                            <input
+                              type="time"
+                              value={day.end_time}
+                              onChange={(event) => {
+                                const nextValue = event.target.value;
+                                setScheduleDays((prev) => prev.map((item) => (
+                                  item.key === day.key ? { ...item, end_time: nextValue } : item
+                                )));
+                              }}
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </div>
 
             {editingId && editingDetail ? (
@@ -994,6 +1274,59 @@ export function CohortsPage() {
                   </table>
                   </div>
                 )}
+
+                <div className="form-subcard">
+                  <strong>Lista de participantes (certificado / relatório)</strong>
+                  <div className="three-col">
+                    <label>
+                      Empresa
+                      <select
+                        value={participantCompanyId}
+                        onChange={(event) => setParticipantCompanyId(event.target.value)}
+                      >
+                        <option value="">Selecione</option>
+                        {(editingDetail.allocations ?? [])
+                          .filter((allocation) => Boolean(allocation.company_id))
+                          .map((allocation) => (
+                            <option key={`participant-company-${allocation.company_id}`} value={allocation.company_id}>
+                              {allocation.company_name}
+                            </option>
+                          ))}
+                      </select>
+                    </label>
+                    <label>
+                      Participante
+                      <input
+                        value={participantName}
+                        onChange={(event) => setParticipantName(event.target.value)}
+                        placeholder="Ex.: Claudio da Silva"
+                      />
+                    </label>
+                    <div className="actions actions-compact">
+                      <button type="button" onClick={addParticipant}>Adicionar participante</button>
+                    </div>
+                  </div>
+
+                  {participantCompanyId && (participantsByCompany[participantCompanyId]?.length ?? 0) > 0 ? (
+                    <div className="event-list">
+                      {(participantsByCompany[participantCompanyId] ?? []).map((item) => (
+                        <div key={item.id} className="event-item">
+                          <span>{item.name}</span>
+                          <button type="button" onClick={() => removeParticipant(item.id)}>Remover</button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="muted">Nenhum participante cadastrado para esta empresa.</p>
+                  )}
+
+                  {participantCompanyId ? (
+                    <>
+                      <label>Prévia de relatório/certificado</label>
+                      <textarea rows={10} value={reportPreview} readOnly />
+                    </>
+                  ) : null}
+                </div>
               </div>
             ) : null}
 

@@ -113,6 +113,17 @@ export function initDb() {
       foreign key(module_id) references module_template(id) on delete restrict
     );
 
+    create table if not exists cohort_schedule_day (
+      id text primary key,
+      cohort_id text not null,
+      day_index integer not null,
+      day_date text not null,
+      start_time text,
+      end_time text,
+      unique(cohort_id, day_index),
+      foreign key(cohort_id) references cohort(id) on delete cascade
+    );
+
     create table if not exists cohort_allocation (
       id text primary key,
       cohort_id text not null,
@@ -128,6 +139,17 @@ export function initDb() {
       foreign key(cohort_id) references cohort(id) on delete cascade,
       foreign key(company_id) references company(id) on delete cascade,
       foreign key(module_id) references module_template(id) on delete restrict
+    );
+
+    create table if not exists cohort_participant (
+      id text primary key,
+      cohort_id text not null,
+      company_id text not null,
+      participant_name text not null,
+      created_at text not null,
+      unique(cohort_id, company_id, participant_name),
+      foreign key(cohort_id) references cohort(id) on delete cascade,
+      foreign key(company_id) references company(id) on delete cascade
     );
 
     create table if not exists optional_module (
@@ -497,7 +519,9 @@ export function clearAllData() {
     delete from company_optional_progress;
     delete from optional_module;
     delete from company_module_activation;
+    delete from cohort_participant;
     delete from cohort_allocation;
+    delete from cohort_schedule_day;
     delete from cohort_module_block;
     delete from cohort;
     delete from technician_skill;
