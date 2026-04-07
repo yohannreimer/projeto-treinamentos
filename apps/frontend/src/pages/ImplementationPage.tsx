@@ -7,9 +7,10 @@ import { askDestructiveConfirmation } from '../utils/destructive';
 type KanbanPriority = 'Alta' | 'Normal' | 'Baixa' | 'Critica';
 type KanbanSubcategory = 'Pre_vendas' | 'Pos_vendas' | 'Suporte' | 'Implementacao';
 type KanbanSupportHandoffTarget = 'Conosco' | 'Sao_Paulo';
+type KanbanBoardMode = 'implementation' | 'support';
 
 const KANBAN_PRIORITY_OPTIONS: KanbanPriority[] = ['Alta', 'Normal', 'Baixa', 'Critica'];
-const KANBAN_SUBCATEGORY_OPTIONS: KanbanSubcategory[] = ['Pre_vendas', 'Pos_vendas', 'Suporte', 'Implementacao'];
+const KANBAN_SUBCATEGORY_OPTIONS_IMPLEMENTATION: Exclude<KanbanSubcategory, 'Suporte'>[] = ['Pre_vendas', 'Pos_vendas', 'Implementacao'];
 const KANBAN_IMAGE_MAX_BYTES = 750_000;
 const KANBAN_FILTERS_COLLAPSED_STORAGE_KEY = 'orquestrador_kanban_filters_collapsed_v1';
 
@@ -117,6 +118,17 @@ function subcategoryLabel(value?: KanbanSubcategory | '' | null): string {
   return 'Suporte';
 }
 
+function isSupportCard(card: Pick<KanbanCard, 'subcategory'>): boolean {
+  return card.subcategory === 'Suporte';
+}
+
+function cardMatchesBoardMode(card: Pick<KanbanCard, 'subcategory'>, boardMode: KanbanBoardMode): boolean {
+  if (boardMode === 'support') {
+    return isSupportCard(card);
+  }
+  return !isSupportCard(card);
+}
+
 function formatDateBr(dateIso?: string | null): string {
   if (!dateIso) return '-';
   const date = new Date(`${dateIso}T00:00:00`);
@@ -141,7 +153,11 @@ function toDataUrl(file: File): Promise<string> {
   });
 }
 
-export function ImplementationPage() {
+type ImplementationPageProps = {
+  boardMode?: KanbanBoardMode;
+};
+
+export function ImplementationPage({ boardMode = 'implementation' }: ImplementationPageProps) {
   const [columns, setColumns] = useState<KanbanColumn[]>([]);
   const [columnDrafts, setColumnDrafts] = useState<Record<string, ColumnDraft>>({});
   const [newColumnTitle, setNewColumnTitle] = useState('');
@@ -248,6 +264,11 @@ export function ImplementationPage() {
 
     if (destination.droppableId === source.droppableId && destination.index === source.index) return;
 
+    const sourceVisibleColumn = visibleColumns.find((column) => column.id === source.droppableId);
+    const destinationVisibleColumn = visibleColumns.find((column) => column.id === destination.droppableId);
+    const movedVisibleCard = sourceVisibleColumn?.cards[source.index];
+    if (!sourceVisibleColumn || !destinationVisibleColumn || !movedVisibleCard) return;
+
     const sourceColumnIndex = columns.findIndex((column) => column.id === source.droppableId);
     const destinationColumnIndex = columns.findIndex((column) => column.id === destination.droppableId);
     if (sourceColumnIndex === -1 || destinationColumnIndex === -1) return;
@@ -255,15 +276,33 @@ export function ImplementationPage() {
     const sourceColumn = columns[sourceColumnIndex];
     const destinationColumn = columns[destinationColumnIndex];
     const sourceCards = [...sourceColumn.cards];
-    const destinationCards = sourceColumn.id === destinationColumn.id ? sourceCards : [...destinationColumn.cards];
-    const [movedCard] = sourceCards.splice(source.index, 1);
+    const movedSourceIndex = sourceCards.findIndex((card) => card.id === movedVisibleCard.id);
+    if (movedSourceIndex === -1) return;
+    const [movedCard] = sourceCards.splice(movedSourceIndex, 1);
     if (!movedCard) return;
 
     const movedCardNext: KanbanCard = {
       ...movedCard,
       column_id: destinationColumn.id
     };
-    destinationCards.splice(destination.index, 0, movedCardNext);
+
+    const destinationCardsBase = sourceColumn.id === destinationColumn.id ? sourceCards : [...destinationColumn.cards];
+    const destinationVisibleCards = (sourceColumn.id === destinationColumn.id ? sourceVisibleColumn.cards : destinationVisibleColumn.cards)
+      .filter((card) => card.id !== movedCard.id);
+    const destinationReferenceCard = destinationVisibleCards[destination.index];
+    const destinationCards = [...destinationCardsBase];
+    if (!destinationReferenceCard) {
+      const lastVisible = destinationVisibleCards[destinationVisibleCards.length - 1];
+      if (!lastVisible) {
+        destinationCards.push(movedCardNext);
+      } else {
+        const lastVisibleIndex = destinationCards.findIndex((card) => card.id === lastVisible.id);
+        destinationCards.splice(lastVisibleIndex + 1, 0, movedCardNext);
+      }
+    } else {
+      const destinationInsertIndex = destinationCards.findIndex((card) => card.id === destinationReferenceCard.id);
+      destinationCards.splice(destinationInsertIndex, 0, movedCardNext);
+    }
 
     const nextColumns = columns.map((column) => {
       if (column.id === sourceColumn.id && column.id === destinationColumn.id) {
@@ -362,7 +401,8 @@ export function ImplementationPage() {
       const created = await api.createImplementationKanbanCard({
         title: draft.title.trim(),
         description: draft.description.trim() || null,
-        column_id: columnId
+        column_id: columnId,
+        subcategory: boardMode === 'support' ? 'Suporte' : null
       }) as { id: string };
       setDraft(columnId, {
         isOpen: false,
@@ -372,7 +412,11 @@ export function ImplementationPage() {
       const nextColumns = await loadBoard();
       const createdCard = nextColumns.flatMap((column) => column.cards).find((card) => card.id === created.id);
       if (createdCard && openDetailsAfterCreate) {
-        setCardDetail(cardDetailFromCard(createdCard));
+        const nextDetail = cardDetailFromCard(createdCard);
+        if (boardMode === 'support') {
+          nextDetail.subcategory = 'Suporte';
+        }
+        setCardDetail(nextDetail);
         setMessage('Cartão criado. Complete os detalhes no painel lateral.');
       } else {
         setMessage('Cartão criado.');
@@ -383,7 +427,11 @@ export function ImplementationPage() {
   }
 
   function editCard(card: KanbanCard) {
-    setCardDetail(cardDetailFromCard(card));
+    const nextDetail = cardDetailFromCard(card);
+    if (boardMode === 'support') {
+      nextDetail.subcategory = 'Suporte';
+    }
+    setCardDetail(nextDetail);
   }
 
   async function deleteCard(card: KanbanCard) {
@@ -412,7 +460,10 @@ export function ImplementationPage() {
     setError('');
     setMessage('');
     try {
-      const isSupport = cardDetail.subcategory === 'Suporte';
+      const nextSubcategory: KanbanSubcategory | null = boardMode === 'support'
+        ? 'Suporte'
+        : (cardDetail.subcategory || null);
+      const isSupport = nextSubcategory === 'Suporte';
       const supportHandoffTarget = isSupport
         ? (cardDetail.support_handoff_target || null)
         : null;
@@ -425,7 +476,7 @@ export function ImplementationPage() {
         client_name: cardDetail.client_name.trim() || null,
         license_name: cardDetail.license_name.trim() || null,
         technician_id: cardDetail.technician_id || null,
-        subcategory: cardDetail.subcategory || null,
+        subcategory: nextSubcategory,
         support_resolution: isSupport ? (cardDetail.support_resolution.trim() || null) : null,
         support_third_party_notes: null,
         support_handoff_target: supportHandoffTarget,
@@ -468,9 +519,16 @@ export function ImplementationPage() {
     }
   }
 
+  const boardScopedColumns = useMemo(
+    () => columns.map((column) => ({
+      ...column,
+      cards: column.cards.filter((card) => cardMatchesBoardMode(card, boardMode))
+    })),
+    [columns, boardMode]
+  );
   const totalCards = useMemo(
-    () => columns.reduce((acc, column) => acc + column.cards.length, 0),
-    [columns]
+    () => boardScopedColumns.reduce((acc, column) => acc + column.cards.length, 0),
+    [boardScopedColumns]
   );
   const technicianNameById = useMemo(
     () => new Map(technicianOptions.map((technician) => [technician.id, technician.name])),
@@ -506,11 +564,11 @@ export function ImplementationPage() {
   }
 
   const visibleColumns = useMemo(
-    () => columns.map((column) => ({
+    () => boardScopedColumns.map((column) => ({
       ...column,
       cards: column.cards.filter(cardMatchesFilters)
     })),
-    [columns, filterClientName, filterTechnicianId, filterPriority, filterDueFrom, filterDueTo]
+    [boardScopedColumns, filterClientName, filterTechnicianId, filterPriority, filterDueFrom, filterDueTo]
   );
 
   const visibleCardsCount = useMemo(
@@ -518,13 +576,13 @@ export function ImplementationPage() {
     [visibleColumns]
   );
   const supportAlerts = useMemo(() => (
-    columns
+    boardScopedColumns
       .flatMap((column) => column.cards.map((card) => ({
         ...card,
         columnTitle: column.title
       })))
       .filter((card) => card.subcategory === 'Suporte' && card.support_alert_level !== 'none')
-  ), [columns]);
+  ), [boardScopedColumns]);
 
   function clearFilters() {
     setFilterClientName('');
@@ -571,13 +629,17 @@ export function ImplementationPage() {
   return (
     <div className="page implementation-page">
       <header className="page-header">
-        <h1>Implementação</h1>
-        <p>Kanban customizável para organizar melhorias, bugs e entregas.</p>
+        <h1>{boardMode === 'support' ? 'Suporte' : 'Implementação'}</h1>
+        <p>
+          {boardMode === 'support'
+            ? 'Kanban de suporte com acompanhamento de resolução e alertas operacionais.'
+            : 'Kanban customizável para organizar melhorias, bugs e entregas.'}
+        </p>
       </header>
 
       {error ? <p className="error">{error}</p> : null}
       {message ? <p className="info">{message}</p> : null}
-      {supportAlerts.length > 0 ? (
+      {boardMode === 'support' && supportAlerts.length > 0 ? (
         <Section title="Alertas de suporte" className="kanban-config-panel">
           <div className="stack">
             {supportAlerts.map((alert) => (
@@ -897,33 +959,37 @@ export function ImplementationPage() {
                     ))}
                   </select>
                 </label>
-                <label>
-                  Subcategoria
-                  <select
-                    value={cardDetail.subcategory}
-                    onChange={(event) => {
-                      const nextSubcategory = event.target.value as KanbanSubcategory | '';
-                      setCardDetail((prev) => {
-                        if (!prev) return prev;
-                        if (nextSubcategory === 'Suporte') {
-                          return { ...prev, subcategory: nextSubcategory };
-                        }
-                        return {
-                          ...prev,
-                          subcategory: nextSubcategory,
-                          support_resolution: '',
-                          support_handoff_target: '',
-                          support_handoff_date: ''
-                        };
-                      });
-                    }}
-                  >
-                    <option value="">Sem subcategoria</option>
-                    {KANBAN_SUBCATEGORY_OPTIONS.map((option) => (
-                      <option key={option} value={option}>{subcategoryLabel(option)}</option>
-                    ))}
-                  </select>
-                </label>
+                {boardMode === 'support' ? (
+                  <label>
+                    Subcategoria
+                    <input value="Suporte" disabled />
+                  </label>
+                ) : (
+                  <label>
+                    Subcategoria
+                    <select
+                      value={cardDetail.subcategory}
+                      onChange={(event) => {
+                        const nextSubcategory = event.target.value as KanbanSubcategory | '';
+                        setCardDetail((prev) => {
+                          if (!prev) return prev;
+                          return {
+                            ...prev,
+                            subcategory: nextSubcategory,
+                            support_resolution: '',
+                            support_handoff_target: '',
+                            support_handoff_date: ''
+                          };
+                        });
+                      }}
+                    >
+                      <option value="">Sem subcategoria</option>
+                      {KANBAN_SUBCATEGORY_OPTIONS_IMPLEMENTATION.map((option) => (
+                        <option key={option} value={option}>{subcategoryLabel(option)}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
                 <label>
                   Técnico responsável (opcional)
                   <select
@@ -957,7 +1023,7 @@ export function ImplementationPage() {
                 </label>
               </div>
 
-              {cardDetail.subcategory === 'Suporte' ? (
+              {(boardMode === 'support' || cardDetail.subcategory === 'Suporte') ? (
                 <div className="kanban-support-fields">
                   <label>
                     Resolução do suporte

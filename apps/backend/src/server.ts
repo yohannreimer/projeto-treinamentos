@@ -691,6 +691,14 @@ function totalCohortDays(blocks: Array<{ start_day_offset: number; duration_days
     );
 }
 
+function totalScheduleSlots(
+  period: (typeof COHORT_PERIOD_VALUES)[number],
+  blocks: Array<{ start_day_offset: number; duration_days: number }>
+): number {
+  const totalDays = totalCohortDays(blocks);
+  return period === 'Meio_periodo' ? totalDays * 2 : totalDays;
+}
+
 function normalizeScheduleDays(
   scheduleDays: Array<{ day_index: number; day_date: string; start_time?: string | null; end_time?: string | null }> | undefined,
   totalDays: number
@@ -724,10 +732,10 @@ function validateScheduleDays(
   scheduleDays: Array<{ day_index: number; day_date: string; start_time?: string | null; end_time?: string | null }> | undefined
 ): string | null {
   if (!scheduleDays || scheduleDays.length === 0) return null;
-  const totalDays = totalCohortDays(blocks);
+  const totalDays = totalScheduleSlots(period, blocks);
   const normalized = normalizeScheduleDays(scheduleDays, totalDays);
   if (!normalized) {
-    return `Agenda personalizada inválida. Informe exatamente ${totalDays} dia(s), com índice sequencial de 1 até ${totalDays}.`;
+    return `Agenda personalizada inválida. Informe exatamente ${totalDays} ${period === 'Meio_periodo' ? 'encontro(s)' : 'dia(s)'}, com índice sequencial de 1 até ${totalDays}.`;
   }
 
   if (period === 'Meio_periodo') {
@@ -753,7 +761,7 @@ function resolveCohortDateSlots(params: {
   endTime: string | null;
   scheduleDays?: Array<{ day_index: number; day_date: string; start_time?: string | null; end_time?: string | null }>;
 }) {
-  const totalDays = totalCohortDays(params.blocks);
+  const totalDays = totalScheduleSlots(params.period, params.blocks);
   const normalized = normalizeScheduleDays(params.scheduleDays, totalDays);
   if (normalized) {
     return normalized.map((row) => ({
@@ -781,7 +789,8 @@ function syncConfirmedCohortExecutions() {
       a.company_id,
       a.module_id,
       a.entry_day,
-      c.start_date
+      c.start_date,
+      c.period
     from cohort_allocation a
     join cohort c on c.id = a.cohort_id
     where c.status in ('Confirmada', 'Concluida')
@@ -793,6 +802,7 @@ function syncConfirmedCohortExecutions() {
     module_id: string;
     entry_day: number;
     start_date: string;
+    period: (typeof COHORT_PERIOD_VALUES)[number] | null;
   }>;
 
   if (candidates.length === 0) return;
@@ -824,8 +834,12 @@ function syncConfirmedCohortExecutions() {
 
   const tx = db.transaction(() => {
     candidates.forEach((candidate) => {
-      const dayOffset = Math.max(0, Number(candidate.entry_day || 1) - 1);
-      const scheduledDay = selectScheduleDay.get(candidate.cohort_id, dayOffset + 1) as { day_date: string } | undefined;
+      const entryDay = Math.max(1, Number(candidate.entry_day || 1));
+      const scheduleIndex = candidate.period === 'Meio_periodo'
+        ? (entryDay * 2) - 1
+        : entryDay;
+      const dayOffset = Math.max(0, scheduleIndex - 1);
+      const scheduledDay = selectScheduleDay.get(candidate.cohort_id, scheduleIndex) as { day_date: string } | undefined;
       const executionDate = scheduledDay?.day_date ?? addBusinessDays(candidate.start_date, dayOffset);
       if (executionDate > todayIso) return;
 
@@ -1239,6 +1253,10 @@ app.get('/calendar/cohorts', (_req, res) => {
         )
       ), '') as module_names,
       coalesce((
+        select nullif(count(*), 0)
+        from cohort_schedule_day csd_count
+        where csd_count.cohort_id = c.id
+      ), (
         select sum(cmb2.duration_days)
         from cohort_module_block cmb2
         where cmb2.cohort_id = c.id

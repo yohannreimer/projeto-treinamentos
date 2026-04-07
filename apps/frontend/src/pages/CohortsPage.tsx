@@ -130,6 +130,26 @@ function modulesFromEntry(blocks: CohortBlock[], entryModuleId: string): string[
     .map((block) => block.module_id);
 }
 
+function totalScheduleEntriesFromBlocks(
+  draft: BlockDraft[],
+  selectedPeriod: (typeof periodOptions)[number]
+) {
+  const baseDays = Math.max(1, totalDaysFromDraftBlocks(draft));
+  return selectedPeriod === 'Meio_periodo' ? baseDays * 2 : baseDays;
+}
+
+function totalDaysFromDraftBlocks(draft: BlockDraft[]) {
+  let day = 1;
+  let maxEnd = 1;
+  draft.forEach((block) => {
+    const duration = Math.max(1, Number(block.duration_days) || 1);
+    const endDay = day + duration - 1;
+    maxEnd = Math.max(maxEnd, endDay);
+    day += duration;
+  });
+  return maxEnd;
+}
+
 export function CohortsPage() {
   const [searchParams] = useSearchParams();
 
@@ -292,7 +312,7 @@ export function CohortsPage() {
     setBlocks(nextBlocks);
     setScheduleDays(buildScheduleDraft(
       new Date().toISOString().slice(0, 10),
-      totalDaysFromBlocks(nextBlocks),
+      totalScheduleEntriesFromBlocks(nextBlocks, 'Integral'),
       [],
       '13:30',
       '17:00'
@@ -480,9 +500,9 @@ export function CohortsPage() {
   }, [technicianId, startDate, status, period, cohortStartTime, cohortEndTime, scheduleDays, blockPreview, editingId]);
 
   useEffect(() => {
-    const totalDays = totalDaysFromBlocks(blocks);
+    const totalDays = totalScheduleEntriesFromBlocks(blocks, period);
     setScheduleDays((prev) => buildScheduleDraft(startDate, totalDays, prev, cohortStartTime, cohortEndTime));
-  }, [startDate, blocks, cohortStartTime, cohortEndTime]);
+  }, [startDate, blocks, period, cohortStartTime, cohortEndTime]);
 
   function addBlock() {
     const fallbackModuleId = modules[0]?.id ?? '';
@@ -554,7 +574,7 @@ export function CohortsPage() {
       }));
       setScheduleDays(buildScheduleDraft(
         detail.start_date,
-        totalDaysFromBlocks(nextBlocks),
+        totalScheduleEntriesFromBlocks(nextBlocks, (detail.period ?? 'Integral') as (typeof periodOptions)[number]),
         persistedSchedule,
         detail.start_time ?? '13:30',
         detail.end_time ?? '17:00'
@@ -735,7 +755,7 @@ export function CohortsPage() {
         return;
       }
     }
-    if (scheduleDays.length !== totalDaysFromBlocks(blocks)) {
+    if (scheduleDays.length !== totalScheduleEntriesFromBlocks(blocks, period)) {
       setError('Agenda personalizada inválida. Atualize as datas da turma.');
       return;
     }
@@ -1073,13 +1093,17 @@ export function CohortsPage() {
               </table>
               </div>
               <div className="form-subcard">
-                <strong>Agenda personalizada por dia</strong>
-                <p className="muted">Você pode definir dias não sequenciais e horário de cada dia.</p>
+                <strong>{period === 'Meio_periodo' ? 'Agenda personalizada por encontro' : 'Agenda personalizada por dia'}</strong>
+                <p className="muted">
+                  {period === 'Meio_periodo'
+                    ? 'Para meio período, cada diária gera 2 encontros. Você pode definir a data e o horário de cada encontro.'
+                    : 'Você pode definir dias não sequenciais e horário de cada dia.'}
+                </p>
                 <div className="table-wrap">
                   <table className="table table-hover table-tight">
                     <thead>
                       <tr>
-                        <th>Dia</th>
+                        <th>{period === 'Meio_periodo' ? 'Encontro' : 'Dia'}</th>
                         <th>Data</th>
                         <th>Início</th>
                         <th>Fim</th>
@@ -1088,7 +1112,7 @@ export function CohortsPage() {
                     <tbody>
                       {scheduleDays.map((day) => (
                         <tr key={day.key}>
-                          <td>Dia {day.day_index}</td>
+                          <td>{period === 'Meio_periodo' ? 'Encontro' : 'Dia'} {day.day_index}</td>
                           <td>
                             <input
                               type="date"

@@ -53,7 +53,8 @@ export function App() {
         <Route path="/clientes" element={<ClientsPage />} />
         <Route path="/clientes/:id" element={<ClientDetailPage />} />
         <Route path="/tecnicos" element={<TechniciansPage />} />
-        <Route path="/implementacao" element={<ImplementationPage />} />
+        <Route path="/implementacao" element={<ImplementationPage boardMode="implementation" />} />
+        <Route path="/suporte" element={<ImplementationPage boardMode="support" />} />
         <Route path="/processos-seletivos" element={<RecruitmentPage />} />
         <Route path="/licencas" element={<LicensesPage />} />
         <Route path="/licencas/programas" element={<LicenseProgramsPage />} />
