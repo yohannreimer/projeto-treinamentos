@@ -25,6 +25,8 @@ type CohortCalendarOccurrence = Cohort & {
   calendar_date: string;
   day_index: number;
   total_business_days: number;
+  day_start_time?: string | null;
+  day_end_time?: string | null;
 };
 type CalendarActivity = {
   id: string;
@@ -237,6 +239,26 @@ function splitPipeList(value?: string | null): string[] {
     .filter(Boolean);
 }
 
+function parseScheduleDaysRaw(raw?: string): Array<{ day_index: number; day_date: string; start_time: string | null; end_time: string | null }> {
+  if (!raw) return [];
+  return raw
+    .split(' || ')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const [dayIndexRaw, dayDate, startTimeRaw, endTimeRaw] = entry.split('::');
+      const dayIndex = Number(dayIndexRaw);
+      return {
+        day_index: Number.isFinite(dayIndex) ? dayIndex : 0,
+        day_date: dayDate ?? '',
+        start_time: startTimeRaw ? startTimeRaw : null,
+        end_time: endTimeRaw ? endTimeRaw : null
+      };
+    })
+    .filter((item) => item.day_index > 0 && Boolean(item.day_date))
+    .sort((a, b) => a.day_index - b.day_index);
+}
+
 function collapseList(items: string[], max: number): string {
   if (items.length === 0) return '-';
   if (items.length <= max) return items.join(', ');
@@ -399,14 +421,19 @@ export function CalendarPage() {
   const cohortEventsByDate = useMemo(() => {
     return filteredRows.reduce<Record<string, CohortCalendarOccurrence[]>>((acc, item) => {
       const totalBusinessDays = Math.max(1, Number(item.total_duration_days) || 1);
+      const scheduleDays = parseScheduleDaysRaw(item.schedule_days_raw);
+      const scheduleByIndex = new Map(scheduleDays.map((day) => [day.day_index, day]));
       for (let dayIndex = 1; dayIndex <= totalBusinessDays; dayIndex += 1) {
-        const calendarDate = addBusinessDays(item.start_date, dayIndex - 1);
+        const scheduleDay = scheduleByIndex.get(dayIndex);
+        const calendarDate = scheduleDay?.day_date ?? addBusinessDays(item.start_date, dayIndex - 1);
         acc[calendarDate] = acc[calendarDate] ?? [];
         acc[calendarDate].push({
           ...item,
           calendar_date: calendarDate,
           day_index: dayIndex,
-          total_business_days: totalBusinessDays
+          total_business_days: totalBusinessDays,
+          day_start_time: scheduleDay?.start_time ?? null,
+          day_end_time: scheduleDay?.end_time ?? null
         });
       }
       return acc;
@@ -971,6 +998,9 @@ export function CalendarPage() {
                         <p className="calendar-event-meta">
                           {statusLabel(event.delivery_mode ?? 'Online')} · {formatCohortSchedule(event.period, event.start_time, event.end_time)}
                         </p>
+                        {event.day_start_time && event.day_end_time ? (
+                          <p className="calendar-event-meta">Horário: {event.day_start_time} - {event.day_end_time}</p>
+                        ) : null}
                         <p className="calendar-event-meta calendar-ops-only" title={collapseList(moduleNames, 10)}>
                           Módulos: {collapseList(moduleNames, 2)}
                         </p>
@@ -1058,7 +1088,12 @@ export function CalendarPage() {
                           <td className="calendar-ops-only" title={collapseList(splitPipeList(event.participant_names), 100)}>
                             {collapseList(splitPipeList(event.participant_names), 3)}
                           </td>
-                          <td><StatusChip value={event.status} /></td>
+                          <td>
+                            <StatusChip value={event.status} />
+                            {event.day_start_time && event.day_end_time ? (
+                              <p className="muted">{event.day_start_time} - {event.day_end_time}</p>
+                            ) : null}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
