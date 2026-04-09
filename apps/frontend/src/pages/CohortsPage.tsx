@@ -225,12 +225,6 @@ export function CohortsPage() {
     });
   }
 
-  function totalDaysFromBlocks(draft: BlockDraft[]) {
-    const payload = toBlockPayload(draft);
-    if (payload.length === 0) return 1;
-    return Math.max(...payload.map((item) => item.start_day_offset + item.duration_days - 1));
-  }
-
   function buildScheduleDraft(
     startDateValue: string,
     totalDays: number,
@@ -411,6 +405,12 @@ export function CohortsPage() {
     const rows = allocationSuggestions?.companies ?? [];
     return rows.find((company: any) => company.id === allocationCompanyId) ?? null;
   }, [allocationSuggestions, allocationCompanyId]);
+  const isReadyToAddCompany = Boolean(
+    allocationCompanyId &&
+    entryModuleId &&
+    allocationBlocks.length > 0 &&
+    !selectedCompanySuggestion?.block_reason
+  );
 
   const participantsByCompany = useMemo(() => {
     const rows = editingDetail?.participants ?? [];
@@ -522,29 +522,6 @@ export function CohortsPage() {
       return a.module_name.localeCompare(b.module_name);
     });
   }, [editingDetail, participantCountByCompanyModule]);
-
-  const reportPreview = useMemo(() => {
-    if (!editingDetail || !participantCompanyId) return '';
-    const companyParticipants = participantsByCompany[participantCompanyId] ?? [];
-    const companyName = companyParticipants[0]?.company_name
-      ?? companies.find((company) => company.id === participantCompanyId)?.name
-      ?? '-';
-    const moduleNames = participantCompanyModules.map((block) => moduleShortLabel(block.module_name));
-    const totalDays = Math.max(
-      1,
-      participantCompanyModules.reduce((sum, block) => sum + Math.max(1, Number(block.duration_days) || 1), 0)
-    );
-    return [
-      `Empresa: ${companyName}`,
-      '',
-      'Participantes:',
-      ...(companyParticipants.length > 0 ? companyParticipants.map((item) => `- ${item.name}`) : ['- (sem participantes cadastrados)']),
-      '',
-      `Treinamento: ${moduleNames.join(' + ') || '-'}`,
-      `Instrutor: ${editingDetail.technician_name ?? '-'}`,
-      `Carga Horária: ${totalDays} diária(s) (8h*${totalDays})`
-    ].join('\n');
-  }, [editingDetail, participantCompanyId, participantsByCompany, companies, participantCompanyModules]);
 
   const stats = useMemo(() => {
     const open = cohorts.filter((cohort) => ['Planejada', 'Aguardando_quorum', 'Confirmada'].includes(cohort.status)).length;
@@ -1473,12 +1450,17 @@ export function CohortsPage() {
                   </div>
                 ) : null}
 
+                <div className={`allocation-confirm-hint ${isReadyToAddCompany ? 'is-ready' : ''}`}>
+                  <strong>Passo obrigatório:</strong> depois de escolher cliente e módulos, clique no botão abaixo para confirmar a entrada na turma.
+                </div>
+
                 <button
+                  className={`allocation-confirm-btn ${isReadyToAddCompany ? 'is-ready' : ''}`}
                   type="button"
                   onClick={allocateCompanyInCohort}
                   disabled={!allocationCompanyId || !entryModuleId || allocationBlocks.length === 0 || Boolean(selectedCompanySuggestion?.block_reason)}
                 >
-                  Adicionar cliente na turma
+                  Confirmar cliente na turma
                 </button>
 
                 {editingDetail.allocations.length === 0 ? (
@@ -1529,126 +1511,127 @@ export function CohortsPage() {
 
                 <div className="form-subcard">
                   <strong>Lista de participantes (certificado / relatório)</strong>
-                  <div className="three-col">
-                    <label>
-                      Empresa
-                      <select
-                        value={participantCompanyId}
-                        onChange={(event) => setParticipantCompanyId(event.target.value)}
-                      >
-                        <option value="">Selecione</option>
-                        {allocationCompanies.map((company) => (
-                          <option key={`participant-company-${company.id}`} value={company.id}>
-                            {company.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      Participante
-                      <input
-                        value={participantName}
-                        onChange={(event) => setParticipantName(event.target.value)}
-                        placeholder="Ex.: Claudio da Silva"
-                      />
-                    </label>
-                    <div className="actions actions-compact">
-                      <button type="button" onClick={addParticipant}>Adicionar participante</button>
-                    </div>
-                  </div>
-
-                  {participantCompanyId && participantCompanyModules.length > 0 ? (
-                    <div className="form-subcard">
-                      <strong>Módulos ativos para esta empresa</strong>
-                      <div className="participant-module-chip-list">
-                        {participantCompanyModules.map((module) => (
-                          <span key={`module-chip-${module.module_id}`} className="participant-module-chip">
-                            {module.order_in_cohort}. {moduleShortLabel(module.module_name)} • Dia {module.start_day_offset}
-                          </span>
-                        ))}
+                  {allocationCompanies.length === 0 ? (
+                    <p className="warn-text">
+                      Primeiro confirme um cliente na turma no passo acima para liberar esta etapa.
+                    </p>
+                  ) : (
+                    <>
+                      <div className="three-col">
+                        <label>
+                          Empresa
+                          <select
+                            value={participantCompanyId}
+                            onChange={(event) => setParticipantCompanyId(event.target.value)}
+                          >
+                            <option value="">Selecione</option>
+                            {allocationCompanies.map((company) => (
+                              <option key={`participant-company-${company.id}`} value={company.id}>
+                                {company.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          Participante
+                          <input
+                            value={participantName}
+                            onChange={(event) => setParticipantName(event.target.value)}
+                            placeholder="Ex.: Claudio da Silva"
+                          />
+                        </label>
+                        <div className="actions actions-compact">
+                          <button type="button" onClick={addParticipant}>Adicionar participante</button>
+                        </div>
                       </div>
-                    </div>
-                  ) : null}
 
-                  {participantCompanyId && (participantsByCompany[participantCompanyId]?.length ?? 0) > 0 ? (
-                    <div className="participant-module-matrix">
-                      {(participantsByCompany[participantCompanyId] ?? []).map((item) => (
-                        <div key={item.id} className="participant-module-row">
-                          <div className="participant-module-person">
-                            <strong>{item.name}</strong>
-                            <small>
-                              Módulos vinculados:{' '}
-                              {item.module_ids.length > 0
-                                ? item.module_ids
-                                  .map((moduleId) => participantCompanyModules.find((module) => module.module_id === moduleId)?.module_name)
-                                  .filter(Boolean)
-                                  .map((name) => moduleShortLabel(String(name)))
-                                  .join(' • ')
-                                : 'Nenhum'}
-                            </small>
-                          </div>
-                          <div className="participant-module-options">
-                            {participantCompanyModules.map((module) => {
-                              const checked = item.module_ids.includes(module.module_id);
-                              const isSaving = savingParticipantModules.includes(item.id);
-                              return (
-                                <label key={`participant-${item.id}-module-${module.module_id}`} className="participant-module-option">
-                                  <input
-                                    type="checkbox"
-                                    checked={checked}
-                                    disabled={isSaving}
-                                    onChange={() => toggleParticipantModule(item.id, item.module_ids, module.module_id)}
-                                  />
-                                  <span>{module.order_in_cohort}. {moduleShortLabel(module.module_name)}</span>
-                                </label>
-                              );
-                            })}
-                          </div>
-                          <div className="actions actions-compact">
-                            <button
-                              type="button"
-                              onClick={() => removeParticipant(item.id)}
-                              disabled={savingParticipantModules.includes(item.id)}
-                            >
-                              Remover
-                            </button>
+                      {participantCompanyId && participantCompanyModules.length > 0 ? (
+                        <div className="form-subcard">
+                          <strong>Módulos ativos para esta empresa</strong>
+                          <div className="participant-module-chip-list">
+                            {participantCompanyModules.map((module) => (
+                              <span key={`module-chip-${module.module_id}`} className="participant-module-chip">
+                                {module.order_in_cohort}. {moduleShortLabel(module.module_name)} • Dia {module.start_day_offset}
+                              </span>
+                            ))}
                           </div>
                         </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="muted">Nenhum participante cadastrado para esta empresa.</p>
-                  )}
+                      ) : null}
 
-                  {certificateTargets.length > 0 ? (
-                    <div className="form-subcard">
-                      <strong>Emitir certificado por empresa e módulo</strong>
-                      <div className="event-list">
-                        {certificateTargets.map((item) => (
-                          <div key={`cert-${item.company_id}-${item.module_id}`} className="event-item">
-                            <span>
-                              {item.company_name} • {moduleShortLabel(item.module_name)} • {item.participants_count} participante(s)
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => void emitCertificate(item.company_id, item.module_id)}
-                              disabled={item.participants_count === 0 || emittingCertificateKeys.includes(`${item.company_id}::${item.module_id}`)}
-                              title={item.participants_count === 0 ? 'Cadastre participantes para habilitar' : 'Baixar certificado PDF do módulo'}
-                            >
-                              {emittingCertificateKeys.includes(`${item.company_id}::${item.module_id}`) ? 'Gerando...' : 'Emitir PDF'}
-                            </button>
+                      {participantCompanyId && (participantsByCompany[participantCompanyId]?.length ?? 0) > 0 ? (
+                        <div className="participant-module-matrix">
+                          {(participantsByCompany[participantCompanyId] ?? []).map((item) => (
+                            <div key={item.id} className="participant-module-row">
+                              <div className="participant-module-person">
+                                <strong>{item.name}</strong>
+                                <small>
+                                  Módulos vinculados:{' '}
+                                  {item.module_ids.length > 0
+                                    ? item.module_ids
+                                      .map((moduleId) => participantCompanyModules.find((module) => module.module_id === moduleId)?.module_name)
+                                      .filter(Boolean)
+                                      .map((name) => moduleShortLabel(String(name)))
+                                      .join(' • ')
+                                    : 'Nenhum'}
+                                </small>
+                              </div>
+                              <div className="participant-module-options">
+                                {participantCompanyModules.map((module) => {
+                                  const checked = item.module_ids.includes(module.module_id);
+                                  const isSaving = savingParticipantModules.includes(item.id);
+                                  return (
+                                    <label key={`participant-${item.id}-module-${module.module_id}`} className="participant-module-option">
+                                      <input
+                                        type="checkbox"
+                                        checked={checked}
+                                        disabled={isSaving}
+                                        onChange={() => toggleParticipantModule(item.id, item.module_ids, module.module_id)}
+                                      />
+                                      <span>{module.order_in_cohort}. {moduleShortLabel(module.module_name)}</span>
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                              <div className="actions actions-compact">
+                                <button
+                                  type="button"
+                                  onClick={() => removeParticipant(item.id)}
+                                  disabled={savingParticipantModules.includes(item.id)}
+                                >
+                                  Remover
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="muted">Nenhum participante cadastrado para esta empresa.</p>
+                      )}
+
+                      {certificateTargets.length > 0 ? (
+                        <div className="form-subcard">
+                          <strong>Emitir certificado por empresa e módulo</strong>
+                          <div className="event-list">
+                            {certificateTargets.map((item) => (
+                              <div key={`cert-${item.company_id}-${item.module_id}`} className="event-item">
+                                <span>
+                                  {item.company_name} • {moduleShortLabel(item.module_name)} • {item.participants_count} participante(s)
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => void emitCertificate(item.company_id, item.module_id)}
+                                  disabled={item.participants_count === 0 || emittingCertificateKeys.includes(`${item.company_id}::${item.module_id}`)}
+                                  title={item.participants_count === 0 ? 'Cadastre participantes para habilitar' : 'Baixar certificado PDF do módulo'}
+                                >
+                                  {emittingCertificateKeys.includes(`${item.company_id}::${item.module_id}`) ? 'Gerando...' : 'Emitir PDF'}
+                                </button>
+                              </div>
+                            ))}
                           </div>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-
-                  {participantCompanyId ? (
-                    <>
-                      <label>Prévia de relatório/certificado</label>
-                      <textarea rows={10} value={reportPreview} readOnly />
+                        </div>
+                      ) : null}
                     </>
-                  ) : null}
+                  )}
                 </div>
               </div>
             ) : null}

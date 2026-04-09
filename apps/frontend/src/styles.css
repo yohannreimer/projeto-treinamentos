@@ -1076,6 +1076,45 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   color: #5b6b82;
 }
 
+.allocation-confirm-hint {
+  border: 1px solid #f2d39d;
+  background: #fff8eb;
+  color: #6f4a00;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 0.86rem;
+  line-height: 1.35;
+}
+
+.allocation-confirm-hint strong {
+  display: inline-block;
+  margin-right: 6px;
+}
+
+.allocation-confirm-hint.is-ready {
+  border-color: #89d5b6;
+  background: #edf9f3;
+  color: #0c6c46;
+}
+
+.allocation-confirm-btn {
+  min-height: 42px;
+  font-size: 0.96rem;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
+
+.allocation-confirm-btn.is-ready {
+  background: linear-gradient(180deg, #1f8f5e 0%, #18704a 100%);
+  border-color: #156643;
+  color: #fff;
+  box-shadow: 0 10px 20px rgba(24, 112, 74, 0.24);
+}
+
+.allocation-confirm-btn.is-ready:hover {
+  filter: brightness(1.04);
+}
+
 .allocation-module-option {
   border: 1px solid var(--line);
   border-radius: 12px;
