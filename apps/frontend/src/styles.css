@@ -887,11 +887,6 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   gap: 14px;
 }
 
-.cohorts-workspace.is-editing {
-  grid-template-columns: minmax(0, 1.05fr) minmax(560px, 1fr);
-  align-items: start;
-}
-
 .cohorts-list-panel .panel-content {
   overflow: auto;
 }
@@ -899,6 +894,66 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 .cohorts-editor-panel .panel-content {
   max-height: calc(100vh - 260px);
   overflow: auto;
+}
+
+.cohort-editor-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+
+.cohort-editor-backdrop {
+  position: absolute;
+  inset: 0;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  box-shadow: none;
+  background: rgba(12, 24, 39, 0.46);
+}
+
+.cohort-editor-modal {
+  position: relative;
+  width: min(1480px, calc(100vw - 32px));
+  max-height: calc(100vh - 34px);
+  overflow: hidden;
+  border-radius: 18px;
+  box-shadow: 0 26px 50px rgba(8, 22, 39, 0.26);
+}
+
+.cohort-editor-modal .panel {
+  border-radius: 18px;
+  margin: 0;
+}
+
+.cohort-editor-modal .panel-content {
+  max-height: calc(100vh - 170px);
+  overflow: auto;
+}
+
+.cohort-editor-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cohort-editor-close-btn {
+  border: 1px solid #b9cce3;
+  border-radius: 999px;
+  background: #f1f7ff;
+  color: #164a78;
+  box-shadow: none;
+  padding: 6px 10px;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.cohort-editor-close-btn:hover {
+  border-color: #99b9de;
+  background: #e8f2ff;
 }
 
 .wizard-step {
@@ -1054,6 +1109,85 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 .allocation-module-option small {
   color: var(--ink-soft);
   font-size: 0.76rem;
+}
+
+.participant-module-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.participant-module-chip {
+  border: 1px solid #cfe0f4;
+  border-radius: 999px;
+  background: #f2f7ff;
+  color: #23496d;
+  padding: 4px 9px;
+  font-size: 0.76rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.participant-module-matrix {
+  display: grid;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.participant-module-row {
+  border: 1px solid #d8e5f4;
+  border-radius: 12px;
+  background: #f8fbff;
+  padding: 10px;
+  display: grid;
+  grid-template-columns: minmax(190px, 0.8fr) minmax(0, 1.8fr) auto;
+  gap: 10px;
+  align-items: start;
+}
+
+.participant-module-person {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.participant-module-person strong {
+  font-size: 0.9rem;
+}
+
+.participant-module-person small {
+  color: var(--ink-soft);
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+
+.participant-module-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 6px 8px;
+}
+
+.participant-module-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #d8e5f4;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 6px 8px;
+  min-width: 0;
+}
+
+.participant-module-option span {
+  min-width: 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #294666;
+}
+
+.participant-module-option input {
+  margin: 0;
 }
 
 .table-hover tbody tr:hover {
@@ -2229,7 +2363,6 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   .stats-grid { grid-template-columns: repeat(2, minmax(160px, 1fr)); }
   .three-col { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .clients-tools-grid { grid-template-columns: 1fr; }
-  .cohorts-workspace.is-editing { grid-template-columns: 1fr; }
   .cohorts-editor-panel .panel-content { max-height: none; }
   .calendar-toolbar-filters { grid-template-columns: 1fr 1fr; }
   .calendar-metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -2248,6 +2381,12 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   .calendar-overlay-grid { grid-template-columns: 1fr; }
   .calendar-overlay-col:first-child { border-right: none; border-bottom: 1px solid var(--line); }
   .timeline-item { grid-template-columns: 1fr; }
+  .participant-module-row {
+    grid-template-columns: 1fr;
+  }
+  .participant-module-options {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .kanban-empty-state {
@@ -2273,6 +2412,20 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   }
   .main-content { padding: 14px; }
   .page-header { padding: 12px 13px; }
+  .cohort-editor-overlay {
+    padding: 0;
+  }
+  .cohort-editor-modal {
+    width: 100vw;
+    max-height: 100vh;
+    border-radius: 0;
+  }
+  .cohort-editor-modal .panel {
+    border-radius: 0;
+  }
+  .cohort-editor-modal .panel-content {
+    max-height: calc(100vh - 140px);
+  }
   .calendar-toolbar-main { align-items: stretch; }
   .calendar-toolbar-filters,
   .calendar-metrics-grid {
@@ -2333,6 +2486,9 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
     table-layout: auto;
   }
   .technicians-reference-grid {
+    grid-template-columns: 1fr;
+  }
+  .participant-module-options {
     grid-template-columns: 1fr;
   }
   .technicians-reference-grid label:nth-child(3) {

@@ -102,6 +102,40 @@ export const api = {
     }),
   deleteCohortParticipant: (cohortId: string, participantId: string) =>
     req(`/cohorts/${cohortId}/participants/${participantId}`, { method: 'DELETE' }),
+  updateCohortParticipantModules: async (cohortId: string, participantId: string, payload: { module_ids: string[] }) => {
+    const path = `/cohorts/${cohortId}/participants/${participantId}/modules`;
+    try {
+      return await req(path, {
+        method: 'PATCH',
+        body: JSON.stringify(payload)
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      if (!message.includes('Cannot PATCH')) {
+        throw error;
+      }
+      return req(path, {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+    }
+  },
+  cohortCertificateUrl: (
+    cohortId: string,
+    companyId: string,
+    options?: { download?: boolean; format?: 'pdf' | 'html'; moduleId?: string }
+  ) => {
+    const params = new URLSearchParams();
+    params.set('company_id', companyId);
+    params.set('format', options?.format ?? 'pdf');
+    if (options?.moduleId) {
+      params.set('module_id', options.moduleId);
+    }
+    if (options?.download) {
+      params.set('download', '1');
+    }
+    return `${BASE_URL}/cohorts/${cohortId}/certificate?${params.toString()}`;
+  },
   allocationSuggestions: (cohortId: string, moduleId: string) =>
     req(`/cohorts/${cohortId}/suggestions/${moduleId}`),
   createAllocation: (payload: unknown) =>

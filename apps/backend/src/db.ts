@@ -152,6 +152,14 @@ export function initDb() {
       foreign key(company_id) references company(id) on delete cascade
     );
 
+    create table if not exists cohort_participant_module (
+      participant_id text not null,
+      module_id text not null,
+      primary key (participant_id, module_id),
+      foreign key(participant_id) references cohort_participant(id) on delete cascade,
+      foreign key(module_id) references module_template(id) on delete cascade
+    );
+
     create table if not exists optional_module (
       id text primary key,
       code text not null unique,
@@ -342,6 +350,14 @@ export function initDb() {
   ensureColumn('implementation_kanban_card', 'due_date', 'due_date text');
   ensureColumn('implementation_kanban_card', 'attachment_image_data_url', 'attachment_image_data_url text');
 
+  db.exec(`
+    insert or ignore into cohort_participant_module (participant_id, module_id)
+    select cp.id, a.module_id
+    from cohort_participant cp
+    join cohort_allocation a on a.cohort_id = cp.cohort_id and a.company_id = cp.company_id
+    where a.status <> 'Cancelado'
+  `);
+
   const activitiesWithSingleTechnician = db.prepare(`
     select id, technician_id
     from calendar_activity
@@ -519,6 +535,7 @@ export function clearAllData() {
     delete from company_optional_progress;
     delete from optional_module;
     delete from company_module_activation;
+    delete from cohort_participant_module;
     delete from cohort_participant;
     delete from cohort_allocation;
     delete from cohort_schedule_day;

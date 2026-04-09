@@ -1,7 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import cors from 'cors';
 import express from 'express';
+import puppeteer from 'puppeteer-core';
 import { z } from 'zod';
 import { clearAllData, db, initDb, nowDateIso, seedDb, uuid } from './db.js';
 import { importWorkbook } from './workbookImport.js';
@@ -44,6 +46,25 @@ const IMPLEMENTATION_KANBAN_DEFAULT_COLUMNS = [
   { id: 'kcol-doing', title: 'Em andamento', color: '#b17613' },
   { id: 'kcol-done', title: 'Concluído', color: '#1c8b61' }
 ] as const;
+const SERVER_FILE_PATH = fileURLToPath(import.meta.url);
+const SERVER_DIR = path.dirname(SERVER_FILE_PATH);
+const PROJECT_ROOT_FROM_SERVER = path.resolve(SERVER_DIR, '..', '..', '..');
+const CERTIFICATE_TEMPLATE_PATH_CANDIDATES = [
+  path.resolve(SERVER_DIR, 'templates/certificate_holand.html'),
+  path.resolve(PROJECT_ROOT_FROM_SERVER, 'apps/backend/src/templates/certificate_holand.html'),
+  path.resolve(process.cwd(), 'apps/backend/src/templates/certificate_holand.html'),
+  path.resolve(process.cwd(), 'src/templates/certificate_holand.html'),
+  path.resolve(process.cwd(), 'apps/backend/dist/templates/certificate_holand.html')
+] as const;
+let certificateTemplateCache: string | null = null;
+const PDF_BROWSER_PATH_CANDIDATES = [
+  process.env.PUPPETEER_EXECUTABLE_PATH,
+  process.env.CHROME_BIN,
+  '/usr/bin/chromium-browser',
+  '/usr/bin/chromium',
+  '/usr/bin/google-chrome',
+  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+].filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
 
 const kanbanCardImageSchema = z
   .string()
@@ -131,6 +152,10 @@ const technicianConflictCheckSchema = z.object({
 const cohortParticipantCreateSchema = z.object({
   company_id: z.string().min(1),
   participant_name: z.string().min(3).max(160)
+});
+
+const cohortParticipantModulesUpdateSchema = z.object({
+  module_ids: z.array(z.string().min(1)).max(200).default([])
 });
 
 const licenseCreateSchema = z.object({
@@ -343,8 +368,204 @@ function moduleExistsInCohort(cohortId: string, moduleId: string): boolean {
   return Boolean(row?.ok);
 }
 
+function activeCompanyModuleIdsInCohort(cohortId: string, companyId: string): string[] {
+  const rows = db.prepare(`
+    select distinct module_id
+    from cohort_allocation
+    where cohort_id = ? and company_id = ? and status <> 'Cancelado'
+    order by entry_day asc
+  `).all(cohortId, companyId) as Array<{ module_id: string }>;
+  return rows.map((row) => row.module_id);
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function readCertificateTemplate(): string {
+  if (certificateTemplateCache) {
+    return certificateTemplateCache;
+  }
+  for (const candidatePath of CERTIFICATE_TEMPLATE_PATH_CANDIDATES) {
+    if (!fs.existsSync(candidatePath)) continue;
+    certificateTemplateCache = fs.readFileSync(candidatePath, 'utf-8');
+    return certificateTemplateCache;
+  }
+  throw new Error('Template de certificado não encontrado.');
+}
+
+function resolvePdfBrowserExecutablePath(): string {
+  for (const candidatePath of PDF_BROWSER_PATH_CANDIDATES) {
+    if (fs.existsSync(candidatePath)) {
+      return candidatePath;
+    }
+  }
+  throw new Error(
+    'Navegador para PDF não encontrado. Defina PUPPETEER_EXECUTABLE_PATH ou instale Chromium/Google Chrome no servidor.'
+  );
+}
+
+async function renderPdfFromHtml(html: string): Promise<Buffer> {
+  const executablePath = resolvePdfBrowserExecutablePath();
+  const browser = await puppeteer.launch({
+    executablePath,
+    headless: true,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--font-render-hinting=none'
+    ]
+  });
+
+  try {
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1400, height: 1000, deviceScaleFactor: 2 });
+    await page.setContent(html, { waitUntil: 'networkidle0' });
+    await page.emulateMediaType('screen');
+    await page.evaluate(async () => {
+      const fontsReady = (document as any)?.fonts?.ready;
+      if (fontsReady) {
+        await fontsReady;
+      }
+    });
+    const pdfBuffer = await page.pdf({
+      printBackground: true,
+      preferCSSPageSize: true,
+      margin: {
+        top: '0mm',
+        right: '0mm',
+        bottom: '0mm',
+        left: '0mm'
+      }
+    });
+    return Buffer.from(pdfBuffer);
+  } finally {
+    await browser.close();
+  }
+}
+
+function applyPdfLayoutOverrides(html: string): string {
+  const override = `
+<style id="pdf-layout-override">
+  @page { size: 297mm 210mm !important; margin: 0 !important; }
+  html, body {
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 297mm !important;
+    height: 210mm !important;
+    background: #EF2F0F !important;
+    overflow: hidden !important;
+  }
+  body {
+    display: block !important;
+  }
+  .cert {
+    width: 297mm !important;
+    height: 210mm !important;
+    box-shadow: none !important;
+    margin: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+    position: relative !important;
+    background: #1D2830 !important;
+  }
+  .top-bar,
+  .header,
+  .hero,
+  .arrow-divider {
+    flex: 0 0 auto !important;
+  }
+  .employees-section {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    padding-bottom: 14px !important;
+  }
+  #employees-grid {
+    align-content: start !important;
+    gap: 6px !important;
+  }
+  .footer {
+    flex: 0 0 auto !important;
+    margin-top: auto !important;
+    padding-top: 14px !important;
+    padding-bottom: 14px !important;
+    margin-bottom: 11mm !important;
+  }
+  .bottom-strip {
+    position: absolute !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: -0.4mm !important;
+    flex: 0 0 auto !important;
+    margin: 0 !important;
+    box-shadow: 0 1px 0 #EF2F0F !important;
+  }
+  .cert::after {
+    content: '' !important;
+    position: absolute !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    height: 1.4mm !important;
+    background: #EF2F0F !important;
+    z-index: 5 !important;
+    pointer-events: none !important;
+  }
+  .bottom-strip {
+    position: relative !important;
+    z-index: 6 !important;
+  }
+</style>`;
+
+  if (html.includes('</head>')) {
+    return html.replace('</head>', `${override}\n</head>`);
+  }
+  return `${override}\n${html}`;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function moduleShortLabel(name: string): string {
+  return name
+    .replace(/^Treinamento\s+/i, '')
+    .replace(/^TopSolid'?/i, 'TopSolid')
+    .trim();
+}
+
+function formatLongDatePtBr(dateIso: string): string {
+  const parts = parseIsoDate(dateIso).toLocaleDateString('pt-BR', {
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric'
+  });
+  return parts.replace(/\s+/g, ' ').trim();
+}
+
+function normalizeCertToken(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 18);
+}
+
+function normalizeFileLabelPart(value: string): string {
+  const normalized = value
+    .replace(/[\\/:*?"<>|]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return normalized || 'Sem nome';
 }
 
 function hasDestructiveConfirmation(confirmationPhrase?: string): boolean {
@@ -1604,15 +1825,265 @@ app.get('/cohorts/:id', (req, res) => {
     where cohort_id = ?
     order by day_index asc
   `).all(req.params.id);
-  const participants = db.prepare(`
-    select cp.id, cp.company_id, c.name as company_name, cp.participant_name, cp.created_at
+  const participantsRaw = db.prepare(`
+    select
+      cp.id,
+      cp.company_id,
+      c.name as company_name,
+      cp.participant_name,
+      cp.created_at,
+      (
+        select group_concat(cpm.module_id, '|')
+        from cohort_participant_module cpm
+        where cpm.participant_id = cp.id
+      ) as module_ids_raw
     from cohort_participant cp
     join company c on c.id = cp.company_id
     where cp.cohort_id = ?
     order by c.name asc, cp.participant_name asc
-  `).all(req.params.id);
+  `).all(req.params.id) as Array<{
+    id: string;
+    company_id: string;
+    company_name: string;
+    participant_name: string;
+    created_at: string;
+    module_ids_raw: string | null;
+  }>;
+
+  const participants = participantsRaw.map((row) => ({
+    id: row.id,
+    company_id: row.company_id,
+    company_name: row.company_name,
+    participant_name: row.participant_name,
+    created_at: row.created_at,
+    module_ids: row.module_ids_raw
+      ? row.module_ids_raw.split('|').map((item) => item.trim()).filter(Boolean)
+      : []
+  }));
 
   return res.json({ ...cohort, blocks, allocations, schedule_days, participants });
+});
+
+app.get('/cohorts/:id/certificate', async (req, res) => {
+  const companyId = typeof req.query.company_id === 'string'
+    ? req.query.company_id.trim()
+    : '';
+  const requestedModuleId = typeof req.query.module_id === 'string'
+    ? req.query.module_id.trim()
+    : '';
+  if (!companyId) {
+    return res.status(400).json({ message: 'Informe o parâmetro company_id para emitir o certificado.' });
+  }
+  if (!requestedModuleId) {
+    return res.status(400).json({ message: 'Informe o parâmetro module_id para emitir certificado por módulo.' });
+  }
+
+  const cohort = db.prepare(`
+    select c.id, c.code, c.name, c.technician_id, t.name as technician_name
+    from cohort c
+    left join technician t on t.id = c.technician_id
+    where c.id = ?
+  `).get(req.params.id) as {
+    id: string;
+    code: string;
+    name: string;
+    technician_id: string | null;
+    technician_name: string | null;
+  } | undefined;
+
+  if (!cohort) {
+    return res.status(404).json({ message: 'Turma não encontrada.' });
+  }
+
+  const company = db.prepare(`
+    select id, name
+    from company
+    where id = ?
+  `).get(companyId) as { id: string; name: string } | undefined;
+
+  if (!company) {
+    return res.status(404).json({ message: 'Empresa não encontrada.' });
+  }
+
+  const hasAllocation = db.prepare(`
+    select 1 as ok
+    from cohort_allocation
+    where cohort_id = ? and company_id = ? and status <> 'Cancelado'
+    limit 1
+  `).get(req.params.id, companyId) as { ok: number } | undefined;
+
+  if (!hasAllocation) {
+    return res.status(400).json({ message: 'Esta empresa não possui alocação ativa nesta turma.' });
+  }
+
+  const moduleRows = db.prepare(`
+    select
+      a.module_id,
+      mt.code as module_code,
+      mt.name as module_name,
+      coalesce(cmb.order_in_cohort, 9999) as order_in_cohort,
+      coalesce(cmb.duration_days, 1) as duration_days
+    from cohort_allocation a
+    join module_template mt on mt.id = a.module_id
+    left join cohort_module_block cmb on cmb.cohort_id = a.cohort_id and cmb.module_id = a.module_id
+    where a.cohort_id = ? and a.company_id = ? and a.status <> 'Cancelado'
+    group by a.module_id
+    order by order_in_cohort asc, mt.name asc
+  `).all(req.params.id, companyId) as Array<{
+    module_id: string;
+    module_code: string;
+    module_name: string;
+    order_in_cohort: number;
+    duration_days: number;
+  }>;
+
+  if (moduleRows.length === 0) {
+    return res.status(400).json({ message: 'Sem módulos ativos para esta empresa nesta turma.' });
+  }
+
+  const moduleRow = moduleRows.find((row) => row.module_id === requestedModuleId);
+  if (!moduleRow) {
+    return res.status(400).json({ message: 'Módulo informado não está ativo para esta empresa nesta turma.' });
+  }
+
+  const participants = db.prepare(`
+    select cp.participant_name
+    from cohort_participant cp
+    join cohort_participant_module cpm on cpm.participant_id = cp.id
+    where cp.cohort_id = ? and cp.company_id = ? and cpm.module_id = ?
+    order by cp.participant_name asc
+  `).all(req.params.id, companyId, requestedModuleId) as Array<{ participant_name: string }>;
+
+  if (participants.length === 0) {
+    return res.status(400).json({ message: 'Nenhum participante desta empresa está vinculado ao módulo selecionado.' });
+  }
+
+  const totalDays = Math.max(1, Number(moduleRow.duration_days) || 1);
+  const totalHours = totalDays * 8;
+  const trainingName = moduleShortLabel(moduleRow.module_name);
+  const issueDateIso = nowDateIso();
+  const certCode = [
+    'CERT',
+    normalizeCertToken(cohort.code || cohort.name || 'TURMA'),
+    normalizeCertToken(company.name || 'EMPRESA'),
+    normalizeCertToken(moduleRow.module_code || moduleRow.module_name || requestedModuleId),
+    issueDateIso.replace(/-/g, '')
+  ].filter(Boolean).join('-');
+
+  const employeeCardsHtml = participants
+    .map((participant, index) => {
+      const position = String(index + 1).padStart(2, '0');
+      return `
+      <div class="employee-card">
+        <div class="employee-num">${position}</div>
+        <div class="employee-name">${escapeHtml(participant.participant_name)}</div>
+        <div class="employee-role">Participante</div>
+      </div>`;
+    })
+    .join('');
+
+  try {
+    let html = readCertificateTemplate();
+    const tokens: Array<[string, string]> = [
+      ['COMPANY_NAME', escapeHtml(company.name)],
+      ['COURSE_NAME', escapeHtml(trainingName || cohort.name)],
+      ['COURSE_HOURS', escapeHtml(`⏱ ${totalDays} diária(s) (${totalHours}h)`)],
+      ['EMPLOYEES_GRID', employeeCardsHtml],
+      ['TECHNICIAN_NAME', escapeHtml(cohort.technician_name ?? 'Sem técnico definido')],
+      ['EMIT_DATE', escapeHtml(formatLongDatePtBr(issueDateIso))],
+      ['CERT_CODE', escapeHtml(certCode)]
+    ];
+    tokens.forEach(([token, value]) => {
+      html = html.split(`{{${token}}}`).join(value);
+    });
+
+    const format = typeof req.query.format === 'string'
+      ? req.query.format.trim().toLowerCase()
+      : 'pdf';
+    const shouldDownload = String(req.query.download ?? '1') !== '0';
+    const fileBase = `Certificado - ${normalizeFileLabelPart(company.name)} - ${normalizeFileLabelPart(trainingName || moduleRow.module_name)}`;
+
+    if (format === 'html') {
+      const encodedFileName = encodeURIComponent(`${fileBase}.html`);
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.setHeader('Content-Disposition', `${shouldDownload ? 'attachment' : 'inline'}; filename*=UTF-8''${encodedFileName}`);
+      return res.send(html);
+    }
+
+    const pdfHtml = applyPdfLayoutOverrides(html);
+    const pdfBuffer = await renderPdfFromHtml(pdfHtml);
+
+    const certificateDocumentTitle = fileBase;
+    const certificateDocumentNotes = [
+      '[CERTIFICADO_AUTOMATICO]',
+      `Código: ${certCode}`,
+      `Turma: ${cohort.code}`,
+      `Empresa: ${company.name}`,
+      `Módulo: ${trainingName}`,
+      `Participantes: ${participants.map((item) => item.participant_name).join(' | ')}`,
+      `Emitido em: ${formatLongDatePtBr(issueDateIso)}`
+    ].join('\n');
+    const certificateDataUrl = `data:application/pdf;base64,${pdfBuffer.toString('base64')}`;
+    const existingCertificateDocument = db.prepare(`
+      select id
+      from internal_document
+      where category = 'Certificados'
+        and notes like ?
+      limit 1
+    `).get(`%Código: ${certCode}%`) as { id: string } | undefined;
+
+    if (existingCertificateDocument) {
+      db.prepare(`
+        update internal_document
+        set
+          title = ?,
+          category = ?,
+          notes = ?,
+          file_name = ?,
+          mime_type = ?,
+          file_data_base64 = ?,
+          file_size_bytes = ?,
+          updated_at = ?
+        where id = ?
+      `).run(
+        certificateDocumentTitle,
+        'Certificados',
+        certificateDocumentNotes,
+        `${fileBase}.pdf`,
+        'application/pdf',
+        certificateDataUrl,
+        pdfBuffer.length,
+        nowDateIso(),
+        existingCertificateDocument.id
+      );
+    } else {
+      db.prepare(`
+        insert into internal_document (
+          id, title, category, notes, file_name, mime_type, file_data_base64,
+          file_size_bytes, created_at, updated_at
+        )
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        uuid('doc'),
+        certificateDocumentTitle,
+        'Certificados',
+        certificateDocumentNotes,
+        `${fileBase}.pdf`,
+        'application/pdf',
+        certificateDataUrl,
+        pdfBuffer.length,
+        nowDateIso(),
+        nowDateIso()
+      );
+    }
+
+    const encodedFileName = encodeURIComponent(`${fileBase}.pdf`);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `${shouldDownload ? 'attachment' : 'inline'}; filename*=UTF-8''${encodedFileName}`);
+    return res.send(pdfBuffer);
+  } catch (error) {
+    return res.status(500).json({ message: 'Erro ao gerar certificado.', detail: errorMessage(error) });
+  }
 });
 
 app.post('/cohorts/check-technician-conflict', (req, res) => {
@@ -2012,16 +2483,27 @@ app.post('/cohorts/:id/participants', (req, res) => {
   }
 
   try {
-    db.prepare(`
+    const participantId = uuid('cpt');
+    const activeModuleIds = activeCompanyModuleIdsInCohort(req.params.id, parsed.data.company_id);
+    const insertParticipant = db.prepare(`
       insert into cohort_participant (id, cohort_id, company_id, participant_name, created_at)
       values (?, ?, ?, ?, ?)
-    `).run(
-      uuid('cpt'),
-      req.params.id,
-      parsed.data.company_id,
-      parsed.data.participant_name.trim(),
-      nowDateIso()
-    );
+    `);
+    const insertParticipantModule = db.prepare(`
+      insert or ignore into cohort_participant_module (participant_id, module_id)
+      values (?, ?)
+    `);
+    const tx = db.transaction(() => {
+      insertParticipant.run(
+        participantId,
+        req.params.id,
+        parsed.data.company_id,
+        parsed.data.participant_name.trim(),
+        nowDateIso()
+      );
+      activeModuleIds.forEach((moduleId) => insertParticipantModule.run(participantId, moduleId));
+    });
+    tx();
     return res.status(201).json({ ok: true });
   } catch (error) {
     return res.status(400).json({ message: 'Nao foi possivel adicionar participante', detail: errorMessage(error) });
@@ -2042,6 +2524,54 @@ app.delete('/cohorts/:id/participants/:participantId', (req, res) => {
   db.prepare('delete from cohort_participant where id = ?').run(req.params.participantId);
   return res.json({ ok: true });
 });
+
+function updateCohortParticipantModulesHandler(req: express.Request, res: express.Response) {
+  const parsed = cohortParticipantModulesUpdateSchema.safeParse({
+    module_ids: Array.isArray(req.body?.module_ids)
+      ? req.body.module_ids
+      : (Array.isArray(req.body?.moduleIds) ? req.body.moduleIds : [])
+  });
+  if (!parsed.success) {
+    return res.status(400).json(parsed.error.flatten());
+  }
+
+  const participant = db.prepare(`
+    select id, cohort_id, company_id
+    from cohort_participant
+    where id = ? and cohort_id = ?
+  `).get(req.params.participantId, req.params.id) as {
+    id: string;
+    cohort_id: string;
+    company_id: string;
+  } | undefined;
+
+  if (!participant) {
+    return res.status(404).json({ message: 'Participante não encontrado na turma.' });
+  }
+
+  const allowedModuleIds = new Set(activeCompanyModuleIdsInCohort(req.params.id, participant.company_id));
+  const requestedModuleIds = Array.from(new Set(parsed.data.module_ids.map((item) => item.trim()).filter(Boolean)));
+  const invalidModuleId = requestedModuleIds.find((moduleId) => !allowedModuleIds.has(moduleId));
+  if (invalidModuleId) {
+    return res.status(400).json({ message: 'Existe módulo inválido para esta empresa nesta turma.' });
+  }
+
+  const insertParticipantModule = db.prepare(`
+    insert into cohort_participant_module (participant_id, module_id)
+    values (?, ?)
+  `);
+
+  const tx = db.transaction(() => {
+    db.prepare('delete from cohort_participant_module where participant_id = ?').run(req.params.participantId);
+    requestedModuleIds.forEach((moduleId) => insertParticipantModule.run(req.params.participantId, moduleId));
+  });
+
+  tx();
+  return res.json({ ok: true, module_ids: requestedModuleIds });
+}
+
+app.patch('/cohorts/:id/participants/:participantId/modules', updateCohortParticipantModulesHandler);
+app.post('/cohorts/:id/participants/:participantId/modules', updateCohortParticipantModulesHandler);
 
 app.post('/allocations', (req, res) => {
   const parsed = createAllocationSchema.safeParse(req.body);
@@ -2222,6 +2752,23 @@ app.post('/cohorts/:id/allocate-company', (req, res) => {
         payload.notes ?? null
       );
     });
+
+    const participants = db.prepare(`
+      select id
+      from cohort_participant
+      where cohort_id = ? and company_id = ?
+    `).all(cohortId, payload.company_id) as Array<{ id: string }>;
+    if (participants.length > 0) {
+      const insertParticipantModule = db.prepare(`
+        insert or ignore into cohort_participant_module (participant_id, module_id)
+        values (?, ?)
+      `);
+      participants.forEach((participant) => {
+        selectedBlocks.forEach((block) => {
+          insertParticipantModule.run(participant.id, block.module_id);
+        });
+      });
+    }
   });
 
   try {

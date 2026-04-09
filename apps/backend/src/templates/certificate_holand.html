@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Certificado Holand</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --navy:  #1D2830;
+    --red:   #EF2F0F;
+    --white: #FFFFFF;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    background: #111518;
+    font-family: 'Inter', sans-serif;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 32px 20px;
+    min-height: 100vh;
+  }
+
+  /* ── CERTIFICATE ───────────────────────────────── */
+  .cert {
+    width: 980px;
+    background: var(--navy);
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 24px 80px rgba(0,0,0,.6);
+  }
+
+  .bg-chevron {
+    position: absolute;
+    top: -60px; right: -80px;
+    width: 460px;
+    opacity: .06;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* ── TOP BAR ───────────────────────────────────── */
+  .top-bar { background: var(--red); height: 6px; }
+
+  /* ── HEADER ────────────────────────────────────── */
+  .header {
+    position: relative; z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 26px 48px 22px;
+    border-bottom: 1px solid rgba(255,255,255,.08);
+  }
+
+  .header-left { display: flex; align-items: center; gap: 20px; }
+  .header-divider { width: 1px; height: 30px; background: rgba(255,255,255,.15); }
+
+  .header-company-label {
+    font-size: 9px; font-weight: 600;
+    letter-spacing: 2px; text-transform: uppercase;
+    color: rgba(255,255,255,.35); margin-bottom: 3px;
+  }
+
+  /* ★ ID para o app preencher */
+  #company-name {
+    font-size: 15px; font-weight: 700;
+    color: var(--white); letter-spacing: .3px;
+  }
+
+  .header-right { text-align: right; }
+  .header-right .dept {
+    font-size: 10px; font-weight: 600;
+    letter-spacing: 3px; text-transform: uppercase;
+    color: var(--red); margin-bottom: 3px;
+  }
+  .header-right .doc-title {
+    font-size: 10px; font-weight: 400;
+    color: rgba(255,255,255,.35);
+    letter-spacing: 1.5px; text-transform: uppercase;
+  }
+
+  /* ── HERO ──────────────────────────────────────── */
+  .hero {
+    position: relative; z-index: 2;
+    padding: 36px 48px 24px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 40px; align-items: start;
+  }
+
+  .certifica-label {
+    font-size: 10px; font-weight: 700;
+    letter-spacing: 4px; text-transform: uppercase;
+    color: var(--red); margin-bottom: 10px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .certifica-label::before {
+    content: ''; display: block;
+    width: 22px; height: 2px; background: var(--red);
+  }
+
+  .certifica-title {
+    font-size: 44px; font-weight: 800;
+    color: var(--white); line-height: 1.0; letter-spacing: -1px;
+  }
+  .certifica-title span { color: var(--red); }
+
+  .certifica-sub {
+    font-size: 13px; font-weight: 300;
+    color: rgba(255,255,255,.5);
+    line-height: 1.65; max-width: 500px; margin-top: 14px;
+  }
+
+  .course-box {
+    background: var(--red);
+    padding: 22px 26px; min-width: 200px;
+    clip-path: polygon(0 0, 100% 0, 92% 100%, 0 100%);
+    flex-shrink: 0;
+  }
+  .course-box-label {
+    font-size: 9px; font-weight: 700;
+    letter-spacing: 3px; text-transform: uppercase;
+    color: rgba(255,255,255,.7); margin-bottom: 6px;
+  }
+
+  /* ★ IDs para o app preencher */
+  #course-name {
+    font-size: 20px; font-weight: 900;
+    color: var(--white); line-height: 1.1; text-transform: uppercase;
+  }
+  #course-hours {
+    font-size: 11px; font-weight: 500;
+    color: rgba(255,255,255,.8);
+    margin-top: 10px; padding-top: 10px;
+    border-top: 1px solid rgba(255,255,255,.3);
+  }
+
+  /* ── DIVIDER ───────────────────────────────────── */
+  .arrow-divider {
+    position: relative; z-index: 2;
+    margin: 0 48px;
+    display: flex; align-items: center;
+  }
+  .arrow-divider-line { flex: 1; height: 1px; background: rgba(255,255,255,.1); }
+  .arrow-chevrons { display: flex; gap: 4px; padding: 0 16px; }
+  .chev { width: 8px; height: 16px; }
+
+  /* ── EMPLOYEES ─────────────────────────────────── */
+  .employees-section {
+    position: relative; z-index: 2;
+    padding: 20px 48px 24px;
+  }
+
+  .employees-label {
+    font-size: 9px; font-weight: 700;
+    letter-spacing: 3px; text-transform: uppercase;
+    color: rgba(255,255,255,.3); margin-bottom: 12px;
+  }
+
+  /*
+   * ★ APP: popular #employees-grid com elementos .employee-card
+   *
+   * Estrutura de cada card:
+   * <div class="employee-card">
+   *   <div class="employee-num">01</div>
+   *   <div class="employee-name">Nome do Colaborador</div>
+   *   <div class="employee-role">Cargo</div>
+   * </div>
+   */
+  #employees-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 2px;
+  }
+
+  .employee-card {
+    background: rgba(255,255,255,.04);
+    border-left: 3px solid rgba(239,47,15,.4);
+    padding: 10px 15px;
+  }
+  .employee-num {
+    font-size: 9px; font-weight: 700;
+    color: var(--red); letter-spacing: 1px; margin-bottom: 3px;
+  }
+  .employee-name {
+    font-size: 13px; font-weight: 700;
+    color: var(--white); line-height: 1.2;
+  }
+  .employee-role {
+    font-size: 11px; font-weight: 400;
+    color: rgba(255,255,255,.4); margin-top: 2px;
+  }
+
+  /* ── FOOTER ────────────────────────────────────── */
+  .footer {
+    position: relative; z-index: 2;
+    background: rgba(0,0,0,.22);
+    padding: 18px 48px;
+    display: grid;
+    grid-template-columns: 1fr 1px 1fr 1px auto 1px auto;
+    align-items: center; gap: 24px;
+  }
+  .footer-div { height: 34px; background: rgba(255,255,255,.1); }
+
+  .sig-line { width: 110px; height: 1px; background: rgba(255,255,255,.2); margin-bottom: 5px; }
+
+  /* ★ IDs para o app preencher */
+  #sig-name-1, #sig-name-2 {
+    font-size: 13px; font-weight: 700; color: var(--white); margin-bottom: 2px;
+  }
+  #sig-title-1, #sig-title-2 {
+    font-size: 10px; color: rgba(255,255,255,.4);
+  }
+
+  .meta-label {
+    font-size: 9px; font-weight: 600;
+    letter-spacing: 2px; text-transform: uppercase;
+    color: var(--red); margin-bottom: 3px;
+  }
+
+  /* ★ IDs para o app preencher */
+  #emit-date, #cert-validity {
+    font-size: 12px; font-weight: 500; color: rgba(255,255,255,.7);
+  }
+
+  .seal {
+    width: 72px; height: 72px;
+    border: 2px solid var(--red); border-radius: 50%;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    background: rgba(239,47,15,.08); position: relative;
+  }
+  .seal::before {
+    content: ''; position: absolute; inset: 4px;
+    border: 1px solid rgba(239,47,15,.3); border-radius: 50%;
+  }
+  .seal-icon { font-size: 17px; color: var(--red); margin-bottom: 1px; }
+  .seal-text {
+    font-size: 5.5px; font-weight: 700;
+    letter-spacing: 1px; color: var(--red);
+    text-transform: uppercase; text-align: center; line-height: 1.4;
+  }
+
+  /* ── BOTTOM STRIP ──────────────────────────────── */
+  .bottom-strip {
+    background: var(--red); padding: 9px 48px;
+    display: flex; justify-content: space-between; align-items: center;
+    position: relative; z-index: 2;
+  }
+  .bottom-strip p {
+    font-size: 9px; font-weight: 600;
+    letter-spacing: 2px; text-transform: uppercase;
+    color: rgba(255,255,255,.8);
+  }
+  /* ★ ID para o app preencher */
+  #cert-code {
+    font-size: 10px; font-weight: 700;
+    color: var(--white); letter-spacing: 1px;
+  }
+
+  /* ── PRINT ─────────────────────────────────────── */
+  @page { size: A4 landscape; margin: 0; }
+
+  @media print {
+    html, body {
+      background: var(--red);
+      padding: 0;
+      margin: 0;
+      width: 297mm;
+      height: 210mm;
+      display: block;
+      overflow: hidden;
+    }
+    .cert {
+      width: 297mm;
+      height: 210mm;
+      box-shadow: none;
+      position: relative;
+      overflow: hidden;
+    }
+    .bottom-strip {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: -0.4mm;
+      margin: 0;
+    }
+    * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+  }
+</style>
+</head>
+<body>
+<div class="cert">
+
+  <svg class="bg-chevron" viewBox="0 0 400 500" xmlns="http://www.w3.org/2000/svg">
+    <path d="M80,0 L320,0 L400,250 L320,500 L80,500 L160,250 Z" fill="white"/>
+  </svg>
+
+  <div class="top-bar"></div>
+
+  <!-- HEADER -->
+  <div class="header">
+    <div class="header-left">
+
+      <!-- Logo Holand SVG inline (sem fundo, vetorial) -->
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 819.28 157.14" style="height:34px;display:block;">
+        <path style="fill:#ef2f0f" d="M183.19,80.08c.54-.93.54-2.09,0-3.02l-18.27-31.65c-.54-.94-1.54-1.51-2.62-1.51h-33.06c-2.33,0-3.78,2.52-2.62,4.53l4.77,8.27c1.16,2.01-.29,4.53-2.62,4.53h-49.59c-2.33,0-3.78-2.52-2.62-4.53l24.8-42.94c1.16-2.01-.29-4.53-2.62-4.53h-33.06c-1.08,0-2.08.58-2.62,1.51L24.8,77.06c-.54.93-.54,2.09,0,3.02l18.28,31.65c.54.93,1.54,1.51,2.62,1.51h33.05c2.33,0,3.78-2.52,2.62-4.53l-4.78-8.28c-1.16-2.01.29-4.53,2.62-4.53h49.6c2.33,0,3.78,2.52,2.62,4.53l-24.8,42.95c-1.16,2.01.29,4.53,2.62,4.53h33.06c1.08,0,2.08-.58,2.62-1.51l38.29-66.32Z"/>
+        <path style="fill:#ffffff" d="M312.5,35.08v86.97c0,1.51-1.22,2.73-2.73,2.73h-16.74c-1.51,0-2.73-1.22-2.73-2.73v-14.75c0-1.51-1.22-2.73-2.73-2.73h-32.69c-1.51,0-2.73,1.22-2.73,2.73v14.75c0,1.51-1.22,2.73-2.73,2.73h-16.88c-1.51,0-2.73-1.22-2.73-2.73V35.08c0-1.51,1.22-2.73,2.73-2.73h16.88c1.51,0,2.73,1.22,2.73,2.73v44.47c0,1.51,1.22,2.73,2.73,2.73h32.69c1.51,0,2.73-1.22,2.73-2.73v-44.47c0-1.51,1.22-2.73,2.73-2.73h16.74c1.51,0,2.73,1.22,2.73,2.73Z"/>
+        <path style="fill:#ffffff" d="M407.04,112.23c-9.11,9.24-20.27,13.86-33.47,13.86s-24.36-4.62-33.47-13.86c-9.11-9.24-13.66-20.46-13.66-33.67s4.56-24.42,13.66-33.66c9.11-9.24,20.27-13.86,33.47-13.86s24.36,4.62,33.47,13.86c9.11,9.24,13.66,20.46,13.66,33.66s-4.56,24.42-13.66,33.67ZM373.57,104.45c7.04,0,12.96-2.49,17.76-7.46,4.8-4.97,7.19-11.11,7.19-18.42s-2.4-13.44-7.19-18.41c-4.8-4.97-10.72-7.46-17.76-7.46s-13.07,2.49-17.82,7.46c-4.75,4.97-7.13,11.11-7.13,18.41s2.38,13.45,7.13,18.42c4.75,4.97,10.69,7.46,17.82,7.46Z"/>
+        <path style="fill:#ffffff" d="M434.66,122.05V35.09c0-1.51,1.22-2.73,2.73-2.73h16.86c1.51,0,2.73,1.22,2.73,2.73v66.5c0,1.51,1.22,2.73,2.73,2.73h37.32c1.94,0,3.26,1.96,2.53,3.75l-6.11,15.01c-.42,1.03-1.42,1.7-2.53,1.7h-53.52c-1.51,0-2.73-1.22-2.73-2.73Z"/>
+        <path style="fill:#ffffff" d="M552.94,69.7l-20.96,53.35c-.41,1.04-1.42,1.73-2.54,1.73h-18.54c-1.93,0-3.25-1.95-2.53-3.74l34.79-86.96c.41-1.04,1.42-1.71,2.53-1.71h19.68c1.11,0,2.11.68,2.53,1.71l35.03,86.96c.72,1.79-.6,3.75-2.53,3.75h-18.54c-1.12,0-2.12-.68-2.53-1.72l-21.32-53.38c-.92-2.29-4.17-2.28-5.07.01Z"/>
+        <path style="fill:#ffffff" d="M613.4,122.05V35.09c0-1.51,1.22-2.73,2.73-2.73h20.87c.93,0,1.79.47,2.29,1.25l30.61,47.58c1.47,2.29,5.02,1.25,5.02-1.48v-44.63c0-1.51,1.22-2.73,2.73-2.73h16.73c1.51,0,2.73,1.22,2.73,2.73v86.96c0,1.51-1.22,2.73-2.73,2.73h-20.86c-.93,0-1.79-.47-2.3-1.26l-30.48-47.55c-1.47-2.29-5.02-1.25-5.02,1.47v44.61c0,1.51-1.22,2.73-2.73,2.73h-16.86c-1.51,0-2.73-1.22-2.73-2.73Z"/>
+        <path style="fill:#ffffff" d="M711.06,122.05V35.08c0-1.5,1.21-2.72,2.72-2.73l34.12-.12c13.03,0,24.12,4.11,33.27,12.34,9.15,8.23,13.73,19.52,13.73,33.86s-4.58,25.66-13.73,33.93c-9.15,8.27-20.24,12.41-33.27,12.41h-34.11c-1.51,0-2.73-1.22-2.73-2.73ZM733.37,100.4c0,1.51,1.22,2.73,2.73,2.73h10.87c7.57,0,13.75-2.05,18.55-6.14,4.8-4.09,7.2-10.27,7.2-18.55s-2.4-14.43-7.2-18.48c-4.8-4.05-10.98-6.07-18.55-6.07l-10.9.11c-1.5.01-2.7,1.23-2.7,2.73v43.68Z"/>
+      </svg>
+
+      <div class="header-divider"></div>
+
+      <div>
+        <div class="header-company-label">Empresa Certificada</div>
+        <div id="company-name">{{COMPANY_NAME}}</div>
+      </div>
+    </div>
+
+    <div class="header-right">
+      <div class="dept">Depto. de Treinamento &amp; Desenvolvimento</div>
+      <div class="doc-title">Certificado Oficial de Capacitação</div>
+    </div>
+  </div>
+
+  <!-- HERO -->
+  <div class="hero">
+    <div>
+      <div class="certifica-label">Certificado de Conclusão</div>
+      <h1 class="certifica-title">CERTIFICA<br><span>COM</span><br>DISTINÇÃO</h1>
+      <p class="certifica-sub">
+        que os colaboradores abaixo concluíram com êxito o programa de
+        capacitação técnica da Holand, demonstrando proficiência teórica
+        e prática nos conteúdos exigidos para certificação no curso:
+      </p>
+    </div>
+    <div class="course-box">
+      <div class="course-box-label">Curso Técnico</div>
+      <div id="course-name">{{COURSE_NAME}}</div>
+      <div id="course-hours">{{COURSE_HOURS}}</div>
+    </div>
+  </div>
+
+  <!-- DIVIDER -->
+  <div class="arrow-divider">
+    <div class="arrow-divider-line"></div>
+    <div class="arrow-chevrons">
+      <svg class="chev" viewBox="0 0 8 16"><path d="M0 0 L8 8 L0 16 L2 16 L10 8 L2 0Z" fill="#EF2F0F" opacity=".4"/></svg>
+      <svg class="chev" viewBox="0 0 8 16"><path d="M0 0 L8 8 L0 16 L2 16 L10 8 L2 0Z" fill="#EF2F0F" opacity=".7"/></svg>
+      <svg class="chev" viewBox="0 0 8 16"><path d="M0 0 L8 8 L0 16 L2 16 L10 8 L2 0Z" fill="#EF2F0F"/></svg>
+    </div>
+    <div class="arrow-divider-line"></div>
+  </div>
+
+  <!-- EMPLOYEES -->
+  <div class="employees-section">
+    <div class="employees-label">Colaboradores Certificados</div>
+    <div id="employees-grid">{{EMPLOYEES_GRID}}</div>
+  </div>
+
+  <!-- FOOTER -->
+  <div class="footer">
+    <div>
+      <div class="sig-line"></div>
+      <div id="sig-name-1">Leonardo Holand</div>
+      <div id="sig-title-1">Diretor Administrativo</div>
+    </div>
+
+    <div class="footer-div"></div>
+
+    <div>
+      <div class="sig-line"></div>
+      <div id="sig-name-2">{{TECHNICIAN_NAME}}</div>
+      <div id="sig-title-2">Técnico Responsável pelo Curso</div>
+    </div>
+
+    <div class="footer-div"></div>
+
+    <div>
+      <div class="meta-label">Data de Emissão</div>
+      <div id="emit-date">{{EMIT_DATE}}</div>
+    </div>
+
+    <div class="footer-div"></div>
+
+    <div class="seal">
+      <div class="seal-icon">⚙</div>
+      <div class="seal-text">CERT<br>OFICIAL</div>
+    </div>
+  </div>
+
+  <!-- BOTTOM STRIP -->
+  <div class="bottom-strip">
+    <p>Transformando complexidade em eficiência · holand.com.br</p>
+    <span id="cert-code">{{CERT_CODE}}</span>
+  </div>
+
+</div>
+</body>
+</html>

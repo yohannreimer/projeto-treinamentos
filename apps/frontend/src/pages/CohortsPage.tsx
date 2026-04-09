@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../services/api';
 import type { Cohort, Module } from '../types';
@@ -26,6 +26,7 @@ type CohortAllocation = {
   id: string;
   company_id?: string;
   company_name: string;
+  module_id?: string;
   module_name: string;
   entry_day: number;
   status: 'Previsto' | 'Confirmado' | 'Executado' | 'Cancelado';
@@ -48,6 +49,7 @@ type CohortDetail = Cohort & {
     company_name: string;
     participant_name: string;
     created_at: string;
+    module_ids?: string[];
   }>;
 };
 
@@ -189,6 +191,9 @@ export function CohortsPage() {
   const [allocationSuggestions, setAllocationSuggestions] = useState<any>(null);
   const [participantCompanyId, setParticipantCompanyId] = useState('');
   const [participantName, setParticipantName] = useState('');
+  const [savingParticipantModules, setSavingParticipantModules] = useState<string[]>([]);
+  const [emittingCertificateKeys, setEmittingCertificateKeys] = useState<string[]>([]);
+  const emittingCertificateLockRef = useRef<Set<string>>(new Set());
   const [isCheckingTechnicianConflict, setIsCheckingTechnicianConflict] = useState(false);
   const [hasTechnicianConflict, setHasTechnicianConflict] = useState(false);
   const [technicianConflictMessage, setTechnicianConflictMessage] = useState('');
@@ -409,13 +414,114 @@ export function CohortsPage() {
 
   const participantsByCompany = useMemo(() => {
     const rows = editingDetail?.participants ?? [];
-    return rows.reduce<Record<string, Array<{ id: string; name: string; company_name: string }>>>((acc, row) => {
+    return rows.reduce<Record<string, Array<{ id: string; name: string; company_name: string; module_ids: string[] }>>>((acc, row) => {
       const key = row.company_id;
       acc[key] = acc[key] ?? [];
-      acc[key].push({ id: row.id, name: row.participant_name, company_name: row.company_name });
+      acc[key].push({
+        id: row.id,
+        name: row.participant_name,
+        company_name: row.company_name,
+        module_ids: Array.isArray(row.module_ids) ? row.module_ids : []
+      });
       return acc;
     }, {});
   }, [editingDetail]);
+
+  const participantCountByCompanyModule = useMemo(() => {
+    const counts = new Map<string, number>();
+    Object.entries(participantsByCompany).forEach(([companyId, participants]) => {
+      participants.forEach((participant) => {
+        participant.module_ids.forEach((moduleId) => {
+          const key = `${companyId}::${moduleId}`;
+          counts.set(key, (counts.get(key) ?? 0) + 1);
+        });
+      });
+    });
+    return counts;
+  }, [participantsByCompany]);
+
+  const allocationCompanies = useMemo(() => {
+    const map = new Map<string, { id: string; name: string }>();
+    (editingDetail?.allocations ?? []).forEach((allocation) => {
+      if (!allocation.company_id || allocation.status === 'Cancelado') return;
+      if (map.has(allocation.company_id)) return;
+      map.set(allocation.company_id, {
+        id: allocation.company_id,
+        name: allocation.company_name
+      });
+    });
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [editingDetail]);
+
+  const participantCompanyModules = useMemo(() => {
+    if (!editingDetail || !participantCompanyId) return [] as Array<{
+      module_id: string;
+      module_name: string;
+      order_in_cohort: number;
+      start_day_offset: number;
+      duration_days: number;
+    }>;
+
+    const blockByModule = new Map(
+      (editingDetail.blocks ?? []).map((block) => [block.module_id, block])
+    );
+
+    const modulesMap = new Map<string, {
+      module_id: string;
+      module_name: string;
+      order_in_cohort: number;
+      start_day_offset: number;
+      duration_days: number;
+    }>();
+
+    (editingDetail.allocations ?? []).forEach((allocation) => {
+      if (!allocation.company_id || allocation.company_id !== participantCompanyId) return;
+      if (!allocation.module_id || allocation.status === 'Cancelado') return;
+      const block = blockByModule.get(allocation.module_id);
+      modulesMap.set(allocation.module_id, {
+        module_id: allocation.module_id,
+        module_name: allocation.module_name ?? block?.module_name ?? allocation.module_id,
+        order_in_cohort: block?.order_in_cohort ?? Number.MAX_SAFE_INTEGER,
+        start_day_offset: block?.start_day_offset ?? allocation.entry_day,
+        duration_days: block?.duration_days ?? 1
+      });
+    });
+
+    return Array.from(modulesMap.values()).sort((a, b) => {
+      if (a.order_in_cohort !== b.order_in_cohort) {
+        return a.order_in_cohort - b.order_in_cohort;
+      }
+      return a.module_name.localeCompare(b.module_name);
+    });
+  }, [editingDetail, participantCompanyId]);
+
+  const certificateTargets = useMemo(() => {
+    const map = new Map<string, {
+      company_id: string;
+      company_name: string;
+      module_id: string;
+      module_name: string;
+      participants_count: number;
+    }>();
+    (editingDetail?.allocations ?? []).forEach((allocation) => {
+      if (!allocation.company_id || !allocation.module_id) return;
+      if (allocation.status === 'Cancelado') return;
+      const key = `${allocation.company_id}::${allocation.module_id}`;
+      if (map.has(key)) return;
+      map.set(key, {
+        company_id: allocation.company_id,
+        company_name: allocation.company_name,
+        module_id: allocation.module_id,
+        module_name: allocation.module_name,
+        participants_count: participantCountByCompanyModule.get(key) ?? 0
+      });
+    });
+    return Array.from(map.values()).sort((a, b) => {
+      const companyCompare = a.company_name.localeCompare(b.company_name);
+      if (companyCompare !== 0) return companyCompare;
+      return a.module_name.localeCompare(b.module_name);
+    });
+  }, [editingDetail, participantCountByCompanyModule]);
 
   const reportPreview = useMemo(() => {
     if (!editingDetail || !participantCompanyId) return '';
@@ -423,12 +529,11 @@ export function CohortsPage() {
     const companyName = companyParticipants[0]?.company_name
       ?? companies.find((company) => company.id === participantCompanyId)?.name
       ?? '-';
-    const moduleNames = (editingDetail.blocks ?? []).map((block) => moduleShortLabel(block.module_name));
-    const totalDays = totalDaysFromBlocks((editingDetail.blocks ?? []).map((block) => ({
-      key: block.id,
-      module_id: block.module_id,
-      duration_days: block.duration_days
-    })));
+    const moduleNames = participantCompanyModules.map((block) => moduleShortLabel(block.module_name));
+    const totalDays = Math.max(
+      1,
+      participantCompanyModules.reduce((sum, block) => sum + Math.max(1, Number(block.duration_days) || 1), 0)
+    );
     return [
       `Empresa: ${companyName}`,
       '',
@@ -439,7 +544,7 @@ export function CohortsPage() {
       `Instrutor: ${editingDetail.technician_name ?? '-'}`,
       `Carga Horária: ${totalDays} diária(s) (8h*${totalDays})`
     ].join('\n');
-  }, [editingDetail, participantCompanyId, participantsByCompany, companies]);
+  }, [editingDetail, participantCompanyId, participantsByCompany, companies, participantCompanyModules]);
 
   const stats = useMemo(() => {
     const open = cohorts.filter((cohort) => ['Planejada', 'Aguardando_quorum', 'Confirmada'].includes(cohort.status)).length;
@@ -538,6 +643,11 @@ export function CohortsPage() {
       }
       return [...prev, moduleId];
     });
+  }
+
+  function closeEditor() {
+    resetForm(modules, cohorts);
+    setShowForm(false);
   }
 
   async function startEdit(cohortId: string) {
@@ -715,6 +825,104 @@ export function CohortsPage() {
     }
   }
 
+  async function saveParticipantModules(participantId: string, moduleIds: string[]) {
+    if (!editingId) return;
+    setSavingParticipantModules((prev) => (prev.includes(participantId) ? prev : [...prev, participantId]));
+    try {
+      await api.updateCohortParticipantModules(editingId, participantId, { module_ids: moduleIds });
+      await loadCohortDetail(editingId);
+      setMessage('Módulos do participante atualizados.');
+      setError('');
+    } catch (err) {
+      setError((err as Error).message);
+      await loadCohortDetail(editingId);
+    } finally {
+      setSavingParticipantModules((prev) => prev.filter((id) => id !== participantId));
+    }
+  }
+
+  function toggleParticipantModule(participantId: string, currentModuleIds: string[], moduleId: string) {
+    const current = new Set(currentModuleIds);
+    if (current.has(moduleId)) {
+      current.delete(moduleId);
+    } else {
+      current.add(moduleId);
+    }
+    const nextModuleIds = participantCompanyModules
+      .map((module) => module.module_id)
+      .filter((allowedModuleId) => current.has(allowedModuleId));
+
+    setEditingDetail((prev) => {
+      if (!prev) return prev;
+      const nextParticipants = (prev.participants ?? []).map((participant) => (
+        participant.id === participantId
+          ? { ...participant, module_ids: nextModuleIds }
+          : participant
+      ));
+      return { ...prev, participants: nextParticipants };
+    });
+
+    saveParticipantModules(participantId, nextModuleIds);
+  }
+
+  async function emitCertificate(companyId: string, moduleId: string) {
+    if (!editingId) return;
+    if (!companyId) {
+      setError('Selecione a empresa para emitir o certificado.');
+      return;
+    }
+    if (!moduleId) {
+      setError('Selecione o módulo para emitir o certificado.');
+      return;
+    }
+
+    const certKey = `${companyId}::${moduleId}`;
+    if (emittingCertificateLockRef.current.has(certKey)) {
+      return;
+    }
+
+    const participantCount = participantCountByCompanyModule.get(`${companyId}::${moduleId}`) ?? 0;
+    if (participantCount === 0) {
+      setError('Cadastre participantes vinculados a este módulo para emitir o certificado.');
+      return;
+    }
+
+    const url = api.cohortCertificateUrl(editingId, companyId, {
+      download: true,
+      format: 'pdf',
+      moduleId
+    });
+
+    emittingCertificateLockRef.current.add(certKey);
+    setEmittingCertificateKeys((prev) => (prev.includes(certKey) ? prev : [...prev, certKey]));
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        const body = await response.text();
+        throw new Error(body || 'Erro ao gerar certificado.');
+      }
+      const blob = await response.blob();
+      const contentDisposition = response.headers.get('Content-Disposition') ?? '';
+      const utfFileNameMatch = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+      const simpleFileNameMatch = contentDisposition.match(/filename=\"?([^\";]+)\"?/i);
+      const encodedFileName = utfFileNameMatch?.[1] ?? simpleFileNameMatch?.[1] ?? '';
+      const fileName = encodedFileName ? decodeURIComponent(encodedFileName) : `certificado-${certKey}.pdf`;
+      const blobUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = blobUrl;
+      anchor.download = fileName;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(blobUrl);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      emittingCertificateLockRef.current.delete(certKey);
+      setEmittingCertificateKeys((prev) => prev.filter((item) => item !== certKey));
+    }
+  }
+
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setError('');
@@ -847,7 +1055,7 @@ export function CohortsPage() {
         </article>
       </div>
 
-      <div className={`cohorts-workspace ${showForm ? 'is-editing' : ''}`}>
+      <div className="cohorts-workspace">
         <Section
           title="Turmas cadastradas"
           className="cohorts-list-panel"
@@ -912,8 +1120,28 @@ export function CohortsPage() {
           </div>
         </Section>
 
-        {showForm ? (
-          <Section title={editingId ? `Editar turma ${code}` : 'Criar nova turma'} className="cohorts-editor-panel">
+      </div>
+
+      {showForm ? (
+        <div className="cohort-editor-overlay" role="dialog" aria-modal="true">
+          <button
+            type="button"
+            className="cohort-editor-backdrop"
+            onClick={closeEditor}
+            aria-label="Fechar edição de turma"
+          />
+          <div className="cohort-editor-modal">
+            <Section
+              title={editingId ? `Editar turma ${code}` : 'Criar nova turma'}
+              className="cohorts-editor-panel"
+              action={(
+                <div className="cohort-editor-header-actions">
+                  <button type="button" className="cohort-editor-close-btn" onClick={closeEditor}>
+                    Fechar
+                  </button>
+                </div>
+              )}
+            >
             <form className="form form-spacious" onSubmit={submit}>
             <div className="wizard-step">
               <h3 className="wizard-step-title"><span className="step-index">1</span>Informações principais</h3>
@@ -1309,13 +1537,11 @@ export function CohortsPage() {
                         onChange={(event) => setParticipantCompanyId(event.target.value)}
                       >
                         <option value="">Selecione</option>
-                        {(editingDetail.allocations ?? [])
-                          .filter((allocation) => Boolean(allocation.company_id))
-                          .map((allocation) => (
-                            <option key={`participant-company-${allocation.company_id}`} value={allocation.company_id}>
-                              {allocation.company_name}
-                            </option>
-                          ))}
+                        {allocationCompanies.map((company) => (
+                          <option key={`participant-company-${company.id}`} value={company.id}>
+                            {company.name}
+                          </option>
+                        ))}
                       </select>
                     </label>
                     <label>
@@ -1331,18 +1557,91 @@ export function CohortsPage() {
                     </div>
                   </div>
 
+                  {participantCompanyId && participantCompanyModules.length > 0 ? (
+                    <div className="form-subcard">
+                      <strong>Módulos ativos para esta empresa</strong>
+                      <div className="participant-module-chip-list">
+                        {participantCompanyModules.map((module) => (
+                          <span key={`module-chip-${module.module_id}`} className="participant-module-chip">
+                            {module.order_in_cohort}. {moduleShortLabel(module.module_name)} • Dia {module.start_day_offset}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
                   {participantCompanyId && (participantsByCompany[participantCompanyId]?.length ?? 0) > 0 ? (
-                    <div className="event-list">
+                    <div className="participant-module-matrix">
                       {(participantsByCompany[participantCompanyId] ?? []).map((item) => (
-                        <div key={item.id} className="event-item">
-                          <span>{item.name}</span>
-                          <button type="button" onClick={() => removeParticipant(item.id)}>Remover</button>
+                        <div key={item.id} className="participant-module-row">
+                          <div className="participant-module-person">
+                            <strong>{item.name}</strong>
+                            <small>
+                              Módulos vinculados:{' '}
+                              {item.module_ids.length > 0
+                                ? item.module_ids
+                                  .map((moduleId) => participantCompanyModules.find((module) => module.module_id === moduleId)?.module_name)
+                                  .filter(Boolean)
+                                  .map((name) => moduleShortLabel(String(name)))
+                                  .join(' • ')
+                                : 'Nenhum'}
+                            </small>
+                          </div>
+                          <div className="participant-module-options">
+                            {participantCompanyModules.map((module) => {
+                              const checked = item.module_ids.includes(module.module_id);
+                              const isSaving = savingParticipantModules.includes(item.id);
+                              return (
+                                <label key={`participant-${item.id}-module-${module.module_id}`} className="participant-module-option">
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    disabled={isSaving}
+                                    onChange={() => toggleParticipantModule(item.id, item.module_ids, module.module_id)}
+                                  />
+                                  <span>{module.order_in_cohort}. {moduleShortLabel(module.module_name)}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                          <div className="actions actions-compact">
+                            <button
+                              type="button"
+                              onClick={() => removeParticipant(item.id)}
+                              disabled={savingParticipantModules.includes(item.id)}
+                            >
+                              Remover
+                            </button>
+                          </div>
                         </div>
                       ))}
                     </div>
                   ) : (
                     <p className="muted">Nenhum participante cadastrado para esta empresa.</p>
                   )}
+
+                  {certificateTargets.length > 0 ? (
+                    <div className="form-subcard">
+                      <strong>Emitir certificado por empresa e módulo</strong>
+                      <div className="event-list">
+                        {certificateTargets.map((item) => (
+                          <div key={`cert-${item.company_id}-${item.module_id}`} className="event-item">
+                            <span>
+                              {item.company_name} • {moduleShortLabel(item.module_name)} • {item.participants_count} participante(s)
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => void emitCertificate(item.company_id, item.module_id)}
+                              disabled={item.participants_count === 0 || emittingCertificateKeys.includes(`${item.company_id}::${item.module_id}`)}
+                              title={item.participants_count === 0 ? 'Cadastre participantes para habilitar' : 'Baixar certificado PDF do módulo'}
+                            >
+                              {emittingCertificateKeys.includes(`${item.company_id}::${item.module_id}`) ? 'Gerando...' : 'Emitir PDF'}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
 
                   {participantCompanyId ? (
                     <>
@@ -1360,18 +1659,16 @@ export function CohortsPage() {
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  resetForm(modules, cohorts);
-                  setShowForm(false);
-                }}
+                onClick={closeEditor}
               >
                 Cancelar
               </button>
             </div>
             </form>
           </Section>
-        ) : null}
-      </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
