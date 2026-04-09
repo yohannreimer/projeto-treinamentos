@@ -14,5 +14,7 @@ export function assignTestDbPath(testName: string) {
 
 export async function importAppWithTestDb(testName: string) {
   assignTestDbPath(testName);
+  const { resetDbConnection } = await import('../db.js');
+  resetDbConnection();
   return import('../app.js');
 }

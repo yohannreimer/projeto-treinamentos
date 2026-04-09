@@ -3,16 +3,59 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+type SqliteDatabase = InstanceType<typeof Database>;
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const dataDir = path.resolve(__dirname, '../data');
 fs.mkdirSync(dataDir, { recursive: true });
-const explicitDbPath = process.env.APP_DB_PATH?.trim();
-const dbPath = explicitDbPath
-  ? path.resolve(explicitDbPath)
-  : path.resolve(dataDir, 'app.db');
 
-export const db = new Database(dbPath);
+function resolveDbPath() {
+  const explicitDbPath = process.env.APP_DB_PATH?.trim();
+  return explicitDbPath ? path.resolve(explicitDbPath) : path.resolve(dataDir, 'app.db');
+}
+
+let activeDbPath: string | null = null;
+let activeDb: SqliteDatabase | null = null;
+
+function getDbConnection(forceRefresh = false): SqliteDatabase {
+  const nextDbPath = resolveDbPath();
+  if (!forceRefresh && activeDb && activeDbPath === nextDbPath) {
+    return activeDb;
+  }
+
+  const nextDb = new Database(nextDbPath);
+  const previousDb = activeDb;
+  activeDb = nextDb;
+  activeDbPath = nextDbPath;
+  previousDb?.close();
+
+  return nextDb;
+}
+
+export function resetDbConnection() {
+  return getDbConnection(true);
+}
+
+export const db = new Proxy({} as SqliteDatabase, {
+  get(_target, property) {
+    const connection = getDbConnection();
+    const value = Reflect.get(connection, property);
+    return typeof value === 'function' ? value.bind(connection) : value;
+  },
+  set(_target, property, value) {
+    return Reflect.set(getDbConnection(), property, value);
+  },
+  has(_target, property) {
+    return Reflect.has(getDbConnection(), property);
+  },
+  ownKeys() {
+    return Reflect.ownKeys(getDbConnection());
+  },
+  getOwnPropertyDescriptor(_target, property) {
+    return Reflect.getOwnPropertyDescriptor(getDbConnection(), property);
+  }
+});
 
 function ensureColumn(table: string, column: string, definition: string) {
   const columns = db.prepare(`pragma table_info(${table})`).all() as Array<{ name: string }>;

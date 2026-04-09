@@ -1,11 +1,27 @@
 import cors from 'cors';
 import express from 'express';
-import { initDb, seedDb } from './db.js';
+import { initDb, resetDbConnection, seedDb } from './db.js';
 import { registerCoreRoutes } from './coreRoutes.js';
 
-export function createApp() {
-  initDb();
-  seedDb();
+export type CreateAppOptions = {
+  forceDbRefresh?: boolean;
+  initDb?: boolean;
+  seedDb?: boolean;
+};
+
+export function createApp(options: CreateAppOptions = {}) {
+  const { forceDbRefresh = false, initDb: shouldInitDb = true, seedDb: shouldSeedDb = true } = options;
+
+  if (forceDbRefresh) {
+    resetDbConnection();
+  }
+
+  if (shouldInitDb) {
+    initDb();
+  }
+  if (shouldSeedDb) {
+    seedDb();
+  }
 
   const app = express();
   app.use(cors());
