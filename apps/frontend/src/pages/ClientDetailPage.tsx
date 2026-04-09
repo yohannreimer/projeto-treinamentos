@@ -276,7 +276,7 @@ export function ClientDetailPage() {
   if (!data && !error) return <p>Carregando cliente...</p>;
 
   return (
-    <div className="page">
+    <div className="page client-detail-page">
       <header className="page-header">
         <h1>{data?.company?.name ?? 'Cliente'}</h1>
         <p>Perfil operacional do cliente, ajustes de planejamento e histórico da jornada.</p>

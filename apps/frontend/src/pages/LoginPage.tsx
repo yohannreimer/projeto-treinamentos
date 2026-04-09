@@ -22,8 +22,13 @@ export function LoginPage({ onLogin }: LoginPageProps) {
   return (
     <div className="login-screen">
       <div className="login-card">
+        <div className="login-brand-row">
+          <span className="brand-mark" aria-hidden="true" />
+          <strong>HOLAND</strong>
+        </div>
         <h1>Orquestrador de Jornadas</h1>
-        <p>Faça login para acessar a plataforma.</p>
+        <p>Transformando complexidade em eficiência operacional.</p>
+        <div className="login-direction-accent" aria-hidden="true" />
 
         <form className="login-form" onSubmit={submit}>
           <label>
@@ -50,6 +55,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
 
           <button type="submit">Entrar</button>
         </form>
+        <small className="login-footnote">Ambiente interno premium para gestão de treinamentos.</small>
       </div>
     </div>
   );

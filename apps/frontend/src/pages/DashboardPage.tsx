@@ -70,17 +70,36 @@ export function DashboardPage() {
     return direction === 'asc' ? ' ↑' : ' ↓';
   }
 
+  const urgentAlerts = data.cards.cohorts_without_quorum + data.cards.blocked_by_installation;
+  const recommendation = data.cards.open_cohorts > data.cards.next_7_days
+    ? 'Revisar capacidade técnica para abertura de novas turmas.'
+    : 'Priorizar confirmação das turmas da próxima semana.';
+
   return (
-    <div className="page">
+    <div className="page dashboard-page">
       <header className="page-header">
         <h1>Dashboard Operacional</h1>
+        <p>Painel premium de decisão para abrir turmas, reduzir gargalos e acelerar a jornada dos clientes.</p>
       </header>
 
       <div className="kpi-grid">
-        <KpiCard title="Turmas em aberto" value={data.cards.open_cohorts} />
-        <KpiCard title="Próximas turmas (7 dias)" value={data.cards.next_7_days} />
-        <KpiCard title="Turmas sem quórum" value={data.cards.cohorts_without_quorum} />
-        <KpiCard title="Clientes travados (MOD-01)" value={data.cards.blocked_by_installation} />
+        <KpiCard title="Turmas em aberto" value={data.cards.open_cohorts} helper="Visão executiva da operação ativa." />
+        <KpiCard title="Próximas turmas (7 dias)" value={data.cards.next_7_days} helper="Volume já planejado para os próximos dias." />
+        <KpiCard title="Turmas sem quórum" value={data.cards.cohorts_without_quorum} helper="Risco imediato de atraso na agenda." />
+        <KpiCard title="Clientes travados (MOD-01)" value={data.cards.blocked_by_installation} helper="Ponto de bloqueio para progresso de jornada." />
+      </div>
+
+      <div className="dashboard-priority-grid">
+        <article className="dashboard-priority-card">
+          <span>Atenção imediata</span>
+          <strong>{urgentAlerts}</strong>
+          <p>Somatório de alertas críticos para atuação no mesmo dia.</p>
+        </article>
+        <article className="dashboard-priority-card dashboard-priority-card-accent">
+          <span>Próxima decisão recomendada</span>
+          <strong>Ação priorizada</strong>
+          <p>{recommendation}</p>
+        </article>
       </div>
 
       <div className="two-col">
@@ -93,7 +112,7 @@ export function DashboardPage() {
         }>
           <p className="form-hint">Ordene por nome, pendências ou prontas para priorizar abertura de novas turmas.</p>
           <div className="table-wrap">
-          <table className="table table-hover table-tight">
+          <table className="table table-hover table-tight table-sticky-actions">
             <thead><tr>
               <th><button type="button" className="table-sort-btn" onClick={() => togglePendingSort('name')}>Módulo{sortIndicator('name', pendingSortKey, pendingSortDirection)}</button></th>
               <th><button type="button" className="table-sort-btn" onClick={() => togglePendingSort('pending')}>Pendências{sortIndicator('pending', pendingSortKey, pendingSortDirection)}</button></th>

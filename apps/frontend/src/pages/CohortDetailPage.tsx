@@ -182,9 +182,10 @@ export function CohortDetailPage() {
   if (!data && !error) return <p>Carregando turma...</p>;
 
   return (
-    <div className="page">
+    <div className="page cohort-detail-page">
       <header className="page-header">
         <h1>{data ? `${data.code} - ${data.name}` : 'Turma'}</h1>
+        <p>Gestão detalhada da turma com jornada direcionada por blocos e ações operacionais.</p>
       </header>
       {error ? <p className="error">{error}</p> : null}
       {message ? <p className="info">{message}</p> : null}

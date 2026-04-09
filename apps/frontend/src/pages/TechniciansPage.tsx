@@ -249,7 +249,10 @@ export function TechniciansPage() {
 
   return (
     <div className="page technicians-page">
-      <header className="page-header"><h1>Técnicos</h1></header>
+      <header className="page-header">
+        <h1>Técnicos</h1>
+        <p>Leitura de carga, custo e capacitações para priorização de agenda com menor risco operacional.</p>
+      </header>
       {error ? <p className="error">{error}</p> : null}
       {message ? <p className="info">{message}</p> : null}
 
