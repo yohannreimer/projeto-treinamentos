@@ -7,7 +7,10 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const dataDir = path.resolve(__dirname, '../data');
 fs.mkdirSync(dataDir, { recursive: true });
-const dbPath = path.resolve(dataDir, 'app.db');
+const explicitDbPath = process.env.APP_DB_PATH?.trim();
+const dbPath = explicitDbPath
+  ? path.resolve(explicitDbPath)
+  : path.resolve(dataDir, 'app.db');
 
 export const db = new Database(dbPath);
 
