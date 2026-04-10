@@ -3256,16 +3256,44 @@ button:focus-visible,
   border-radius: 14px;
   padding: 13px 14px;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 13px;
   background: linear-gradient(180deg, #ffffff 0%, #f8fbfc 100%);
 }
 
+.portal-agenda-item {
+  position: relative;
+  padding: 14px 16px 14px 18px;
+}
+
+.portal-agenda-item::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 4px;
+  border-radius: 8px;
+  background: #cad5df;
+}
+
+.portal-agenda-item.is-warning::before {
+  background: #d28a1e;
+}
+
+.portal-agenda-item.is-success::before {
+  background: #1d8b54;
+}
+
+.portal-agenda-item.is-critical::before {
+  background: #c63b2a;
+}
+
 .portal-agenda-main,
 .portal-ticket-main {
   display: grid;
-  gap: 2px;
+  gap: 3px;
 }
 
 .portal-agenda-item p,
@@ -3283,6 +3311,35 @@ button:focus-visible,
   color: #556370;
   font-size: 0.84rem;
   min-width: 180px;
+}
+
+.portal-agenda-meta {
+  gap: 8px;
+}
+
+.portal-agenda-meta-chips {
+  display: inline-flex;
+  justify-content: flex-end;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.portal-agenda-meta-datetime {
+  display: grid;
+  gap: 1px;
+  text-align: right;
+}
+
+.portal-agenda-meta-datetime span {
+  color: #5a6a77;
+  font-size: 0.84rem;
+}
+
+.portal-agenda-meta-datetime strong {
+  color: #243542;
+  font-size: 0.92rem;
+  line-height: 1.2;
 }
 
 .portal-ticket-badges {
@@ -3481,6 +3538,12 @@ button:focus-visible,
   .portal-ticket-meta {
     justify-items: start;
     min-width: 0;
+  }
+  .portal-agenda-meta-chips {
+    justify-content: flex-start;
+  }
+  .portal-agenda-meta-datetime {
+    text-align: left;
   }
   .portal-ticket-badges {
     justify-content: flex-start;

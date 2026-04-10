@@ -25,6 +25,13 @@ function agendaStatusTone(status: string) {
   return 'is-muted';
 }
 
+function agendaDateLabel(item: PortalAgendaItem) {
+  const start = formatDateBr(item.start_date);
+  const end = formatDateBr(item.end_date);
+  if (start === end) return start;
+  return `${start} até ${end}`;
+}
+
 export function PortalAgendaPage({ api }: PortalAgendaPageProps) {
   const [items, setItems] = useState<PortalAgendaItem[]>([]);
   const [error, setError] = useState('');
@@ -69,24 +76,28 @@ export function PortalAgendaPage({ api }: PortalAgendaPageProps) {
           </div>
         ) : null}
         {items.map((item) => (
-          <article key={item.id} className="portal-agenda-item">
+          <article key={item.id} className={`portal-agenda-item ${agendaStatusTone(item.status)}`}>
             <div className="portal-agenda-main">
               <strong>{item.title}</strong>
               <p>{item.notes?.trim() || 'Atividade registrada para o seu cronograma operacional.'}</p>
             </div>
             <div className="portal-agenda-meta">
-              <span className="portal-status-chip is-muted">{statusLabel(item.activity_type)}</span>
-              <span className={`portal-status-chip ${agendaStatusTone(item.status)}`}>{statusLabel(item.status)}</span>
-              {item.encounter_index && item.total_encounters ? (
-                <span className="portal-status-chip is-analysis">
-                  Encontro {item.encounter_index}/{item.total_encounters}
-                </span>
-              ) : null}
-              {item.source === 'jornada' ? (
-                <span className="portal-status-chip is-muted">Jornada de treinamento</span>
-              ) : null}
-              <span>{formatDateBr(item.start_date)} até {formatDateBr(item.end_date)}</span>
-              <span>{agendaTimeLabel(item)}</span>
+              <div className="portal-agenda-meta-chips">
+                <span className="portal-status-chip is-muted">{statusLabel(item.activity_type)}</span>
+                <span className={`portal-status-chip ${agendaStatusTone(item.status)}`}>{statusLabel(item.status)}</span>
+                {item.encounter_index && item.total_encounters ? (
+                  <span className="portal-status-chip is-analysis">
+                    Encontro {item.encounter_index}/{item.total_encounters}
+                  </span>
+                ) : null}
+                {item.source === 'jornada' ? (
+                  <span className="portal-status-chip is-muted">Jornada de treinamento</span>
+                ) : null}
+              </div>
+              <div className="portal-agenda-meta-datetime">
+                <span>{agendaDateLabel(item)}</span>
+                <strong>{agendaTimeLabel(item)}</strong>
+              </div>
             </div>
           </article>
         ))}
