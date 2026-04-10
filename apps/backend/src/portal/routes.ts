@@ -1,5 +1,6 @@
 import express, { type Express } from 'express';
 import { z } from 'zod';
+import { db } from '../db.js';
 import {
   createPortalSession,
   findPortalUserBySlugAndUsername,
@@ -103,6 +104,10 @@ function clearLoginAttempts(key: string) {
   loginAttempts.delete(key);
 }
 
+function getPortalContextOrNull(res: express.Response) {
+  return readPortalAuthContext(res);
+}
+
 export function registerPortalRoutes(app: Express) {
   const router = express.Router();
 
@@ -152,7 +157,7 @@ export function registerPortalRoutes(app: Express) {
   });
 
   router.get('/me', requirePortalAuth, (_req, res) => {
-    const context = readPortalAuthContext(res);
+    const context = getPortalContextOrNull(res);
     if (!context) {
       return res.status(401).json({ message: 'Sessão inválida ou expirada.' });
     }
@@ -163,6 +168,119 @@ export function registerPortalRoutes(app: Express) {
       username: context.username,
       slug: context.slug
     });
+  });
+
+  router.get('/overview', requirePortalAuth, (_req, res) => {
+    const context = getPortalContextOrNull(res);
+    if (!context) {
+      return res.status(401).json({ message: 'Sessão inválida ou expirada.' });
+    }
+
+    const planning = db.prepare(`
+      select
+        count(*) as total,
+        sum(case when cmp.status = 'Concluido' then 1 else 0 end) as completed,
+        sum(case when cmp.status = 'Em_execucao' then 1 else 0 end) as in_progress,
+        sum(case when cmp.status = 'Planejado' then 1 else 0 end) as planned
+      from company_module_progress cmp
+      where cmp.company_id = ?
+    `).get(context.company_id) as {
+      total: number;
+      completed: number | null;
+      in_progress: number | null;
+      planned: number | null;
+    };
+
+    const agenda = db.prepare(`
+      select
+        count(*) as total,
+        min(start_date) as next_date
+      from calendar_activity
+      where company_id = ?
+        and date(end_date) >= date('now')
+    `).get(context.company_id) as { total: number; next_date: string | null };
+
+    return res.status(200).json({
+      company_id: context.company_id,
+      company_name: context.company_name,
+      planning: {
+        total: planning.total ?? 0,
+        completed: planning.completed ?? 0,
+        in_progress: planning.in_progress ?? 0,
+        planned: planning.planned ?? 0
+      },
+      agenda: {
+        total: agenda.total ?? 0,
+        next_date: agenda.next_date
+      }
+    });
+  });
+
+  router.get('/planning', requirePortalAuth, (_req, res) => {
+    const context = getPortalContextOrNull(res);
+    if (!context) {
+      return res.status(401).json({ message: 'Sessão inválida ou expirada.' });
+    }
+
+    const items = db.prepare(`
+      select
+        cmp.company_id,
+        mt.code as module_code,
+        mt.name as module_name,
+        cmp.status,
+        cmp.completed_at
+      from company_module_progress cmp
+      join module_template mt on mt.id = cmp.module_id
+      where cmp.company_id = ?
+      order by mt.code asc
+    `).all(context.company_id) as Array<{
+      company_id: string;
+      module_code: string;
+      module_name: string;
+      status: string;
+      completed_at: string | null;
+    }>;
+
+    return res.status(200).json({ items });
+  });
+
+  router.get('/agenda', requirePortalAuth, (_req, res) => {
+    const context = getPortalContextOrNull(res);
+    if (!context) {
+      return res.status(401).json({ message: 'Sessão inválida ou expirada.' });
+    }
+
+    const items = db.prepare(`
+      select
+        id,
+        company_id,
+        title,
+        activity_type,
+        start_date,
+        end_date,
+        all_day,
+        start_time,
+        end_time,
+        status,
+        notes
+      from calendar_activity
+      where company_id = ?
+      order by date(start_date) asc, coalesce(start_time, '00:00') asc
+    `).all(context.company_id) as Array<{
+      id: string;
+      company_id: string | null;
+      title: string;
+      activity_type: string;
+      start_date: string;
+      end_date: string;
+      all_day: number;
+      start_time: string | null;
+      end_time: string | null;
+      status: string;
+      notes: string | null;
+    }>;
+
+    return res.status(200).json({ items });
   });
 
   app.use('/portal/api', router);
