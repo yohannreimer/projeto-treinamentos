@@ -1,7 +1,8 @@
 import cors from 'cors';
-import express from 'express';
+import express, { type NextFunction, type Request, type Response } from 'express';
 import { initDb, resetDbConnection, seedDb } from './db.js';
 import { registerCoreRoutes } from './coreRoutes.js';
+import { registerPortalRoutes } from './portal/routes.js';
 
 export type CreateAppOptions = {
   forceDbRefresh?: boolean;
@@ -24,9 +25,19 @@ export function createApp(options: CreateAppOptions = {}) {
   }
 
   const app = express();
+  app.set('trust proxy', process.env.TRUST_PROXY?.trim() || 'loopback, linklocal, uniquelocal');
   app.use(cors());
   app.use(express.json({ limit: '15mb' }));
   registerCoreRoutes(app);
+  registerPortalRoutes(app);
+  app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('[api] unexpected error:', message);
+    if (res.headersSent) {
+      return;
+    }
+    res.status(500).json({ message: 'Erro interno do servidor.' });
+  });
 
   return app;
 }
