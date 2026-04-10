@@ -162,6 +162,71 @@ function normalizePortalTicketPriority(priority: string | null | undefined) {
   return 'Normal';
 }
 
+type PortalClientDisplaySettings = {
+  supportIntroText: string | null;
+  hiddenModuleIds: Set<string>;
+  moduleDateOverrides: Map<string, string>;
+};
+
+const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+function parseModuleIdList(raw: string | null | undefined) {
+  if (!raw?.trim()) return [] as string[];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [] as string[];
+    const ids = parsed
+      .map((value) => typeof value === 'string' ? value.trim() : '')
+      .filter((value) => value.length > 0);
+    return Array.from(new Set(ids));
+  } catch {
+    return [] as string[];
+  }
+}
+
+function parseModuleDateOverrides(raw: string | null | undefined) {
+  const overrides = new Map<string, string>();
+  if (!raw?.trim()) return overrides;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return overrides;
+    }
+    Object.entries(parsed as Record<string, unknown>).forEach(([moduleId, nextDate]) => {
+      const normalizedModuleId = moduleId.trim();
+      if (!normalizedModuleId) return;
+      if (typeof nextDate !== 'string' || !ISO_DATE_PATTERN.test(nextDate)) return;
+      overrides.set(normalizedModuleId, nextDate);
+    });
+  } catch {
+    return overrides;
+  }
+  return overrides;
+}
+
+function readPortalClientDisplaySettings(portalClientId: string): PortalClientDisplaySettings {
+  const row = db.prepare(`
+    select support_intro_text, hidden_module_ids_json, module_date_overrides_json
+    from portal_client
+    where id = ?
+    limit 1
+  `).get(portalClientId) as
+    | { support_intro_text: string | null; hidden_module_ids_json: string | null; module_date_overrides_json: string | null }
+    | undefined;
+  if (!row) {
+    return {
+      supportIntroText: null,
+      hiddenModuleIds: new Set<string>(),
+      moduleDateOverrides: new Map<string, string>()
+    };
+  }
+  return {
+    supportIntroText: row.support_intro_text?.trim() || null,
+    hiddenModuleIds: new Set(parseModuleIdList(row.hidden_module_ids_json)),
+    moduleDateOverrides: parseModuleDateOverrides(row.module_date_overrides_json)
+  };
+}
+
 function parseIsoDate(dateIso: string): Date {
   const [year, month, day] = dateIso.split('-').map(Number);
   return new Date(year, (month ?? 1) - 1, day ?? 1);
@@ -259,6 +324,7 @@ type JourneyModuleSummary = {
 type JourneyAgendaItem = {
   id: string;
   company_id: string;
+  module_id: string;
   title: string;
   activity_type: string;
   start_date: string;
@@ -406,11 +472,16 @@ function buildPortalJourneyReadModel(companyId: string) {
       };
     });
 
-    const completedEncounters = slotRows.filter((slot) => slot.day_date <= todayIso).length;
+    const slotRowsWithStatus = slotRows.map((slot) => ({
+      ...slot,
+      status: deriveJourneySlotStatus(slot.day_date, slot.start_time, slot.end_time, snapshot)
+    }));
+
+    const completedEncounters = slotRowsWithStatus.filter((slot) => slot.status === 'Concluida').length;
     const remainingEncounters = Math.max(0, totalEncounters - completedEncounters);
     const nextDates = Array.from(new Set(
-      slotRows
-        .filter((slot) => slot.day_date >= todayIso)
+      slotRowsWithStatus
+        .filter((slot) => slot.status !== 'Concluida')
         .map((slot) => slot.day_date)
     )).slice(0, 3);
 
@@ -419,7 +490,7 @@ function buildPortalJourneyReadModel(companyId: string) {
       : completedEncounters >= totalEncounters
         ? 'Concluido'
         : 'Em_execucao';
-    const completedAt = stage === 'Concluido' ? slotRows[totalEncounters - 1]?.day_date ?? null : null;
+    const completedAt = stage === 'Concluido' ? slotRowsWithStatus[totalEncounters - 1]?.day_date ?? null : null;
 
     const summary: JourneyModuleSummary = {
       module_id: row.module_id,
@@ -437,15 +508,18 @@ function buildPortalJourneyReadModel(companyId: string) {
     const currentSummary = moduleById.get(row.module_id);
     moduleById.set(row.module_id, currentSummary ? mergeJourneySummary(currentSummary, summary) : summary);
 
-    slotRows
-      .filter((slot) => slot.day_date >= todayIso)
-      .slice(0, 8)
-      .forEach((slot) => {
-        const slotStatus = deriveJourneySlotStatus(slot.day_date, slot.start_time, slot.end_time, snapshot);
-        if (slotStatus === 'Concluida') return;
+    const pastSlots = slotRowsWithStatus
+      .filter((slot) => slot.status === 'Concluida')
+      .slice(-6);
+    const upcomingSlots = slotRowsWithStatus
+      .filter((slot) => slot.status !== 'Concluida')
+      .slice(0, 8);
+
+    [...pastSlots, ...upcomingSlots].forEach((slot) => {
         agendaItems.push({
           id: `journey-${row.allocation_id}-${slot.day_index}`,
           company_id: row.company_id,
+          module_id: row.module_id,
           title: `${row.module_name} · Encontro ${slot.encounter_index}/${totalEncounters}`,
           activity_type: 'Implementacao',
           start_date: slot.day_date,
@@ -453,14 +527,14 @@ function buildPortalJourneyReadModel(companyId: string) {
           all_day: normalizedPeriod === 'Integral' ? 1 : 0,
           start_time: slot.start_time,
           end_time: slot.end_time,
-          status: slotStatus,
+          status: slot.status,
           notes: row.cohort_code ? `Turma ${row.cohort_code} · ${row.cohort_name}` : `Turma ${row.cohort_name}`,
           source: 'jornada',
           module_name: row.module_name,
           encounter_index: slot.encounter_index,
           total_encounters: totalEncounters
         });
-      });
+    });
   });
 
   agendaItems.sort((a, b) => {
@@ -549,6 +623,51 @@ function buildPortalPlanningItems(companyId: string, journeyModuleById: Map<stri
   return items.sort((a, b) => a.module_code.localeCompare(b.module_code));
 }
 
+function applyPlanningDisplaySettings(
+  items: ReturnType<typeof buildPortalPlanningItems>,
+  settings: PortalClientDisplaySettings
+) {
+  return items
+    .filter((item) => !settings.hiddenModuleIds.has(item.module_id))
+    .map((item) => {
+      const overrideDate = settings.moduleDateOverrides.get(item.module_id);
+      if (!overrideDate || item.status === 'Concluido') {
+        return item;
+      }
+      const nextDates = [overrideDate, ...(item.next_dates ?? []).filter((value) => value !== overrideDate)].slice(0, 3);
+      return {
+        ...item,
+        next_dates: nextDates
+      };
+    });
+}
+
+function applyJourneyAgendaDisplaySettings(items: JourneyAgendaItem[], settings: PortalClientDisplaySettings) {
+  const visibleItems = items.filter((item) => !settings.hiddenModuleIds.has(item.module_id));
+  const adjustedItems = visibleItems.map((item) => ({ ...item }));
+
+  const upcomingByModule = new Map<string, number>();
+  adjustedItems.forEach((item, index) => {
+    if (item.status === 'Concluida') return;
+    if (upcomingByModule.has(item.module_id)) return;
+    upcomingByModule.set(item.module_id, index);
+  });
+
+  settings.moduleDateOverrides.forEach((overrideDate, moduleId) => {
+    const targetIndex = upcomingByModule.get(moduleId);
+    if (typeof targetIndex === 'undefined') return;
+    const target = adjustedItems[targetIndex];
+    if (!target) return;
+    adjustedItems[targetIndex] = {
+      ...target,
+      start_date: overrideDate,
+      end_date: overrideDate
+    };
+  });
+
+  return adjustedItems;
+}
+
 export function registerPortalRoutes(app: Express) {
   const router = express.Router();
 
@@ -617,8 +736,13 @@ export function registerPortalRoutes(app: Express) {
       return res.status(401).json({ message: 'Sessão inválida ou expirada.' });
     }
 
+    const displaySettings = readPortalClientDisplaySettings(context.portal_client_id);
     const journeyReadModel = buildPortalJourneyReadModel(context.company_id);
-    const planningItems = buildPortalPlanningItems(context.company_id, journeyReadModel.moduleById);
+    const planningItems = applyPlanningDisplaySettings(
+      buildPortalPlanningItems(context.company_id, journeyReadModel.moduleById),
+      displaySettings
+    );
+    const journeyAgendaItems = applyJourneyAgendaDisplaySettings(journeyReadModel.agendaItems, displaySettings);
     const planning = {
       total: planningItems.length,
       completed: planningItems.filter((item) => item.status === 'Concluido').length,
@@ -634,7 +758,7 @@ export function registerPortalRoutes(app: Express) {
         and date(end_date) >= date('now')
       order by date(start_date) asc
     `).all(context.company_id) as Array<{ start_date: string }>;
-    const journeyNextDate = journeyReadModel.agendaItems[0]?.start_date ?? null;
+    const journeyNextDate = journeyAgendaItems[0]?.start_date ?? null;
     const calendarNextDate = calendar[0]?.start_date ?? null;
     const nextDateCandidates = [journeyNextDate, calendarNextDate].filter(Boolean) as string[];
     const nextDate = nextDateCandidates.length > 0
@@ -651,7 +775,7 @@ export function registerPortalRoutes(app: Express) {
         planned: planning.planned
       },
       agenda: {
-        total: calendar.length + journeyReadModel.agendaItems.length,
+        total: calendar.length + journeyAgendaItems.length,
         next_date: nextDate
       }
     });
@@ -663,8 +787,12 @@ export function registerPortalRoutes(app: Express) {
       return res.status(401).json({ message: 'Sessão inválida ou expirada.' });
     }
 
+    const displaySettings = readPortalClientDisplaySettings(context.portal_client_id);
     const journeyReadModel = buildPortalJourneyReadModel(context.company_id);
-    const items = buildPortalPlanningItems(context.company_id, journeyReadModel.moduleById);
+    const items = applyPlanningDisplaySettings(
+      buildPortalPlanningItems(context.company_id, journeyReadModel.moduleById),
+      displaySettings
+    );
 
     return res.status(200).json({ items });
   });
@@ -679,6 +807,7 @@ export function registerPortalRoutes(app: Express) {
       select
         id,
         company_id,
+        null as module_id,
         title,
         activity_type,
         start_date,
@@ -694,6 +823,7 @@ export function registerPortalRoutes(app: Express) {
     `).all(context.company_id) as Array<{
       id: string;
       company_id: string | null;
+      module_id: string | null;
       title: string;
       activity_type: string;
       start_date: string;
@@ -705,10 +835,12 @@ export function registerPortalRoutes(app: Express) {
       notes: string | null;
     }>;
 
+    const displaySettings = readPortalClientDisplaySettings(context.portal_client_id);
     const journeyReadModel = buildPortalJourneyReadModel(context.company_id);
+    const journeyAgendaItems = applyJourneyAgendaDisplaySettings(journeyReadModel.agendaItems, displaySettings);
     const items = [
       ...calendarItems.map((item) => ({ ...item, source: 'agenda' as const })),
-      ...journeyReadModel.agendaItems
+      ...journeyAgendaItems
     ].sort((left, right) => {
       const dateCmp = left.start_date.localeCompare(right.start_date);
       if (dateCmp !== 0) return dateCmp;
@@ -794,6 +926,7 @@ export function registerPortalRoutes(app: Express) {
     if (!context) {
       return res.status(401).json({ message: 'Sessão inválida ou expirada.' });
     }
+    const displaySettings = readPortalClientDisplaySettings(context.portal_client_id);
 
     const rows = db.prepare(`
       with linked_kanban_cards as (
@@ -867,7 +1000,10 @@ export function registerPortalRoutes(app: Express) {
         columnTitle: row.column_title
       })
     }));
-    return res.status(200).json({ items });
+    return res.status(200).json({
+      items,
+      support_intro_text: displaySettings.supportIntroText
+    });
   });
 
   app.use('/portal/api', router);

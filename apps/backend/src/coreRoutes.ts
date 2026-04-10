@@ -3363,12 +3363,54 @@ export function registerCoreRoutes(app: Express) {
     return res.json({ entry_day_suggested: block?.start_day_offset ?? 1, companies: rows });
   });
 
+  const isoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
   const portalAccessUpsertSchema = z.object({
     slug: z.string().trim().min(2).max(120),
     username: z.string().trim().min(1).max(120),
-    password: z.string().min(6).max(200),
-    is_active: z.boolean().default(true)
+    password: z.string().trim().min(6).max(200).optional(),
+    is_active: z.boolean().default(true),
+    support_intro_text: z.string().trim().max(600).nullable().optional(),
+    hidden_module_ids: z.array(z.string().trim().min(1).max(120)).max(500).optional(),
+    module_date_overrides: z.array(z.object({
+      module_id: z.string().trim().min(1).max(120),
+      next_date: isoDateSchema
+    })).max(500).optional()
   });
+
+  function parsePortalModuleIdList(raw: string | null | undefined): string[] {
+    if (!raw?.trim()) return [];
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (!Array.isArray(parsed)) return [];
+      const ids = parsed
+        .map((value) => typeof value === 'string' ? value.trim() : '')
+        .filter((value) => value.length > 0);
+      return Array.from(new Set(ids));
+    } catch {
+      return [];
+    }
+  }
+
+  function parsePortalDateOverrides(raw: string | null | undefined) {
+    if (!raw?.trim()) return {} as Record<string, string>;
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return {} as Record<string, string>;
+      }
+      const next: Record<string, string> = {};
+      Object.entries(parsed as Record<string, unknown>).forEach(([moduleId, nextDate]) => {
+        const normalizedModuleId = moduleId.trim();
+        if (!normalizedModuleId || typeof nextDate !== 'string' || !isoDateSchema.safeParse(nextDate).success) {
+          return;
+        }
+        next[normalizedModuleId] = nextDate;
+      });
+      return next;
+    } catch {
+      return {} as Record<string, string>;
+    }
+  }
   
   app.get('/companies', (req, res) => {
     const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
@@ -3800,6 +3842,9 @@ export function registerCoreRoutes(app: Express) {
       select
         pc.slug,
         pc.is_active,
+        pc.support_intro_text,
+        pc.hidden_module_ids_json,
+        pc.module_date_overrides_json,
         pu.username
       from portal_client pc
       left join portal_user pu on pu.portal_client_id = pc.id
@@ -3807,17 +3852,40 @@ export function registerCoreRoutes(app: Express) {
       order by pu.is_active desc, datetime(pu.updated_at) desc
       limit 1
     `).get(req.params.id) as
-      | { slug: string; is_active: number; username: string | null }
+      | {
+        slug: string;
+        is_active: number;
+        username: string | null;
+        support_intro_text: string | null;
+        hidden_module_ids_json: string | null;
+        module_date_overrides_json: string | null;
+      }
       | undefined;
 
     if (!row) {
-      return res.json({ slug: null, username: null, is_active: false });
+      return res.json({
+        slug: null,
+        username: null,
+        is_active: false,
+        support_intro_text: null,
+        hidden_module_ids: [],
+        module_date_overrides: []
+      });
     }
+
+    const hiddenModuleIds = parsePortalModuleIdList(row.hidden_module_ids_json);
+    const moduleDateOverrides = parsePortalDateOverrides(row.module_date_overrides_json);
 
     return res.json({
       slug: row.slug,
       username: row.username,
-      is_active: Number(row.is_active) === 1
+      is_active: Number(row.is_active) === 1,
+      support_intro_text: row.support_intro_text ?? null,
+      hidden_module_ids: hiddenModuleIds,
+      module_date_overrides: Object.entries(moduleDateOverrides).map(([module_id, next_date]) => ({
+        module_id,
+        next_date
+      }))
     });
   });
 
@@ -3836,9 +3904,22 @@ export function registerCoreRoutes(app: Express) {
     const nowIso = new Date().toISOString();
     const normalizedSlug = payload.slug.trim().toLowerCase();
     const normalizedUsername = payload.username.trim();
+    const normalizedSupportIntroText = payload.support_intro_text?.trim() || null;
+    const hiddenModuleIds = Array.from(new Set((payload.hidden_module_ids ?? [])
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0)));
+    const moduleDateOverrideMap = (payload.module_date_overrides ?? []).reduce((acc, entry) => {
+      const moduleId = entry.module_id.trim();
+      if (!moduleId) return acc;
+      acc[moduleId] = entry.next_date;
+      return acc;
+    }, {} as Record<string, string>);
+    const hiddenModuleIdsJson = JSON.stringify(hiddenModuleIds);
+    const moduleDateOverridesJson = JSON.stringify(moduleDateOverrideMap);
 
     try {
-      const passwordHash = await hashPassword(payload.password);
+      const passwordCandidate = payload.password?.trim() ?? '';
+      const passwordHash = passwordCandidate ? await hashPassword(passwordCandidate) : null;
 
       const tx = db.transaction(() => {
         const existingClient = db.prepare(`
@@ -3852,23 +3933,59 @@ export function registerCoreRoutes(app: Express) {
         if (existingClient) {
           db.prepare(`
             update portal_client
-            set slug = ?, is_active = ?, updated_at = ?
+            set slug = ?, is_active = ?, support_intro_text = ?, hidden_module_ids_json = ?, module_date_overrides_json = ?, updated_at = ?
             where id = ?
-          `).run(normalizedSlug, payload.is_active ? 1 : 0, nowIso, portalClientId);
+          `).run(
+            normalizedSlug,
+            payload.is_active ? 1 : 0,
+            normalizedSupportIntroText,
+            hiddenModuleIdsJson,
+            moduleDateOverridesJson,
+            nowIso,
+            portalClientId
+          );
         } else {
           db.prepare(`
-            insert into portal_client (id, company_id, slug, is_active, created_at, updated_at)
-            values (?, ?, ?, ?, ?, ?)
-          `).run(portalClientId, req.params.id, normalizedSlug, payload.is_active ? 1 : 0, nowIso, nowIso);
+            insert into portal_client (
+              id, company_id, slug, is_active, support_intro_text, hidden_module_ids_json, module_date_overrides_json, created_at, updated_at
+            )
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(
+            portalClientId,
+            req.params.id,
+            normalizedSlug,
+            payload.is_active ? 1 : 0,
+            normalizedSupportIntroText,
+            hiddenModuleIdsJson,
+            moduleDateOverridesJson,
+            nowIso,
+            nowIso
+          );
         }
 
         const existingUser = db.prepare(`
-          select id
+          select id, password_hash
           from portal_user
           where portal_client_id = ?
             and username = ?
           limit 1
-        `).get(portalClientId, normalizedUsername) as { id: string } | undefined;
+        `).get(portalClientId, normalizedUsername) as { id: string; password_hash: string } | undefined;
+
+        const currentUser = db.prepare(`
+          select id, password_hash
+          from portal_user
+          where portal_client_id = ?
+          order by is_active desc, datetime(updated_at) desc
+          limit 1
+        `).get(portalClientId) as { id: string; password_hash: string } | undefined;
+
+        const resolvedPasswordHash = passwordHash
+          ?? existingUser?.password_hash
+          ?? currentUser?.password_hash
+          ?? null;
+        if (!resolvedPasswordHash) {
+          throw new Error('Informe a senha do portal para concluir o cadastro inicial.');
+        }
 
         db.prepare(`
           update portal_user
@@ -3881,13 +3998,13 @@ export function registerCoreRoutes(app: Express) {
             update portal_user
             set username = ?, password_hash = ?, is_active = 1, updated_at = ?
             where id = ?
-          `).run(normalizedUsername, passwordHash, nowIso, existingUser.id);
+          `).run(normalizedUsername, resolvedPasswordHash, nowIso, existingUser.id);
         } else {
           db.prepare(`
             insert into portal_user (
               id, portal_client_id, username, password_hash, is_active, last_login_at, created_at, updated_at
             ) values (?, ?, ?, ?, 1, null, ?, ?)
-          `).run(uuid('pusr'), portalClientId, normalizedUsername, passwordHash, nowIso, nowIso);
+          `).run(uuid('pusr'), portalClientId, normalizedUsername, resolvedPasswordHash, nowIso, nowIso);
         }
 
         return portalClientId;

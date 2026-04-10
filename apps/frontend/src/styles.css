@@ -583,6 +583,14 @@ h1, h2, h3, h4, h5, h6,
   min-width: 980px;
 }
 
+.portal-curation-table-wrap .table {
+  min-width: 760px;
+}
+
+.portal-curation-table td input[type='date'] {
+  min-width: 170px;
+}
+
 .table-wrap-wide .table {
   min-width: 1320px;
 }
@@ -3231,6 +3239,35 @@ button:focus-visible,
   margin-top: 12px;
   display: grid;
   gap: 11px;
+}
+
+.portal-agenda-section {
+  margin-top: 14px;
+}
+
+.portal-agenda-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.portal-agenda-section-head h3 {
+  margin: 0;
+  font-size: 1.03rem;
+  color: #23313d;
+}
+
+.portal-agenda-section-head span {
+  border-radius: 999px;
+  border: 1px solid #d3dce4;
+  background: #f7fafc;
+  color: #4f6271;
+  font-size: 0.78rem;
+  font-weight: 700;
+  min-width: 28px;
+  text-align: center;
+  padding: 3px 8px;
 }
 
 .portal-empty-state {

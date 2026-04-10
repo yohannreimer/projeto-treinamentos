@@ -166,7 +166,14 @@ test('GET /companies/:id/portal-access returns default payload when portal is no
   try {
     const res = await request(app).get('/companies/comp-01/portal-access');
     assert.equal(res.status, 200);
-    assert.deepEqual(res.body, { slug: null, username: null, is_active: false });
+    assert.deepEqual(res.body, {
+      slug: null,
+      username: null,
+      is_active: false,
+      support_intro_text: null,
+      hidden_module_ids: [],
+      module_date_overrides: []
+    });
   } finally {
     cleanupDbFiles(dbPath);
   }
@@ -184,7 +191,10 @@ test('PUT /companies/:id/portal-access upserts slug, username and password', asy
         slug: 'Metal-Forte-Portal',
         username: 'cliente',
         password: 'NovaSenha#123',
-        is_active: true
+        is_active: true,
+        support_intro_text: 'Use este canal para registrar impedimentos e dúvidas.',
+        hidden_module_ids: ['mod-03'],
+        module_date_overrides: [{ module_id: 'mod-02', next_date: '2026-05-23' }]
       });
 
     assert.equal(upsertRes.status, 200);
@@ -203,7 +213,10 @@ test('PUT /companies/:id/portal-access upserts slug, username and password', asy
     assert.deepEqual(getProvisioned.body, {
       slug: 'metal-forte-portal',
       username: 'cliente',
-      is_active: true
+      is_active: true,
+      support_intro_text: 'Use este canal para registrar impedimentos e dúvidas.',
+      hidden_module_ids: ['mod-03'],
+      module_date_overrides: [{ module_id: 'mod-02', next_date: '2026-05-23' }]
     });
 
     const loginOk = await request(app)
@@ -225,7 +238,10 @@ test('PUT /companies/:id/portal-access upserts slug, username and password', asy
         slug: 'metal-forte-inativo',
         username: 'cliente2',
         password: 'OutraSenha#123',
-        is_active: false
+        is_active: false,
+        support_intro_text: 'Texto atualizado de suporte.',
+        hidden_module_ids: ['mod-01', 'mod-03'],
+        module_date_overrides: [{ module_id: 'mod-01', next_date: '2026-06-01' }]
       });
 
     assert.equal(secondUpsert.status, 200);
@@ -247,13 +263,55 @@ test('PUT /companies/:id/portal-access upserts slug, username and password', asy
     assert.deepEqual(getUpdated.body, {
       slug: 'metal-forte-inativo',
       username: 'cliente2',
-      is_active: false
+      is_active: false,
+      support_intro_text: 'Texto atualizado de suporte.',
+      hidden_module_ids: ['mod-01', 'mod-03'],
+      module_date_overrides: [{ module_id: 'mod-01', next_date: '2026-06-01' }]
     });
 
     const loginBlocked = await request(app)
       .post('/portal/api/auth/login')
       .send({ slug: 'metal-forte-inativo', username: 'cliente2', password: 'OutraSenha#123' });
     assert.equal(loginBlocked.status, 401);
+  } finally {
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('PUT /companies/:id/portal-access keeps current password when omitted on update', async () => {
+  const dbPath = assignTestDbPath('portal-access-update-without-password');
+  cleanupDbFiles(dbPath);
+  const app = createApp({ forceDbRefresh: true });
+
+  try {
+    const firstUpsert = await request(app)
+      .put('/companies/comp-01/portal-access')
+      .send({
+        slug: 'sem-senha',
+        username: 'cliente',
+        password: 'SenhaInicial#123',
+        is_active: true
+      });
+    assert.equal(firstUpsert.status, 200);
+
+    const secondUpsert = await request(app)
+      .put('/companies/comp-01/portal-access')
+      .send({
+        slug: 'sem-senha-ajuste',
+        username: 'cliente',
+        is_active: true,
+        support_intro_text: 'Canal oficial de suporte.'
+      });
+    assert.equal(secondUpsert.status, 200);
+
+    const loginRes = await request(app)
+      .post('/portal/api/auth/login')
+      .send({
+        slug: 'sem-senha-ajuste',
+        username: 'cliente',
+        password: 'SenhaInicial#123'
+      });
+    assert.equal(loginRes.status, 200);
   } finally {
     cleanupDbFiles(dbPath);
   }

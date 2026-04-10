@@ -185,12 +185,19 @@ test('POST /portal/api/tickets creates portal_ticket and implementation_kanban_c
       new Date().toISOString()
     );
 
+    db.prepare(`
+      update portal_client
+      set support_intro_text = ?
+      where id = ?
+    `).run('Canal oficial para dúvidas e impedimentos do seu time.', 'portal-client-tickets');
+
     const listRes = await request(app)
       .get('/portal/api/tickets')
       .set('Authorization', `Bearer ${token}`);
 
     assert.equal(listRes.status, 200);
     assert.equal(Array.isArray(listRes.body.items), true);
+    assert.equal(listRes.body.support_intro_text, 'Canal oficial para dúvidas e impedimentos do seu time.');
     const createdItem = listRes.body.items.find((item: { title: string }) => item.title === 'Erro no acesso') as
       | { title: string; client_status: string; status?: string; column_title?: string }
       | undefined;

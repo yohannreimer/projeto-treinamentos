@@ -24,7 +24,7 @@ test('renders ticket list and opens new ticket form', async () => {
 
   render(<PortalTicketsPage api={fakeApi} />);
 
-  expect(await screen.findByText(/chamados/i)).toBeInTheDocument();
-  await userEvent.click(screen.getByRole('button', { name: /novo chamado/i }));
+  expect(await screen.findByText(/suporte/i)).toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: /nova solicitação/i }));
   expect(screen.getByLabelText(/assunto/i)).toBeInTheDocument();
 });

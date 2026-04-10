@@ -53,6 +53,7 @@ export type PortalPlanningItem = {
 export type PortalAgendaItem = {
   id: string;
   company_id: string | null;
+  module_id?: string | null;
   title: string;
   activity_type: string;
   start_date: string;
@@ -82,6 +83,11 @@ export type PortalTicket = {
   source: PortalTicketSource;
 };
 
+export type PortalTicketsResponse = {
+  items: PortalTicket[];
+  support_intro_text?: string | null;
+};
+
 export type CreatePortalTicketPayload = {
   title: string;
   description?: string | null;
@@ -93,6 +99,6 @@ export type PortalAuthedApi = {
   overview: () => Promise<PortalOverview>;
   planning: () => Promise<{ items: PortalPlanningItem[] }>;
   agenda: () => Promise<{ items: PortalAgendaItem[] }>;
-  tickets: () => Promise<{ items: PortalTicket[] }>;
+  tickets: () => Promise<PortalTicketsResponse>;
   createTicket: (payload: CreatePortalTicketPayload) => Promise<{ id: string }>;
 };

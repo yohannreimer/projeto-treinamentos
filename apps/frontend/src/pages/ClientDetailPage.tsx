@@ -40,6 +40,9 @@ export function ClientDetailPage() {
   const [portalUsername, setPortalUsername] = useState('');
   const [portalPassword, setPortalPassword] = useState('');
   const [portalActive, setPortalActive] = useState(true);
+  const [portalSupportIntroText, setPortalSupportIntroText] = useState('');
+  const [portalHiddenModuleIds, setPortalHiddenModuleIds] = useState<string[]>([]);
+  const [portalDateOverrides, setPortalDateOverrides] = useState<Record<string, string>>({});
   const [savingPortalAccess, setSavingPortalAccess] = useState(false);
 
   const [moduleEdits, setModuleEdits] = useState<Record<string, ModuleEdit>>({});
@@ -61,6 +64,13 @@ export function ClientDetailPage() {
         setPortalSlug(portalAccess.slug ?? '');
         setPortalUsername(portalAccess.username ?? '');
         setPortalActive(Boolean(portalAccess.is_active));
+        setPortalSupportIntroText(portalAccess.support_intro_text ?? '');
+        setPortalHiddenModuleIds(portalAccess.hidden_module_ids ?? []);
+        setPortalDateOverrides((portalAccess.module_date_overrides ?? []).reduce((acc, row) => {
+          if (!row.module_id || !row.next_date) return acc;
+          acc[row.module_id] = row.next_date;
+          return acc;
+        }, {} as Record<string, string>));
         setPortalPassword('');
         setError('');
       })
@@ -204,6 +214,35 @@ export function ClientDetailPage() {
     }
   }
 
+  function moduleHiddenInPortal(moduleId: string) {
+    return portalHiddenModuleIds.includes(moduleId);
+  }
+
+  function toggleModuleVisibilityInPortal(moduleId: string, visible: boolean) {
+    setPortalHiddenModuleIds((prev) => {
+      if (visible) {
+        return prev.filter((id) => id !== moduleId);
+      }
+      if (prev.includes(moduleId)) return prev;
+      return [...prev, moduleId];
+    });
+  }
+
+  function updatePortalModuleDateOverride(moduleId: string, nextDate: string) {
+    setPortalDateOverrides((prev) => {
+      if (!nextDate.trim()) {
+        if (!(moduleId in prev)) return prev;
+        const next = { ...prev };
+        delete next[moduleId];
+        return next;
+      }
+      return {
+        ...prev,
+        [moduleId]: nextDate
+      };
+    });
+  }
+
   async function savePortalAccess() {
     if (!id) return;
     if (!portalSlug.trim()) {
@@ -214,10 +253,6 @@ export function ClientDetailPage() {
       setError('Informe o usuário do portal.');
       return;
     }
-    if (!portalPassword.trim()) {
-      setError('Informe a nova senha do portal.');
-      return;
-    }
 
     setSavingPortalAccess(true);
     setError('');
@@ -226,8 +261,13 @@ export function ClientDetailPage() {
       await api.upsertPortalAccessByCompany(id, {
         slug: portalSlug.trim(),
         username: portalUsername.trim(),
-        password: portalPassword,
-        is_active: portalActive
+        password: portalPassword.trim() || undefined,
+        is_active: portalActive,
+        support_intro_text: portalSupportIntroText.trim() || null,
+        hidden_module_ids: Array.from(new Set(portalHiddenModuleIds)),
+        module_date_overrides: Object.entries(portalDateOverrides)
+          .filter(([, nextDate]) => nextDate.trim().length > 0)
+          .map(([module_id, next_date]) => ({ module_id, next_date }))
       });
       setPortalPassword('');
       setMessage('Acesso do portal atualizado.');
@@ -408,7 +448,10 @@ export function ClientDetailPage() {
 
           <Section title="Acesso ao portal do cliente">
             <div className="form form-spacious">
-              <p className="form-hint">Defina URL, usuário e status do acesso externo para o cliente acompanhar planejamento, agenda e chamados.</p>
+              <p className="form-hint">
+                Defina URL, usuário e status do acesso externo para o cliente acompanhar planejamento, agenda e suporte.
+                As configurações abaixo são mão única: apenas seu time altera, o cliente só visualiza.
+              </p>
               <div className="three-col">
                 <label>
                   Slug da URL
@@ -440,9 +483,58 @@ export function ClientDetailPage() {
                   type="password"
                   value={portalPassword}
                   onChange={(event) => setPortalPassword(event.target.value)}
-                  placeholder="Digite a nova senha para salvar"
+                  placeholder="Opcional: preencha somente para trocar a senha"
                 />
               </label>
+
+              <label>
+                Texto de apoio da aba Suporte
+                <textarea
+                  rows={2}
+                  value={portalSupportIntroText}
+                  onChange={(event) => setPortalSupportIntroText(event.target.value)}
+                  placeholder="Ex: Registre a solicitação com contexto e impacto para acelerar o atendimento."
+                />
+              </label>
+
+              <div className="table-wrap portal-curation-table-wrap">
+                <table className="table portal-curation-table">
+                  <thead>
+                    <tr>
+                      <th>Módulo</th>
+                      <th>Visível no portal</th>
+                      <th>Data exibida (opcional)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {activeTimeline.map((moduleItem: any) => (
+                      <tr key={`portal-curation-${moduleItem.module_id}`}>
+                        <td>
+                          <strong>{moduleItem.code} - {moduleItem.name}</strong>
+                        </td>
+                        <td>
+                          <label className="checkbox-row">
+                            <input
+                              type="checkbox"
+                              checked={!moduleHiddenInPortal(moduleItem.module_id)}
+                              onChange={(event) => toggleModuleVisibilityInPortal(moduleItem.module_id, event.target.checked)}
+                            />
+                            {moduleHiddenInPortal(moduleItem.module_id) ? 'Oculto no portal' : 'Exibido no portal'}
+                          </label>
+                        </td>
+                        <td>
+                          <input
+                            type="date"
+                            value={portalDateOverrides[moduleItem.module_id] ?? ''}
+                            onChange={(event) => updatePortalModuleDateOverride(moduleItem.module_id, event.target.value)}
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
               <div className="actions actions-compact">
                 <button type="button" onClick={savePortalAccess} disabled={savingPortalAccess}>
                   {savingPortalAccess ? 'Salvando acesso...' : 'Salvar acesso do portal'}

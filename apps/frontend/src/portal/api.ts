@@ -4,7 +4,8 @@ import type {
   PortalLoginPayload,
   PortalLoginResponse,
   PortalMe,
-  PortalOverview
+  PortalOverview,
+  PortalTicketsResponse
 } from './types';
 
 const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
@@ -73,7 +74,7 @@ export const portalApi = {
     overview: () => portalReq<PortalOverview>('/portal/api/overview', {}, { token, onUnauthorized }),
     planning: () => portalReq('/portal/api/planning', {}, { token, onUnauthorized }),
     agenda: () => portalReq('/portal/api/agenda', {}, { token, onUnauthorized }),
-    tickets: () => portalReq('/portal/api/tickets', {}, { token, onUnauthorized }),
+    tickets: () => portalReq<PortalTicketsResponse>('/portal/api/tickets', {}, { token, onUnauthorized }),
     createTicket: (payload: CreatePortalTicketPayload) =>
       portalReq('/portal/api/tickets', {
         method: 'POST',

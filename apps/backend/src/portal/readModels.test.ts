@@ -108,6 +108,38 @@ test('GET /portal/api/planning returns only authenticated company modules', asyn
   }
 });
 
+test('portal planning applies admin curation (hidden modules + date override)', async () => {
+  const { app, dbPath } = await createPortalReadModelsFixture('portal-readmodels-admin-curation');
+
+  try {
+    db.prepare(`
+      update portal_client
+      set hidden_module_ids_json = ?, module_date_overrides_json = ?
+      where id = ?
+    `).run(
+      JSON.stringify(['mod-03']),
+      JSON.stringify({ 'mod-02': '2026-06-20' }),
+      'portal-client-readmodels'
+    );
+
+    const token = await loginPortal(app);
+    const planningRes = await request(app)
+      .get('/portal/api/planning')
+      .set('Authorization', `Bearer ${token}`);
+
+    assert.equal(planningRes.status, 200);
+    const moduleIds = planningRes.body.items.map((item: { module_id: string }) => item.module_id);
+    assert.equal(moduleIds.includes('mod-03'), false);
+    const overridden = planningRes.body.items.find((item: { module_id: string }) => item.module_id === 'mod-02') as
+      | { module_id: string; next_dates?: string[] }
+      | undefined;
+    assert.ok(overridden);
+    assert.deepEqual(overridden.next_dates, ['2026-06-20']);
+  } finally {
+    cleanupDbFiles(dbPath);
+  }
+});
+
 test('GET /portal/api/agenda returns only company activities', async () => {
   const { app, dbPath } = await createPortalReadModelsFixture('portal-readmodels-agenda');
 

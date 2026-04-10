@@ -175,10 +175,25 @@ export const api = {
     }),
   companyById: (id: string) => req(`/companies/${id}`),
   portalAccessByCompany: (companyId: string) =>
-    req<{ slug: string | null; username: string | null; is_active: boolean }>(`/companies/${companyId}/portal-access`),
+    req<{
+      slug: string | null;
+      username: string | null;
+      is_active: boolean;
+      support_intro_text: string | null;
+      hidden_module_ids: string[];
+      module_date_overrides: Array<{ module_id: string; next_date: string }>;
+    }>(`/companies/${companyId}/portal-access`),
   upsertPortalAccessByCompany: (
     companyId: string,
-    payload: { slug: string; username: string; password: string; is_active: boolean }
+    payload: {
+      slug: string;
+      username: string;
+      password?: string;
+      is_active: boolean;
+      support_intro_text?: string | null;
+      hidden_module_ids?: string[];
+      module_date_overrides?: Array<{ module_id: string; next_date: string }>;
+    }
   ) =>
     req<{ ok: boolean; portal_client_id: string }>(`/companies/${companyId}/portal-access`, {
       method: 'PUT',

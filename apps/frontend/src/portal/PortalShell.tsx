@@ -5,7 +5,6 @@ import { portalSessionStore } from './auth';
 import type { PortalMe, PortalSessionData } from './types';
 import { PortalAgendaPage } from './pages/PortalAgendaPage';
 import { PortalLoginPage } from './pages/PortalLoginPage';
-import { PortalOverviewPage } from './pages/PortalOverviewPage';
 import { PortalPlanningPage } from './pages/PortalPlanningPage';
 import { PortalTicketsPage } from './pages/PortalTicketsPage';
 import holandHorizontalLogo from '../assets/holand-horizontal.svg';
@@ -84,10 +83,9 @@ export function PortalShell() {
           </p>
         </div>
         <nav className="portal-nav">
-          <NavLink end to="" className={({ isActive }) => isActive ? 'is-active' : ''}>Visão Geral</NavLink>
           <NavLink to="planejamento" className={({ isActive }) => isActive ? 'is-active' : ''}>Planejamento</NavLink>
           <NavLink to="agenda" className={({ isActive }) => isActive ? 'is-active' : ''}>Agenda</NavLink>
-          <NavLink to="chamados" className={({ isActive }) => isActive ? 'is-active' : ''}>Chamados</NavLink>
+          <NavLink to="suporte" className={({ isActive }) => isActive ? 'is-active' : ''}>Suporte</NavLink>
         </nav>
         <div className="portal-sidebar-footer">
           <small>{profile?.username ? `Acesso: ${profile.username}` : 'Sessão ativa'}</small>
@@ -106,10 +104,11 @@ export function PortalShell() {
         </header>
         {authError ? <p className="error">{authError}</p> : null}
         <Routes>
-          <Route index element={<PortalOverviewPage api={apiClient} />} />
+          <Route index element={<Navigate to="agenda" replace />} />
           <Route path="planejamento" element={<PortalPlanningPage api={apiClient} />} />
           <Route path="agenda" element={<PortalAgendaPage api={apiClient} />} />
-          <Route path="chamados" element={<PortalTicketsPage api={apiClient} />} />
+          <Route path="suporte" element={<PortalTicketsPage api={apiClient} />} />
+          <Route path="chamados" element={<Navigate to="../suporte" replace />} />
           <Route path="*" element={<Navigate to="" replace />} />
         </Routes>
       </main>

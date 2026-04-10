@@ -495,6 +495,9 @@ export function initDb() {
   ensureColumn('implementation_kanban_card', 'due_date', 'due_date text');
   ensureColumn('implementation_kanban_card', 'attachment_image_data_url', 'attachment_image_data_url text');
   ensureColumn('portal_ticket', 'kanban_card_id', 'kanban_card_id text');
+  ensureColumn('portal_client', 'support_intro_text', 'support_intro_text text');
+  ensureColumn('portal_client', 'hidden_module_ids_json', "hidden_module_ids_json text not null default '[]'");
+  ensureColumn('portal_client', 'module_date_overrides_json', "module_date_overrides_json text not null default '{}'");
 
   db.exec(`
     drop index if exists idx_portal_user_username;

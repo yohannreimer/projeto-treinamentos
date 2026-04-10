@@ -26,6 +26,7 @@ export function PortalTicketsPage({ api }: PortalTicketsPageProps) {
   const [items, setItems] = useState<PortalTicket[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [supportIntroText, setSupportIntroText] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [title, setTitle] = useState('');
@@ -37,9 +38,10 @@ export function PortalTicketsPage({ api }: PortalTicketsPageProps) {
     try {
       const response = await api.tickets();
       setItems(response.items ?? []);
+      setSupportIntroText(response.support_intro_text?.trim() ?? '');
       setError('');
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : 'Falha ao carregar chamados.');
+      setError(loadError instanceof Error ? loadError.message : 'Falha ao carregar suporte.');
     } finally {
       setLoading(false);
     }
@@ -52,7 +54,7 @@ export function PortalTicketsPage({ api }: PortalTicketsPageProps) {
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!title.trim()) {
-      setError('Informe o assunto do chamado.');
+      setError('Informe o assunto da solicitação.');
       return;
     }
 
@@ -71,7 +73,7 @@ export function PortalTicketsPage({ api }: PortalTicketsPageProps) {
       setPriority('Normal');
       await load();
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : 'Falha ao criar chamado.');
+      setError(submitError instanceof Error ? submitError.message : 'Falha ao criar solicitação de suporte.');
     } finally {
       setSubmitting(false);
     }
@@ -81,11 +83,13 @@ export function PortalTicketsPage({ api }: PortalTicketsPageProps) {
     <section className="portal-panel">
       <header className="portal-panel-header portal-panel-header-row">
         <div>
-          <h2>Chamados</h2>
-          <p>Abertura e acompanhamento de suportes ligados ao seu contrato, incluindo atualizações da operação.</p>
+          <h2>Suporte</h2>
+          <p>
+            {supportIntroText || 'Abertura e acompanhamento das solicitações ligadas ao seu contrato, com estágio vindo da operação Holand.'}
+          </p>
         </div>
         <button type="button" className="portal-primary-btn" onClick={() => setShowForm((prev) => !prev)}>
-          {showForm ? 'Fechar formulário' : 'Novo chamado'}
+          {showForm ? 'Fechar formulário' : 'Nova solicitação'}
         </button>
       </header>
 
@@ -118,7 +122,7 @@ export function PortalTicketsPage({ api }: PortalTicketsPageProps) {
           </label>
           <div className="actions actions-compact">
             <button type="submit" className="portal-primary-btn" disabled={submitting}>
-              {submitting ? 'Enviando...' : 'Enviar chamado'}
+              {submitting ? 'Enviando...' : 'Enviar solicitação'}
             </button>
             <button type="button" className="portal-secondary-btn" onClick={() => setShowForm(false)}>
               Cancelar
@@ -128,14 +132,14 @@ export function PortalTicketsPage({ api }: PortalTicketsPageProps) {
       ) : null}
 
       {error ? <p className="error">{error}</p> : null}
-      {loading ? <p>Carregando chamados...</p> : null}
+      {loading ? <p>Carregando suporte...</p> : null}
 
       {!loading ? (
         <div className="portal-ticket-list">
           {items.length === 0 ? (
             <div className="portal-empty-state">
-              <strong>Nenhum chamado aberto até agora.</strong>
-              <p>Use o botão “Novo chamado” para registrar uma solicitação ao time Holand.</p>
+              <strong>Nenhuma solicitação de suporte até agora.</strong>
+              <p>Use o botão “Nova solicitação” para registrar uma demanda ao time Holand.</p>
             </div>
           ) : null}
           {items.map((item) => (
