@@ -28,12 +28,27 @@ type CohortCalendarOccurrence = Cohort & {
   day_start_time?: string | null;
   day_end_time?: string | null;
 };
+type ActivityDaySchedule = {
+  day_date: string;
+  all_day: number;
+  start_time: string | null;
+  end_time: string | null;
+};
+
+type ActivityDayScheduleDraft = {
+  all_day: boolean;
+  start_time: string;
+  end_time: string;
+};
+
 type CalendarActivity = {
   id: string;
   title: string;
   activity_type: 'Visita_cliente' | 'Pre_vendas' | 'Pos_vendas' | 'Suporte' | 'Implementacao' | 'Reuniao' | 'Outro';
   start_date: string;
   end_date: string;
+  selected_dates: string[];
+  day_schedules: ActivityDaySchedule[];
   all_day: number;
   start_time: string | null;
   end_time: string | null;
@@ -49,6 +64,9 @@ type CalendarActivity = {
 
 type CalendarActivityOccurrence = CalendarActivity & {
   calendar_date: string;
+  occurrence_all_day: number;
+  occurrence_start_time: string | null;
+  occurrence_end_time: string | null;
 };
 type DaySortKey = 'name' | 'technician_name' | 'participant_names' | 'status';
 type SortDirection = 'asc' | 'desc';
@@ -103,6 +121,10 @@ function iterateDateRange(startDateIso: string, endDateIso: string): string[] {
     cursor = addDays(cursor, 1);
   }
   return dates;
+}
+
+function normalizeDateList(dateList: string[]): string[] {
+  return Array.from(new Set(dateList.filter(Boolean))).sort((a, b) => a.localeCompare(b));
 }
 
 function isWeekendDate(date: Date): boolean {
@@ -259,6 +281,31 @@ function parseScheduleDaysRaw(raw?: string): Array<{ day_index: number; day_date
     .sort((a, b) => a.day_index - b.day_index);
 }
 
+function parseActivityDaySchedulesRaw(raw?: string): ActivityDaySchedule[] {
+  if (!raw) return [];
+  return raw
+    .split(' || ')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const [dayDate, allDayRaw, startTimeRaw, endTimeRaw] = entry.split('::');
+      const allDay = Number(allDayRaw);
+      return {
+        day_date: dayDate ?? '',
+        all_day: allDay === 1 ? 1 : 0,
+        start_time: startTimeRaw ? startTimeRaw : null,
+        end_time: endTimeRaw ? endTimeRaw : null
+      };
+    })
+    .filter((item) => Boolean(item.day_date))
+    .sort((a, b) => a.day_date.localeCompare(b.day_date));
+}
+
+function activityOccurrenceTimeLabel(activity: CalendarActivityOccurrence): string {
+  if (activity.occurrence_all_day === 1) return 'Dia inteiro';
+  return `${activity.occurrence_start_time ?? '--:--'}${activity.occurrence_end_time ? ` - ${activity.occurrence_end_time}` : ''}`;
+}
+
 function collapseList(items: string[], max: number): string {
   if (items.length === 0) return '-';
   if (items.length <= max) return items.join(', ');
@@ -333,8 +380,15 @@ export function CalendarPage() {
   const [activityTechnicianIds, setActivityTechnicianIds] = useState<string[]>([]);
   const [activityStatus, setActivityStatus] = useState<CalendarActivity['status']>('Planejada');
   const [activityAllDay, setActivityAllDay] = useState(true);
-  const [activityStartDate, setActivityStartDate] = useState(selectedDate);
-  const [activityEndDate, setActivityEndDate] = useState(selectedDate);
+  const [activityDates, setActivityDates] = useState<string[]>([selectedDate]);
+  const [activityDateSchedules, setActivityDateSchedules] = useState<Record<string, ActivityDayScheduleDraft>>({
+    [selectedDate]: {
+      all_day: true,
+      start_time: '',
+      end_time: ''
+    }
+  });
+  const [activityDateInput, setActivityDateInput] = useState(selectedDate);
   const [activityStartTime, setActivityStartTime] = useState('');
   const [activityEndTime, setActivityEndTime] = useState('');
   const [activityNotes, setActivityNotes] = useState('');
@@ -351,9 +405,11 @@ export function CalendarPage() {
     ]);
     setRows(calendarRows as Cohort[]);
     const normalizedActivities = (activityRows as Array<Record<string, unknown>>).map((row) => ({
-      ...(row as unknown as Omit<CalendarActivity, 'technician_ids' | 'technician_names'>),
+      ...(row as unknown as Omit<CalendarActivity, 'technician_ids' | 'technician_names' | 'selected_dates' | 'day_schedules'>),
       technician_ids: splitPipeList(String(row.technician_ids_raw ?? '')),
-      technician_names: splitPipeList(String(row.technician_names ?? ''))
+      technician_names: splitPipeList(String(row.technician_names ?? '')),
+      selected_dates: splitPipeList(String(row.selected_dates_raw ?? '')),
+      day_schedules: parseActivityDaySchedulesRaw(String(row.day_schedules_raw ?? ''))
     })) as CalendarActivity[];
     setActivities(normalizedActivities);
     setModules(modulesRows as Module[]);
@@ -442,12 +498,19 @@ export function CalendarPage() {
 
   const activitiesByDate = useMemo(() => {
     return filteredActivities.reduce<Record<string, CalendarActivityOccurrence[]>>((acc, activity) => {
-      const dates = iterateDateRange(activity.start_date, activity.end_date || activity.start_date);
+      const dayScheduleByDate = new Map(activity.day_schedules.map((row) => [row.day_date, row]));
+      const dates = activity.selected_dates.length > 0
+        ? normalizeDateList(activity.selected_dates)
+        : iterateDateRange(activity.start_date, activity.end_date || activity.start_date);
       dates.forEach((date) => {
+        const daySchedule = dayScheduleByDate.get(date);
         acc[date] = acc[date] ?? [];
         acc[date].push({
           ...activity,
-          calendar_date: date
+          calendar_date: date,
+          occurrence_all_day: daySchedule ? daySchedule.all_day : activity.all_day,
+          occurrence_start_time: daySchedule ? daySchedule.start_time : activity.start_time,
+          occurrence_end_time: daySchedule ? daySchedule.end_time : activity.end_time
         });
       });
       return acc;
@@ -542,8 +605,8 @@ export function CalendarPage() {
 
   const selectedDayActivities = useMemo(() => {
     return [...(activitiesByDate[selectedDate] ?? [])].sort((a, b) => {
-      const leftTime = a.all_day ? '00:00' : (a.start_time ?? '00:00');
-      const rightTime = b.all_day ? '00:00' : (b.start_time ?? '00:00');
+      const leftTime = a.occurrence_all_day === 1 ? '00:00' : (a.occurrence_start_time ?? '00:00');
+      const rightTime = b.occurrence_all_day === 1 ? '00:00' : (b.occurrence_start_time ?? '00:00');
       if (leftTime !== rightTime) return leftTime.localeCompare(rightTime);
       return a.title.localeCompare(b.title);
     });
@@ -613,12 +676,37 @@ export function CalendarPage() {
     return createBlocksPreview;
   }
 
+  function defaultActivityDateSchedule(): ActivityDayScheduleDraft {
+    if (activityAllDay) {
+      return {
+        all_day: true,
+        start_time: '',
+        end_time: ''
+      };
+    }
+    return {
+      all_day: false,
+      start_time: activityStartTime,
+      end_time: activityEndTime
+    };
+  }
+
   function openDayPanel(date: string) {
     setSelectedDate(date);
     setSelectedId(null);
     setDetail(null);
-    setActivityStartDate(date);
-    setActivityEndDate(date);
+    setActivityAllDay(true);
+    setActivityStartTime('');
+    setActivityEndTime('');
+    setActivityDates([date]);
+    setActivityDateSchedules({
+      [date]: {
+        all_day: true,
+        start_time: '',
+        end_time: ''
+      }
+    });
+    setActivityDateInput(date);
     setEditingActivityId(null);
     setIsActivityFormOpen(false);
     setIsDayPanelOpen(true);
@@ -627,8 +715,18 @@ export function CalendarPage() {
   function openCohort(event: CohortCalendarOccurrence, date: string) {
     setSelectedId(event.id);
     setSelectedDate(date);
-    setActivityStartDate(date);
-    setActivityEndDate(date);
+    setActivityAllDay(true);
+    setActivityStartTime('');
+    setActivityEndTime('');
+    setActivityDates([date]);
+    setActivityDateSchedules({
+      [date]: {
+        all_day: true,
+        start_time: '',
+        end_time: ''
+      }
+    });
+    setActivityDateInput(date);
     setEditingActivityId(null);
     setIsActivityFormOpen(false);
     setIsDayPanelOpen(true);
@@ -641,8 +739,15 @@ export function CalendarPage() {
     setActivityTechnicianIds([]);
     setActivityStatus('Planejada');
     setActivityAllDay(true);
-    setActivityStartDate(baseDate);
-    setActivityEndDate(baseDate);
+    setActivityDates([baseDate]);
+    setActivityDateSchedules({
+      [baseDate]: {
+        all_day: true,
+        start_time: '',
+        end_time: ''
+      }
+    });
+    setActivityDateInput(baseDate);
     setActivityStartTime('');
     setActivityEndTime('');
     setActivityNotes('');
@@ -755,19 +860,112 @@ export function CalendarPage() {
   }
 
   function editActivity(activity: CalendarActivityOccurrence) {
+    const dates = normalizeDateList(
+      activity.selected_dates.length > 0
+        ? activity.selected_dates
+        : iterateDateRange(activity.start_date, activity.end_date || activity.start_date)
+    );
+    const scheduleMap: Record<string, ActivityDayScheduleDraft> = {};
+    if (activity.day_schedules.length > 0) {
+      activity.day_schedules.forEach((daySchedule) => {
+        scheduleMap[daySchedule.day_date] = {
+          all_day: Number(daySchedule.all_day) === 1,
+          start_time: daySchedule.start_time ?? '',
+          end_time: daySchedule.end_time ?? ''
+        };
+      });
+    } else {
+      dates.forEach((dateIso) => {
+        scheduleMap[dateIso] = {
+          all_day: Number(activity.all_day) === 1,
+          start_time: activity.start_time ?? '',
+          end_time: activity.end_time ?? ''
+        };
+      });
+    }
+    const firstDate = dates[0] ?? activity.start_date;
+    const firstSchedule = scheduleMap[firstDate] ?? {
+      all_day: Number(activity.all_day) === 1,
+      start_time: activity.start_time ?? '',
+      end_time: activity.end_time ?? ''
+    };
     setEditingActivityId(activity.id);
     setActivityTitle(activity.title);
     setActivityType(activity.activity_type);
     setActivityCompanyId(activity.company_id ?? '');
     setActivityTechnicianIds(activity.technician_ids ?? []);
     setActivityStatus(activity.status);
-    setActivityAllDay(Number(activity.all_day) === 1);
-    setActivityStartDate(activity.start_date);
-    setActivityEndDate(activity.end_date || activity.start_date);
-    setActivityStartTime(activity.start_time ?? '');
-    setActivityEndTime(activity.end_time ?? '');
+    setActivityAllDay(firstSchedule.all_day);
+    setActivityDates(dates.length > 0 ? dates : [activity.start_date]);
+    setActivityDateSchedules(scheduleMap);
+    setActivityDateInput(firstDate);
+    setActivityStartTime(firstSchedule.start_time);
+    setActivityEndTime(firstSchedule.end_time);
     setActivityNotes(activity.notes ?? '');
     setIsActivityFormOpen(true);
+  }
+
+  function addActivityDateByValue(dateIso: string) {
+    if (!dateIso) return;
+    setActivityDates((prev) => normalizeDateList([...prev, dateIso]));
+    setActivityDateSchedules((prev) => {
+      if (prev[dateIso]) return prev;
+      return {
+        ...prev,
+        [dateIso]: defaultActivityDateSchedule()
+      };
+    });
+  }
+
+  function addActivityDate() {
+    addActivityDateByValue(activityDateInput);
+  }
+
+  function removeActivityDate(dateIso: string) {
+    if (activityDates.length <= 1) {
+      setMessage('Atividade precisa ter ao menos uma data.');
+      return;
+    }
+    setActivityDates((prev) => prev.filter((item) => item !== dateIso));
+    setActivityDateSchedules((prev) => {
+      const next = { ...prev };
+      delete next[dateIso];
+      return next;
+    });
+  }
+
+  function updateActivityDateSchedule(dateIso: string, patch: Partial<ActivityDayScheduleDraft>) {
+    setActivityDateSchedules((prev) => {
+      const current = prev[dateIso] ?? defaultActivityDateSchedule();
+      const next = {
+        ...current,
+        ...patch
+      };
+      if (next.all_day) {
+        next.start_time = '';
+        next.end_time = '';
+      }
+      return {
+        ...prev,
+        [dateIso]: next
+      };
+    });
+  }
+
+  function replicateScheduleToAllDates() {
+    const template = defaultActivityDateSchedule();
+    setActivityDateSchedules((prev) => {
+      const next = { ...prev };
+      normalizeDateList(activityDates).forEach((dateIso) => {
+        next[dateIso] = {
+          all_day: template.all_day,
+          start_time: template.start_time,
+          end_time: template.end_time
+        };
+      });
+      return next;
+    });
+    setMessage('Horário padrão replicado para todas as datas da atividade.');
   }
 
   async function saveActivityOnSelectedDay() {
@@ -776,28 +974,49 @@ export function CalendarPage() {
       setMessage('Informe o título da atividade.');
       return;
     }
-    if (!activityStartDate || !activityEndDate) {
-      setMessage('Informe o período da atividade.');
+    const selectedDates = normalizeDateList(activityDates);
+    if (selectedDates.length === 0) {
+      setMessage('Adicione ao menos uma data para a atividade.');
       return;
     }
+    const dateSchedules = selectedDates.map((dateIso) => {
+      const draft = activityDateSchedules[dateIso] ?? defaultActivityDateSchedule();
+      return {
+        day_date: dateIso,
+        all_day: draft.all_day,
+        start_time: draft.all_day ? null : (draft.start_time || null),
+        end_time: draft.all_day ? null : (draft.end_time || null)
+      };
+    });
+    for (const schedule of dateSchedules) {
+      if (!schedule.all_day && (!schedule.start_time || !schedule.end_time)) {
+        setMessage(`Preencha hora início e fim em ${shortDateLabel(schedule.day_date)} ou marque dia inteiro.`);
+        return;
+      }
+      if (!schedule.all_day && schedule.start_time && schedule.end_time && schedule.end_time < schedule.start_time) {
+        setMessage(`Hora final não pode ser menor que a hora inicial em ${shortDateLabel(schedule.day_date)}.`);
+        return;
+      }
+    }
+    const activityStartDate = selectedDates[0];
+    const activityEndDate = selectedDates[selectedDates.length - 1];
     if (activityEndDate < activityStartDate) {
       setMessage('Data final não pode ser menor que a data inicial.');
       return;
     }
-    if (!activityAllDay && activityStartTime && activityEndTime && activityEndTime < activityStartTime) {
-      setMessage('Hora final não pode ser menor que a hora inicial.');
-      return;
-    }
 
     try {
+      const allDatesAllDay = dateSchedules.every((item) => item.all_day);
       const payload = {
         title: activityTitle.trim(),
         activity_type: activityType,
         start_date: activityStartDate,
         end_date: activityEndDate,
-        all_day: activityAllDay,
-        start_time: activityAllDay ? null : (activityStartTime || null),
-        end_time: activityAllDay ? null : (activityEndTime || null),
+        selected_dates: selectedDates,
+        date_schedules: dateSchedules,
+        all_day: allDatesAllDay,
+        start_time: allDatesAllDay ? null : (dateSchedules.find((item) => item.start_time)?.start_time ?? null),
+        end_time: allDatesAllDay ? null : (dateSchedules.find((item) => item.end_time)?.end_time ?? null),
         company_id: activityCompanyId || null,
         technician_ids: activityTechnicianIds,
         status: activityStatus,
@@ -1031,7 +1250,7 @@ export function CalendarPage() {
                       <p className="calendar-event-meta">{statusLabel(activity.activity_type)}</p>
                       <p className="calendar-event-meta">Técnicos: {collapseList(activity.technician_names, 2)}</p>
                       <p className="calendar-event-meta">
-                        {activity.all_day ? 'Dia inteiro' : `${activity.start_time ?? '--:--'}${activity.end_time ? ` - ${activity.end_time}` : ''}`}
+                        {activityOccurrenceTimeLabel(activity)}
                       </p>
                     </div>
                   ))}
@@ -1122,7 +1341,7 @@ export function CalendarPage() {
                           </td>
                           <td>{statusLabel(activity.activity_type)}</td>
                           <td>{collapseList(activity.technician_names, 3)}</td>
-                          <td>{activity.all_day ? 'Dia inteiro' : `${activity.start_time ?? '--:--'}${activity.end_time ? ` - ${activity.end_time}` : ''}`}</td>
+                          <td>{activityOccurrenceTimeLabel(activity)}</td>
                           <td><StatusChip value={activity.status} /></td>
                           <td>
                             <button type="button" onClick={() => editActivity(activity)}>Editar</button>
@@ -1208,58 +1427,160 @@ export function CalendarPage() {
                 {isActivityFormOpen ? (
                   <>
                     <h3>{editingActivityId ? 'Editar atividade extra' : 'Registrar atividade extra'}</h3>
-                    <div className="form form-spacious">
-                      <label>Título da atividade
-                        <input value={activityTitle} onChange={(event) => setActivityTitle(event.target.value)} />
-                      </label>
-                      <label>Tipo
-                        <select value={activityType} onChange={(event) => setActivityType(event.target.value as CalendarActivity['activity_type'])}>
-                          {activityTypeOptions.map((option) => (
-                            <option key={option} value={option}>{statusLabel(option)}</option>
-                          ))}
-                        </select>
-                      </label>
-                      <div className="two-col">
-                        <label>Data início
-                          <input type="date" value={activityStartDate} onChange={(event) => setActivityStartDate(event.target.value)} />
+                    <div className="form form-spacious calendar-activity-form">
+                      <p className="calendar-form-intro">
+                        Configure os dados base e depois distribua os horários por data para bloquear corretamente a agenda dos técnicos.
+                      </p>
+
+                      <div className="calendar-form-section">
+                        <p className="calendar-form-step">1. Dados básicos</p>
+                        <label>Título da atividade
+                          <input value={activityTitle} onChange={(event) => setActivityTitle(event.target.value)} />
                         </label>
-                        <label>Data fim
-                          <input type="date" value={activityEndDate} onChange={(event) => setActivityEndDate(event.target.value)} />
-                        </label>
-                      </div>
-                      <label>Cliente (opcional)
-                        <select value={activityCompanyId} onChange={(event) => setActivityCompanyId(event.target.value)}>
-                          <option value="">Sem cliente vinculado</option>
-                          {companies.map((company) => (
-                            <option key={company.id} value={company.id}>{company.name}</option>
-                          ))}
-                        </select>
-                      </label>
-                      <label>Status
-                        <select value={activityStatus} onChange={(event) => setActivityStatus(event.target.value as CalendarActivity['status'])}>
-                          {activityStatusOptions.map((option) => (
-                            <option key={option} value={option}>{statusLabel(option)}</option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="checkbox-row">
-                        <input
-                          type="checkbox"
-                          checked={activityAllDay}
-                          onChange={(event) => setActivityAllDay(event.target.checked)}
-                        />
-                        Dia inteiro
-                      </label>
-                      {!activityAllDay ? (
                         <div className="two-col">
-                          <label>Hora início
-                            <input type="time" value={activityStartTime} onChange={(event) => setActivityStartTime(event.target.value)} />
+                          <label>Tipo
+                            <select value={activityType} onChange={(event) => setActivityType(event.target.value as CalendarActivity['activity_type'])}>
+                              {activityTypeOptions.map((option) => (
+                                <option key={option} value={option}>{statusLabel(option)}</option>
+                              ))}
+                            </select>
                           </label>
-                          <label>Hora fim
-                            <input type="time" value={activityEndTime} onChange={(event) => setActivityEndTime(event.target.value)} />
+                          <label>Status
+                            <select value={activityStatus} onChange={(event) => setActivityStatus(event.target.value as CalendarActivity['status'])}>
+                              {activityStatusOptions.map((option) => (
+                                <option key={option} value={option}>{statusLabel(option)}</option>
+                              ))}
+                            </select>
                           </label>
                         </div>
-                      ) : null}
+                        <label>Cliente (opcional)
+                          <select value={activityCompanyId} onChange={(event) => setActivityCompanyId(event.target.value)}>
+                            <option value="">Sem cliente vinculado</option>
+                            {companies.map((company) => (
+                              <option key={company.id} value={company.id}>{company.name}</option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+
+                      <div className="calendar-form-section">
+                        <p className="calendar-form-step">2. Datas da atividade</p>
+                        <label>Adicionar data
+                          <div className="actions actions-compact activity-date-picker-row">
+                            <input
+                              type="date"
+                              value={activityDateInput}
+                              onChange={(event) => setActivityDateInput(event.target.value)}
+                            />
+                            <button type="button" onClick={addActivityDate}>Adicionar</button>
+                          </div>
+                        </label>
+                        <div className="actions actions-compact activity-quick-date-actions">
+                          <button type="button" onClick={() => addActivityDateByValue(selectedDate)}>Usar dia do painel</button>
+                          <button type="button" onClick={() => addActivityDateByValue(addDays(selectedDate, 1))}>+1 dia</button>
+                          <button type="button" onClick={() => addActivityDateByValue(addDays(selectedDate, 7))}>+7 dias</button>
+                        </div>
+                        <div className="form-subcard activity-selected-dates-card">
+                          <small className="muted">Datas selecionadas ({normalizeDateList(activityDates).length})</small>
+                          {activityDates.length === 0 ? <p className="muted">Nenhuma data selecionada.</p> : (
+                            <div className="activity-date-chip-list">
+                              {normalizeDateList(activityDates).map((dateIso) => (
+                                <button
+                                  key={`activity-date-${dateIso}`}
+                                  type="button"
+                                  className="activity-date-chip"
+                                  onClick={() => removeActivityDate(dateIso)}
+                                  title="Remover data"
+                                >
+                                  {shortDateLabel(dateIso)} ×
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="calendar-form-section">
+                        <p className="calendar-form-step">3. Horários</p>
+                        <div className="form-subcard">
+                          <small className="muted">Horário padrão para aplicar rapidamente</small>
+                          <label className="checkbox-row">
+                            <input
+                              type="checkbox"
+                              checked={activityAllDay}
+                              onChange={(event) => setActivityAllDay(event.target.checked)}
+                            />
+                            Dia inteiro
+                          </label>
+                          {!activityAllDay ? (
+                            <div className="two-col">
+                              <label>Hora início
+                                <input type="time" value={activityStartTime} onChange={(event) => setActivityStartTime(event.target.value)} />
+                              </label>
+                              <label>Hora fim
+                                <input type="time" value={activityEndTime} onChange={(event) => setActivityEndTime(event.target.value)} />
+                              </label>
+                            </div>
+                          ) : null}
+                          <div className="actions actions-compact">
+                            <button type="button" onClick={replicateScheduleToAllDates}>Replicar horário padrão para todas as datas</button>
+                          </div>
+                        </div>
+                        <div className="form-subcard">
+                          <small className="muted">Ajuste fino por data (individual)</small>
+                          {normalizeDateList(activityDates).length === 0 ? <p className="muted">Adicione datas para configurar horários.</p> : (
+                            <div className="activity-date-schedule-list">
+                              {normalizeDateList(activityDates).map((dateIso) => {
+                                const schedule = activityDateSchedules[dateIso] ?? {
+                                  all_day: true,
+                                  start_time: '',
+                                  end_time: ''
+                                };
+                                const isIncomplete = !schedule.all_day && (!schedule.start_time || !schedule.end_time);
+                                return (
+                                  <div key={`activity-schedule-${dateIso}`} className={`activity-date-schedule-row${isIncomplete ? ' is-incomplete' : ''}`}>
+                                    <div className="activity-date-schedule-header">
+                                      <strong>{shortDateLabel(dateIso)}</strong>
+                                      <div className="activity-date-schedule-meta">
+                                        <small className="muted">
+                                          {schedule.all_day ? 'Dia inteiro' : (isIncomplete ? 'Horário incompleto' : `${schedule.start_time} - ${schedule.end_time}`)}
+                                        </small>
+                                        <button type="button" onClick={() => removeActivityDate(dateIso)}>Remover</button>
+                                      </div>
+                                    </div>
+                                    <label className="checkbox-row">
+                                      <input
+                                        type="checkbox"
+                                        checked={schedule.all_day}
+                                        onChange={(event) => updateActivityDateSchedule(dateIso, { all_day: event.target.checked })}
+                                      />
+                                      Dia inteiro
+                                    </label>
+                                    {!schedule.all_day ? (
+                                      <div className="two-col">
+                                        <label>Hora início
+                                          <input
+                                            type="time"
+                                            value={schedule.start_time}
+                                            onChange={(event) => updateActivityDateSchedule(dateIso, { start_time: event.target.value })}
+                                          />
+                                        </label>
+                                        <label>Hora fim
+                                          <input
+                                            type="time"
+                                            value={schedule.end_time}
+                                            onChange={(event) => updateActivityDateSchedule(dateIso, { end_time: event.target.value })}
+                                          />
+                                        </label>
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      </div>
                       <fieldset className="form-subcard">
                         <legend>Técnicos (opcional, pode marcar mais de um)</legend>
                         <div className="technicians-skills-grid">
