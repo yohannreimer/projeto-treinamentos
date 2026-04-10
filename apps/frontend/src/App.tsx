@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { Layout } from './components/Layout';
+import { PortalShell } from './portal/PortalShell';
 import { DashboardPage } from './pages/DashboardPage';
 import { CalendarPage } from './pages/CalendarPage';
 import { CohortsPage } from './pages/CohortsPage';
@@ -20,7 +21,7 @@ const AUTH_STORAGE_KEY = 'orquestrador_auth_v1';
 const AUTH_USER = 'holand';
 const AUTH_PASSWORD = 'Holand2026!@#';
 
-export function App() {
+function InternalApp() {
   const [isAuthenticated, setIsAuthenticated] = useState(() => (
     window.localStorage.getItem(AUTH_STORAGE_KEY) === '1'
   ));
@@ -63,5 +64,14 @@ export function App() {
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Layout>
+  );
+}
+
+export function App() {
+  return (
+    <Routes>
+      <Route path="/portal/:slug/*" element={<PortalShell />} />
+      <Route path="*" element={<InternalApp />} />
+    </Routes>
   );
 }
