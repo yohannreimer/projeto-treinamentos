@@ -5,6 +5,7 @@ import express, { type Express } from 'express';
 import puppeteer from 'puppeteer-core';
 import { z } from 'zod';
 import { clearAllData, db, nowDateIso, uuid } from './db.js';
+import { hashPassword } from './portal/auth.js';
 import { importWorkbook } from './workbookImport.js';
 import type { AllocationStatus, ModuleProgressStatus } from './types.js';
 
@@ -24,6 +25,7 @@ const KANBAN_SUBCATEGORY_VALUES = ['Pre_vendas', 'Pos_vendas', 'Suporte', 'Imple
 const KANBAN_SUPPORT_HANDOFF_VALUES = ['Conosco', 'Sao_Paulo'] as const;
 const CALENDAR_ACTIVITY_TYPE_VALUES = ['Visita_cliente', 'Pre_vendas', 'Pos_vendas', 'Suporte', 'Implementacao', 'Reuniao', 'Outro'] as const;
 const CALENDAR_ACTIVITY_STATUS_VALUES = ['Planejada', 'Em_andamento', 'Concluida', 'Cancelada'] as const;
+const ISO_DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const IMPLEMENTATION_KANBAN_DEFAULT_COLUMNS = [
   { id: 'kcol-todo', title: 'A fazer', color: '#7b8ea8' },
   { id: 'kcol-doing', title: 'Em andamento', color: '#b17613' },
@@ -210,11 +212,20 @@ const kanbanCardUpdateSchema = z.object({
   attachment_image_data_url: kanbanCardImageSchema.nullable().optional()
 });
 
+const calendarActivityDateScheduleSchema = z.object({
+  day_date: z.string().regex(ISO_DATE_REGEX),
+  all_day: z.boolean().optional().default(true),
+  start_time: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
+  end_time: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional()
+});
+
 const calendarActivityCreateSchema = z.object({
   title: z.string().min(2).max(160),
   activity_type: z.enum(CALENDAR_ACTIVITY_TYPE_VALUES).default('Outro'),
-  start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  end_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  start_date: z.string().regex(ISO_DATE_REGEX),
+  end_date: z.string().regex(ISO_DATE_REGEX).optional(),
+  selected_dates: z.array(z.string().regex(ISO_DATE_REGEX)).optional(),
+  date_schedules: z.array(calendarActivityDateScheduleSchema).optional(),
   all_day: z.boolean().optional().default(true),
   start_time: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
   end_time: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
@@ -228,8 +239,10 @@ const calendarActivityCreateSchema = z.object({
 const calendarActivityUpdateSchema = z.object({
   title: z.string().min(2).max(160).optional(),
   activity_type: z.enum(CALENDAR_ACTIVITY_TYPE_VALUES).optional(),
-  start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  end_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  start_date: z.string().regex(ISO_DATE_REGEX).optional(),
+  end_date: z.string().regex(ISO_DATE_REGEX).optional(),
+  selected_dates: z.array(z.string().regex(ISO_DATE_REGEX)).optional(),
+  date_schedules: z.array(calendarActivityDateScheduleSchema).optional(),
   all_day: z.boolean().optional(),
   start_time: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
   end_time: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
@@ -846,6 +859,200 @@ function isoDate(date: Date): string {
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+}
+
+function uniqueSortedIsoDates(values?: string[] | null): string[] {
+  if (!values || values.length === 0) return [];
+  return Array.from(new Set(
+    values
+      .map((item) => item.trim())
+      .filter((item) => ISO_DATE_REGEX.test(item))
+  )).sort((a, b) => a.localeCompare(b));
+}
+
+function iterateIsoDateRange(startDate: string, endDate: string): string[] {
+  const cursor = parseIsoDate(startDate);
+  const finish = parseIsoDate(endDate);
+  if (Number.isNaN(cursor.getTime()) || Number.isNaN(finish.getTime()) || cursor > finish) return [];
+
+  const dates: string[] = [];
+  while (cursor <= finish) {
+    dates.push(isoDate(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return dates;
+}
+
+type ActivityDateSchedule = {
+  day_date: string;
+  all_day: boolean;
+  start_time: string | null;
+  end_time: string | null;
+};
+
+function normalizeActivityDatePayload(args: {
+  startDate: string;
+  endDate: string;
+  selectedDates?: string[] | null;
+  dateSchedules?: Array<{ day_date: string; all_day?: boolean; start_time?: string | null; end_time?: string | null }> | null;
+  defaultAllDay: boolean;
+  defaultStartTime: string | null;
+  defaultEndTime: string | null;
+}): {
+  startDate: string;
+  endDate: string;
+  selectedDates: string[];
+  selectedDatesRaw: string | null;
+  dateSchedules: ActivityDateSchedule[];
+  summaryAllDay: boolean;
+  summaryStartTime: string | null;
+  summaryEndTime: string | null;
+} {
+  const normalizedDateSchedules = (args.dateSchedules ?? [])
+    .map((row) => ({
+      day_date: row.day_date.trim(),
+      all_day: row.all_day ?? true,
+      start_time: row.start_time ?? null,
+      end_time: row.end_time ?? null
+    }))
+    .filter((row) => ISO_DATE_REGEX.test(row.day_date))
+    .sort((a, b) => a.day_date.localeCompare(b.day_date));
+  const scheduleMap = new Map<string, { all_day: boolean; start_time: string | null; end_time: string | null }>();
+  normalizedDateSchedules.forEach((row) => {
+    scheduleMap.set(row.day_date, {
+      all_day: row.all_day,
+      start_time: row.start_time,
+      end_time: row.end_time
+    });
+  });
+
+  let selectedDates = uniqueSortedIsoDates(args.selectedDates);
+  if (selectedDates.length === 0 && scheduleMap.size > 0) {
+    selectedDates = Array.from(scheduleMap.keys()).sort((a, b) => a.localeCompare(b));
+  }
+  if (selectedDates.length === 0) {
+    selectedDates = iterateIsoDateRange(args.startDate, args.endDate);
+  }
+  if (selectedDates.length === 0) {
+    selectedDates = [args.startDate];
+  }
+
+  const dateSchedules = selectedDates.map<ActivityDateSchedule>((dateIso) => {
+    const schedule = scheduleMap.get(dateIso);
+    const allDay = schedule?.all_day ?? args.defaultAllDay;
+    const startTime = allDay ? null : (schedule?.start_time ?? args.defaultStartTime ?? null);
+    const endTime = allDay ? null : (schedule?.end_time ?? args.defaultEndTime ?? null);
+    if (!allDay && startTime && endTime && endTime < startTime) {
+      throw new Error(`Hora final não pode ser menor que a hora inicial em ${dateIso}.`);
+    }
+    return {
+      day_date: dateIso,
+      all_day: allDay,
+      start_time: startTime,
+      end_time: endTime
+    };
+  });
+
+  const summaryAllDay = dateSchedules.every((row) => row.all_day);
+  const summaryStartTime = summaryAllDay
+    ? null
+    : dateSchedules.find((row) => row.start_time)?.start_time ?? null;
+  const summaryEndTime = summaryAllDay
+    ? null
+    : dateSchedules.find((row) => row.end_time)?.end_time ?? null;
+
+  return {
+    startDate: selectedDates[0],
+    endDate: selectedDates[selectedDates.length - 1],
+    selectedDates,
+    selectedDatesRaw: selectedDates.join('|'),
+    dateSchedules,
+    summaryAllDay,
+    summaryStartTime,
+    summaryEndTime
+  };
+}
+
+function activityTimeToMinutes(value: string | null): number | null {
+  if (!value) return null;
+  const [hourRaw, minuteRaw] = value.split(':');
+  const hour = Number(hourRaw);
+  const minute = Number(minuteRaw);
+  if (!Number.isInteger(hour) || !Number.isInteger(minute)) return null;
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+  return hour * 60 + minute;
+}
+
+function activitySlotsOverlap(left: ActivityDateSchedule, right: ActivityDateSchedule): boolean {
+  if (left.all_day || right.all_day) return true;
+  const leftStart = activityTimeToMinutes(left.start_time);
+  const leftEnd = activityTimeToMinutes(left.end_time);
+  const rightStart = activityTimeToMinutes(right.start_time);
+  const rightEnd = activityTimeToMinutes(right.end_time);
+  if (leftStart === null || leftEnd === null || rightStart === null || rightEnd === null) return true;
+  if (leftEnd <= leftStart || rightEnd <= rightStart) return true;
+  return leftStart < rightEnd && rightStart < leftEnd;
+}
+
+function activitySlotLabel(slot: ActivityDateSchedule): string {
+  if (slot.all_day) return 'Dia inteiro';
+  return `${slot.start_time ?? '--:--'} - ${slot.end_time ?? '--:--'}`;
+}
+
+function assertNoActivityTechnicianConflicts(args: {
+  technicianIds: string[];
+  schedules: ActivityDateSchedule[];
+  excludeActivityId?: string;
+}): string | null {
+  if (args.technicianIds.length === 0 || args.schedules.length === 0) return null;
+  const baseSql = `
+    select ca.id, ca.title, cad.day_date, cad.all_day, cad.start_time, cad.end_time
+    from calendar_activity ca
+    join calendar_activity_day cad on cad.activity_id = ca.id
+    join calendar_activity_technician cat on cat.activity_id = ca.id
+    where cat.technician_id = ?
+      and cad.day_date = ?
+      and ca.status <> 'Cancelada'
+  `;
+  const queryWithExclude = db.prepare(`${baseSql} and ca.id <> ?`);
+  const queryWithoutExclude = db.prepare(baseSql);
+
+  for (const technicianId of args.technicianIds) {
+    for (const schedule of args.schedules) {
+      const rows = args.excludeActivityId
+        ? queryWithExclude.all(technicianId, schedule.day_date, args.excludeActivityId)
+        : queryWithoutExclude.all(technicianId, schedule.day_date);
+      const normalizedRows = rows as Array<{
+        id: string;
+        title: string;
+        day_date: string;
+        all_day: number;
+        start_time: string | null;
+        end_time: string | null;
+      }>;
+      const conflict = normalizedRows.find((row) => activitySlotsOverlap(
+        schedule,
+        {
+          day_date: row.day_date,
+          all_day: Number(row.all_day) === 1,
+          start_time: row.start_time,
+          end_time: row.end_time
+        }
+      ));
+      if (conflict) {
+        const dateLabel = parseIsoDate(schedule.day_date).toLocaleDateString('pt-BR');
+        const requestedLabel = activitySlotLabel(schedule);
+        const existingLabel = activitySlotLabel({
+          day_date: conflict.day_date,
+          all_day: Number(conflict.all_day) === 1,
+          start_time: conflict.start_time,
+          end_time: conflict.end_time
+        });
+        return `Conflito de agenda do técnico em ${dateLabel}: novo horário ${requestedLabel} conflita com "${conflict.title}" (${existingLabel}).`;
+      }
+    }
+  }
+  return null;
 }
 
 function isWeekend(date: Date): boolean {
@@ -1519,6 +1726,21 @@ export function registerCoreRoutes(app: Express) {
             order by t.name asc
           ) t2
         ), '') as technician_names,
+        coalesce(ca.selected_dates, '') as selected_dates_raw,
+        coalesce((
+          select group_concat(cad_row, ' || ')
+          from (
+            select printf('%s::%d::%s::%s',
+              cad.day_date,
+              cad.all_day,
+              coalesce(cad.start_time, ''),
+              coalesce(cad.end_time, '')
+            ) as cad_row
+            from calendar_activity_day cad
+            where cad.activity_id = ca.id
+            order by cad.day_date asc
+          )
+        ), '') as day_schedules_raw,
         c.name as company_name
       from calendar_activity ca
       left join company c on c.id = ca.company_id
@@ -1535,17 +1757,28 @@ export function registerCoreRoutes(app: Express) {
     }
   
     const payload = parsed.data;
-    const startDate = payload.start_date;
-    const endDate = payload.end_date ?? payload.start_date;
+    let normalizedDates: ReturnType<typeof normalizeActivityDatePayload>;
+    try {
+      normalizedDates = normalizeActivityDatePayload({
+        startDate: payload.start_date,
+        endDate: payload.end_date ?? payload.start_date,
+        selectedDates: payload.selected_dates,
+        dateSchedules: payload.date_schedules,
+        defaultAllDay: payload.all_day ?? true,
+        defaultStartTime: payload.start_time ?? null,
+        defaultEndTime: payload.end_time ?? null
+      });
+    } catch (error) {
+      return res.status(400).json({ message: errorMessage(error) });
+    }
+    const startDate = normalizedDates.startDate;
+    const endDate = normalizedDates.endDate;
     const technicianIds = Array.from(new Set((payload.technician_ids ?? [])
       .concat(payload.technician_id ? [payload.technician_id] : [])
       .map((item) => item.trim())
       .filter(Boolean)));
     if (endDate < startDate) {
       return res.status(400).json({ message: 'Data final não pode ser menor que a data inicial.' });
-    }
-    if (!payload.all_day && payload.start_time && payload.end_time && payload.end_time < payload.start_time) {
-      return res.status(400).json({ message: 'Hora final não pode ser menor que a hora inicial.' });
     }
   
     const technicianExistsStmt = db.prepare('select id from technician where id = ?');
@@ -1561,25 +1794,33 @@ export function registerCoreRoutes(app: Express) {
         return res.status(404).json({ message: 'Cliente não encontrado.' });
       }
     }
+    const conflictMessage = assertNoActivityTechnicianConflicts({
+      technicianIds,
+      schedules: normalizedDates.dateSchedules
+    });
+    if (conflictMessage) {
+      return res.status(409).json({ message: conflictMessage });
+    }
   
     const activityId = uuid('act');
     const nowIso = nowDateIso();
     const tx = db.transaction(() => {
       db.prepare(`
         insert into calendar_activity (
-          id, title, activity_type, start_date, end_date, all_day, start_time, end_time,
+          id, title, activity_type, start_date, end_date, selected_dates, all_day, start_time, end_time,
           technician_id, company_id, status, notes, created_at, updated_at
         )
-        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         activityId,
         payload.title.trim(),
         payload.activity_type,
         startDate,
         endDate,
-        payload.all_day ? 1 : 0,
-        payload.all_day ? null : (payload.start_time ?? null),
-        payload.all_day ? null : (payload.end_time ?? null),
+        normalizedDates.selectedDatesRaw,
+        normalizedDates.summaryAllDay ? 1 : 0,
+        normalizedDates.summaryStartTime,
+        normalizedDates.summaryEndTime,
         technicianIds[0] ?? null,
         payload.company_id ?? null,
         payload.status,
@@ -1593,6 +1834,19 @@ export function registerCoreRoutes(app: Express) {
         values (?, ?)
       `);
       technicianIds.forEach((technicianId) => insertTech.run(activityId, technicianId));
+      const insertDay = db.prepare(`
+        insert into calendar_activity_day (activity_id, day_date, all_day, start_time, end_time)
+        values (?, ?, ?, ?, ?)
+      `);
+      normalizedDates.dateSchedules.forEach((schedule) => {
+        insertDay.run(
+          activityId,
+          schedule.day_date,
+          schedule.all_day ? 1 : 0,
+          schedule.all_day ? null : schedule.start_time,
+          schedule.all_day ? null : schedule.end_time
+        );
+      });
     });
     tx();
   
@@ -1606,13 +1860,14 @@ export function registerCoreRoutes(app: Express) {
     }
   
     const existing = db.prepare(`
-      select id, start_date, end_date, all_day, start_time, end_time, technician_id
+      select id, start_date, end_date, selected_dates, all_day, start_time, end_time, technician_id
       from calendar_activity
       where id = ?
     `).get(req.params.id) as {
       id: string;
       start_date: string;
       end_date: string;
+      selected_dates: string | null;
       all_day: number;
       start_time: string | null;
       end_time: string | null;
@@ -1621,37 +1876,92 @@ export function registerCoreRoutes(app: Express) {
     if (!existing) {
       return res.status(404).json({ message: 'Atividade não encontrada.' });
     }
-  
+
     const payload = parsed.data;
-    const nextStartDate = payload.start_date ?? existing.start_date;
-    const nextEndDate = payload.end_date ?? existing.end_date;
+    const existingDateSchedulesRows = db.prepare(`
+      select day_date, all_day, start_time, end_time
+      from calendar_activity_day
+      where activity_id = ?
+      order by day_date asc
+    `).all(req.params.id) as Array<{
+      day_date: string;
+      all_day: number;
+      start_time: string | null;
+      end_time: string | null;
+    }>;
+    const existingSelectedDates = uniqueSortedIsoDates((existing.selected_dates ?? '').split('|'));
+    const existingDatesFromRange = iterateIsoDateRange(existing.start_date, existing.end_date || existing.start_date);
+    const fallbackExistingDates = existingSelectedDates.length > 0 ? existingSelectedDates : existingDatesFromRange;
+    const existingDateSchedules = existingDateSchedulesRows.length > 0
+      ? existingDateSchedulesRows.map((row) => ({
+        day_date: row.day_date,
+        all_day: Number(row.all_day) === 1,
+        start_time: row.start_time,
+        end_time: row.end_time
+      }))
+      : fallbackExistingDates.map((dayDate) => ({
+        day_date: dayDate,
+        all_day: Number(existing.all_day) === 1,
+        start_time: existing.start_time,
+        end_time: existing.end_time
+      }));
+
+    const hasSelectedDatesPatch = Object.prototype.hasOwnProperty.call(payload, 'selected_dates');
+    const hasDateSchedulesPatch = Object.prototype.hasOwnProperty.call(payload, 'date_schedules');
+    const hasGlobalTimePatch = (
+      Object.prototype.hasOwnProperty.call(payload, 'all_day') ||
+      Object.prototype.hasOwnProperty.call(payload, 'start_time') ||
+      Object.prototype.hasOwnProperty.call(payload, 'end_time')
+    );
+    let normalizedDates: ReturnType<typeof normalizeActivityDatePayload>;
+    try {
+      normalizedDates = normalizeActivityDatePayload({
+        startDate: payload.start_date ?? existing.start_date,
+        endDate: payload.end_date ?? existing.end_date,
+        selectedDates: hasSelectedDatesPatch
+          ? payload.selected_dates
+          : (existingSelectedDates.length > 0 ? existingSelectedDates : undefined),
+        dateSchedules: hasDateSchedulesPatch
+          ? payload.date_schedules
+          : (hasGlobalTimePatch ? undefined : existingDateSchedules),
+        defaultAllDay: payload.all_day ?? (Number(existing.all_day) === 1),
+        defaultStartTime: Object.prototype.hasOwnProperty.call(payload, 'start_time')
+          ? (payload.start_time ?? null)
+          : existing.start_time,
+        defaultEndTime: Object.prototype.hasOwnProperty.call(payload, 'end_time')
+          ? (payload.end_time ?? null)
+          : existing.end_time
+      });
+    } catch (error) {
+      return res.status(400).json({ message: errorMessage(error) });
+    }
+    const nextStartDate = normalizedDates.startDate;
+    const nextEndDate = normalizedDates.endDate;
     if (nextEndDate < nextStartDate) {
       return res.status(400).json({ message: 'Data final não pode ser menor que a data inicial.' });
     }
-    const nextAllDay = payload.all_day ?? Boolean(existing.all_day);
-    const nextStartTime = Object.prototype.hasOwnProperty.call(payload, 'start_time')
-      ? payload.start_time ?? null
-      : existing.start_time;
-    const nextEndTime = Object.prototype.hasOwnProperty.call(payload, 'end_time')
-      ? payload.end_time ?? null
-      : existing.end_time;
     const nextTechnicianIds = payload.technician_ids
       ? Array.from(new Set(payload.technician_ids.map((item) => item.trim()).filter(Boolean)))
       : undefined;
     const hasLegacyTechnicianPatch = Object.prototype.hasOwnProperty.call(payload, 'technician_id');
     const hasTechnicianPatch = typeof nextTechnicianIds !== 'undefined' || hasLegacyTechnicianPatch;
     const normalizedLegacyTechnicianId = hasLegacyTechnicianPatch ? (payload.technician_id?.trim() || null) : null;
-    if (!nextAllDay && nextStartTime && nextEndTime && nextEndTime < nextStartTime) {
-      return res.status(400).json({ message: 'Hora final não pode ser menor que a hora inicial.' });
-    }
+    const existingTechRows = db.prepare(`
+      select technician_id
+      from calendar_activity_technician
+      where activity_id = ?
+      order by technician_id asc
+    `).all(req.params.id) as Array<{ technician_id: string }>;
+    const existingTechnicianIds = existingTechRows.map((row) => row.technician_id).filter(Boolean);
+    const finalTechnicianIds = nextTechnicianIds
+      ? nextTechnicianIds
+      : hasLegacyTechnicianPatch
+        ? (normalizedLegacyTechnicianId ? [normalizedLegacyTechnicianId] : [])
+        : existingTechnicianIds;
   
     const technicianExistsStmt = db.prepare('select id from technician where id = ?');
     const technicianIdsToValidate = new Set<string>();
-    if (nextTechnicianIds) {
-      nextTechnicianIds.forEach((item) => technicianIdsToValidate.add(item));
-    } else if (normalizedLegacyTechnicianId) {
-      technicianIdsToValidate.add(normalizedLegacyTechnicianId);
-    }
+    finalTechnicianIds.forEach((item) => technicianIdsToValidate.add(item));
     for (const technicianId of technicianIdsToValidate) {
       const technician = technicianExistsStmt.get(technicianId) as { id: string } | undefined;
       if (!technician) {
@@ -1664,6 +1974,14 @@ export function registerCoreRoutes(app: Express) {
         return res.status(404).json({ message: 'Cliente não encontrado.' });
       }
     }
+    const conflictMessage = assertNoActivityTechnicianConflicts({
+      technicianIds: finalTechnicianIds,
+      schedules: normalizedDates.dateSchedules,
+      excludeActivityId: req.params.id
+    });
+    if (conflictMessage) {
+      return res.status(409).json({ message: conflictMessage });
+    }
   
     const fields: string[] = [];
     const values: unknown[] = [];
@@ -1675,32 +1993,18 @@ export function registerCoreRoutes(app: Express) {
       fields.push('activity_type = ?');
       values.push(payload.activity_type);
     }
-    if (typeof payload.start_date === 'string') {
-      fields.push('start_date = ?');
-      values.push(payload.start_date);
-    }
-    if (typeof payload.end_date === 'string') {
-      fields.push('end_date = ?');
-      values.push(payload.end_date);
-    }
-    if (typeof payload.all_day === 'boolean') {
-      fields.push('all_day = ?');
-      values.push(payload.all_day ? 1 : 0);
-      if (payload.all_day) {
-        fields.push('start_time = ?');
-        values.push(null);
-        fields.push('end_time = ?');
-        values.push(null);
-      }
-    }
-    if (Object.prototype.hasOwnProperty.call(payload, 'start_time') && !nextAllDay) {
-      fields.push('start_time = ?');
-      values.push(payload.start_time ?? null);
-    }
-    if (Object.prototype.hasOwnProperty.call(payload, 'end_time') && !nextAllDay) {
-      fields.push('end_time = ?');
-      values.push(payload.end_time ?? null);
-    }
+    fields.push('start_date = ?');
+    values.push(nextStartDate);
+    fields.push('end_date = ?');
+    values.push(nextEndDate);
+    fields.push('selected_dates = ?');
+    values.push(normalizedDates.selectedDatesRaw);
+    fields.push('all_day = ?');
+    values.push(normalizedDates.summaryAllDay ? 1 : 0);
+    fields.push('start_time = ?');
+    values.push(normalizedDates.summaryStartTime);
+    fields.push('end_time = ?');
+    values.push(normalizedDates.summaryEndTime);
     if (hasTechnicianPatch) {
       fields.push('technician_id = ?');
       if (nextTechnicianIds) {
@@ -1721,27 +2025,26 @@ export function registerCoreRoutes(app: Express) {
       fields.push('notes = ?');
       values.push(payload.notes?.trim() || null);
     }
-  
-    if (fields.length === 0) {
-      if (nextTechnicianIds) {
-        const tx = db.transaction(() => {
-          db.prepare('delete from calendar_activity_technician where activity_id = ?').run(req.params.id);
-          const insertTech = db.prepare(`
-            insert into calendar_activity_technician (activity_id, technician_id)
-            values (?, ?)
-          `);
-          nextTechnicianIds.forEach((technicianId) => insertTech.run(req.params.id, technicianId));
-        });
-        tx();
-      }
-      return res.json({ ok: true });
-    }
-  
+
     fields.push('updated_at = ?');
     values.push(nowDateIso());
     values.push(req.params.id);
     const tx = db.transaction(() => {
       db.prepare(`update calendar_activity set ${fields.join(', ')} where id = ?`).run(...values);
+      db.prepare('delete from calendar_activity_day where activity_id = ?').run(req.params.id);
+      const insertDay = db.prepare(`
+        insert into calendar_activity_day (activity_id, day_date, all_day, start_time, end_time)
+        values (?, ?, ?, ?, ?)
+      `);
+      normalizedDates.dateSchedules.forEach((schedule) => {
+        insertDay.run(
+          req.params.id,
+          schedule.day_date,
+          schedule.all_day ? 1 : 0,
+          schedule.all_day ? null : schedule.start_time,
+          schedule.all_day ? null : schedule.end_time
+        );
+      });
       if (nextTechnicianIds) {
         db.prepare('delete from calendar_activity_technician where activity_id = ?').run(req.params.id);
         const insertTech = db.prepare(`
@@ -2959,6 +3262,13 @@ export function registerCoreRoutes(app: Express) {
   
     return res.json({ entry_day_suggested: block?.start_day_offset ?? 1, companies: rows });
   });
+
+  const portalAccessUpsertSchema = z.object({
+    slug: z.string().trim().min(2).max(120),
+    username: z.string().trim().min(1).max(120),
+    password: z.string().min(6).max(200),
+    is_active: z.boolean().default(true)
+  });
   
   app.get('/companies', (req, res) => {
     const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
@@ -3378,6 +3688,119 @@ export function registerCoreRoutes(app: Express) {
     `).all(req.params.id);
   
     res.json({ company: companyPayload, timeline, optionals, history });
+  });
+
+  app.get('/companies/:id/portal-access', (req, res) => {
+    const company = db.prepare('select id from company where id = ?').get(req.params.id) as { id: string } | undefined;
+    if (!company) {
+      return res.status(404).json({ message: 'Empresa nao encontrada' });
+    }
+
+    const row = db.prepare(`
+      select
+        pc.slug,
+        pc.is_active,
+        pu.username
+      from portal_client pc
+      left join portal_user pu on pu.portal_client_id = pc.id
+      where pc.company_id = ?
+      order by pu.is_active desc, datetime(pu.updated_at) desc
+      limit 1
+    `).get(req.params.id) as
+      | { slug: string; is_active: number; username: string | null }
+      | undefined;
+
+    if (!row) {
+      return res.json({ slug: null, username: null, is_active: false });
+    }
+
+    return res.json({
+      slug: row.slug,
+      username: row.username,
+      is_active: Number(row.is_active) === 1
+    });
+  });
+
+  app.put('/companies/:id/portal-access', async (req, res) => {
+    const company = db.prepare('select id from company where id = ?').get(req.params.id) as { id: string } | undefined;
+    if (!company) {
+      return res.status(404).json({ message: 'Empresa nao encontrada' });
+    }
+
+    const parsed = portalAccessUpsertSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+
+    const payload = parsed.data;
+    const nowIso = new Date().toISOString();
+    const normalizedSlug = payload.slug.trim().toLowerCase();
+    const normalizedUsername = payload.username.trim();
+
+    try {
+      const passwordHash = await hashPassword(payload.password);
+
+      const tx = db.transaction(() => {
+        const existingClient = db.prepare(`
+          select id
+          from portal_client
+          where company_id = ?
+          limit 1
+        `).get(req.params.id) as { id: string } | undefined;
+
+        const portalClientId = existingClient?.id ?? uuid('pcli');
+        if (existingClient) {
+          db.prepare(`
+            update portal_client
+            set slug = ?, is_active = ?, updated_at = ?
+            where id = ?
+          `).run(normalizedSlug, payload.is_active ? 1 : 0, nowIso, portalClientId);
+        } else {
+          db.prepare(`
+            insert into portal_client (id, company_id, slug, is_active, created_at, updated_at)
+            values (?, ?, ?, ?, ?, ?)
+          `).run(portalClientId, req.params.id, normalizedSlug, payload.is_active ? 1 : 0, nowIso, nowIso);
+        }
+
+        const existingUser = db.prepare(`
+          select id
+          from portal_user
+          where portal_client_id = ?
+            and username = ?
+          limit 1
+        `).get(portalClientId, normalizedUsername) as { id: string } | undefined;
+
+        db.prepare(`
+          update portal_user
+          set is_active = 0, updated_at = ?
+          where portal_client_id = ?
+        `).run(nowIso, portalClientId);
+
+        if (existingUser) {
+          db.prepare(`
+            update portal_user
+            set username = ?, password_hash = ?, is_active = 1, updated_at = ?
+            where id = ?
+          `).run(normalizedUsername, passwordHash, nowIso, existingUser.id);
+        } else {
+          db.prepare(`
+            insert into portal_user (
+              id, portal_client_id, username, password_hash, is_active, last_login_at, created_at, updated_at
+            ) values (?, ?, ?, ?, 1, null, ?, ?)
+          `).run(uuid('pusr'), portalClientId, normalizedUsername, passwordHash, nowIso, nowIso);
+        }
+
+        return portalClientId;
+      });
+
+      const portalClientId = tx();
+      return res.json({ ok: true, portal_client_id: portalClientId });
+    } catch (error) {
+      return res.status(400).json({
+        message: 'Nao foi possivel atualizar acesso do portal',
+        detail: errorMessage(error)
+      });
+    }
   });
   
   app.patch('/companies/:companyId/progress/:moduleId', (req, res) => {

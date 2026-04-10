@@ -157,3 +157,104 @@ test('POST /portal/api/auth/login applies rate limit after repeated invalid atte
     cleanupDbFiles(dbPath);
   }
 });
+
+test('GET /companies/:id/portal-access returns default payload when portal is not provisioned', async () => {
+  const dbPath = assignTestDbPath('portal-access-get-default');
+  cleanupDbFiles(dbPath);
+  const app = createApp({ forceDbRefresh: true });
+
+  try {
+    const res = await request(app).get('/companies/comp-01/portal-access');
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body, { slug: null, username: null, is_active: false });
+  } finally {
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('PUT /companies/:id/portal-access upserts slug, username and password', async () => {
+  const dbPath = assignTestDbPath('portal-access-upsert');
+  cleanupDbFiles(dbPath);
+  const app = createApp({ forceDbRefresh: true });
+
+  try {
+    const upsertRes = await request(app)
+      .put('/companies/comp-01/portal-access')
+      .send({
+        slug: 'Metal-Forte-Portal',
+        username: 'cliente',
+        password: 'NovaSenha#123',
+        is_active: true
+      });
+
+    assert.equal(upsertRes.status, 200);
+    assert.equal(upsertRes.body.ok, true);
+    assert.equal(typeof upsertRes.body.portal_client_id, 'string');
+
+    const clientRows = db.prepare(`
+      select count(*) as count
+      from portal_client
+      where company_id = ?
+    `).get('comp-01') as { count: number };
+    assert.equal(clientRows.count, 1);
+
+    const getProvisioned = await request(app).get('/companies/comp-01/portal-access');
+    assert.equal(getProvisioned.status, 200);
+    assert.deepEqual(getProvisioned.body, {
+      slug: 'metal-forte-portal',
+      username: 'cliente',
+      is_active: true
+    });
+
+    const loginOk = await request(app)
+      .post('/portal/api/auth/login')
+      .send({ slug: 'metal-forte-portal', username: 'cliente', password: 'NovaSenha#123' });
+    assert.equal(loginOk.status, 200);
+
+    const legacyPasswordHash = await hashPassword('SenhaLegado#123');
+    const nowIso = new Date().toISOString();
+    db.prepare(`
+      insert into portal_user (
+        id, portal_client_id, username, password_hash, is_active, last_login_at, created_at, updated_at
+      ) values (?, ?, ?, ?, 1, null, ?, ?)
+    `).run('portal-user-legacy', upsertRes.body.portal_client_id, 'legado', legacyPasswordHash, nowIso, nowIso);
+
+    const secondUpsert = await request(app)
+      .put('/companies/comp-01/portal-access')
+      .send({
+        slug: 'metal-forte-inativo',
+        username: 'cliente2',
+        password: 'OutraSenha#123',
+        is_active: false
+      });
+
+    assert.equal(secondUpsert.status, 200);
+    assert.equal(secondUpsert.body.ok, true);
+
+    const userRows = db.prepare(`
+      select pu.username, pu.is_active
+      from portal_user pu
+      join portal_client pc on pc.id = pu.portal_client_id
+      where pc.company_id = ?
+    `).all('comp-01') as Array<{ username: string; is_active: number }>;
+    assert.equal(userRows.some((row) => row.username === 'cliente2' && row.is_active === 1), true);
+    assert.equal(userRows.some((row) => row.username === 'cliente' && row.is_active === 0), true);
+    assert.equal(userRows.some((row) => row.username === 'legado' && row.is_active === 0), true);
+    assert.equal(userRows.filter((row) => row.is_active === 1).length, 1);
+
+    const getUpdated = await request(app).get('/companies/comp-01/portal-access');
+    assert.equal(getUpdated.status, 200);
+    assert.deepEqual(getUpdated.body, {
+      slug: 'metal-forte-inativo',
+      username: 'cliente2',
+      is_active: false
+    });
+
+    const loginBlocked = await request(app)
+      .post('/portal/api/auth/login')
+      .send({ slug: 'metal-forte-inativo', username: 'cliente2', password: 'OutraSenha#123' });
+    assert.equal(loginBlocked.status, 401);
+  } finally {
+    cleanupDbFiles(dbPath);
+  }
+});
