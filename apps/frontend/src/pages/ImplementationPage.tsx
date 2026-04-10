@@ -12,6 +12,7 @@ type KanbanBoardMode = 'implementation' | 'support';
 const KANBAN_PRIORITY_OPTIONS: KanbanPriority[] = ['Alta', 'Normal', 'Baixa', 'Critica'];
 const KANBAN_SUBCATEGORY_OPTIONS_IMPLEMENTATION: Exclude<KanbanSubcategory, 'Suporte'>[] = ['Pre_vendas', 'Pos_vendas', 'Implementacao'];
 const KANBAN_IMAGE_MAX_BYTES = 750_000;
+const KANBAN_FILE_MAX_BYTES = 8_000_000;
 const KANBAN_FILTERS_COLLAPSED_STORAGE_KEY = 'orquestrador_kanban_filters_collapsed_v1';
 
 type KanbanCard = {
@@ -32,6 +33,8 @@ type KanbanCard = {
   priority: KanbanPriority;
   due_date: string | null;
   attachment_image_data_url: string | null;
+  attachment_file_name: string | null;
+  attachment_file_data_base64: string | null;
   position: number;
   created_at: string;
   updated_at: string;
@@ -74,6 +77,8 @@ type CardDetailDraft = {
   priority: KanbanPriority;
   due_date: string;
   attachment_image_data_url: string | null;
+  attachment_file_name: string;
+  attachment_file_data_base64: string | null;
 } | null;
 
 type ClientOption = {
@@ -106,7 +111,9 @@ function cardDetailFromCard(card: KanbanCard): Exclude<CardDetailDraft, null> {
     support_handoff_date: card.support_handoff_date ?? '',
     priority: card.priority ?? 'Normal',
     due_date: card.due_date ?? '',
-    attachment_image_data_url: card.attachment_image_data_url ?? null
+    attachment_image_data_url: card.attachment_image_data_url ?? null,
+    attachment_file_name: card.attachment_file_name ?? '',
+    attachment_file_data_base64: card.attachment_file_data_base64 ?? null
   };
 }
 
@@ -148,9 +155,22 @@ function toDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result ?? ''));
-    reader.onerror = () => reject(new Error('Não foi possível ler a imagem.'));
+    reader.onerror = () => reject(new Error('Não foi possível ler o arquivo.'));
     reader.readAsDataURL(file);
   });
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function dataUrlSizeBytes(dataUrl: string): number {
+  const base64 = dataUrl.split(',')[1] ?? '';
+  if (!base64) return 0;
+  const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0;
+  return Math.max(0, Math.floor((base64.length * 3) / 4) - padding);
 }
 
 type ImplementationPageProps = {
@@ -483,7 +503,11 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
         support_handoff_date: supportHandoffDate,
         priority: cardDetail.priority,
         due_date: cardDetail.due_date || null,
-        attachment_image_data_url: cardDetail.attachment_image_data_url ?? null
+        attachment_image_data_url: cardDetail.attachment_image_data_url ?? null,
+        attachment_file_name: cardDetail.attachment_file_data_base64
+          ? (cardDetail.attachment_file_name.trim() || 'anexo')
+          : null,
+        attachment_file_data_base64: cardDetail.attachment_file_data_base64 ?? null
       });
       setMessage('Cartão atualizado.');
       setCardDetail(null);
@@ -513,6 +537,33 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
     try {
       const dataUrl = await toDataUrl(file);
       setCardDetail((prev) => (prev ? { ...prev, attachment_image_data_url: dataUrl } : prev));
+      setError('');
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
+  async function onPickDetailFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || !cardDetail) return;
+
+    if (file.size > KANBAN_FILE_MAX_BYTES) {
+      setError('O arquivo é grande demais. Use até 8 MB.');
+      return;
+    }
+
+    try {
+      const dataUrl = await toDataUrl(file);
+      setCardDetail((prev) => (
+        prev
+          ? {
+            ...prev,
+            attachment_file_name: file.name,
+            attachment_file_data_base64: dataUrl
+          }
+          : prev
+      ));
       setError('');
     } catch (err) {
       setError((err as Error).message);
@@ -878,9 +929,21 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
                                         ) : null}
                                         <span className={`chip chip-${(card.priority ?? 'Normal').toLowerCase()}`}>{card.priority ?? 'Normal'}</span>
                                         {card.due_date ? <span className="kanban-meta-pill">Entrega: {formatDateBr(card.due_date)}</span> : null}
+                                        {card.attachment_file_data_base64 ? (
+                                          <span className="kanban-meta-pill">Documento: {card.attachment_file_name || 'Anexo'}</span>
+                                        ) : null}
                                       </div>
                                       {card.attachment_image_data_url ? (
                                         <img className="kanban-card-thumb" src={card.attachment_image_data_url} alt={`Anexo do card ${card.title}`} />
+                                      ) : null}
+                                      {card.attachment_file_data_base64 ? (
+                                        <a
+                                          className="kanban-card-file-link"
+                                          href={card.attachment_file_data_base64}
+                                          download={card.attachment_file_name || `anexo-${card.id}`}
+                                        >
+                                          Baixar documento
+                                        </a>
                                       ) : null}
                                       <div className="actions actions-compact">
                                         <button type="button" className="kanban-card-secondary-btn" onClick={() => editCard(card)}>Abrir</button>
@@ -1034,6 +1097,7 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
                       placeholder="Descreva como o suporte foi resolvido."
                     />
                   </label>
+                  <p className="form-hint">Ao salvar, novas respostas e anexos deste card são espelhados na conversa do cliente.</p>
                   <label>
                     Encaminhamento do suporte
                     <select
@@ -1089,6 +1153,42 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
                     >
                       Remover imagem
                     </button>
+                  </div>
+                ) : null}
+
+                <label className="kanban-inline-attachment-label">
+                  <span>Anexo de documento</span>
+                  <input type="file" onChange={onPickDetailFile} />
+                </label>
+                {cardDetail.attachment_file_data_base64 ? (
+                  <div className="kanban-file-preview">
+                    <div className="kanban-file-preview-head">
+                      <strong>{cardDetail.attachment_file_name || 'Documento anexado'}</strong>
+                      <span>{formatFileSize(dataUrlSizeBytes(cardDetail.attachment_file_data_base64))}</span>
+                    </div>
+                    <div className="actions actions-compact">
+                      <a
+                        className="kanban-card-file-link"
+                        href={cardDetail.attachment_file_data_base64}
+                        download={cardDetail.attachment_file_name || `anexo-${cardDetail.cardId}`}
+                      >
+                        Baixar
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => setCardDetail((prev) => (
+                          prev
+                            ? {
+                              ...prev,
+                              attachment_file_name: '',
+                              attachment_file_data_base64: null
+                            }
+                            : prev
+                        ))}
+                      >
+                        Remover documento
+                      </button>
+                    </div>
                   </div>
                 ) : null}
               </div>

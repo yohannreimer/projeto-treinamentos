@@ -70,10 +70,19 @@ export function AdminPage() {
 
   const [loadingBootstrap, setLoadingBootstrap] = useState(false);
   const [loadingRealScenario, setLoadingRealScenario] = useState(false);
+  const [portalOperatorUsername, setPortalOperatorUsername] = useState('');
+  const [portalOperatorPassword, setPortalOperatorPassword] = useState('');
+  const [portalOperatorConfigured, setPortalOperatorConfigured] = useState(false);
+  const [savingPortalOperatorAccess, setSavingPortalOperatorAccess] = useState(false);
 
   function loadCatalog() {
-    api.catalog().then((response: any) => {
+    Promise.all([
+      api.catalog(),
+      api.portalOperatorAccess()
+    ]).then(([response, operatorAccess]) => {
       setData(response);
+      setPortalOperatorUsername(operatorAccess.username ?? '');
+      setPortalOperatorConfigured(Boolean(operatorAccess.is_configured));
       const modules = (response.modules ?? []) as ModuleCatalog[];
       if (modules.length > 0) {
         setSelectedModuleId((prev) => modules.some((module) => module.id === prev) ? prev : modules[0].id);
@@ -269,6 +278,34 @@ export function AdminPage() {
     }
   }
 
+  async function savePortalOperatorAccess() {
+    if (!portalOperatorUsername.trim()) {
+      setMessage('Informe o login global de operador do portal.');
+      return;
+    }
+    if (!portalOperatorPassword.trim()) {
+      setMessage('Informe a senha global de operador do portal.');
+      return;
+    }
+
+    setSavingPortalOperatorAccess(true);
+    setMessage('');
+    try {
+      const response = await api.upsertPortalOperatorAccess({
+        username: portalOperatorUsername.trim(),
+        password: portalOperatorPassword
+      }) as { username: string };
+      setPortalOperatorPassword('');
+      setPortalOperatorConfigured(true);
+      setPortalOperatorUsername(response.username);
+      setMessage('Credenciais globais do portal atualizadas.');
+    } catch (error) {
+      setMessage((error as Error).message);
+    } finally {
+      setSavingPortalOperatorAccess(false);
+    }
+  }
+
   async function deleteSelectedModule() {
     if (!selectedModule) return;
     const confirmationPhrase = askDestructiveConfirmation(`Excluir módulo ${selectedModule.code} - ${selectedModule.name}`);
@@ -344,6 +381,40 @@ export function AdminPage() {
               </button>
             </div>
           </div>
+        </div>
+      </Section>
+
+      <Section title="Acesso global do Portal do Cliente">
+        <p className="form-hint">
+          Esta credencial interna permite entrar em qualquer <code>/portal/:slug</code> no modo operador Holand, sem usar login do cliente.
+        </p>
+        <div className="three-col">
+          <label>
+            Login global
+            <input
+              value={portalOperatorUsername}
+              onChange={(event) => setPortalOperatorUsername(event.target.value)}
+              placeholder="ex: operador.holand"
+            />
+          </label>
+          <label>
+            Senha global
+            <input
+              type="password"
+              value={portalOperatorPassword}
+              onChange={(event) => setPortalOperatorPassword(event.target.value)}
+              placeholder={portalOperatorConfigured ? 'Digite para trocar a senha' : 'Defina a senha inicial'}
+            />
+          </label>
+          <label>
+            Status
+            <input value={portalOperatorConfigured ? 'Configurado' : 'Não configurado'} disabled />
+          </label>
+        </div>
+        <div className="actions actions-compact">
+          <button type="button" onClick={savePortalOperatorAccess} disabled={savingPortalOperatorAccess}>
+            {savingPortalOperatorAccess ? 'Salvando...' : 'Salvar acesso global do portal'}
+          </button>
         </div>
       </Section>
 

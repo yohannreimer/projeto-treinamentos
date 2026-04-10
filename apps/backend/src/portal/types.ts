@@ -26,6 +26,7 @@ export type PortalSessionRow = {
   portal_client_id: string;
   company_id: string;
   token_hash: string;
+  is_internal: number;
   expires_at: string;
   created_at: string;
   last_seen_at: string;
@@ -37,4 +38,5 @@ export type PortalAuthContext = {
   portal_user_id: string;
   slug: string;
   username: string;
+  is_internal: boolean;
 };

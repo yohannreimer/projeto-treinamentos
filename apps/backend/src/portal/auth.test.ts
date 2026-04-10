@@ -131,6 +131,53 @@ test('GET /portal/api/me returns profile for authenticated portal user', async (
     assert.equal(meRes.body.company_name, 'Grupo Portal Auth');
     assert.equal(meRes.body.username, 'cliente');
     assert.equal(meRes.body.slug, 'grupo-cbm');
+    assert.equal(meRes.body.is_internal, false);
+  } finally {
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('admin portal operator credentials allow internal login in any portal slug', async () => {
+  const { app, dbPath } = await createPortalAuthFixture('portal-api-internal-operator-login');
+
+  try {
+    const saveAccessRes = await request(app)
+      .put('/admin/portal-operator-access')
+      .send({
+        username: 'operador.holand',
+        password: 'SenhaGlobal#123'
+      });
+    assert.equal(saveAccessRes.status, 200);
+    assert.equal(saveAccessRes.body.ok, true);
+    assert.equal(saveAccessRes.body.username, 'operador.holand');
+
+    const readAccessRes = await request(app).get('/admin/portal-operator-access');
+    assert.equal(readAccessRes.status, 200);
+    assert.deepEqual(readAccessRes.body, {
+      username: 'operador.holand',
+      is_configured: true
+    });
+
+    db.prepare('update portal_client set is_active = 0 where id = ?').run('portal-client-auth');
+
+    const loginRes = await request(app)
+      .post('/portal/api/auth/login')
+      .send({
+        slug: 'grupo-cbm',
+        username: 'operador.holand',
+        password: 'SenhaGlobal#123',
+        is_internal: true
+      });
+    assert.equal(loginRes.status, 200);
+    assert.equal(loginRes.body.is_internal, true);
+    assert.equal(typeof loginRes.body.token, 'string');
+
+    const meRes = await request(app)
+      .get('/portal/api/me')
+      .set('Authorization', `Bearer ${loginRes.body.token as string}`);
+    assert.equal(meRes.status, 200);
+    assert.equal(meRes.body.is_internal, true);
+    assert.equal(meRes.body.slug, 'grupo-cbm');
   } finally {
     cleanupDbFiles(dbPath);
   }

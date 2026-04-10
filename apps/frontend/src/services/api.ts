@@ -304,6 +304,8 @@ export const api = {
     priority?: 'Alta' | 'Normal' | 'Baixa' | 'Critica';
     due_date?: string | null;
     attachment_image_data_url?: string | null;
+    attachment_file_name?: string | null;
+    attachment_file_data_base64?: string | null;
   }) =>
     req('/implementation/kanban/cards', {
       method: 'POST',
@@ -326,6 +328,8 @@ export const api = {
     priority?: 'Alta' | 'Normal' | 'Baixa' | 'Critica';
     due_date?: string | null;
     attachment_image_data_url?: string | null;
+    attachment_file_name?: string | null;
+    attachment_file_data_base64?: string | null;
   }) =>
     req(`/implementation/kanban/cards/${id}`, {
       method: 'PATCH',
@@ -378,6 +382,13 @@ export const api = {
     }),
   modules: () => req('/modules'),
   catalog: () => req('/admin/catalog'),
+  portalOperatorAccess: () =>
+    req<{ username: string | null; is_configured: boolean }>('/admin/portal-operator-access'),
+  upsertPortalOperatorAccess: (payload: { username: string; password: string }) =>
+    req<{ ok: boolean; username: string }>('/admin/portal-operator-access', {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    }),
   createAdminModule: (payload: unknown) =>
     req('/admin/modules', {
       method: 'POST',

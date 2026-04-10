@@ -25,6 +25,8 @@ const KANBAN_SUBCATEGORY_VALUES = ['Pre_vendas', 'Pos_vendas', 'Suporte', 'Imple
 const KANBAN_SUPPORT_HANDOFF_VALUES = ['Conosco', 'Sao_Paulo'] as const;
 const CALENDAR_ACTIVITY_TYPE_VALUES = ['Visita_cliente', 'Pre_vendas', 'Pos_vendas', 'Suporte', 'Implementacao', 'Reuniao', 'Outro'] as const;
 const CALENDAR_ACTIVITY_STATUS_VALUES = ['Planejada', 'Em_andamento', 'Concluida', 'Cancelada'] as const;
+const PORTAL_OPERATOR_USERNAME_SETTING_KEY = 'portal_operator_username';
+const PORTAL_OPERATOR_PASSWORD_HASH_SETTING_KEY = 'portal_operator_password_hash';
 const ISO_DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const IMPLEMENTATION_KANBAN_DEFAULT_COLUMNS = [
   { id: 'kcol-todo', title: 'A fazer', color: '#7b8ea8' },
@@ -55,6 +57,11 @@ const kanbanCardImageSchema = z
   .string()
   .max(3_000_000)
   .refine((value) => value.startsWith('data:image/'), 'Anexo deve ser uma imagem válida em data URL.');
+
+const kanbanCardFileDataSchema = z
+  .string()
+  .max(12_000_000)
+  .refine((value) => /^data:[a-zA-Z0-9.+-]+\/[a-zA-Z0-9.+-]+;base64,/.test(value), 'Arquivo inválido.');
 
 const internalDocumentDataUrlSchema = z
   .string()
@@ -190,7 +197,9 @@ const kanbanCardCreateSchema = z.object({
   support_handoff_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   priority: z.enum(KANBAN_CARD_PRIORITY_VALUES).optional(),
   due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
-  attachment_image_data_url: kanbanCardImageSchema.nullable().optional()
+  attachment_image_data_url: kanbanCardImageSchema.nullable().optional(),
+  attachment_file_name: z.string().max(220).nullable().optional(),
+  attachment_file_data_base64: kanbanCardFileDataSchema.nullable().optional()
 });
 
 const kanbanCardUpdateSchema = z.object({
@@ -209,7 +218,9 @@ const kanbanCardUpdateSchema = z.object({
   support_handoff_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   priority: z.enum(KANBAN_CARD_PRIORITY_VALUES).optional(),
   due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
-  attachment_image_data_url: kanbanCardImageSchema.nullable().optional()
+  attachment_image_data_url: kanbanCardImageSchema.nullable().optional(),
+  attachment_file_name: z.string().max(220).nullable().optional(),
+  attachment_file_data_base64: kanbanCardFileDataSchema.nullable().optional()
 });
 
 const calendarActivityDateScheduleSchema = z.object({
@@ -595,6 +606,105 @@ function decodeDataUrl(dataUrl: string): { mimeType: string; buffer: Buffer } {
     mimeType,
     buffer: Buffer.from(base64, 'base64')
   };
+}
+
+type TicketAttachmentPayload = {
+  fileName: string;
+  dataUrl: string;
+};
+
+function normalizeAttachmentFileName(fileName?: string | null, fallbackName = 'anexo') {
+  const cleaned = (fileName ?? '')
+    .replace(/[\\/:*?"<>|]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return cleaned || fallbackName;
+}
+
+function extensionFromMimeType(mimeType: string) {
+  const normalized = mimeType.toLowerCase();
+  if (normalized === 'image/png') return 'png';
+  if (normalized === 'image/jpeg') return 'jpg';
+  if (normalized === 'image/webp') return 'webp';
+  if (normalized === 'image/gif') return 'gif';
+  if (normalized === 'application/pdf') return 'pdf';
+  if (normalized === 'application/msword') return 'doc';
+  if (normalized === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') return 'docx';
+  if (normalized === 'application/vnd.ms-excel') return 'xls';
+  if (normalized === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') return 'xlsx';
+  if (normalized === 'application/zip') return 'zip';
+  if (normalized === 'text/plain') return 'txt';
+  return '';
+}
+
+function validateKanbanAttachmentDataUrl(dataUrl: string): { mimeType: string; fileSizeBytes: number } {
+  const decoded = decodeDataUrl(dataUrl);
+  if (decoded.buffer.length === 0) {
+    throw new Error('Arquivo inválido.');
+  }
+  if (decoded.buffer.length > 8_000_000) {
+    throw new Error('Arquivo excede 8 MB.');
+  }
+  return {
+    mimeType: decoded.mimeType,
+    fileSizeBytes: decoded.buffer.length
+  };
+}
+
+function createPortalMessageFromKanbanUpdate(params: {
+  kanbanCardId: string;
+  body: string | null;
+  attachments: TicketAttachmentPayload[];
+  nowIso: string;
+}) {
+  const linkedTicket = db.prepare(`
+    select id
+    from portal_ticket
+    where kanban_card_id = ?
+    order by datetime(created_at) desc, id desc
+    limit 1
+  `).get(params.kanbanCardId) as { id: string } | undefined;
+
+  if (!linkedTicket) return;
+  if (!params.body && params.attachments.length === 0) return;
+
+  const messageId = uuid('ptmsg');
+  db.prepare(`
+    insert into portal_ticket_message (
+      id, ticket_id, author_type, author_label, body, created_at
+    ) values (?, ?, 'Holand', 'Equipe Holand', ?, ?)
+  `).run(
+    messageId,
+    linkedTicket.id,
+    params.body,
+    params.nowIso
+  );
+
+  if (params.attachments.length > 0) {
+    const insertAttachment = db.prepare(`
+      insert into portal_ticket_attachment (
+        id, ticket_message_id, file_name, mime_type, file_data_base64, file_size_bytes, created_at
+      ) values (?, ?, ?, ?, ?, ?, ?)
+    `);
+    params.attachments.forEach((attachment) => {
+      const decoded = validateKanbanAttachmentDataUrl(attachment.dataUrl);
+      insertAttachment.run(
+        uuid('ptatt'),
+        messageId,
+        normalizeAttachmentFileName(attachment.fileName),
+        decoded.mimeType,
+        attachment.dataUrl,
+        decoded.fileSizeBytes,
+        params.nowIso
+      );
+    });
+  }
+
+  db.prepare(`
+    update portal_ticket
+    set updated_at = ?
+    where id = ?
+  `).run(params.nowIso, linkedTicket.id);
 }
 
 function requireDestructiveConfirmation(
@@ -1606,6 +1716,30 @@ function getAdminCatalog() {
     })),
     optional_modules: optionalModules,
     global_rules: { installation_prerequisite: installationModule?.code ?? INSTALLATION_CODES[0] }
+  };
+}
+
+function readAppSetting(key: string): string | null {
+  const row = db.prepare('select value from app_setting where key = ?').get(key) as { value: string } | undefined;
+  return row?.value ?? null;
+}
+
+function writeAppSetting(key: string, value: string) {
+  db.prepare(`
+    insert into app_setting (key, value, updated_at)
+    values (?, ?, ?)
+    on conflict(key) do update set
+      value = excluded.value,
+      updated_at = excluded.updated_at
+  `).run(key, value, new Date().toISOString());
+}
+
+function readPortalOperatorCredentials() {
+  const username = readAppSetting(PORTAL_OPERATOR_USERNAME_SETTING_KEY);
+  const passwordHash = readAppSetting(PORTAL_OPERATOR_PASSWORD_HASH_SETTING_KEY);
+  return {
+    username: username?.trim() || null,
+    password_hash: passwordHash?.trim() || null
   };
 }
 
@@ -4871,6 +5005,8 @@ export function registerCoreRoutes(app: Express) {
         priority,
         due_date,
         attachment_image_data_url,
+        attachment_file_name,
+        attachment_file_data_base64,
         position,
         created_at,
         updated_at
@@ -4893,6 +5029,8 @@ export function registerCoreRoutes(app: Express) {
       priority: string;
       due_date: string | null;
       attachment_image_data_url: string | null;
+      attachment_file_name: string | null;
+      attachment_file_data_base64: string | null;
       position: number;
       created_at: string;
       updated_at: string;
@@ -4967,6 +5105,13 @@ export function registerCoreRoutes(app: Express) {
     const supportHandoffDate = supportHandoffTarget === 'Sao_Paulo'
       ? (payload.support_handoff_date ?? nowIso)
       : null;
+    const attachmentFileData = payload.attachment_file_data_base64 ?? null;
+    const attachmentFileName = attachmentFileData
+      ? normalizeAttachmentFileName(payload.attachment_file_name, 'anexo')
+      : null;
+    if (attachmentFileData) {
+      validateKanbanAttachmentDataUrl(attachmentFileData);
+    }
     const nextPositionRow = db.prepare(`
       select coalesce(max(position), -1) + 1 as next_position
       from implementation_kanban_card
@@ -4978,9 +5123,9 @@ export function registerCoreRoutes(app: Express) {
         insert into implementation_kanban_card (
           id, title, description, status, column_id, client_name, license_name, module_name, technician_id, subcategory,
           support_resolution, support_third_party_notes, support_handoff_target, support_handoff_date, priority, due_date,
-          attachment_image_data_url, position, created_at, updated_at
+          attachment_image_data_url, attachment_file_name, attachment_file_data_base64, position, created_at, updated_at
         )
-        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         cardId,
         payload.title.trim(),
@@ -4999,6 +5144,8 @@ export function registerCoreRoutes(app: Express) {
         payload.priority ?? 'Normal',
         payload.due_date ?? null,
         payload.attachment_image_data_url ?? null,
+        attachmentFileName,
+        attachmentFileData,
         nextPositionRow.next_position,
         nowIso,
         nowIso
@@ -5018,7 +5165,15 @@ export function registerCoreRoutes(app: Express) {
     }
   
     const exists = db.prepare(`
-      select id, subcategory, support_handoff_target, support_handoff_date
+      select
+        id,
+        subcategory,
+        support_handoff_target,
+        support_handoff_date,
+        support_resolution,
+        attachment_image_data_url,
+        attachment_file_name,
+        attachment_file_data_base64
       from implementation_kanban_card
       where id = ?
     `).get(req.params.id) as {
@@ -5026,6 +5181,10 @@ export function registerCoreRoutes(app: Express) {
       subcategory: (typeof KANBAN_SUBCATEGORY_VALUES)[number] | null;
       support_handoff_target: (typeof KANBAN_SUPPORT_HANDOFF_VALUES)[number] | null;
       support_handoff_date: string | null;
+      support_resolution: string | null;
+      attachment_image_data_url: string | null;
+      attachment_file_name: string | null;
+      attachment_file_data_base64: string | null;
     } | undefined;
     if (!exists) {
       return res.status(404).json({ message: 'Card não encontrado' });
@@ -5050,6 +5209,35 @@ export function registerCoreRoutes(app: Express) {
     if (normalizedHandoffTarget !== 'Sao_Paulo') {
       normalizedHandoffDate = null;
     }
+
+    const hasSupportResolutionInPayload = Object.prototype.hasOwnProperty.call(payload, 'support_resolution');
+    const previousSupportResolution = exists.support_resolution?.trim() || '';
+    const nextSupportResolution = hasSupportResolutionInPayload
+      ? (payload.support_resolution?.trim() || '')
+      : previousSupportResolution;
+    const shouldMirrorSupportResolution = isSupportCard
+      && hasSupportResolutionInPayload
+      && nextSupportResolution.length > 0
+      && nextSupportResolution !== previousSupportResolution;
+
+    const hasImageInPayload = Object.prototype.hasOwnProperty.call(payload, 'attachment_image_data_url');
+    const hasFileDataInPayload = Object.prototype.hasOwnProperty.call(payload, 'attachment_file_data_base64');
+    const hasFileNameInPayload = Object.prototype.hasOwnProperty.call(payload, 'attachment_file_name');
+    const shouldMirrorImageAttachment = isSupportCard
+      && hasImageInPayload
+      && Boolean(payload.attachment_image_data_url)
+      && payload.attachment_image_data_url !== (exists.attachment_image_data_url ?? null);
+    const shouldMirrorFileAttachment = isSupportCard
+      && hasFileDataInPayload
+      && Boolean(payload.attachment_file_data_base64)
+      && payload.attachment_file_data_base64 !== (exists.attachment_file_data_base64 ?? null);
+
+    if (payload.attachment_file_data_base64) {
+      validateKanbanAttachmentDataUrl(payload.attachment_file_data_base64);
+    }
+
+    const nowDate = nowDateIso();
+    const nowTs = new Date().toISOString();
   
     const fields: string[] = [];
     const values: unknown[] = [];
@@ -5137,12 +5325,53 @@ export function registerCoreRoutes(app: Express) {
       fields.push('attachment_image_data_url = ?');
       values.push(payload.attachment_image_data_url ?? null);
     }
+    if (hasFileDataInPayload) {
+      const nextFileData = payload.attachment_file_data_base64 ?? null;
+      const nextFileName = nextFileData
+        ? normalizeAttachmentFileName(payload.attachment_file_name ?? exists.attachment_file_name, 'anexo')
+        : null;
+      fields.push('attachment_file_name = ?');
+      values.push(nextFileName);
+      fields.push('attachment_file_data_base64 = ?');
+      values.push(nextFileData);
+    } else if (hasFileNameInPayload) {
+      const nextFileName = exists.attachment_file_data_base64
+        ? normalizeAttachmentFileName(payload.attachment_file_name ?? null, 'anexo')
+        : null;
+      fields.push('attachment_file_name = ?');
+      values.push(nextFileName);
+    }
   
     fields.push('updated_at = ?');
-    values.push(nowDateIso());
+    values.push(nowDate);
     values.push(req.params.id);
   
     db.prepare(`update implementation_kanban_card set ${fields.join(', ')} where id = ?`).run(...values);
+
+    const mirrorAttachments: TicketAttachmentPayload[] = [];
+    if (shouldMirrorImageAttachment && payload.attachment_image_data_url) {
+      const decodedImage = validateKanbanAttachmentDataUrl(payload.attachment_image_data_url);
+      const extension = extensionFromMimeType(decodedImage.mimeType);
+      mirrorAttachments.push({
+        fileName: extension ? `anexo-imagem.${extension}` : 'anexo-imagem',
+        dataUrl: payload.attachment_image_data_url
+      });
+    }
+    if (shouldMirrorFileAttachment && payload.attachment_file_data_base64) {
+      const nextFileName = normalizeAttachmentFileName(payload.attachment_file_name ?? exists.attachment_file_name, 'anexo');
+      mirrorAttachments.push({
+        fileName: nextFileName,
+        dataUrl: payload.attachment_file_data_base64
+      });
+    }
+    if (shouldMirrorSupportResolution || mirrorAttachments.length > 0) {
+      createPortalMessageFromKanbanUpdate({
+        kanbanCardId: req.params.id,
+        body: shouldMirrorSupportResolution ? nextSupportResolution : null,
+        attachments: mirrorAttachments,
+        nowIso: nowTs
+      });
+    }
     return res.json({ ok: true });
   });
   
@@ -5477,6 +5706,38 @@ export function registerCoreRoutes(app: Express) {
   
   app.get('/admin/catalog', (_req, res) => {
     res.json(getAdminCatalog());
+  });
+
+  app.get('/admin/portal-operator-access', (_req, res) => {
+    const current = readPortalOperatorCredentials();
+    return res.json({
+      username: current.username,
+      is_configured: Boolean(current.username && current.password_hash)
+    });
+  });
+
+  app.put('/admin/portal-operator-access', async (req, res) => {
+    const schema = z.object({
+      username: z.string().trim().min(3).max(120),
+      password: z.string().trim().min(8).max(200)
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+
+    try {
+      const normalizedUsername = parsed.data.username.trim();
+      const passwordHash = await hashPassword(parsed.data.password.trim());
+      writeAppSetting(PORTAL_OPERATOR_USERNAME_SETTING_KEY, normalizedUsername);
+      writeAppSetting(PORTAL_OPERATOR_PASSWORD_HASH_SETTING_KEY, passwordHash);
+      return res.json({ ok: true, username: normalizedUsername });
+    } catch (error) {
+      return res.status(400).json({
+        message: 'Nao foi possivel atualizar credencial global do portal',
+        detail: errorMessage(error)
+      });
+    }
   });
   
   app.post('/admin/modules', (req, res) => {

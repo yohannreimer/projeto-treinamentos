@@ -50,7 +50,7 @@ export async function verifyPassword(password: string, stored: string): Promise<
   return timingSafeEqual(digest, expectedDigest);
 }
 
-type PortalLoginUser = PortalAuthContext & {
+type PortalLoginUser = Omit<PortalAuthContext, 'is_internal'> & {
   company_name: string;
   password_hash: string;
   portal_user_active: number;
@@ -61,7 +61,8 @@ export type PortalSessionContext = PortalAuthContext & {
   company_name: string;
 };
 
-type PortalSessionRow = PortalSessionContext & {
+type PortalSessionRow = Omit<PortalSessionContext, 'is_internal'> & {
+  is_internal: number;
   session_id: string;
   expires_at: string;
 };
@@ -69,6 +70,7 @@ type PortalSessionRow = PortalSessionContext & {
 export type PortalLoginResult = {
   token: string;
   expires_at: string;
+  is_internal: boolean;
 };
 
 function hashSessionToken(token: string) {
@@ -104,22 +106,27 @@ export function findPortalUserBySlugAndUsername(slug: string, username: string):
   return row ?? null;
 }
 
-export async function createPortalSession(user: PortalAuthContext): Promise<PortalLoginResult> {
+export async function createPortalSession(
+  user: Omit<PortalAuthContext, 'is_internal'>,
+  options?: { isInternal?: boolean }
+): Promise<PortalLoginResult> {
   const nowIso = new Date().toISOString();
   const token = randomBytes(SESSION_TOKEN_BYTES).toString('base64url');
   const tokenHash = hashSessionToken(token);
   const expiresAt = computeSessionExpiry(Date.now());
+  const isInternal = options?.isInternal === true;
 
   db.prepare(`
     insert into portal_session (
-      id, portal_user_id, portal_client_id, company_id, token_hash, expires_at, created_at, last_seen_at
-    ) values (?, ?, ?, ?, ?, ?, ?, ?)
+      id, portal_user_id, portal_client_id, company_id, token_hash, is_internal, expires_at, created_at, last_seen_at
+    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     uuid('psess'),
     user.portal_user_id,
     user.portal_client_id,
     user.company_id,
     tokenHash,
+    isInternal ? 1 : 0,
     expiresAt,
     nowIso,
     nowIso
@@ -131,7 +138,7 @@ export async function createPortalSession(user: PortalAuthContext): Promise<Port
     where id = ?
   `).run(nowIso, nowIso, user.portal_user_id);
 
-  return { token, expires_at: expiresAt };
+  return { token, expires_at: expiresAt, is_internal: isInternal };
 }
 
 function findPortalSessionByToken(token: string): PortalSessionRow | null {
@@ -140,6 +147,7 @@ function findPortalSessionByToken(token: string): PortalSessionRow | null {
     select
       ps.id as session_id,
       ps.expires_at,
+      ps.is_internal,
       ps.company_id,
       ps.portal_client_id,
       ps.portal_user_id,
@@ -151,8 +159,8 @@ function findPortalSessionByToken(token: string): PortalSessionRow | null {
     join portal_client pc on pc.id = ps.portal_client_id and pc.company_id = ps.company_id
     join company c on c.id = ps.company_id
     where ps.token_hash = ?
-      and pu.is_active = 1
-      and pc.is_active = 1
+      and (ps.is_internal = 1 or pu.is_active = 1)
+      and (ps.is_internal = 1 or pc.is_active = 1)
       and datetime(ps.expires_at) > datetime('now')
     limit 1
   `).get(tokenHash) as PortalSessionRow | undefined;
@@ -189,7 +197,8 @@ export function requirePortalAuth(req: Request, res: Response, next: NextFunctio
     portal_user_id: session.portal_user_id,
     slug: session.slug,
     username: session.username,
-    company_name: session.company_name
+    company_name: session.company_name,
+    is_internal: Number(session.is_internal) === 1
   } satisfies PortalSessionContext;
 
   return next();

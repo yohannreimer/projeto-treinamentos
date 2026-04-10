@@ -3,7 +3,7 @@ import holandHorizontalLogo from '../../assets/holand-horizontal.svg';
 
 type PortalLoginPageProps = {
   slug: string;
-  onSubmit: (payload: { username: string; password: string }) => Promise<boolean> | boolean;
+  onSubmit: (payload: { username: string; password: string; is_internal: boolean }) => Promise<boolean> | boolean;
 };
 
 export function PortalLoginPage({ slug, onSubmit }: PortalLoginPageProps) {
@@ -11,12 +11,13 @@ export function PortalLoginPage({ slug, onSubmit }: PortalLoginPageProps) {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [isInternalLogin, setIsInternalLogin] = useState(false);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmitting(true);
     try {
-      const ok = await onSubmit({ username: username.trim(), password });
+      const ok = await onSubmit({ username: username.trim(), password, is_internal: isInternalLogin });
       if (!ok) {
         setError('Login ou senha inválidos.');
         return;
@@ -58,6 +59,15 @@ export function PortalLoginPage({ slug, onSubmit }: PortalLoginPageProps) {
               placeholder="Sua senha"
               autoComplete="current-password"
             />
+          </label>
+
+          <label className="portal-login-checkbox">
+            <input
+              type="checkbox"
+              checked={isInternalLogin}
+              onChange={(event) => setIsInternalLogin(event.target.checked)}
+            />
+            Acesso interno Holand (operador)
           </label>
 
           {error ? <p className="error">{error}</p> : null}

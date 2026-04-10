@@ -49,13 +49,14 @@ export function PortalShell() {
     };
   }, [apiClient]);
 
-  async function handleLogin(payload: { username: string; password: string }) {
+  async function handleLogin(payload: { username: string; password: string; is_internal: boolean }) {
     const result = await portalApi.login({
       slug,
       username: payload.username,
-      password: payload.password
+      password: payload.password,
+      is_internal: payload.is_internal
     });
-    const nextSession = { token: result.token, expires_at: result.expires_at };
+    const nextSession = { token: result.token, expires_at: result.expires_at, is_internal: result.is_internal };
     portalSessionStore.save(slug, nextSession);
     setSession(nextSession);
     setAuthError('');
@@ -88,18 +89,22 @@ export function PortalShell() {
           <NavLink to="suporte" className={({ isActive }) => isActive ? 'is-active' : ''}>Suporte</NavLink>
         </nav>
         <div className="portal-sidebar-footer">
-          <small>{profile?.username ? `Acesso: ${profile.username}` : 'Sessão ativa'}</small>
+          <small>
+            {profile?.is_internal
+              ? 'Acesso interno Holand'
+              : (profile?.username ? `Acesso: ${profile.username}` : 'Sessão ativa')}
+          </small>
           <button type="button" className="portal-logout-btn" onClick={clearSession}>Sair</button>
         </div>
       </aside>
       <main className="portal-main">
         <header className="portal-topbar">
           <div className="portal-topbar-copy">
-            <span className="portal-topbar-kicker">Operação do cliente</span>
+            <span className="portal-topbar-kicker">{profile?.is_internal ? 'Modo operador Holand' : 'Operação do cliente'}</span>
             <strong>{profile?.company_name ?? 'Cliente'}</strong>
           </div>
           <div className="portal-topbar-meta">
-            <span className="portal-live-dot">Sessão segura ativa</span>
+            <span className="portal-live-dot">{profile?.is_internal ? 'Sessão interna ativa' : 'Sessão segura ativa'}</span>
           </div>
         </header>
         {authError ? <p className="error">{authError}</p> : null}

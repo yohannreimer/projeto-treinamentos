@@ -8,13 +8,16 @@ import {
   requirePortalAuth,
   verifyPassword
 } from './auth.js';
-import { toClientFacingStatus } from './status.js';
+import { toClientFacingStatus, toWorkflowStage } from './status.js';
 
 const DUMMY_PASSWORD_HASH = 'scrypt:00112233445566778899aabbccddeeff:5232aa4cb8582e8f374f25579c6f9ad17d5a9af5ba6d42d4c44df702d20c9d4faef25ea0fca6a5aa69b8bb25439ee4c45cb8e173ceb7f0972b0a8f7fbf2bbd99';
 const LOGIN_WINDOW_MS = 60_000;
 const LOGIN_BLOCK_MS = 5 * 60_000;
 const LOGIN_ATTEMPT_LIMIT = 8;
 const LOGIN_MAX_TRACKED_KEYS = 3_000;
+const PORTAL_OPERATOR_USERNAME_SETTING_KEY = 'portal_operator_username';
+const PORTAL_OPERATOR_PASSWORD_HASH_SETTING_KEY = 'portal_operator_password_hash';
+const INTERNAL_PORTAL_USER_USERNAME = '__holand_internal_operator__';
 
 type LoginAttemptState = {
   startedAtMs: number;
@@ -28,17 +31,97 @@ const loginAttempts = new Map<string, LoginAttemptState>();
 const loginSchema = z.object({
   slug: z.string().trim().min(2).max(120),
   username: z.string().trim().min(1).max(120),
-  password: z.string().min(1).max(200)
+  password: z.string().min(1).max(200),
+  is_internal: z.boolean().optional().default(false)
 });
 
 const createTicketSchema = z.object({
   title: z.string().trim().min(3).max(160),
   description: z.string().trim().max(2_000).nullable().optional(),
-  priority: z.enum(['Alta', 'Normal', 'Baixa', 'Critica']).default('Normal')
+  priority: z.enum(['Alta', 'Normal', 'Baixa', 'Critica']).default('Normal'),
+  attachments: z.array(z.object({
+    file_name: z.string().trim().min(1).max(200),
+    file_data_base64: z.string().max(12_000_000)
+  })).max(8).optional().default([])
+});
+
+const ticketMessageSchema = z.object({
+  body: z.string().trim().max(4_000).nullable().optional(),
+  attachments: z.array(z.object({
+    file_name: z.string().trim().min(1).max(200),
+    file_data_base64: z.string().max(12_000_000)
+  })).max(8).optional().default([])
 });
 
 function buildLoginThrottleKey(ip: string, userAgent: string, slug: string, username: string) {
   return `${ip}::${userAgent}::${slug.trim().toLowerCase()}::${username.trim().toLowerCase()}`;
+}
+
+function readPortalOperatorCredentials() {
+  const rows = db.prepare(`
+    select key, value
+    from app_setting
+    where key in (?, ?)
+  `).all(
+    PORTAL_OPERATOR_USERNAME_SETTING_KEY,
+    PORTAL_OPERATOR_PASSWORD_HASH_SETTING_KEY
+  ) as Array<{ key: string; value: string }>;
+  const settingMap = new Map(rows.map((row) => [row.key, row.value]));
+  return {
+    username: settingMap.get(PORTAL_OPERATOR_USERNAME_SETTING_KEY)?.trim() || null,
+    password_hash: settingMap.get(PORTAL_OPERATOR_PASSWORD_HASH_SETTING_KEY)?.trim() || null
+  };
+}
+
+function findPortalClientBySlug(slug: string) {
+  return db.prepare(`
+    select
+      pc.id as portal_client_id,
+      pc.company_id,
+      pc.slug,
+      c.name as company_name
+    from portal_client pc
+    join company c on c.id = pc.company_id
+    where pc.slug = ?
+    limit 1
+  `).get(slug.trim()) as
+    | { portal_client_id: string; company_id: string; slug: string; company_name: string }
+    | undefined;
+}
+
+function ensureInternalPortalUser(portalClientId: string) {
+  const nowIso = new Date().toISOString();
+  const existing = db.prepare(`
+    select id
+    from portal_user
+    where portal_client_id = ?
+      and username = ?
+    limit 1
+  `).get(portalClientId, INTERNAL_PORTAL_USER_USERNAME) as { id: string } | undefined;
+
+  if (existing) {
+    db.prepare(`
+      update portal_user
+      set is_active = 1, updated_at = ?
+      where id = ?
+    `).run(nowIso, existing.id);
+    return existing.id;
+  }
+
+  const portalUserId = uuid('pusr');
+  db.prepare(`
+    insert into portal_user (
+      id, portal_client_id, username, password_hash, is_active, last_login_at, created_at, updated_at
+    ) values (?, ?, ?, ?, 1, null, ?, ?)
+  `).run(
+    portalUserId,
+    portalClientId,
+    INTERNAL_PORTAL_USER_USERNAME,
+    DUMMY_PASSWORD_HASH,
+    nowIso,
+    nowIso
+  );
+  return portalUserId;
 }
 
 function pruneLoginAttempts(nowMs: number) {
@@ -160,6 +243,29 @@ function normalizePortalTicketPriority(priority: string | null | undefined) {
     return priority;
   }
   return 'Normal';
+}
+
+function decodeAttachmentDataUrl(dataUrl: string) {
+  const match = dataUrl.match(/^data:([a-zA-Z0-9.+-]+\/[a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=\s]+)$/);
+  if (!match) {
+    throw new Error('Arquivo inválido. Envie em data URL base64.');
+  }
+
+  const mimeType = match[1] ?? '';
+  const base64Content = (match[2] ?? '').replace(/\s+/g, '');
+  const binary = Buffer.from(base64Content, 'base64');
+  if (!binary.length) {
+    throw new Error('Arquivo vazio.');
+  }
+
+  if (binary.length > 8_000_000) {
+    throw new Error('Arquivo excede 8 MB.');
+  }
+
+  return {
+    mimeType,
+    fileSizeBytes: binary.length
+  };
 }
 
 type PortalClientDisplaySettings = {
@@ -668,6 +774,57 @@ function applyJourneyAgendaDisplaySettings(items: JourneyAgendaItem[], settings:
   return adjustedItems;
 }
 
+type TicketAttachmentInput = {
+  file_name: string;
+  file_data_base64: string;
+};
+
+function insertTicketMessageWithAttachments(params: {
+  ticketId: string;
+  authorType: 'Cliente' | 'Holand';
+  authorLabel: string | null;
+  body: string | null;
+  attachments: TicketAttachmentInput[];
+  nowIso: string;
+}) {
+  const messageId = uuid('ptmsg');
+  db.prepare(`
+    insert into portal_ticket_message (
+      id, ticket_id, author_type, author_label, body, created_at
+    ) values (?, ?, ?, ?, ?, ?)
+  `).run(
+    messageId,
+    params.ticketId,
+    params.authorType,
+    params.authorLabel,
+    params.body,
+    params.nowIso
+  );
+
+  if (params.attachments.length === 0) return messageId;
+  const insertAttachment = db.prepare(`
+    insert into portal_ticket_attachment (
+      id, ticket_message_id, file_name, mime_type, file_data_base64, file_size_bytes, created_at
+    ) values (?, ?, ?, ?, ?, ?, ?)
+  `);
+  params.attachments.forEach((attachment) => {
+    const normalizedFileName = attachment.file_name.trim();
+    if (!normalizedFileName) return;
+    const decoded = decodeAttachmentDataUrl(attachment.file_data_base64);
+    insertAttachment.run(
+      uuid('ptatt'),
+      messageId,
+      normalizedFileName,
+      decoded.mimeType,
+      attachment.file_data_base64,
+      decoded.fileSizeBytes,
+      params.nowIso
+    );
+  });
+
+  return messageId;
+}
+
 export function registerPortalRoutes(app: Express) {
   const router = express.Router();
 
@@ -678,14 +835,44 @@ export function registerPortalRoutes(app: Express) {
         return res.status(400).json(parsed.error.flatten());
       }
 
-      const { slug, username, password } = parsed.data;
+      const { slug, username, password, is_internal: isInternalLogin } = parsed.data;
       const ip = req.ip || req.socket.remoteAddress || 'unknown';
       const userAgent = (req.header('user-agent') || 'unknown').slice(0, 120);
-      const throttleKey = buildLoginThrottleKey(ip, userAgent, slug, username);
+      const throttleIdentity = isInternalLogin ? `internal:${username}` : username;
+      const throttleKey = buildLoginThrottleKey(ip, userAgent, slug, throttleIdentity);
       const throttle = consumeLoginAttempt(throttleKey, Date.now());
       if (!throttle.allowed) {
         res.set('Retry-After', String(throttle.retryAfterSeconds));
         return res.status(429).json({ message: 'Muitas tentativas. Tente novamente em instantes.' });
+      }
+
+      if (isInternalLogin) {
+        const operatorCredentials = readPortalOperatorCredentials();
+        const portalClient = findPortalClientBySlug(slug);
+        const canAttemptInternalAuth = Boolean(
+          portalClient
+          && operatorCredentials.username
+          && operatorCredentials.password_hash
+          && username.trim() === operatorCredentials.username
+        );
+        const operatorPasswordHash = canAttemptInternalAuth
+          ? (operatorCredentials.password_hash as string)
+          : DUMMY_PASSWORD_HASH;
+        const internalPasswordOk = await verifyPassword(password, operatorPasswordHash);
+        if (!canAttemptInternalAuth || !internalPasswordOk || !portalClient) {
+          return res.status(401).json({ message: 'Credenciais inválidas.' });
+        }
+
+        const portalUserId = ensureInternalPortalUser(portalClient.portal_client_id);
+        const session = await createPortalSession({
+          company_id: portalClient.company_id,
+          portal_client_id: portalClient.portal_client_id,
+          portal_user_id: portalUserId,
+          slug: portalClient.slug,
+          username: INTERNAL_PORTAL_USER_USERNAME
+        }, { isInternal: true });
+        clearLoginAttempts(throttleKey);
+        return res.status(200).json(session);
       }
 
       const portalUser = findPortalUserBySlugAndUsername(slug, username);
@@ -707,7 +894,7 @@ export function registerPortalRoutes(app: Express) {
         portal_user_id: portalUser.portal_user_id,
         slug: portalUser.slug,
         username: portalUser.username
-      });
+      }, { isInternal: false });
       clearLoginAttempts(throttleKey);
 
       return res.status(200).json(session);
@@ -726,7 +913,8 @@ export function registerPortalRoutes(app: Express) {
       company_id: context.company_id,
       company_name: context.company_name,
       username: context.username,
-      slug: context.slug
+      slug: context.slug,
+      is_internal: context.is_internal
     });
   });
 
@@ -867,6 +1055,7 @@ export function registerPortalRoutes(app: Express) {
       const payload = parsed.data;
       const nowIso = new Date().toISOString();
       const description = payload.description?.trim() || null;
+      const attachments = payload.attachments ?? [];
 
       const tx = db.transaction(() => {
         const ticketId = uuid('ptk');
@@ -910,6 +1099,15 @@ export function registerPortalRoutes(app: Express) {
           set kanban_card_id = ?, updated_at = ?
           where id = ?
         `).run(cardId, nowIso, ticketId);
+
+        insertTicketMessageWithAttachments({
+          ticketId,
+          authorType: context.is_internal ? 'Holand' : 'Cliente',
+          authorLabel: context.is_internal ? 'Operador Holand' : context.username,
+          body: description || 'Solicitação aberta.',
+          attachments,
+          nowIso
+        });
 
         return { ticketId };
       });
@@ -995,6 +1193,10 @@ export function registerPortalRoutes(app: Express) {
       created_at: row.created_at,
       updated_at: row.updated_at,
       source: row.source,
+      workflow_stage: toWorkflowStage({
+        ticketStatus: row.status,
+        columnTitle: row.column_title
+      }),
       client_status: toClientFacingStatus({
         ticketStatus: row.status,
         columnTitle: row.column_title
@@ -1004,6 +1206,186 @@ export function registerPortalRoutes(app: Express) {
       items,
       support_intro_text: displaySettings.supportIntroText
     });
+  });
+
+  router.get('/tickets/:id/thread', requirePortalAuth, (req, res) => {
+    const context = getPortalContextOrNull(res);
+    if (!context) {
+      return res.status(401).json({ message: 'Sessão inválida ou expirada.' });
+    }
+
+    if (req.params.id.startsWith('kcard-')) {
+      return res.status(200).json({
+        ticket_id: req.params.id,
+        messages: [],
+        note: 'Este item veio da operação interna e ainda não possui thread no portal.'
+      });
+    }
+
+    const ticket = db.prepare(`
+      select id
+      from portal_ticket
+      where id = ?
+        and company_id = ?
+      limit 1
+    `).get(req.params.id, context.company_id) as { id: string } | undefined;
+
+    if (!ticket) {
+      return res.status(404).json({ message: 'Chamado não encontrado para este cliente.' });
+    }
+
+    const messages = db.prepare(`
+      select id, author_type, author_label, body, created_at
+      from portal_ticket_message
+      where ticket_id = ?
+      order by datetime(created_at) asc, id asc
+    `).all(ticket.id) as Array<{
+      id: string;
+      author_type: 'Cliente' | 'Holand';
+      author_label: string | null;
+      body: string | null;
+      created_at: string;
+    }>;
+
+    const attachments = db.prepare(`
+      select id, ticket_message_id, file_name, mime_type, file_size_bytes, created_at
+      from portal_ticket_attachment
+      where ticket_message_id in (
+        select id from portal_ticket_message where ticket_id = ?
+      )
+      order by datetime(created_at) asc, id asc
+    `).all(ticket.id) as Array<{
+      id: string;
+      ticket_message_id: string;
+      file_name: string;
+      mime_type: string;
+      file_size_bytes: number;
+      created_at: string;
+    }>;
+
+    const attachmentsByMessage = new Map<string, Array<{
+      id: string;
+      file_name: string;
+      mime_type: string;
+      file_size_bytes: number;
+      created_at: string;
+      download_url: string;
+    }>>();
+    attachments.forEach((item) => {
+      const list = attachmentsByMessage.get(item.ticket_message_id) ?? [];
+      list.push({
+        id: item.id,
+        file_name: item.file_name,
+        mime_type: item.mime_type,
+        file_size_bytes: item.file_size_bytes,
+        created_at: item.created_at,
+        download_url: `/portal/api/tickets/${ticket.id}/attachments/${item.id}/download`
+      });
+      attachmentsByMessage.set(item.ticket_message_id, list);
+    });
+
+    return res.status(200).json({
+      ticket_id: ticket.id,
+      messages: messages.map((message) => ({
+        id: message.id,
+        author_type: message.author_type,
+        author_label: message.author_label,
+        body: message.body,
+        created_at: message.created_at,
+        attachments: attachmentsByMessage.get(message.id) ?? []
+      }))
+    });
+  });
+
+  router.post('/tickets/:id/messages', requirePortalAuth, (req, res) => {
+    const context = getPortalContextOrNull(res);
+    if (!context) {
+      return res.status(401).json({ message: 'Sessão inválida ou expirada.' });
+    }
+
+    const parsed = ticketMessageSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+
+    if (req.params.id.startsWith('kcard-')) {
+      return res.status(400).json({ message: 'Este item da operação não possui thread editável no portal.' });
+    }
+
+    const ticket = db.prepare(`
+      select id
+      from portal_ticket
+      where id = ?
+        and company_id = ?
+      limit 1
+    `).get(req.params.id, context.company_id) as { id: string } | undefined;
+    if (!ticket) {
+      return res.status(404).json({ message: 'Chamado não encontrado para este cliente.' });
+    }
+
+    const payload = parsed.data;
+    const body = payload.body?.trim() || null;
+    const attachments = payload.attachments ?? [];
+    if (!body && attachments.length === 0) {
+      return res.status(400).json({ message: 'Informe uma mensagem ou anexo.' });
+    }
+
+    const nowIso = new Date().toISOString();
+    const messageId = insertTicketMessageWithAttachments({
+      ticketId: ticket.id,
+      authorType: context.is_internal ? 'Holand' : 'Cliente',
+      authorLabel: context.is_internal ? 'Operador Holand' : context.username,
+      body,
+      attachments,
+      nowIso
+    });
+
+    db.prepare(`
+      update portal_ticket
+      set updated_at = ?
+      where id = ?
+    `).run(nowIso, ticket.id);
+
+    return res.status(201).json({ id: messageId });
+  });
+
+  router.get('/tickets/:ticketId/attachments/:attachmentId/download', requirePortalAuth, (req, res) => {
+    const context = getPortalContextOrNull(res);
+    if (!context) {
+      return res.status(401).json({ message: 'Sessão inválida ou expirada.' });
+    }
+
+    const row = db.prepare(`
+      select
+        a.file_name,
+        a.mime_type,
+        a.file_data_base64
+      from portal_ticket_attachment a
+      join portal_ticket_message m on m.id = a.ticket_message_id
+      join portal_ticket t on t.id = m.ticket_id
+      where a.id = ?
+        and t.id = ?
+        and t.company_id = ?
+      limit 1
+    `).get(
+      req.params.attachmentId,
+      req.params.ticketId,
+      context.company_id
+    ) as
+      | { file_name: string; mime_type: string; file_data_base64: string }
+      | undefined;
+
+    if (!row) {
+      return res.status(404).json({ message: 'Anexo não encontrado.' });
+    }
+
+    const decoded = decodeAttachmentDataUrl(row.file_data_base64);
+    const dataPart = row.file_data_base64.split(',')[1] ?? '';
+    const buffer = Buffer.from(dataPart, 'base64');
+    const fileName = encodeURIComponent(row.file_name);
+    res.setHeader('Content-Type', row.mime_type || decoded.mimeType || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${fileName}`);
+    return res.status(200).send(buffer);
   });
 
   app.use('/portal/api', router);

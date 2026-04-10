@@ -75,8 +75,15 @@ export const portalApi = {
     planning: () => portalReq('/portal/api/planning', {}, { token, onUnauthorized }),
     agenda: () => portalReq('/portal/api/agenda', {}, { token, onUnauthorized }),
     tickets: () => portalReq<PortalTicketsResponse>('/portal/api/tickets', {}, { token, onUnauthorized }),
+    ticketThread: (ticketId: string) =>
+      portalReq(`/portal/api/tickets/${ticketId}/thread`, {}, { token, onUnauthorized }),
     createTicket: (payload: CreatePortalTicketPayload) =>
       portalReq('/portal/api/tickets', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      }, { token, onUnauthorized }),
+    createTicketMessage: (ticketId, payload) =>
+      portalReq(`/portal/api/tickets/${ticketId}/messages`, {
         method: 'POST',
         body: JSON.stringify(payload)
       }, { token, onUnauthorized })

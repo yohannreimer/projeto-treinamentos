@@ -2582,6 +2582,26 @@ button:focus-visible,
   border-radius: 12px;
 }
 
+.kanban-card-file-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 1px solid #d4dde7;
+  border-radius: 10px;
+  background: #f6f8fa;
+  color: #2f4358;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.kanban-card-file-link:hover {
+  background: #edf1f5;
+  border-color: #c9d4df;
+}
+
 .kanban-create-note-btn {
   background: linear-gradient(180deg, #fff9f8 0%, #fff0ed 100%);
   color: #7f2f20;
@@ -2701,6 +2721,31 @@ button:focus-visible,
   justify-self: start;
   min-height: 28px;
   font-size: 0.8rem;
+}
+
+.kanban-file-preview {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid #d6dfe8;
+  border-radius: 14px;
+  background: #fff;
+}
+
+.kanban-file-preview-head {
+  display: grid;
+  gap: 2px;
+}
+
+.kanban-file-preview-head strong {
+  font-size: 0.84rem;
+  color: #203245;
+  word-break: break-word;
+}
+
+.kanban-file-preview-head span {
+  font-size: 0.74rem;
+  color: #5a7086;
 }
 
 .kanban-column-footer {
@@ -2923,6 +2968,20 @@ button:focus-visible,
   gap: 7px;
   font-weight: 600;
   color: var(--brand-ink);
+}
+
+.portal-login-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  color: #5b6976;
+  font-weight: 600;
+}
+
+.portal-login-checkbox input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
 }
 
 .portal-login-form input {
@@ -3386,6 +3445,71 @@ button:focus-visible,
   justify-content: flex-end;
 }
 
+.portal-ticket-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.portal-attachment-remove {
+  margin-left: 6px;
+  border: none;
+  background: transparent;
+  color: #7b8895;
+  font-size: 0.74rem;
+  padding: 0;
+}
+
+.portal-ticket-thread {
+  margin-top: 14px;
+  border: 1px solid #d7e1e8;
+  border-radius: 16px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.portal-ticket-thread-messages {
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.portal-ticket-message {
+  border: 1px solid #d9e3ea;
+  border-radius: 12px;
+  padding: 10px 11px;
+  background: #f9fbfc;
+}
+
+.portal-ticket-message.is-holand {
+  border-color: rgba(239, 47, 15, 0.25);
+  background: rgba(239, 47, 15, 0.05);
+}
+
+.portal-ticket-message-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8rem;
+  color: #5e6f7d;
+}
+
+.portal-ticket-message-head strong {
+  color: #223441;
+}
+
+.portal-ticket-message p {
+  margin: 6px 0 0;
+}
+
+.portal-ticket-message-attachments {
+  margin-top: 8px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 .portal-table-wrap {
   margin-top: 12px;
   overflow: auto;
@@ -3497,6 +3621,10 @@ button:focus-visible,
   padding: 10px 12px;
   font-weight: 700;
   cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .portal-status-chip {

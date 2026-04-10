@@ -2,16 +2,19 @@ export type PortalLoginPayload = {
   slug: string;
   username: string;
   password: string;
+  is_internal?: boolean;
 };
 
 export type PortalLoginResponse = {
   token: string;
   expires_at: string;
+  is_internal: boolean;
 };
 
 export type PortalSessionData = {
   token: string;
   expires_at: string;
+  is_internal?: boolean;
 };
 
 export type PortalMe = {
@@ -19,6 +22,7 @@ export type PortalMe = {
   company_name: string;
   username: string;
   slug: string;
+  is_internal?: boolean;
 };
 
 export type PortalOverview = {
@@ -79,6 +83,7 @@ export type PortalTicket = {
   priority: PortalTicketPriority;
   created_at: string;
   updated_at: string;
+  workflow_stage?: string;
   client_status: string;
   source: PortalTicketSource;
 };
@@ -92,6 +97,28 @@ export type CreatePortalTicketPayload = {
   title: string;
   description?: string | null;
   priority?: PortalTicketPriority;
+  attachments?: Array<{
+    file_name: string;
+    file_data_base64: string;
+  }>;
+};
+
+export type PortalTicketMessageAttachment = {
+  id: string;
+  file_name: string;
+  mime_type: string;
+  file_size_bytes: number;
+  created_at: string;
+  download_url: string;
+};
+
+export type PortalTicketMessage = {
+  id: string;
+  author_type: 'Cliente' | 'Holand';
+  author_label: string | null;
+  body: string | null;
+  created_at: string;
+  attachments: PortalTicketMessageAttachment[];
 };
 
 export type PortalAuthedApi = {
@@ -100,5 +127,17 @@ export type PortalAuthedApi = {
   planning: () => Promise<{ items: PortalPlanningItem[] }>;
   agenda: () => Promise<{ items: PortalAgendaItem[] }>;
   tickets: () => Promise<PortalTicketsResponse>;
+  ticketThread: (ticketId: string) => Promise<{
+    ticket_id: string;
+    messages: PortalTicketMessage[];
+    note?: string;
+  }>;
   createTicket: (payload: CreatePortalTicketPayload) => Promise<{ id: string }>;
+  createTicketMessage: (
+    ticketId: string,
+    payload: {
+      body?: string | null;
+      attachments?: Array<{ file_name: string; file_data_base64: string }>;
+    }
+  ) => Promise<{ id: string }>;
 };

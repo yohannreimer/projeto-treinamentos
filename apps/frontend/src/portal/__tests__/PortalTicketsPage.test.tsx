@@ -19,7 +19,9 @@ test('renders ticket list and opens new ticket form', async () => {
         }
       ]
     }),
-    createTicket: vi.fn().mockResolvedValue({ id: 'ptk-02' })
+    createTicket: vi.fn().mockResolvedValue({ id: 'ptk-02' }),
+    ticketThread: vi.fn().mockResolvedValue({ ticket_id: 'ptk-01', messages: [] }),
+    createTicketMessage: vi.fn().mockResolvedValue({ id: 'ptmsg-01' })
   };
 
   render(<PortalTicketsPage api={fakeApi} />);

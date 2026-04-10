@@ -78,7 +78,13 @@ test('POST /portal/api/tickets creates portal_ticket and implementation_kanban_c
       .send({
         title: 'Erro no acesso',
         description: 'Detalhes do problema no login do usuário final.',
-        priority: 'Alta'
+        priority: 'Alta',
+        attachments: [
+          {
+            file_name: 'evidencia.txt',
+            file_data_base64: 'data:text/plain;base64,SG9sYW5kIHRlc3Rl'
+          }
+        ]
       });
 
     assert.equal(createRes.status, 201);
@@ -121,6 +127,22 @@ test('POST /portal/api/tickets creates portal_ticket and implementation_kanban_c
     assert.equal(card.client_name, 'Cliente Portal Tickets');
     assert.equal(card.subcategory, 'Suporte');
     assert.equal(card.priority, 'Alta');
+
+    const messageCount = db.prepare(`
+      select count(*) as count
+      from portal_ticket_message
+      where ticket_id = ?
+    `).get(createRes.body.id) as { count: number };
+    assert.equal(messageCount.count, 1);
+
+    const attachmentCount = db.prepare(`
+      select count(*) as count
+      from portal_ticket_attachment
+      where ticket_message_id in (
+        select id from portal_ticket_message where ticket_id = ?
+      )
+    `).get(createRes.body.id) as { count: number };
+    assert.equal(attachmentCount.count, 1);
 
     db.prepare(`
       insert into portal_ticket (
@@ -199,7 +221,7 @@ test('POST /portal/api/tickets creates portal_ticket and implementation_kanban_c
     assert.equal(Array.isArray(listRes.body.items), true);
     assert.equal(listRes.body.support_intro_text, 'Canal oficial para dúvidas e impedimentos do seu time.');
     const createdItem = listRes.body.items.find((item: { title: string }) => item.title === 'Erro no acesso') as
-      | { title: string; client_status: string; status?: string; column_title?: string }
+      | { title: string; client_status: string; workflow_stage?: string; status?: string; column_title?: string }
       | undefined;
     assert.ok(createdItem);
     assert.equal(
@@ -212,11 +234,13 @@ test('POST /portal/api/tickets creates portal_ticket and implementation_kanban_c
         item.title === 'Erro no acesso' && item.source === 'Portal'),
       true
     );
+    assert.equal(createdItem.workflow_stage, 'A fazer');
     assert.equal(
-      listRes.body.items.some((item: { title: string; source: string; client_status: string }) =>
+      listRes.body.items.some((item: { title: string; source: string; client_status: string; workflow_stage: string }) =>
         item.title === 'Suporte aberto pelo time interno'
         && item.source === 'Operacao'
-        && item.client_status === 'Em execução'),
+        && item.client_status === 'Em execução'
+        && item.workflow_stage === 'Em andamento'),
       true
     );
     assert.equal('status' in createdItem, false);
@@ -229,6 +253,63 @@ test('POST /portal/api/tickets creates portal_ticket and implementation_kanban_c
       listRes.body.items.some((item: { title: string }) => item.title === 'Suporte de outro cliente'),
       false
     );
+
+    const threadRes = await request(app)
+      .get(`/portal/api/tickets/${createRes.body.id as string}/thread`)
+      .set('Authorization', `Bearer ${token}`);
+    assert.equal(threadRes.status, 200);
+    assert.equal(Array.isArray(threadRes.body.messages), true);
+    assert.equal(threadRes.body.messages.length, 1);
+    assert.equal(threadRes.body.messages[0].attachments.length, 1);
+
+    const messageRes = await request(app)
+      .post(`/portal/api/tickets/${createRes.body.id as string}/messages`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        body: 'Enviei mais contexto.',
+        attachments: [
+          {
+            file_name: 'print.png',
+            file_data_base64: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7+4V0AAAAASUVORK5CYII='
+          }
+        ]
+      });
+    assert.equal(messageRes.status, 201);
+
+    assert.ok(ticket.kanban_card_id);
+    const internalMirrorRes = await request(app)
+      .patch(`/implementation/kanban/cards/${ticket.kanban_card_id}`)
+      .send({
+        support_resolution: 'Aplicamos ajuste no perfil e validamos com o time do cliente.',
+        attachment_file_name: 'checklist-final.pdf',
+        attachment_file_data_base64: 'data:application/pdf;base64,JVBERi0xLjQKJQ=='
+      });
+    assert.equal(internalMirrorRes.status, 200);
+
+    const mirroredThreadRes = await request(app)
+      .get(`/portal/api/tickets/${createRes.body.id as string}/thread`)
+      .set('Authorization', `Bearer ${token}`);
+    assert.equal(mirroredThreadRes.status, 200);
+    assert.equal(mirroredThreadRes.body.messages.length, 3);
+    const mirroredMessage = mirroredThreadRes.body.messages.find((message: {
+      author_type: string;
+      author_label: string | null;
+      body: string | null;
+      attachments: Array<{ file_name: string }>;
+    }) => message.body === 'Aplicamos ajuste no perfil e validamos com o time do cliente.') as
+      | {
+        author_type: string;
+        author_label: string | null;
+        body: string | null;
+        attachments: Array<{ file_name: string }>;
+      }
+      | undefined;
+    assert.ok(mirroredMessage);
+    assert.equal(mirroredMessage.author_type, 'Holand');
+    assert.equal(mirroredMessage.author_label, 'Equipe Holand');
+    assert.equal(mirroredMessage.body, 'Aplicamos ajuste no perfil e validamos com o time do cliente.');
+    assert.equal(mirroredMessage.attachments.length, 1);
+    assert.equal(mirroredMessage.attachments[0].file_name, 'checklist-final.pdf');
   } finally {
     cleanupDbFiles(dbPath);
   }

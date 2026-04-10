@@ -175,6 +175,7 @@ export function initDb() {
       portal_client_id text not null,
       company_id text not null,
       token_hash text not null unique,
+      is_internal integer not null default 0,
       expires_at text not null,
       created_at text not null,
       last_seen_at text not null,
@@ -201,6 +202,33 @@ export function initDb() {
       foreign key(company_id) references company(id) on delete cascade,
       foreign key(portal_user_id) references portal_user(id) on delete cascade,
       foreign key(kanban_card_id) references implementation_kanban_card(id) on delete set null
+    );
+
+    create table if not exists portal_ticket_message (
+      id text primary key,
+      ticket_id text not null,
+      author_type text not null default 'Cliente',
+      author_label text,
+      body text,
+      created_at text not null,
+      foreign key(ticket_id) references portal_ticket(id) on delete cascade
+    );
+
+    create table if not exists portal_ticket_attachment (
+      id text primary key,
+      ticket_message_id text not null,
+      file_name text not null,
+      mime_type text not null,
+      file_data_base64 text not null,
+      file_size_bytes integer not null default 0,
+      created_at text not null,
+      foreign key(ticket_message_id) references portal_ticket_message(id) on delete cascade
+    );
+
+    create table if not exists app_setting (
+      key text primary key,
+      value text not null,
+      updated_at text not null
     );
 
     create table if not exists technician (
@@ -439,6 +467,8 @@ export function initDb() {
       priority text not null default 'Normal',
       due_date text,
       attachment_image_data_url text,
+      attachment_file_name text,
+      attachment_file_data_base64 text,
       position integer not null default 0,
       created_at text not null,
       updated_at text not null,
@@ -494,6 +524,9 @@ export function initDb() {
   ensureColumn('implementation_kanban_card', 'priority', "priority text not null default 'Normal'");
   ensureColumn('implementation_kanban_card', 'due_date', 'due_date text');
   ensureColumn('implementation_kanban_card', 'attachment_image_data_url', 'attachment_image_data_url text');
+  ensureColumn('implementation_kanban_card', 'attachment_file_name', 'attachment_file_name text');
+  ensureColumn('implementation_kanban_card', 'attachment_file_data_base64', 'attachment_file_data_base64 text');
+  ensureColumn('portal_session', 'is_internal', 'is_internal integer not null default 0');
   ensureColumn('portal_ticket', 'kanban_card_id', 'kanban_card_id text');
   ensureColumn('portal_client', 'support_intro_text', 'support_intro_text text');
   ensureColumn('portal_client', 'hidden_module_ids_json', "hidden_module_ids_json text not null default '[]'");
@@ -506,6 +539,8 @@ export function initDb() {
     create index if not exists idx_portal_session_client on portal_session(portal_client_id);
     create index if not exists idx_portal_ticket_company_created on portal_ticket(company_id, created_at desc);
     create index if not exists idx_portal_ticket_kanban on portal_ticket(kanban_card_id);
+    create index if not exists idx_portal_ticket_message_ticket_created on portal_ticket_message(ticket_id, created_at asc);
+    create index if not exists idx_portal_ticket_attachment_message on portal_ticket_attachment(ticket_message_id);
   `);
 
   db.exec(`
@@ -775,6 +810,8 @@ export function seedDb() {
 export function clearAllData() {
   db.exec(`
     delete from portal_ticket;
+    delete from portal_ticket_attachment;
+    delete from portal_ticket_message;
     delete from portal_session;
     delete from portal_user;
     delete from portal_client;
