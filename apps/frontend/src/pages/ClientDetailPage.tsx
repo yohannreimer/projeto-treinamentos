@@ -36,6 +36,11 @@ export function ClientDetailPage() {
   const [contactName, setContactName] = useState('');
   const [contactPhone, setContactPhone] = useState('');
   const [contactEmail, setContactEmail] = useState('');
+  const [portalSlug, setPortalSlug] = useState('');
+  const [portalUsername, setPortalUsername] = useState('');
+  const [portalPassword, setPortalPassword] = useState('');
+  const [portalActive, setPortalActive] = useState(true);
+  const [savingPortalAccess, setSavingPortalAccess] = useState(false);
 
   const [moduleEdits, setModuleEdits] = useState<Record<string, ModuleEdit>>({});
   const [savingCompany, setSavingCompany] = useState(false);
@@ -47,9 +52,16 @@ export function ClientDetailPage() {
 
   function load() {
     if (!id) return;
-    api.companyById(id)
-      .then((response) => {
+    Promise.all([
+      api.companyById(id),
+      api.portalAccessByCompany(id)
+    ])
+      .then(([response, portalAccess]) => {
         setData(response);
+        setPortalSlug(portalAccess.slug ?? '');
+        setPortalUsername(portalAccess.username ?? '');
+        setPortalActive(Boolean(portalAccess.is_active));
+        setPortalPassword('');
         setError('');
       })
       .catch((err: Error) => {
@@ -189,6 +201,41 @@ export function ClientDetailPage() {
       setError((err as Error).message);
     } finally {
       setSavingCompany(false);
+    }
+  }
+
+  async function savePortalAccess() {
+    if (!id) return;
+    if (!portalSlug.trim()) {
+      setError('Informe o slug do portal.');
+      return;
+    }
+    if (!portalUsername.trim()) {
+      setError('Informe o usuário do portal.');
+      return;
+    }
+    if (!portalPassword.trim()) {
+      setError('Informe a nova senha do portal.');
+      return;
+    }
+
+    setSavingPortalAccess(true);
+    setError('');
+    setMessage('');
+    try {
+      await api.upsertPortalAccessByCompany(id, {
+        slug: portalSlug.trim(),
+        username: portalUsername.trim(),
+        password: portalPassword,
+        is_active: portalActive
+      });
+      setPortalPassword('');
+      setMessage('Acesso do portal atualizado.');
+      load();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSavingPortalAccess(false);
     }
   }
 
@@ -354,6 +401,51 @@ export function ClientDetailPage() {
               <div className="actions actions-compact">
                 <button type="button" onClick={saveCompanyProfile} disabled={savingCompany}>
                   {savingCompany ? 'Salvando...' : 'Salvar dados do cliente'}
+                </button>
+              </div>
+            </div>
+          </Section>
+
+          <Section title="Acesso ao portal do cliente">
+            <div className="form form-spacious">
+              <p className="form-hint">Defina URL, usuário e status do acesso externo para o cliente acompanhar planejamento, agenda e chamados.</p>
+              <div className="three-col">
+                <label>
+                  Slug da URL
+                  <input
+                    value={portalSlug}
+                    onChange={(event) => setPortalSlug(event.target.value)}
+                    placeholder="ex: cliente-metal-forte"
+                  />
+                </label>
+                <label>
+                  Usuário
+                  <input
+                    value={portalUsername}
+                    onChange={(event) => setPortalUsername(event.target.value)}
+                    placeholder="Usuário de acesso"
+                  />
+                </label>
+                <label>
+                  Status
+                  <select value={portalActive ? 'ativo' : 'inativo'} onChange={(event) => setPortalActive(event.target.value === 'ativo')}>
+                    <option value="ativo">Ativo</option>
+                    <option value="inativo">Inativo</option>
+                  </select>
+                </label>
+              </div>
+              <label>
+                Nova senha
+                <input
+                  type="password"
+                  value={portalPassword}
+                  onChange={(event) => setPortalPassword(event.target.value)}
+                  placeholder="Digite a nova senha para salvar"
+                />
+              </label>
+              <div className="actions actions-compact">
+                <button type="button" onClick={savePortalAccess} disabled={savingPortalAccess}>
+                  {savingPortalAccess ? 'Salvando acesso...' : 'Salvar acesso do portal'}
                 </button>
               </div>
             </div>

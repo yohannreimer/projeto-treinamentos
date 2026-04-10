@@ -174,6 +174,16 @@ export const api = {
       method: 'DELETE'
     }),
   companyById: (id: string) => req(`/companies/${id}`),
+  portalAccessByCompany: (companyId: string) =>
+    req<{ slug: string | null; username: string | null; is_active: boolean }>(`/companies/${companyId}/portal-access`),
+  upsertPortalAccessByCompany: (
+    companyId: string,
+    payload: { slug: string; username: string; password: string; is_active: boolean }
+  ) =>
+    req<{ ok: boolean; portal_client_id: string }>(`/companies/${companyId}/portal-access`, {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    }),
   licensePrograms: () => req('/license-programs'),
   createLicenseProgram: (payload: unknown) =>
     req('/license-programs', {
