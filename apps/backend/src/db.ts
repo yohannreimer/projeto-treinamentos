@@ -3,19 +3,93 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+type SqliteDatabase = InstanceType<typeof Database>;
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const dataDir = path.resolve(__dirname, '../data');
 fs.mkdirSync(dataDir, { recursive: true });
-const dbPath = path.resolve(dataDir, 'app.db');
 
-export const db = new Database(dbPath);
+function resolveDbPath() {
+  const explicitDbPath = process.env.APP_DB_PATH?.trim();
+  return explicitDbPath ? path.resolve(explicitDbPath) : path.resolve(dataDir, 'app.db');
+}
+
+let activeDbPath: string | null = null;
+let activeDb: SqliteDatabase | null = null;
+
+function getDbConnection(forceRefresh = false): SqliteDatabase {
+  const nextDbPath = resolveDbPath();
+  if (!forceRefresh && activeDb && activeDbPath === nextDbPath) {
+    return activeDb;
+  }
+
+  const nextDb = new Database(nextDbPath);
+  nextDb.pragma('foreign_keys = ON');
+  const previousDb = activeDb;
+  activeDb = nextDb;
+  activeDbPath = nextDbPath;
+  previousDb?.close();
+
+  return nextDb;
+}
+
+export function resetDbConnection() {
+  return getDbConnection(true);
+}
+
+export const db = new Proxy({} as SqliteDatabase, {
+  get(_target, property) {
+    const connection = getDbConnection();
+    const value = Reflect.get(connection, property);
+    return typeof value === 'function' ? value.bind(connection) : value;
+  },
+  set(_target, property, value) {
+    return Reflect.set(getDbConnection(), property, value);
+  },
+  has(_target, property) {
+    return Reflect.has(getDbConnection(), property);
+  },
+  ownKeys() {
+    return Reflect.ownKeys(getDbConnection());
+  },
+  getOwnPropertyDescriptor(_target, property) {
+    return Reflect.getOwnPropertyDescriptor(getDbConnection(), property);
+  }
+});
 
 function ensureColumn(table: string, column: string, definition: string) {
   const columns = db.prepare(`pragma table_info(${table})`).all() as Array<{ name: string }>;
   if (!columns.some((item) => item.name === column)) {
     db.exec(`alter table ${table} add column ${definition}`);
   }
+}
+
+function uniqueSortedIsoDates(values: string[]): string[] {
+  return Array.from(new Set(values
+    .map((item) => item.trim())
+    .filter((item) => /^\d{4}-\d{2}-\d{2}$/.test(item))
+  )).sort((a, b) => a.localeCompare(b));
+}
+
+function iterateIsoDateRange(startDate: string, endDate: string): string[] {
+  const [startYear, startMonth, startDay] = startDate.split('-').map(Number);
+  const [endYear, endMonth, endDay] = endDate.split('-').map(Number);
+  if (!startYear || !startMonth || !startDay || !endYear || !endMonth || !endDay) return [];
+
+  const cursor = new Date(startYear, startMonth - 1, startDay);
+  const end = new Date(endYear, endMonth - 1, endDay);
+  if (Number.isNaN(cursor.getTime()) || Number.isNaN(end.getTime()) || cursor > end) return [];
+
+  const results: string[] = [];
+  while (cursor <= end) {
+    const y = cursor.getFullYear();
+    const m = String(cursor.getMonth() + 1).padStart(2, '0');
+    const d = String(cursor.getDate()).padStart(2, '0');
+    results.push(`${y}-${m}-${d}`);
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return results;
 }
 
 export function initDb() {
@@ -68,6 +142,65 @@ export function initDb() {
       primary key (company_id, module_id),
       foreign key(company_id) references company(id) on delete cascade,
       foreign key(module_id) references module_template(id) on delete cascade
+    );
+
+    create table if not exists portal_client (
+      id text primary key,
+      company_id text not null unique,
+      slug text not null unique,
+      is_active integer not null default 1,
+      created_at text not null,
+      updated_at text not null,
+      unique(id, company_id),
+      foreign key(company_id) references company(id) on delete cascade
+    );
+
+    create table if not exists portal_user (
+      id text primary key,
+      portal_client_id text not null,
+      username text not null,
+      password_hash text not null,
+      is_active integer not null default 1,
+      last_login_at text,
+      created_at text not null,
+      updated_at text not null,
+      unique(id, portal_client_id),
+      unique(portal_client_id, username),
+      foreign key(portal_client_id) references portal_client(id) on delete cascade
+    );
+
+    create table if not exists portal_session (
+      id text primary key,
+      portal_user_id text not null,
+      portal_client_id text not null,
+      company_id text not null,
+      token_hash text not null unique,
+      expires_at text not null,
+      created_at text not null,
+      last_seen_at text not null,
+      foreign key(portal_user_id, portal_client_id)
+        references portal_user(id, portal_client_id)
+        on delete cascade,
+      foreign key(portal_client_id, company_id)
+        references portal_client(id, company_id)
+        on delete cascade
+    );
+
+    create table if not exists portal_ticket (
+      id text primary key,
+      company_id text not null,
+      portal_user_id text not null,
+      title text not null,
+      description text,
+      priority text not null default 'Normal',
+      status text not null default 'Aberto',
+      origin text not null default 'portal_cliente',
+      kanban_card_id text,
+      created_at text not null,
+      updated_at text not null,
+      foreign key(company_id) references company(id) on delete cascade,
+      foreign key(portal_user_id) references portal_user(id) on delete cascade,
+      foreign key(kanban_card_id) references implementation_kanban_card(id) on delete set null
     );
 
     create table if not exists technician (
@@ -243,6 +376,7 @@ export function initDb() {
       activity_type text not null default 'Outro',
       start_date text not null,
       end_date text not null,
+      selected_dates text,
       all_day integer not null default 1,
       start_time text,
       end_time text,
@@ -262,6 +396,16 @@ export function initDb() {
       primary key (activity_id, technician_id),
       foreign key(activity_id) references calendar_activity(id) on delete cascade,
       foreign key(technician_id) references technician(id) on delete cascade
+    );
+
+    create table if not exists calendar_activity_day (
+      activity_id text not null,
+      day_date text not null,
+      all_day integer not null default 1,
+      start_time text,
+      end_time text,
+      primary key (activity_id, day_date),
+      foreign key(activity_id) references calendar_activity(id) on delete cascade
     );
 
     create table if not exists internal_document (
@@ -335,6 +479,7 @@ export function initDb() {
   ensureColumn('company_license', 'user_name', 'user_name text');
   ensureColumn('company_license', 'module_list', 'module_list text');
   ensureColumn('company_license', 'license_identifier', 'license_identifier text');
+  ensureColumn('calendar_activity', 'selected_dates', 'selected_dates text');
   ensureColumn('technician', 'hourly_cost', 'hourly_cost real');
   ensureColumn('implementation_kanban_card', 'column_id', 'column_id text');
   ensureColumn('implementation_kanban_card', 'client_name', 'client_name text');
@@ -349,6 +494,76 @@ export function initDb() {
   ensureColumn('implementation_kanban_card', 'priority', "priority text not null default 'Normal'");
   ensureColumn('implementation_kanban_card', 'due_date', 'due_date text');
   ensureColumn('implementation_kanban_card', 'attachment_image_data_url', 'attachment_image_data_url text');
+  ensureColumn('portal_ticket', 'kanban_card_id', 'kanban_card_id text');
+
+  db.exec(`
+    drop index if exists idx_portal_user_username;
+    create index if not exists idx_portal_user_client_active on portal_user(portal_client_id, is_active);
+    create index if not exists idx_portal_session_company_expires on portal_session(company_id, expires_at);
+    create index if not exists idx_portal_session_client on portal_session(portal_client_id);
+    create index if not exists idx_portal_ticket_company_created on portal_ticket(company_id, created_at desc);
+    create index if not exists idx_portal_ticket_kanban on portal_ticket(kanban_card_id);
+  `);
+
+  db.exec(`
+    create trigger if not exists portal_session_tenant_consistency_insert
+    before insert on portal_session
+    for each row
+    when not exists (
+      select 1
+      from portal_user pu
+      join portal_client pc on pc.id = pu.portal_client_id
+      where pu.id = new.portal_user_id
+        and pu.portal_client_id = new.portal_client_id
+        and pc.company_id = new.company_id
+    )
+    begin
+      select raise(abort, 'portal_session tenant mismatch');
+    end;
+
+    create trigger if not exists portal_session_tenant_consistency_update
+    before update of portal_user_id, portal_client_id, company_id on portal_session
+    for each row
+    when not exists (
+      select 1
+      from portal_user pu
+      join portal_client pc on pc.id = pu.portal_client_id
+      where pu.id = new.portal_user_id
+        and pu.portal_client_id = new.portal_client_id
+        and pc.company_id = new.company_id
+    )
+    begin
+      select raise(abort, 'portal_session tenant mismatch');
+    end;
+
+    create trigger if not exists portal_ticket_tenant_consistency_insert
+    before insert on portal_ticket
+    for each row
+    when not exists (
+      select 1
+      from portal_user pu
+      join portal_client pc on pc.id = pu.portal_client_id
+      where pu.id = new.portal_user_id
+        and pc.company_id = new.company_id
+    )
+    begin
+      select raise(abort, 'portal_ticket tenant mismatch');
+    end;
+
+    create trigger if not exists portal_ticket_tenant_consistency_update
+    before update of portal_user_id, company_id on portal_ticket
+    for each row
+    when not exists (
+      select 1
+      from portal_user pu
+      join portal_client pc on pc.id = pu.portal_client_id
+      where pu.id = new.portal_user_id
+        and pc.company_id = new.company_id
+    )
+    begin
+      select raise(abort, 'portal_ticket tenant mismatch');
+    end;
+  `);
 
   db.exec(`
     insert or ignore into cohort_participant_module (participant_id, module_id)
@@ -369,6 +584,39 @@ export function initDb() {
   `);
   activitiesWithSingleTechnician.forEach((row) => {
     insertActivityTechnician.run(row.id, row.technician_id);
+  });
+
+  const activitiesWithoutDayRows = db.prepare(`
+    select ca.id, ca.start_date, ca.end_date, ca.selected_dates, ca.all_day, ca.start_time, ca.end_time
+    from calendar_activity ca
+    where not exists (
+      select 1
+      from calendar_activity_day cad
+      where cad.activity_id = ca.id
+    )
+  `).all() as Array<{
+    id: string;
+    start_date: string;
+    end_date: string;
+    selected_dates: string | null;
+    all_day: number;
+    start_time: string | null;
+    end_time: string | null;
+  }>;
+  const insertActivityDay = db.prepare(`
+    insert or ignore into calendar_activity_day (activity_id, day_date, all_day, start_time, end_time)
+    values (?, ?, ?, ?, ?)
+  `);
+  activitiesWithoutDayRows.forEach((activity) => {
+    const selectedDates = uniqueSortedIsoDates((activity.selected_dates ?? '').split('|'));
+    const fallbackDates = iterateIsoDateRange(activity.start_date, activity.end_date || activity.start_date);
+    const dates = selectedDates.length > 0 ? selectedDates : fallbackDates;
+    const allDay = Number(activity.all_day) === 1 ? 1 : 0;
+    const startTime = allDay === 1 ? null : activity.start_time;
+    const endTime = allDay === 1 ? null : activity.end_time;
+    dates.forEach((dateIso) => {
+      insertActivityDay.run(activity.id, dateIso, allDay, startTime, endTime);
+    });
   });
 
   const nowIso = new Date().toISOString().slice(0, 10);
@@ -523,6 +771,11 @@ export function seedDb() {
 
 export function clearAllData() {
   db.exec(`
+    delete from portal_ticket;
+    delete from portal_session;
+    delete from portal_user;
+    delete from portal_client;
+    delete from calendar_activity_day;
     delete from calendar_activity_technician;
     delete from internal_document;
     delete from calendar_activity;

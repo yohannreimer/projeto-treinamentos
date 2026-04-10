@@ -39,6 +39,24 @@ Projeto full-stack com front React + API Express + SQLite para operar jornadas m
 - Tecnicos (lista + especialidades)
 - Admin Jornada
 
+## Portal do Cliente
+- URL: `/portal/{slug}`
+- Login dedicado por cliente (`usuario + senha`) com sessao isolada do ambiente interno
+- Navegacao principal:
+  - `Visao Geral`
+  - `Planejamento`
+  - `Agenda`
+  - `Chamados`
+- Provisionamento interno:
+  - Tela: `Clientes > Detalhe do cliente > Acesso ao portal do cliente`
+  - Endpoints:
+    - `GET /companies/:id/portal-access`
+    - `PUT /companies/:id/portal-access`
+- Fluxo de suporte:
+  - cliente abre chamado no portal
+  - backend cria `portal_ticket` e card automatico no Kanban interno
+  - portal exibe status externo simplificado (`Recebido`, `Em analise`, `Em execucao`, `Aguardando cliente`, `Resolvido`)
+
 ## Importacao inicial via planilha Excel
 1. Abra `Admin Jornada` no front.
 2. Informe o caminho da planilha `.xlsx` (padrao):
