@@ -1,6 +1,6 @@
 import express, { type Express } from 'express';
 import { z } from 'zod';
-import { db } from '../db.js';
+import { db, uuid } from '../db.js';
 import {
   createPortalSession,
   findPortalUserBySlugAndUsername,
@@ -8,6 +8,7 @@ import {
   requirePortalAuth,
   verifyPassword
 } from './auth.js';
+import { toClientFacingStatus } from './status.js';
 
 const DUMMY_PASSWORD_HASH = 'scrypt:00112233445566778899aabbccddeeff:5232aa4cb8582e8f374f25579c6f9ad17d5a9af5ba6d42d4c44df702d20c9d4faef25ea0fca6a5aa69b8bb25439ee4c45cb8e173ceb7f0972b0a8f7fbf2bbd99';
 const LOGIN_WINDOW_MS = 60_000;
@@ -28,6 +29,12 @@ const loginSchema = z.object({
   slug: z.string().trim().min(2).max(120),
   username: z.string().trim().min(1).max(120),
   password: z.string().min(1).max(200)
+});
+
+const createTicketSchema = z.object({
+  title: z.string().trim().min(3).max(160),
+  description: z.string().trim().max(2_000).nullable().optional(),
+  priority: z.enum(['Alta', 'Normal', 'Baixa', 'Critica']).default('Normal')
 });
 
 function buildLoginThrottleKey(ip: string, userAgent: string, slug: string, username: string) {
@@ -106,6 +113,46 @@ function clearLoginAttempts(key: string) {
 
 function getPortalContextOrNull(res: express.Response) {
   return readPortalAuthContext(res);
+}
+
+function resolveSupportInboxColumn() {
+  const supportColumn = db.prepare(`
+    select id, title
+    from implementation_kanban_column
+    where lower(title) like '%suporte%'
+    order by position asc
+    limit 1
+  `).get() as { id: string; title: string } | undefined;
+  if (supportColumn) {
+    return supportColumn;
+  }
+
+  const firstColumn = db.prepare(`
+    select id, title
+    from implementation_kanban_column
+    order by position asc
+    limit 1
+  `).get() as { id: string; title: string } | undefined;
+  if (firstColumn) {
+    return firstColumn;
+  }
+
+  const nowIso = new Date().toISOString();
+  const fallbackColumn = { id: uuid('kcol'), title: 'Suporte' };
+  db.prepare(`
+    insert into implementation_kanban_column (id, title, color, position, created_at, updated_at)
+    values (?, ?, ?, 0, ?, ?)
+  `).run(fallbackColumn.id, fallbackColumn.title, '#7b8ea8', nowIso, nowIso);
+  return fallbackColumn;
+}
+
+function resolveNextCardPosition(columnId: string) {
+  const row = db.prepare(`
+    select coalesce(max(position), -1) + 1 as next_position
+    from implementation_kanban_card
+    where column_id = ?
+  `).get(columnId) as { next_position: number | null };
+  return row.next_position ?? 0;
 }
 
 export function registerPortalRoutes(app: Express) {
@@ -280,6 +327,122 @@ export function registerPortalRoutes(app: Express) {
       notes: string | null;
     }>;
 
+    return res.status(200).json({ items });
+  });
+
+  router.post('/tickets', requirePortalAuth, (req, res, next) => {
+    try {
+      const context = getPortalContextOrNull(res);
+      if (!context) {
+        return res.status(401).json({ message: 'Sessão inválida ou expirada.' });
+      }
+
+      const parsed = createTicketSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json(parsed.error.flatten());
+      }
+
+      const payload = parsed.data;
+      const nowIso = new Date().toISOString();
+      const description = payload.description?.trim() || null;
+
+      const tx = db.transaction(() => {
+        const ticketId = uuid('ptk');
+        const column = resolveSupportInboxColumn();
+        const nextPosition = resolveNextCardPosition(column.id);
+        const cardId = uuid('kcard');
+
+        db.prepare(`
+          insert into portal_ticket (
+            id, company_id, portal_user_id, title, description, priority, status, origin, created_at, updated_at
+          ) values (?, ?, ?, ?, ?, ?, 'Aberto', 'portal_cliente', ?, ?)
+        `).run(
+          ticketId,
+          context.company_id,
+          context.portal_user_id,
+          payload.title,
+          description,
+          payload.priority,
+          nowIso,
+          nowIso
+        );
+
+        db.prepare(`
+          insert into implementation_kanban_card (
+            id, title, description, column_id, client_name, subcategory, priority, position, created_at, updated_at
+          ) values (?, ?, ?, ?, ?, 'Suporte', ?, ?, ?, ?)
+        `).run(
+          cardId,
+          payload.title,
+          description,
+          column.id,
+          context.company_name,
+          payload.priority,
+          nextPosition,
+          nowIso,
+          nowIso
+        );
+
+        db.prepare(`
+          update portal_ticket
+          set kanban_card_id = ?, updated_at = ?
+          where id = ?
+        `).run(cardId, nowIso, ticketId);
+
+        return { ticketId };
+      });
+
+      const { ticketId } = tx();
+      return res.status(201).json({ id: ticketId });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  router.get('/tickets', requirePortalAuth, (_req, res) => {
+    const context = getPortalContextOrNull(res);
+    if (!context) {
+      return res.status(401).json({ message: 'Sessão inválida ou expirada.' });
+    }
+
+    const rows = db.prepare(`
+      select
+        pt.id,
+        pt.title,
+        pt.description,
+        pt.priority,
+        pt.status,
+        pt.created_at,
+        pt.updated_at,
+        c.title as column_title
+      from portal_ticket pt
+      left join implementation_kanban_card kc on kc.id = pt.kanban_card_id
+      left join implementation_kanban_column c on c.id = kc.column_id
+      where pt.company_id = ?
+      order by datetime(pt.created_at) desc
+    `).all(context.company_id) as Array<{
+      id: string;
+      title: string;
+      description: string | null;
+      priority: string;
+      status: string;
+      created_at: string;
+      updated_at: string;
+      column_title: string | null;
+    }>;
+
+    const items = rows.map((row) => ({
+      id: row.id,
+      title: row.title,
+      description: row.description,
+      priority: row.priority,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+      client_status: toClientFacingStatus({
+        ticketStatus: row.status,
+        columnTitle: row.column_title
+      })
+    }));
     return res.status(200).json({ items });
   });
 

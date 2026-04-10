@@ -186,6 +186,23 @@ export function initDb() {
         on delete cascade
     );
 
+    create table if not exists portal_ticket (
+      id text primary key,
+      company_id text not null,
+      portal_user_id text not null,
+      title text not null,
+      description text,
+      priority text not null default 'Normal',
+      status text not null default 'Aberto',
+      origin text not null default 'portal_cliente',
+      kanban_card_id text,
+      created_at text not null,
+      updated_at text not null,
+      foreign key(company_id) references company(id) on delete cascade,
+      foreign key(portal_user_id) references portal_user(id) on delete cascade,
+      foreign key(kanban_card_id) references implementation_kanban_card(id) on delete set null
+    );
+
     create table if not exists technician (
       id text primary key,
       name text not null,
@@ -477,12 +494,15 @@ export function initDb() {
   ensureColumn('implementation_kanban_card', 'priority', "priority text not null default 'Normal'");
   ensureColumn('implementation_kanban_card', 'due_date', 'due_date text');
   ensureColumn('implementation_kanban_card', 'attachment_image_data_url', 'attachment_image_data_url text');
+  ensureColumn('portal_ticket', 'kanban_card_id', 'kanban_card_id text');
 
   db.exec(`
     drop index if exists idx_portal_user_username;
     create index if not exists idx_portal_user_client_active on portal_user(portal_client_id, is_active);
     create index if not exists idx_portal_session_company_expires on portal_session(company_id, expires_at);
     create index if not exists idx_portal_session_client on portal_session(portal_client_id);
+    create index if not exists idx_portal_ticket_company_created on portal_ticket(company_id, created_at desc);
+    create index if not exists idx_portal_ticket_kanban on portal_ticket(kanban_card_id);
   `);
 
   db.exec(`
@@ -514,6 +534,34 @@ export function initDb() {
     )
     begin
       select raise(abort, 'portal_session tenant mismatch');
+    end;
+
+    create trigger if not exists portal_ticket_tenant_consistency_insert
+    before insert on portal_ticket
+    for each row
+    when not exists (
+      select 1
+      from portal_user pu
+      join portal_client pc on pc.id = pu.portal_client_id
+      where pu.id = new.portal_user_id
+        and pc.company_id = new.company_id
+    )
+    begin
+      select raise(abort, 'portal_ticket tenant mismatch');
+    end;
+
+    create trigger if not exists portal_ticket_tenant_consistency_update
+    before update of portal_user_id, company_id on portal_ticket
+    for each row
+    when not exists (
+      select 1
+      from portal_user pu
+      join portal_client pc on pc.id = pu.portal_client_id
+      where pu.id = new.portal_user_id
+        and pc.company_id = new.company_id
+    )
+    begin
+      select raise(abort, 'portal_ticket tenant mismatch');
     end;
   `);
 
@@ -723,6 +771,7 @@ export function seedDb() {
 
 export function clearAllData() {
   db.exec(`
+    delete from portal_ticket;
     delete from portal_session;
     delete from portal_user;
     delete from portal_client;
