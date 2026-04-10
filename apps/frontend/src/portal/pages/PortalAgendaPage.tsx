@@ -12,6 +12,19 @@ function agendaTimeLabel(item: PortalAgendaItem) {
   return 'Horário a confirmar';
 }
 
+function formatDateBr(dateIso: string) {
+  const [year, month, day] = dateIso.split('-').map(Number);
+  if (!year || !month || !day) return dateIso;
+  return new Date(year, month - 1, day).toLocaleDateString('pt-BR');
+}
+
+function agendaStatusTone(status: string) {
+  if (status === 'Em_andamento') return 'is-warning';
+  if (status === 'Concluida') return 'is-success';
+  if (status === 'Cancelada') return 'is-critical';
+  return 'is-muted';
+}
+
 export function PortalAgendaPage({ api }: PortalAgendaPageProps) {
   const [items, setItems] = useState<PortalAgendaItem[]>([]);
   const [error, setError] = useState('');
@@ -63,7 +76,7 @@ export function PortalAgendaPage({ api }: PortalAgendaPageProps) {
             </div>
             <div className="portal-agenda-meta">
               <span className="portal-status-chip is-muted">{statusLabel(item.activity_type)}</span>
-              <span className="portal-status-chip is-progress">{statusLabel(item.status)}</span>
+              <span className={`portal-status-chip ${agendaStatusTone(item.status)}`}>{statusLabel(item.status)}</span>
               {item.encounter_index && item.total_encounters ? (
                 <span className="portal-status-chip is-analysis">
                   Encontro {item.encounter_index}/{item.total_encounters}
@@ -72,7 +85,7 @@ export function PortalAgendaPage({ api }: PortalAgendaPageProps) {
               {item.source === 'jornada' ? (
                 <span className="portal-status-chip is-muted">Jornada de treinamento</span>
               ) : null}
-              <span>{item.start_date} até {item.end_date}</span>
+              <span>{formatDateBr(item.start_date)} até {formatDateBr(item.end_date)}</span>
               <span>{agendaTimeLabel(item)}</span>
             </div>
           </article>

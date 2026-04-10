@@ -1,6 +1,6 @@
 import express, { type Express } from 'express';
 import { z } from 'zod';
-import { db, nowDateIso, uuid } from '../db.js';
+import { db, uuid } from '../db.js';
 import {
   createPortalSession,
   findPortalUserBySlugAndUsername,
@@ -194,6 +194,55 @@ function addBusinessDays(dateIso: string, offset: number): string {
   return isoDate(date);
 }
 
+function currentLocalSnapshot() {
+  const now = new Date();
+  const dateLabel = now.toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+  const [hourLabel, minuteLabel] = now
+    .toLocaleTimeString('pt-BR', {
+      timeZone: 'America/Sao_Paulo',
+      hour12: false,
+      hour: '2-digit',
+      minute: '2-digit'
+    })
+    .split(':');
+  const hour = Number(hourLabel ?? '0');
+  const minute = Number(minuteLabel ?? '0');
+  return {
+    dateIso: dateLabel,
+    minutes: (hour * 60) + minute
+  };
+}
+
+function timeToMinutes(value?: string | null): number | null {
+  if (!value) return null;
+  const [hourRaw, minuteRaw] = value.split(':');
+  const hour = Number(hourRaw);
+  const minute = Number(minuteRaw);
+  if (!Number.isInteger(hour) || !Number.isInteger(minute)) return null;
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+  return (hour * 60) + minute;
+}
+
+function deriveJourneySlotStatus(
+  slotDateIso: string,
+  slotStartTime: string | null,
+  slotEndTime: string | null,
+  snapshot: { dateIso: string; minutes: number }
+) {
+  if (slotDateIso < snapshot.dateIso) return 'Concluida';
+  if (slotDateIso > snapshot.dateIso) return 'Planejada';
+
+  const startMinutes = timeToMinutes(slotStartTime);
+  const endMinutes = timeToMinutes(slotEndTime);
+  if (startMinutes === null || endMinutes === null || endMinutes <= startMinutes) {
+    return 'Em_andamento';
+  }
+
+  if (snapshot.minutes < startMinutes) return 'Planejada';
+  if (snapshot.minutes >= endMinutes) return 'Concluida';
+  return 'Em_andamento';
+}
+
 type JourneyModuleSummary = {
   module_id: string;
   module_code: string;
@@ -252,7 +301,8 @@ function mergeJourneySummary(
 }
 
 function buildPortalJourneyReadModel(companyId: string) {
-  const todayIso = nowDateIso();
+  const snapshot = currentLocalSnapshot();
+  const todayIso = snapshot.dateIso;
   const allocationRows = db.prepare(`
     select
       a.id as allocation_id,
@@ -391,6 +441,8 @@ function buildPortalJourneyReadModel(companyId: string) {
       .filter((slot) => slot.day_date >= todayIso)
       .slice(0, 8)
       .forEach((slot) => {
+        const slotStatus = deriveJourneySlotStatus(slot.day_date, slot.start_time, slot.end_time, snapshot);
+        if (slotStatus === 'Concluida') return;
         agendaItems.push({
           id: `journey-${row.allocation_id}-${slot.day_index}`,
           company_id: row.company_id,
@@ -401,7 +453,7 @@ function buildPortalJourneyReadModel(companyId: string) {
           all_day: normalizedPeriod === 'Integral' ? 1 : 0,
           start_time: slot.start_time,
           end_time: slot.end_time,
-          status: slot.day_date === todayIso ? 'Em_andamento' : 'Planejada',
+          status: slotStatus,
           notes: row.cohort_code ? `Turma ${row.cohort_code} · ${row.cohort_name}` : `Turma ${row.cohort_name}`,
           source: 'jornada',
           module_name: row.module_name,
