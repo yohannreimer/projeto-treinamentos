@@ -64,6 +64,14 @@ export function PortalAgendaPage({ api }: PortalAgendaPageProps) {
             <div className="portal-agenda-meta">
               <span className="portal-status-chip is-muted">{statusLabel(item.activity_type)}</span>
               <span className="portal-status-chip is-progress">{statusLabel(item.status)}</span>
+              {item.encounter_index && item.total_encounters ? (
+                <span className="portal-status-chip is-analysis">
+                  Encontro {item.encounter_index}/{item.total_encounters}
+                </span>
+              ) : null}
+              {item.source === 'jornada' ? (
+                <span className="portal-status-chip is-muted">Jornada de treinamento</span>
+              ) : null}
               <span>{item.start_date} até {item.end_date}</span>
               <span>{agendaTimeLabel(item)}</span>
             </div>

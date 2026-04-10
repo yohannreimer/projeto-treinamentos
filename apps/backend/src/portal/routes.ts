@@ -1,6 +1,6 @@
 import express, { type Express } from 'express';
 import { z } from 'zod';
-import { db, uuid } from '../db.js';
+import { db, nowDateIso, uuid } from '../db.js';
 import {
   createPortalSession,
   findPortalUserBySlugAndUsername,
@@ -162,6 +162,341 @@ function normalizePortalTicketPriority(priority: string | null | undefined) {
   return 'Normal';
 }
 
+function parseIsoDate(dateIso: string): Date {
+  const [year, month, day] = dateIso.split('-').map(Number);
+  return new Date(year, (month ?? 1) - 1, day ?? 1);
+}
+
+function isoDate(value: Date): string {
+  const year = value.getFullYear();
+  const month = `${value.getMonth() + 1}`.padStart(2, '0');
+  const day = `${value.getDate()}`.padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function isWeekend(date: Date): boolean {
+  const day = date.getDay();
+  return day === 0 || day === 6;
+}
+
+function addBusinessDays(dateIso: string, offset: number): string {
+  const date = parseIsoDate(dateIso);
+  while (isWeekend(date)) {
+    date.setDate(date.getDate() + 1);
+  }
+  let moved = 0;
+  while (moved < offset) {
+    date.setDate(date.getDate() + 1);
+    if (!isWeekend(date)) {
+      moved += 1;
+    }
+  }
+  return isoDate(date);
+}
+
+type JourneyModuleSummary = {
+  module_id: string;
+  module_code: string;
+  module_name: string;
+  status: 'Planejado' | 'Em_execucao' | 'Concluido';
+  completed_at: string | null;
+  total_encounters: number;
+  completed_encounters: number;
+  remaining_encounters: number;
+  next_dates: string[];
+  current_cohort: string | null;
+};
+
+type JourneyAgendaItem = {
+  id: string;
+  company_id: string;
+  title: string;
+  activity_type: string;
+  start_date: string;
+  end_date: string;
+  all_day: number;
+  start_time: string | null;
+  end_time: string | null;
+  status: string;
+  notes: string | null;
+  source: 'jornada';
+  module_name: string;
+  encounter_index: number;
+  total_encounters: number;
+};
+
+function journeyStageRank(stage: JourneyModuleSummary['status']) {
+  if (stage === 'Concluido') return 3;
+  if (stage === 'Em_execucao') return 2;
+  return 1;
+}
+
+function mergeJourneySummary(
+  current: JourneyModuleSummary,
+  next: JourneyModuleSummary
+): JourneyModuleSummary {
+  const currentRank = journeyStageRank(current.status);
+  const nextRank = journeyStageRank(next.status);
+  if (nextRank > currentRank) return next;
+  if (nextRank < currentRank) return current;
+
+  if (next.status === 'Concluido') {
+    const currentDate = current.completed_at ?? '';
+    const nextDate = next.completed_at ?? '';
+    return nextDate > currentDate ? next : current;
+  }
+
+  const currentNextDate = current.next_dates[0] ?? '9999-12-31';
+  const nextNextDate = next.next_dates[0] ?? '9999-12-31';
+  return nextNextDate < currentNextDate ? next : current;
+}
+
+function buildPortalJourneyReadModel(companyId: string) {
+  const todayIso = nowDateIso();
+  const allocationRows = db.prepare(`
+    select
+      a.id as allocation_id,
+      a.company_id,
+      a.module_id,
+      a.entry_day,
+      c.id as cohort_id,
+      c.code as cohort_code,
+      c.name as cohort_name,
+      c.start_date,
+      c.start_time,
+      c.end_time,
+      c.period,
+      mt.code as module_code,
+      mt.name as module_name,
+      coalesce(cmb.duration_days, 1) as duration_days
+    from cohort_allocation a
+    join cohort c on c.id = a.cohort_id
+    join module_template mt on mt.id = a.module_id
+    left join cohort_module_block cmb on cmb.cohort_id = a.cohort_id and cmb.module_id = a.module_id
+    where a.company_id = ?
+      and a.status <> 'Cancelado'
+      and c.status in ('Planejada', 'Aguardando_quorum', 'Confirmada', 'Concluida')
+    order by date(c.start_date) asc, a.entry_day asc
+  `).all(companyId) as Array<{
+    allocation_id: string;
+    company_id: string;
+    module_id: string;
+    entry_day: number;
+    cohort_id: string;
+    cohort_code: string | null;
+    cohort_name: string;
+    start_date: string;
+    start_time: string | null;
+    end_time: string | null;
+    period: 'Integral' | 'Meio_periodo' | null;
+    module_code: string;
+    module_name: string;
+    duration_days: number;
+  }>;
+
+  if (allocationRows.length === 0) {
+    return {
+      moduleById: new Map<string, JourneyModuleSummary>(),
+      agendaItems: [] as JourneyAgendaItem[]
+    };
+  }
+
+  const cohortIds = Array.from(new Set(allocationRows.map((row) => row.cohort_id)));
+  const placeholders = cohortIds.map(() => '?').join(',');
+  const scheduleRows = db.prepare(`
+    select cohort_id, day_index, day_date, start_time, end_time
+    from cohort_schedule_day
+    where cohort_id in (${placeholders})
+  `).all(...cohortIds) as Array<{
+    cohort_id: string;
+    day_index: number;
+    day_date: string;
+    start_time: string | null;
+    end_time: string | null;
+  }>;
+  const scheduleByKey = new Map<string, {
+    day_date: string;
+    start_time: string | null;
+    end_time: string | null;
+  }>();
+  scheduleRows.forEach((row) => {
+    scheduleByKey.set(`${row.cohort_id}:${row.day_index}`, {
+      day_date: row.day_date,
+      start_time: row.start_time,
+      end_time: row.end_time
+    });
+  });
+
+  const moduleById = new Map<string, JourneyModuleSummary>();
+  const agendaItems: JourneyAgendaItem[] = [];
+
+  allocationRows.forEach((row) => {
+    const normalizedPeriod = row.period ?? 'Integral';
+    const startSlot = normalizedPeriod === 'Meio_periodo'
+      ? Math.max(1, Number(row.entry_day || 1)) * 2 - 1
+      : Math.max(1, Number(row.entry_day || 1));
+    const totalEncounters = Math.max(1, Number(row.duration_days || 1)) * (normalizedPeriod === 'Meio_periodo' ? 2 : 1);
+
+    const slotRows = Array.from({ length: totalEncounters }).map((_, offset) => {
+      const dayIndex = startSlot + offset;
+      const scheduled = scheduleByKey.get(`${row.cohort_id}:${dayIndex}`);
+      const dayDate = scheduled?.day_date ?? addBusinessDays(row.start_date, Math.max(0, dayIndex - 1));
+      const startTime = normalizedPeriod === 'Meio_periodo'
+        ? (scheduled?.start_time ?? row.start_time ?? null)
+        : null;
+      const endTime = normalizedPeriod === 'Meio_periodo'
+        ? (scheduled?.end_time ?? row.end_time ?? null)
+        : null;
+      return {
+        day_index: dayIndex,
+        day_date: dayDate,
+        start_time: startTime,
+        end_time: endTime,
+        encounter_index: offset + 1
+      };
+    });
+
+    const completedEncounters = slotRows.filter((slot) => slot.day_date <= todayIso).length;
+    const remainingEncounters = Math.max(0, totalEncounters - completedEncounters);
+    const nextDates = Array.from(new Set(
+      slotRows
+        .filter((slot) => slot.day_date >= todayIso)
+        .map((slot) => slot.day_date)
+    )).slice(0, 3);
+
+    const stage: JourneyModuleSummary['status'] = completedEncounters <= 0
+      ? 'Planejado'
+      : completedEncounters >= totalEncounters
+        ? 'Concluido'
+        : 'Em_execucao';
+    const completedAt = stage === 'Concluido' ? slotRows[totalEncounters - 1]?.day_date ?? null : null;
+
+    const summary: JourneyModuleSummary = {
+      module_id: row.module_id,
+      module_code: row.module_code,
+      module_name: row.module_name,
+      status: stage,
+      completed_at: completedAt,
+      total_encounters: totalEncounters,
+      completed_encounters: Math.min(completedEncounters, totalEncounters),
+      remaining_encounters: remainingEncounters,
+      next_dates: nextDates,
+      current_cohort: row.cohort_code ? `${row.cohort_code} · ${row.cohort_name}` : row.cohort_name
+    };
+
+    const currentSummary = moduleById.get(row.module_id);
+    moduleById.set(row.module_id, currentSummary ? mergeJourneySummary(currentSummary, summary) : summary);
+
+    slotRows
+      .filter((slot) => slot.day_date >= todayIso)
+      .slice(0, 8)
+      .forEach((slot) => {
+        agendaItems.push({
+          id: `journey-${row.allocation_id}-${slot.day_index}`,
+          company_id: row.company_id,
+          title: `${row.module_name} · Encontro ${slot.encounter_index}/${totalEncounters}`,
+          activity_type: 'Implementacao',
+          start_date: slot.day_date,
+          end_date: slot.day_date,
+          all_day: normalizedPeriod === 'Integral' ? 1 : 0,
+          start_time: slot.start_time,
+          end_time: slot.end_time,
+          status: slot.day_date === todayIso ? 'Em_andamento' : 'Planejada',
+          notes: row.cohort_code ? `Turma ${row.cohort_code} · ${row.cohort_name}` : `Turma ${row.cohort_name}`,
+          source: 'jornada',
+          module_name: row.module_name,
+          encounter_index: slot.encounter_index,
+          total_encounters: totalEncounters
+        });
+      });
+  });
+
+  agendaItems.sort((a, b) => {
+    const dateCmp = a.start_date.localeCompare(b.start_date);
+    if (dateCmp !== 0) return dateCmp;
+    const leftTime = a.start_time ?? '23:59';
+    const rightTime = b.start_time ?? '23:59';
+    return leftTime.localeCompare(rightTime);
+  });
+
+  return { moduleById, agendaItems };
+}
+
+function derivePlanningStatus(
+  baseStatus: string,
+  journeyStatus?: JourneyModuleSummary['status']
+) {
+  if (!journeyStatus) return baseStatus;
+  if (journeyStatus === 'Em_execucao') return 'Em_execucao';
+  if (journeyStatus === 'Concluido') return 'Concluido';
+  if (baseStatus !== 'Concluido') return 'Planejado';
+  return baseStatus;
+}
+
+function buildPortalPlanningItems(companyId: string, journeyModuleById: Map<string, JourneyModuleSummary>) {
+  const progressRows = db.prepare(`
+    select
+      cmp.company_id,
+      cmp.module_id,
+      mt.code as module_code,
+      mt.name as module_name,
+      cmp.status,
+      cmp.completed_at
+    from company_module_progress cmp
+    join module_template mt on mt.id = cmp.module_id
+    where cmp.company_id = ?
+  `).all(companyId) as Array<{
+    company_id: string;
+    module_id: string;
+    module_code: string;
+    module_name: string;
+    status: string;
+    completed_at: string | null;
+  }>;
+
+  const seenModuleIds = new Set<string>();
+  const items = progressRows.map((row) => {
+    seenModuleIds.add(row.module_id);
+    const journey = journeyModuleById.get(row.module_id);
+    const status = derivePlanningStatus(row.status, journey?.status);
+    const completedAt = status === 'Concluido'
+      ? (journey?.completed_at ?? row.completed_at)
+      : null;
+    return {
+      company_id: row.company_id,
+      module_id: row.module_id,
+      module_code: row.module_code,
+      module_name: row.module_name,
+      status,
+      completed_at: completedAt,
+      total_encounters: journey?.total_encounters ?? null,
+      completed_encounters: journey?.completed_encounters ?? null,
+      remaining_encounters: journey?.remaining_encounters ?? null,
+      next_dates: journey?.next_dates ?? [],
+      current_cohort: journey?.current_cohort ?? null
+    };
+  });
+
+  journeyModuleById.forEach((journey, moduleId) => {
+    if (seenModuleIds.has(moduleId)) return;
+    items.push({
+      company_id: companyId,
+      module_id: moduleId,
+      module_code: journey.module_code,
+      module_name: journey.module_name,
+      status: journey.status,
+      completed_at: journey.completed_at,
+      total_encounters: journey.total_encounters,
+      completed_encounters: journey.completed_encounters,
+      remaining_encounters: journey.remaining_encounters,
+      next_dates: journey.next_dates,
+      current_cohort: journey.current_cohort
+    });
+  });
+
+  return items.sort((a, b) => a.module_code.localeCompare(b.module_code));
+}
+
 export function registerPortalRoutes(app: Express) {
   const router = express.Router();
 
@@ -230,42 +565,42 @@ export function registerPortalRoutes(app: Express) {
       return res.status(401).json({ message: 'Sessão inválida ou expirada.' });
     }
 
-    const planning = db.prepare(`
-      select
-        count(*) as total,
-        sum(case when cmp.status = 'Concluido' then 1 else 0 end) as completed,
-        sum(case when cmp.status = 'Em_execucao' then 1 else 0 end) as in_progress,
-        sum(case when cmp.status = 'Planejado' then 1 else 0 end) as planned
-      from company_module_progress cmp
-      where cmp.company_id = ?
-    `).get(context.company_id) as {
-      total: number;
-      completed: number | null;
-      in_progress: number | null;
-      planned: number | null;
+    const journeyReadModel = buildPortalJourneyReadModel(context.company_id);
+    const planningItems = buildPortalPlanningItems(context.company_id, journeyReadModel.moduleById);
+    const planning = {
+      total: planningItems.length,
+      completed: planningItems.filter((item) => item.status === 'Concluido').length,
+      in_progress: planningItems.filter((item) => item.status === 'Em_execucao').length,
+      planned: planningItems.filter((item) => item.status === 'Planejado').length
     };
 
-    const agenda = db.prepare(`
+    const calendar = db.prepare(`
       select
-        count(*) as total,
-        min(start_date) as next_date
+        start_date
       from calendar_activity
       where company_id = ?
         and date(end_date) >= date('now')
-    `).get(context.company_id) as { total: number; next_date: string | null };
+      order by date(start_date) asc
+    `).all(context.company_id) as Array<{ start_date: string }>;
+    const journeyNextDate = journeyReadModel.agendaItems[0]?.start_date ?? null;
+    const calendarNextDate = calendar[0]?.start_date ?? null;
+    const nextDateCandidates = [journeyNextDate, calendarNextDate].filter(Boolean) as string[];
+    const nextDate = nextDateCandidates.length > 0
+      ? nextDateCandidates.sort((a, b) => a.localeCompare(b))[0]
+      : null;
 
     return res.status(200).json({
       company_id: context.company_id,
       company_name: context.company_name,
       planning: {
-        total: planning.total ?? 0,
-        completed: planning.completed ?? 0,
-        in_progress: planning.in_progress ?? 0,
-        planned: planning.planned ?? 0
+        total: planning.total,
+        completed: planning.completed,
+        in_progress: planning.in_progress,
+        planned: planning.planned
       },
       agenda: {
-        total: agenda.total ?? 0,
-        next_date: agenda.next_date
+        total: calendar.length + journeyReadModel.agendaItems.length,
+        next_date: nextDate
       }
     });
   });
@@ -276,24 +611,8 @@ export function registerPortalRoutes(app: Express) {
       return res.status(401).json({ message: 'Sessão inválida ou expirada.' });
     }
 
-    const items = db.prepare(`
-      select
-        cmp.company_id,
-        mt.code as module_code,
-        mt.name as module_name,
-        cmp.status,
-        cmp.completed_at
-      from company_module_progress cmp
-      join module_template mt on mt.id = cmp.module_id
-      where cmp.company_id = ?
-      order by mt.code asc
-    `).all(context.company_id) as Array<{
-      company_id: string;
-      module_code: string;
-      module_name: string;
-      status: string;
-      completed_at: string | null;
-    }>;
+    const journeyReadModel = buildPortalJourneyReadModel(context.company_id);
+    const items = buildPortalPlanningItems(context.company_id, journeyReadModel.moduleById);
 
     return res.status(200).json({ items });
   });
@@ -304,7 +623,7 @@ export function registerPortalRoutes(app: Express) {
       return res.status(401).json({ message: 'Sessão inválida ou expirada.' });
     }
 
-    const items = db.prepare(`
+    const calendarItems = db.prepare(`
       select
         id,
         company_id,
@@ -333,6 +652,18 @@ export function registerPortalRoutes(app: Express) {
       status: string;
       notes: string | null;
     }>;
+
+    const journeyReadModel = buildPortalJourneyReadModel(context.company_id);
+    const items = [
+      ...calendarItems.map((item) => ({ ...item, source: 'agenda' as const })),
+      ...journeyReadModel.agendaItems
+    ].sort((left, right) => {
+      const dateCmp = left.start_date.localeCompare(right.start_date);
+      if (dateCmp !== 0) return dateCmp;
+      const leftTime = left.start_time ?? '23:59';
+      const rightTime = right.start_time ?? '23:59';
+      return leftTime.localeCompare(rightTime);
+    });
 
     return res.status(200).json({ items });
   });

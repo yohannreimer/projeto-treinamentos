@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import type { PortalAuthedApi, PortalPlanningItem } from '../types';
-import { statusLabel } from '../../utils/labels';
 
 type PortalPlanningPageProps = {
   api: PortalAuthedApi;
@@ -8,9 +7,26 @@ type PortalPlanningPageProps = {
 
 function planningStatusTone(status: string) {
   if (status === 'Concluido') return 'is-success';
-  if (status === 'Em_execucao') return 'is-progress';
-  if (status === 'Planejado') return 'is-warning';
+  if (status === 'Em_execucao' || status === 'Em_andamento') return 'is-progress';
   return 'is-muted';
+}
+
+function planningStatusLabel(status: string) {
+  if (status === 'Concluido') return 'Concluído';
+  if (status === 'Em_execucao' || status === 'Em_andamento') return 'Em andamento';
+  return 'Não iniciado';
+}
+
+function formatDateBr(dateIso: string | null) {
+  if (!dateIso) return '-';
+  const [year, month, day] = dateIso.split('-').map(Number);
+  if (!year || !month || !day) return dateIso;
+  return new Date(year, month - 1, day).toLocaleDateString('pt-BR');
+}
+
+function formatDateListBr(values: string[] | undefined) {
+  if (!values || values.length === 0) return '';
+  return values.slice(0, 3).map((value) => formatDateBr(value)).join(' · ');
 }
 
 export function PortalPlanningPage({ api }: PortalPlanningPageProps) {
@@ -60,7 +76,6 @@ export function PortalPlanningPage({ api }: PortalPlanningPageProps) {
           <table className="portal-table">
             <thead>
               <tr>
-                <th>Módulo</th>
                 <th>Nome</th>
                 <th>Status</th>
                 <th>Concluído em</th>
@@ -69,14 +84,23 @@ export function PortalPlanningPage({ api }: PortalPlanningPageProps) {
             <tbody>
               {items.map((item) => (
                 <tr key={`${item.module_code}-${item.module_name}`}>
-                  <td>{item.module_code}</td>
-                  <td>{item.module_name}</td>
+                  <td>
+                    <strong>{item.module_name}</strong>
+                    {item.total_encounters ? (
+                      <p className="portal-table-subline">
+                        {item.completed_encounters ?? 0}/{item.total_encounters} encontros
+                        {' · '}
+                        faltam {item.remaining_encounters ?? 0}
+                        {item.next_dates && item.next_dates.length > 0 ? ` · próximas: ${formatDateListBr(item.next_dates)}` : ''}
+                      </p>
+                    ) : null}
+                  </td>
                   <td>
                     <span className={`portal-status-chip ${planningStatusTone(item.status)}`}>
-                      {statusLabel(item.status)}
+                      {planningStatusLabel(item.status)}
                     </span>
                   </td>
-                  <td>{item.completed_at ?? '-'}</td>
+                  <td>{formatDateBr(item.completed_at)}</td>
                 </tr>
               ))}
             </tbody>

@@ -38,10 +38,16 @@ export type PortalOverview = {
 
 export type PortalPlanningItem = {
   company_id: string;
+  module_id: string;
   module_code: string;
   module_name: string;
   status: string;
   completed_at: string | null;
+  total_encounters?: number | null;
+  completed_encounters?: number | null;
+  remaining_encounters?: number | null;
+  next_dates?: string[];
+  current_cohort?: string | null;
 };
 
 export type PortalAgendaItem = {
@@ -56,6 +62,10 @@ export type PortalAgendaItem = {
   end_time: string | null;
   status: string;
   notes: string | null;
+  source?: 'agenda' | 'jornada';
+  module_name?: string;
+  encounter_index?: number;
+  total_encounters?: number;
 };
 
 export type PortalTicketPriority = 'Baixa' | 'Normal' | 'Alta' | 'Critica';

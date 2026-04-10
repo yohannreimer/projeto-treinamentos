@@ -3326,6 +3326,17 @@ button:focus-visible,
   color: #21303c;
 }
 
+.portal-table tbody td strong {
+  font-size: 0.96rem;
+  color: #1f2d38;
+}
+
+.portal-table-subline {
+  margin: 4px 0 0;
+  font-size: 0.8rem;
+  color: #5e6d79;
+}
+
 .portal-table tbody tr:nth-child(even) td {
   background: #fbfdfe;
 }

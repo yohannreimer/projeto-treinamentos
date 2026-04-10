@@ -99,10 +99,8 @@ export function PortalShell() {
           <div className="portal-topbar-copy">
             <span className="portal-topbar-kicker">Operação do cliente</span>
             <strong>{profile?.company_name ?? 'Cliente'}</strong>
-            <p>{profile?.username ? `Logado como ${profile.username}` : 'Carregando perfil...'}</p>
           </div>
           <div className="portal-topbar-meta">
-            <span className="portal-slug-chip">/{slug}</span>
             <span className="portal-live-dot">Sessão segura ativa</span>
           </div>
         </header>

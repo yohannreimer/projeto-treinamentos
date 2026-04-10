@@ -1200,62 +1200,162 @@ function syncConfirmedCohortExecutions() {
       a.company_id,
       a.module_id,
       a.entry_day,
+      a.status as allocation_status,
       c.start_date,
-      c.period
+      c.period,
+      coalesce(cmb.duration_days, 1) as duration_days
     from cohort_allocation a
     join cohort c on c.id = a.cohort_id
+    left join cohort_module_block cmb on cmb.cohort_id = a.cohort_id and cmb.module_id = a.module_id
     where c.status in ('Confirmada', 'Concluida')
-      and a.status in ('Previsto', 'Confirmado')
+      and a.status in ('Previsto', 'Confirmado', 'Executado')
   `).all() as Array<{
     allocation_id: string;
     cohort_id: string;
     company_id: string;
     module_id: string;
     entry_day: number;
+    allocation_status: AllocationStatus;
     start_date: string;
     period: (typeof COHORT_PERIOD_VALUES)[number] | null;
+    duration_days: number;
   }>;
 
   if (candidates.length === 0) return;
+
+  const cohortIds = Array.from(new Set(candidates.map((item) => item.cohort_id)));
+  const scheduleByCohortAndIndex = new Map<string, string>();
+  if (cohortIds.length > 0) {
+    const placeholders = cohortIds.map(() => '?').join(',');
+    const scheduleRows = db.prepare(`
+      select cohort_id, day_index, day_date
+      from cohort_schedule_day
+      where cohort_id in (${placeholders})
+    `).all(...cohortIds) as Array<{
+      cohort_id: string;
+      day_index: number;
+      day_date: string;
+    }>;
+    scheduleRows.forEach((row) => {
+      scheduleByCohortAndIndex.set(`${row.cohort_id}:${row.day_index}`, row.day_date);
+    });
+  }
+
+  function resolveSlotDate(candidate: {
+    cohort_id: string;
+    start_date: string;
+  }, slotIndex: number) {
+    const scheduled = scheduleByCohortAndIndex.get(`${candidate.cohort_id}:${slotIndex}`);
+    if (scheduled) return scheduled;
+    return addBusinessDays(candidate.start_date, Math.max(0, slotIndex - 1));
+  }
+
+  function progressRank(status: ModuleProgressStatus) {
+    if (status === 'Concluido') return 3;
+    if (status === 'Em_execucao') return 2;
+    if (status === 'Planejado') return 1;
+    return 0;
+  }
 
   const markExecuted = db.prepare(`
     update cohort_allocation
     set status = 'Executado',
       executed_at = coalesce(executed_at, ?)
     where id = ?
-      and status in ('Previsto', 'Confirmado')
+      and status in ('Previsto', 'Confirmado', 'Executado')
   `);
 
   const upsertProgress = db.prepare(`
     insert into company_module_progress (id, company_id, module_id, status, completed_at)
-    values (?, ?, ?, 'Concluido', ?)
+    values (?, ?, ?, ?, ?)
     on conflict(company_id, module_id) do update set
-      status = 'Concluido',
+      status = excluded.status,
       completed_at = case
-        when company_module_progress.completed_at is null then excluded.completed_at
-        when date(company_module_progress.completed_at) <= date(excluded.completed_at) then excluded.completed_at
-        else company_module_progress.completed_at
+        when excluded.status = 'Concluido' then
+          case
+            when company_module_progress.completed_at is null then excluded.completed_at
+            when date(company_module_progress.completed_at) <= date(excluded.completed_at) then excluded.completed_at
+            else company_module_progress.completed_at
+          end
+        else null
       end
   `);
-  const selectScheduleDay = db.prepare(`
-    select day_date
-    from cohort_schedule_day
-    where cohort_id = ? and day_index = ?
-  `);
+
+  const moduleProgressStates = new Map<string, {
+    company_id: string;
+    module_id: string;
+    status: ModuleProgressStatus;
+    completed_at: string | null;
+  }>();
 
   const tx = db.transaction(() => {
     candidates.forEach((candidate) => {
       const entryDay = Math.max(1, Number(candidate.entry_day || 1));
-      const scheduleIndex = candidate.period === 'Meio_periodo'
+      const normalizedPeriod = candidate.period ?? 'Integral';
+      const startSlot = normalizedPeriod === 'Meio_periodo'
         ? (entryDay * 2) - 1
         : entryDay;
-      const dayOffset = Math.max(0, scheduleIndex - 1);
-      const scheduledDay = selectScheduleDay.get(candidate.cohort_id, scheduleIndex) as { day_date: string } | undefined;
-      const executionDate = scheduledDay?.day_date ?? addBusinessDays(candidate.start_date, dayOffset);
-      if (executionDate > todayIso) return;
+      const totalSlots = Math.max(1, Number(candidate.duration_days || 1)) * (normalizedPeriod === 'Meio_periodo' ? 2 : 1);
+      const endSlot = startSlot + totalSlots - 1;
 
-      markExecuted.run(executionDate, candidate.allocation_id);
-      upsertProgress.run(uuid('prog'), candidate.company_id, candidate.module_id, executionDate);
+      let completedSlots = 0;
+      for (let slotIndex = startSlot; slotIndex <= endSlot; slotIndex += 1) {
+        const slotDate = resolveSlotDate(candidate, slotIndex);
+        if (slotDate <= todayIso) {
+          completedSlots += 1;
+        }
+      }
+
+      let moduleStatus: ModuleProgressStatus = 'Planejado';
+      let completedAt: string | null = null;
+
+      if (completedSlots >= totalSlots) {
+        moduleStatus = 'Concluido';
+        completedAt = resolveSlotDate(candidate, endSlot);
+        markExecuted.run(completedAt, candidate.allocation_id);
+      } else if (completedSlots > 0) {
+        moduleStatus = 'Em_execucao';
+      }
+
+      const mapKey = `${candidate.company_id}:${candidate.module_id}`;
+      const current = moduleProgressStates.get(mapKey);
+      if (!current) {
+        moduleProgressStates.set(mapKey, {
+          company_id: candidate.company_id,
+          module_id: candidate.module_id,
+          status: moduleStatus,
+          completed_at: completedAt
+        });
+        return;
+      }
+
+      const nextRank = progressRank(moduleStatus);
+      const currentRank = progressRank(current.status);
+      if (nextRank > currentRank) {
+        moduleProgressStates.set(mapKey, {
+          company_id: candidate.company_id,
+          module_id: candidate.module_id,
+          status: moduleStatus,
+          completed_at: completedAt
+        });
+        return;
+      }
+      if (nextRank === currentRank && moduleStatus === 'Concluido') {
+        const existingDate = current.completed_at ?? '';
+        const nextDate = completedAt ?? '';
+        if (nextDate > existingDate) {
+          moduleProgressStates.set(mapKey, {
+            company_id: candidate.company_id,
+            module_id: candidate.module_id,
+            status: moduleStatus,
+            completed_at: completedAt
+          });
+        }
+      }
+    });
+
+    moduleProgressStates.forEach((state) => {
+      upsertProgress.run(uuid('prog'), state.company_id, state.module_id, state.status, state.completed_at);
     });
   });
 
