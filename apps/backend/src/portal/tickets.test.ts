@@ -137,6 +137,54 @@ test('POST /portal/api/tickets creates portal_ticket and implementation_kanban_c
       new Date().toISOString()
     );
 
+    db.prepare(`
+      insert into implementation_kanban_column (id, title, color, position, created_at, updated_at)
+      values (?, ?, ?, ?, ?, ?)
+    `).run(
+      'kcol-support-running',
+      'Suporte em andamento',
+      '#ef2f0f',
+      90,
+      new Date().toISOString(),
+      new Date().toISOString()
+    );
+
+    db.prepare(`
+      insert into implementation_kanban_card (
+        id, title, description, status, column_id, client_name, subcategory, priority, position, created_at, updated_at
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'kcard-support-internal',
+      'Suporte aberto pelo time interno',
+      'Card criado internamente e que deve aparecer para o cliente.',
+      'Todo',
+      'kcol-support-running',
+      'Cliente Portal Tickets',
+      'Suporte',
+      'Alta',
+      2,
+      new Date().toISOString(),
+      new Date().toISOString()
+    );
+
+    db.prepare(`
+      insert into implementation_kanban_card (
+        id, title, description, status, column_id, client_name, subcategory, priority, position, created_at, updated_at
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'kcard-support-other-client',
+      'Suporte de outro cliente',
+      'Nao deve aparecer para o cliente autenticado.',
+      'Todo',
+      'kcol-support-running',
+      'Cliente Portal Outro Tenant',
+      'Suporte',
+      'Alta',
+      3,
+      new Date().toISOString(),
+      new Date().toISOString()
+    );
+
     const listRes = await request(app)
       .get('/portal/api/tickets')
       .set('Authorization', `Bearer ${token}`);
@@ -152,10 +200,26 @@ test('POST /portal/api/tickets creates portal_ticket and implementation_kanban_c
         item.title === 'Erro no acesso' && typeof item.client_status === 'string'),
       true
     );
+    assert.equal(
+      listRes.body.items.some((item: { title: string; source: string }) =>
+        item.title === 'Erro no acesso' && item.source === 'Portal'),
+      true
+    );
+    assert.equal(
+      listRes.body.items.some((item: { title: string; source: string; client_status: string }) =>
+        item.title === 'Suporte aberto pelo time interno'
+        && item.source === 'Operacao'
+        && item.client_status === 'Em execução'),
+      true
+    );
     assert.equal('status' in createdItem, false);
     assert.equal('column_title' in createdItem, false);
     assert.equal(
       listRes.body.items.some((item: { title: string }) => item.title === 'Ticket outro tenant'),
+      false
+    );
+    assert.equal(
+      listRes.body.items.some((item: { title: string }) => item.title === 'Suporte de outro cliente'),
       false
     );
   } finally {

@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import holandHorizontalLogo from '../../assets/holand-horizontal.svg';
 
 type PortalLoginPageProps = {
   slug: string;
@@ -31,7 +32,10 @@ export function PortalLoginPage({ slug, onSubmit }: PortalLoginPageProps) {
   return (
     <div className="portal-login-screen">
       <div className="portal-login-card">
-        <p className="portal-login-kicker">Portal do Cliente Holand</p>
+        <div className="portal-login-brand">
+          <img src={holandHorizontalLogo} alt="Holand" className="portal-login-logo" />
+          <p className="portal-login-kicker">Portal do Cliente Holand</p>
+        </div>
         <h1>Acesso da operação</h1>
         <p className="portal-login-subtitle">Ambiente exclusivo do cliente: <strong>{slug}</strong></p>
 

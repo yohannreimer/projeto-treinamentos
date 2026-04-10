@@ -7,6 +7,21 @@ type PortalTicketsPageProps = {
 
 const priorityOptions: PortalTicketPriority[] = ['Baixa', 'Normal', 'Alta', 'Critica'];
 
+function priorityTone(priority: PortalTicketPriority) {
+  if (priority === 'Critica') return 'is-critical';
+  if (priority === 'Alta') return 'is-warning';
+  if (priority === 'Baixa') return 'is-muted';
+  return 'is-progress';
+}
+
+function ticketStatusTone(status: string) {
+  if (status === 'Resolvido') return 'is-success';
+  if (status === 'Em execução') return 'is-progress';
+  if (status === 'Aguardando cliente') return 'is-warning';
+  if (status === 'Em análise') return 'is-analysis';
+  return 'is-muted';
+}
+
 export function PortalTicketsPage({ api }: PortalTicketsPageProps) {
   const [items, setItems] = useState<PortalTicket[]>([]);
   const [loading, setLoading] = useState(true);
@@ -67,10 +82,10 @@ export function PortalTicketsPage({ api }: PortalTicketsPageProps) {
       <header className="portal-panel-header portal-panel-header-row">
         <div>
           <h2>Chamados</h2>
-          <p>Abertura e acompanhamento de suportes ligados ao seu contrato.</p>
+          <p>Abertura e acompanhamento de suportes ligados ao seu contrato, incluindo atualizações da operação.</p>
         </div>
         <button type="button" className="portal-primary-btn" onClick={() => setShowForm((prev) => !prev)}>
-          Novo chamado
+          {showForm ? 'Fechar formulário' : 'Novo chamado'}
         </button>
       </header>
 
@@ -78,11 +93,20 @@ export function PortalTicketsPage({ api }: PortalTicketsPageProps) {
         <form className="portal-ticket-form" onSubmit={submit}>
           <label>
             Assunto
-            <input value={title} onChange={(event) => setTitle(event.target.value)} />
+            <input
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              placeholder="Resumo do problema"
+            />
           </label>
           <label>
             Descrição
-            <textarea rows={3} value={description} onChange={(event) => setDescription(event.target.value)} />
+            <textarea
+              rows={4}
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+              placeholder="Explique o contexto e o impacto para o time."
+            />
           </label>
           <label>
             Prioridade
@@ -96,6 +120,9 @@ export function PortalTicketsPage({ api }: PortalTicketsPageProps) {
             <button type="submit" className="portal-primary-btn" disabled={submitting}>
               {submitting ? 'Enviando...' : 'Enviar chamado'}
             </button>
+            <button type="button" className="portal-secondary-btn" onClick={() => setShowForm(false)}>
+              Cancelar
+            </button>
           </div>
         </form>
       ) : null}
@@ -105,16 +132,24 @@ export function PortalTicketsPage({ api }: PortalTicketsPageProps) {
 
       {!loading ? (
         <div className="portal-ticket-list">
-          {items.length === 0 ? <p>Nenhum chamado aberto até agora.</p> : null}
+          {items.length === 0 ? (
+            <div className="portal-empty-state">
+              <strong>Nenhum chamado aberto até agora.</strong>
+              <p>Use o botão “Novo chamado” para registrar uma solicitação ao time Holand.</p>
+            </div>
+          ) : null}
           {items.map((item) => (
             <article key={item.id} className="portal-ticket-item">
-              <div>
+              <div className="portal-ticket-main">
                 <strong>{item.title}</strong>
                 <p>{item.description || 'Sem descrição detalhada.'}</p>
               </div>
               <div className="portal-ticket-meta">
-                <span>{item.priority}</span>
-                <span>{item.client_status}</span>
+                <div className="portal-ticket-badges">
+                  <span className={`portal-status-chip ${priorityTone(item.priority)}`}>{item.priority}</span>
+                  <span className={`portal-status-chip ${ticketStatusTone(item.client_status)}`}>{item.client_status}</span>
+                </div>
+                <span>{item.source === 'Portal' ? 'Origem: Portal' : 'Origem: Operação Holand'}</span>
                 <span>{new Date(item.created_at).toLocaleDateString('pt-BR')}</span>
               </div>
             </article>

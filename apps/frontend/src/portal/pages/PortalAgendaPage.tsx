@@ -46,17 +46,24 @@ export function PortalAgendaPage({ api }: PortalAgendaPageProps) {
     <section className="portal-panel">
       <header className="portal-panel-header">
         <h2>Agenda</h2>
-        <p>Próximas atividades planejadas para sua operação com a Holand.</p>
+        <p>Próximas atividades planejadas para sua operação com a Holand, com foco em previsibilidade.</p>
       </header>
       <div className="portal-agenda-list">
-        {items.length === 0 ? <p>Nenhuma atividade agendada no momento.</p> : null}
+        {items.length === 0 ? (
+          <div className="portal-empty-state">
+            <strong>Nenhuma atividade agendada no momento.</strong>
+            <p>Quando houver novas ações planejadas, elas aparecerão aqui em ordem cronológica.</p>
+          </div>
+        ) : null}
         {items.map((item) => (
           <article key={item.id} className="portal-agenda-item">
-            <div>
+            <div className="portal-agenda-main">
               <strong>{item.title}</strong>
-              <p>{statusLabel(item.activity_type)} • {statusLabel(item.status)}</p>
+              <p>{item.notes?.trim() || 'Atividade registrada para o seu cronograma operacional.'}</p>
             </div>
             <div className="portal-agenda-meta">
+              <span className="portal-status-chip is-muted">{statusLabel(item.activity_type)}</span>
+              <span className="portal-status-chip is-progress">{statusLabel(item.status)}</span>
               <span>{item.start_date} até {item.end_date}</span>
               <span>{agendaTimeLabel(item)}</span>
             </div>

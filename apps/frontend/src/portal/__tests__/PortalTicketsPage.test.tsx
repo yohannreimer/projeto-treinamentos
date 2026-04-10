@@ -14,7 +14,8 @@ test('renders ticket list and opens new ticket form', async () => {
           priority: 'Normal',
           created_at: '2026-04-01T10:00:00.000Z',
           updated_at: '2026-04-01T10:00:00.000Z',
-          client_status: 'Recebido'
+          client_status: 'Recebido',
+          source: 'Portal'
         }
       ]
     }),

@@ -155,6 +155,13 @@ function resolveNextCardPosition(columnId: string) {
   return row.next_position ?? 0;
 }
 
+function normalizePortalTicketPriority(priority: string | null | undefined) {
+  if (priority === 'Baixa' || priority === 'Normal' || priority === 'Alta' || priority === 'Critica') {
+    return priority;
+  }
+  return 'Normal';
+}
+
 export function registerPortalRoutes(app: Express) {
   const router = express.Router();
 
@@ -406,6 +413,12 @@ export function registerPortalRoutes(app: Express) {
     }
 
     const rows = db.prepare(`
+      with linked_kanban_cards as (
+        select kanban_card_id
+        from portal_ticket
+        where company_id = ?
+          and kanban_card_id is not null
+      )
       select
         pt.id,
         pt.title,
@@ -414,13 +427,39 @@ export function registerPortalRoutes(app: Express) {
         pt.status,
         pt.created_at,
         pt.updated_at,
-        c.title as column_title
+        c.title as column_title,
+        'Portal' as source
       from portal_ticket pt
       left join implementation_kanban_card kc on kc.id = pt.kanban_card_id
       left join implementation_kanban_column c on c.id = kc.column_id
       where pt.company_id = ?
-      order by datetime(pt.created_at) desc
-    `).all(context.company_id) as Array<{
+
+      union all
+
+      select
+        'kcard-' || kc.id as id,
+        kc.title as title,
+        kc.description as description,
+        kc.priority as priority,
+        kc.status as status,
+        kc.created_at as created_at,
+        kc.updated_at as updated_at,
+        c.title as column_title,
+        'Operacao' as source
+      from implementation_kanban_card kc
+      left join implementation_kanban_column c on c.id = kc.column_id
+      where lower(trim(coalesce(kc.client_name, ''))) = lower(trim(?))
+        and (
+          lower(trim(coalesce(kc.subcategory, ''))) = 'suporte'
+          or lower(trim(coalesce(c.title, ''))) like '%suporte%'
+        )
+        and not exists (
+          select 1
+          from linked_kanban_cards lk
+          where lk.kanban_card_id = kc.id
+        )
+      order by created_at desc
+    `).all(context.company_id, context.company_id, context.company_name) as Array<{
       id: string;
       title: string;
       description: string | null;
@@ -429,15 +468,17 @@ export function registerPortalRoutes(app: Express) {
       created_at: string;
       updated_at: string;
       column_title: string | null;
+      source: 'Portal' | 'Operacao';
     }>;
 
     const items = rows.map((row) => ({
       id: row.id,
       title: row.title,
       description: row.description,
-      priority: row.priority,
+      priority: normalizePortalTicketPriority(row.priority),
       created_at: row.created_at,
       updated_at: row.updated_at,
+      source: row.source,
       client_status: toClientFacingStatus({
         ticketStatus: row.status,
         columnTitle: row.column_title

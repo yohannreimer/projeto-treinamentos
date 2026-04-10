@@ -8,6 +8,7 @@ import { PortalLoginPage } from './pages/PortalLoginPage';
 import { PortalOverviewPage } from './pages/PortalOverviewPage';
 import { PortalPlanningPage } from './pages/PortalPlanningPage';
 import { PortalTicketsPage } from './pages/PortalTicketsPage';
+import holandHorizontalLogo from '../assets/holand-horizontal.svg';
 
 export function PortalShell() {
   const { slug = '' } = useParams();
@@ -73,9 +74,14 @@ export function PortalShell() {
   return (
     <div className="portal-shell">
       <aside className="portal-sidebar">
-        <div className="portal-brand">
-          <strong>HOLAND</strong>
-          <small>Portal do Cliente</small>
+        <div className="portal-sidebar-head">
+          <div className="portal-brand">
+            <img src={holandHorizontalLogo} alt="Holand" className="portal-brand-image" />
+            <small>Portal do Cliente</small>
+          </div>
+          <p className="portal-sidebar-caption">
+            Central de operação do seu time com visão clara de planejamento, agenda e suporte.
+          </p>
         </div>
         <nav className="portal-nav">
           <NavLink end to="" className={({ isActive }) => isActive ? 'is-active' : ''}>Visão Geral</NavLink>
@@ -83,15 +89,22 @@ export function PortalShell() {
           <NavLink to="agenda" className={({ isActive }) => isActive ? 'is-active' : ''}>Agenda</NavLink>
           <NavLink to="chamados" className={({ isActive }) => isActive ? 'is-active' : ''}>Chamados</NavLink>
         </nav>
-        <button type="button" className="portal-logout-btn" onClick={clearSession}>Sair</button>
+        <div className="portal-sidebar-footer">
+          <small>{profile?.username ? `Acesso: ${profile.username}` : 'Sessão ativa'}</small>
+          <button type="button" className="portal-logout-btn" onClick={clearSession}>Sair</button>
+        </div>
       </aside>
       <main className="portal-main">
         <header className="portal-topbar">
-          <div>
+          <div className="portal-topbar-copy">
+            <span className="portal-topbar-kicker">Operação do cliente</span>
             <strong>{profile?.company_name ?? 'Cliente'}</strong>
             <p>{profile?.username ? `Logado como ${profile.username}` : 'Carregando perfil...'}</p>
           </div>
-          <span className="portal-slug-chip">/{slug}</span>
+          <div className="portal-topbar-meta">
+            <span className="portal-slug-chip">/{slug}</span>
+            <span className="portal-live-dot">Sessão segura ativa</span>
+          </div>
         </header>
         {authError ? <p className="error">{authError}</p> : null}
         <Routes>

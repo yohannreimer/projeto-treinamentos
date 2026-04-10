@@ -6,6 +6,13 @@ type PortalPlanningPageProps = {
   api: PortalAuthedApi;
 };
 
+function planningStatusTone(status: string) {
+  if (status === 'Concluido') return 'is-success';
+  if (status === 'Em_execucao') return 'is-progress';
+  if (status === 'Planejado') return 'is-warning';
+  return 'is-muted';
+}
+
 export function PortalPlanningPage({ api }: PortalPlanningPageProps) {
   const [items, setItems] = useState<PortalPlanningItem[]>([]);
   const [error, setError] = useState('');
@@ -40,30 +47,42 @@ export function PortalPlanningPage({ api }: PortalPlanningPageProps) {
     <section className="portal-panel">
       <header className="portal-panel-header">
         <h2>Planejamento</h2>
-        <p>Acompanhe os módulos previstos, concluídos e em andamento.</p>
+        <p>Acompanhe os módulos previstos, concluídos e em andamento com leitura rápida por status.</p>
       </header>
-      <div className="table-wrap">
-        <table className="table table-hover">
-          <thead>
-            <tr>
-              <th>Módulo</th>
-              <th>Nome</th>
-              <th>Status</th>
-              <th>Concluído em</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((item) => (
-              <tr key={`${item.module_code}-${item.module_name}`}>
-                <td>{item.module_code}</td>
-                <td>{item.module_name}</td>
-                <td>{statusLabel(item.status)}</td>
-                <td>{item.completed_at ?? '-'}</td>
+      {items.length === 0 ? (
+        <div className="portal-empty-state">
+          <strong>Nenhum módulo disponível no planejamento.</strong>
+          <p>Assim que o plano for publicado pela equipe Holand, ele aparece aqui automaticamente.</p>
+        </div>
+      ) : null}
+      {items.length > 0 ? (
+        <div className="portal-table-wrap">
+          <table className="portal-table">
+            <thead>
+              <tr>
+                <th>Módulo</th>
+                <th>Nome</th>
+                <th>Status</th>
+                <th>Concluído em</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {items.map((item) => (
+                <tr key={`${item.module_code}-${item.module_name}`}>
+                  <td>{item.module_code}</td>
+                  <td>{item.module_name}</td>
+                  <td>
+                    <span className={`portal-status-chip ${planningStatusTone(item.status)}`}>
+                      {statusLabel(item.status)}
+                    </span>
+                  </td>
+                  <td>{item.completed_at ?? '-'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
     </section>
   );
 }

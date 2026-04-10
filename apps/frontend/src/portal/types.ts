@@ -59,6 +59,7 @@ export type PortalAgendaItem = {
 };
 
 export type PortalTicketPriority = 'Baixa' | 'Normal' | 'Alta' | 'Critica';
+export type PortalTicketSource = 'Portal' | 'Operacao';
 
 export type PortalTicket = {
   id: string;
@@ -68,6 +69,7 @@ export type PortalTicket = {
   created_at: string;
   updated_at: string;
   client_status: string;
+  source: PortalTicketSource;
 };
 
 export type CreatePortalTicketPayload = {
