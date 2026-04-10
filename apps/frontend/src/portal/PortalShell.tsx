@@ -49,12 +49,11 @@ export function PortalShell() {
     };
   }, [apiClient]);
 
-  async function handleLogin(payload: { username: string; password: string; is_internal: boolean }) {
+  async function handleLogin(payload: { username: string; password: string }) {
     const result = await portalApi.login({
       slug,
       username: payload.username,
-      password: payload.password,
-      is_internal: payload.is_internal
+      password: payload.password
     });
     const nextSession = { token: result.token, expires_at: result.expires_at, is_internal: result.is_internal };
     portalSessionStore.save(slug, nextSession);
@@ -90,9 +89,7 @@ export function PortalShell() {
         </nav>
         <div className="portal-sidebar-footer">
           <small>
-            {profile?.is_internal
-              ? 'Acesso interno Holand'
-              : (profile?.username ? `Acesso: ${profile.username}` : 'Sessão ativa')}
+            {profile?.username ? `Acesso: ${profile.username}` : 'Sessão ativa'}
           </small>
           <button type="button" className="portal-logout-btn" onClick={clearSession}>Sair</button>
         </div>
@@ -100,19 +97,28 @@ export function PortalShell() {
       <main className="portal-main">
         <header className="portal-topbar">
           <div className="portal-topbar-copy">
-            <span className="portal-topbar-kicker">{profile?.is_internal ? 'Modo operador Holand' : 'Operação do cliente'}</span>
+            <span className="portal-topbar-kicker">Operação do cliente</span>
             <strong>{profile?.company_name ?? 'Cliente'}</strong>
           </div>
           <div className="portal-topbar-meta">
-            <span className="portal-live-dot">{profile?.is_internal ? 'Sessão interna ativa' : 'Sessão segura ativa'}</span>
+            <span className="portal-live-dot">Sessão segura ativa</span>
           </div>
         </header>
         {authError ? <p className="error">{authError}</p> : null}
         <Routes>
           <Route index element={<Navigate to="agenda" replace />} />
-          <Route path="planejamento" element={<PortalPlanningPage api={apiClient} />} />
-          <Route path="agenda" element={<PortalAgendaPage api={apiClient} />} />
-          <Route path="suporte" element={<PortalTicketsPage api={apiClient} />} />
+          <Route path="planejamento" element={<PortalPlanningPage api={apiClient} isInternal={Boolean(profile?.is_internal)} />} />
+          <Route path="agenda" element={<PortalAgendaPage api={apiClient} isInternal={Boolean(profile?.is_internal)} />} />
+          <Route
+            path="suporte"
+            element={
+              <PortalTicketsPage
+                api={apiClient}
+                isInternal={Boolean(profile?.is_internal)}
+                sessionToken={session.token}
+              />
+            }
+          />
           <Route path="chamados" element={<Navigate to="../suporte" replace />} />
           <Route path="*" element={<Navigate to="" replace />} />
         </Routes>

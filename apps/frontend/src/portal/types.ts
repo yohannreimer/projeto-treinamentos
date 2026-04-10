@@ -2,7 +2,6 @@ export type PortalLoginPayload = {
   slug: string;
   username: string;
   password: string;
-  is_internal?: boolean;
 };
 
 export type PortalLoginResponse = {
@@ -67,14 +66,46 @@ export type PortalAgendaItem = {
   end_time: string | null;
   status: string;
   notes: string | null;
-  source?: 'agenda' | 'jornada';
+  source?: 'agenda' | 'jornada' | 'manual';
   module_name?: string;
   encounter_index?: number;
   total_encounters?: number;
 };
 
+export type PortalOperatorDisplaySettings = {
+  support_intro_text: string | null;
+  hidden_module_ids: string[];
+  module_date_overrides: Array<{ module_id: string; next_date: string }>;
+  module_status_overrides: Array<{ module_id: string; status: 'Planejado' | 'Em_execucao' | 'Concluido' }>;
+};
+
+export type PortalOperatorAgendaItem = {
+  id: string;
+  title: string;
+  activity_type: string;
+  start_date: string;
+  end_date: string;
+  all_day: number;
+  start_time: string | null;
+  end_time: string | null;
+  status: 'Planejada' | 'Em_andamento' | 'Concluida' | 'Cancelada';
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type PortalTicketPriority = 'Baixa' | 'Normal' | 'Alta' | 'Critica';
 export type PortalTicketSource = 'Portal' | 'Operacao';
+export type PortalRealtimeSide = 'cliente' | 'holand';
+
+export type PortalTicketRealtimeSummary = {
+  unread_count?: number | null;
+  client_online?: boolean | null;
+  holand_online?: boolean | null;
+  typing_side?: PortalRealtimeSide | null;
+  typing_at?: string | null;
+  last_message_preview?: string | null;
+};
 
 export type PortalTicket = {
   id: string;
@@ -86,6 +117,7 @@ export type PortalTicket = {
   workflow_stage?: string;
   client_status: string;
   source: PortalTicketSource;
+  realtime?: PortalTicketRealtimeSummary | null;
 };
 
 export type PortalTicketsResponse = {
@@ -96,6 +128,7 @@ export type PortalTicketsResponse = {
 export type CreatePortalTicketPayload = {
   title: string;
   description?: string | null;
+  whatsapp_number?: string | null;
   priority?: PortalTicketPriority;
   attachments?: Array<{
     file_name: string;
@@ -121,17 +154,56 @@ export type PortalTicketMessage = {
   attachments: PortalTicketMessageAttachment[];
 };
 
+export type PortalTicketThreadResponse = {
+  ticket_id: string;
+  messages: PortalTicketMessage[];
+  note?: string;
+  has_unread?: boolean;
+  unread_for_cliente?: boolean;
+  unread_for_holand?: boolean;
+  last_message_at?: string | null;
+  last_read_cliente_at?: string | null;
+  last_read_holand_at?: string | null;
+  whatsapp_number?: string | null;
+  unread_count?: number | null;
+  last_read_at?: string | null;
+  presence?: {
+    client_online?: boolean | null;
+    holand_online?: boolean | null;
+  } | null;
+  typing?: {
+    side?: PortalRealtimeSide | null;
+    is_typing?: boolean | null;
+    created_at?: string | null;
+  } | null;
+};
+
 export type PortalAuthedApi = {
   me: () => Promise<PortalMe>;
   overview: () => Promise<PortalOverview>;
   planning: () => Promise<{ items: PortalPlanningItem[] }>;
   agenda: () => Promise<{ items: PortalAgendaItem[] }>;
+  operatorDisplaySettings: () => Promise<PortalOperatorDisplaySettings>;
+  updateOperatorDisplaySettings: (payload: PortalOperatorDisplaySettings) => Promise<{ ok: boolean }>;
+  operatorAgendaItems: () => Promise<{ items: PortalOperatorAgendaItem[] }>;
+  createOperatorAgendaItem: (payload: {
+    title: string;
+    activity_type?: string;
+    start_date: string;
+    end_date?: string;
+    all_day?: boolean;
+    start_time?: string | null;
+    end_time?: string | null;
+    status?: 'Planejada' | 'Em_andamento' | 'Concluida' | 'Cancelada';
+    notes?: string | null;
+  }) => Promise<{ id: string }>;
+  deleteOperatorAgendaItem: (id: string) => Promise<{ ok: boolean }>;
+  updateTicketWorkflow: (
+    ticketId: string,
+    payload: { workflow_stage: 'Backlog' | 'A_fazer' | 'Em_andamento' | 'Concluido' }
+  ) => Promise<{ ok: boolean; workflow_stage: string }>;
   tickets: () => Promise<PortalTicketsResponse>;
-  ticketThread: (ticketId: string) => Promise<{
-    ticket_id: string;
-    messages: PortalTicketMessage[];
-    note?: string;
-  }>;
+  ticketThread: (ticketId: string) => Promise<PortalTicketThreadResponse>;
   createTicket: (payload: CreatePortalTicketPayload) => Promise<{ id: string }>;
   createTicketMessage: (
     ticketId: string,
@@ -140,4 +212,12 @@ export type PortalAuthedApi = {
       attachments?: Array<{ file_name: string; file_data_base64: string }>;
     }
   ) => Promise<{ id: string }>;
+  markTicketRead: (ticketId: string) => Promise<{
+    ok: boolean;
+    ticket_id: string;
+    read_at: string;
+    has_unread?: boolean;
+    unread_for_cliente?: boolean;
+    unread_for_holand?: boolean;
+  }>;
 };

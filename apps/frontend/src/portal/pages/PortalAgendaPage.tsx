@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import type { PortalAgendaItem, PortalAuthedApi } from '../types';
 import { statusLabel } from '../../utils/labels';
 
 type PortalAgendaPageProps = {
   api: PortalAuthedApi;
+  isInternal: boolean;
 };
 
 function agendaTimeLabel(item: PortalAgendaItem) {
@@ -75,32 +76,73 @@ function agendaSortDesc(left: PortalAgendaItem, right: PortalAgendaItem) {
   return agendaSortAsc(right, left);
 }
 
-export function PortalAgendaPage({ api }: PortalAgendaPageProps) {
+export function PortalAgendaPage({ api, isInternal }: PortalAgendaPageProps) {
   const [items, setItems] = useState<PortalAgendaItem[]>([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [showOperatorForm, setShowOperatorForm] = useState(false);
+  const [savingOperatorItem, setSavingOperatorItem] = useState(false);
+  const [operatorTitle, setOperatorTitle] = useState('');
+  const [operatorDate, setOperatorDate] = useState('');
+  const [operatorStatus, setOperatorStatus] = useState<'Planejada' | 'Em_andamento' | 'Concluida' | 'Cancelada'>('Planejada');
+  const [operatorNotes, setOperatorNotes] = useState('');
+
+  async function loadAgenda() {
+    setLoading(true);
+    try {
+      const response = await api.agenda();
+      setItems(response.items ?? []);
+      setError('');
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : 'Falha ao carregar agenda.');
+    } finally {
+      setLoading(false);
+    }
+  }
 
   useEffect(() => {
-    let mounted = true;
-    setLoading(true);
-    api.agenda()
-      .then((response) => {
-        if (!mounted) return;
-        setItems(response.items ?? []);
-        setError('');
-      })
-      .catch((loadError) => {
-        if (!mounted) return;
-        setError(loadError instanceof Error ? loadError.message : 'Falha ao carregar agenda.');
-      })
-      .finally(() => {
-        if (!mounted) return;
-        setLoading(false);
+    void loadAgenda();
+  }, []);
+
+  async function createOperatorAgendaItem(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!operatorTitle.trim() || !operatorDate) {
+      setError('Informe título e data para adicionar evento manual.');
+      return;
+    }
+    setSavingOperatorItem(true);
+    try {
+      await api.createOperatorAgendaItem({
+        title: operatorTitle.trim(),
+        activity_type: 'Outro',
+        start_date: operatorDate,
+        end_date: operatorDate,
+        all_day: true,
+        status: operatorStatus,
+        notes: operatorNotes.trim() || null
       });
-    return () => {
-      mounted = false;
-    };
-  }, [api]);
+      setOperatorTitle('');
+      setOperatorDate('');
+      setOperatorStatus('Planejada');
+      setOperatorNotes('');
+      setShowOperatorForm(false);
+      await loadAgenda();
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'Falha ao criar evento manual.');
+    } finally {
+      setSavingOperatorItem(false);
+    }
+  }
+
+  async function deleteOperatorAgendaItem(itemId: string) {
+    try {
+      await api.deleteOperatorAgendaItem(itemId);
+      await loadAgenda();
+      setError('');
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : 'Falha ao remover evento manual.');
+    }
+  }
 
   if (loading) return <p>Carregando agenda...</p>;
   if (error) return <p className="error">{error}</p>;
@@ -119,6 +161,9 @@ export function PortalAgendaPage({ api }: PortalAgendaPageProps) {
         <div className="portal-agenda-main">
           <strong>{item.title}</strong>
           <p>{item.notes?.trim() || 'Atividade registrada para o seu cronograma operacional.'}</p>
+          {item.source === 'manual' ? (
+            <small className="form-hint">Evento manual ajustado pela equipe Holand.</small>
+          ) : null}
         </div>
         <div className="portal-agenda-meta">
           <div className="portal-agenda-meta-chips">
@@ -137,6 +182,11 @@ export function PortalAgendaPage({ api }: PortalAgendaPageProps) {
             <span>{agendaDateLabel(item)}</span>
             <strong>{agendaTimeLabel(item)}</strong>
           </div>
+          {isInternal && item.source === 'manual' ? (
+            <button type="button" className="portal-secondary-btn" onClick={() => void deleteOperatorAgendaItem(item.id)}>
+              Remover ajuste
+            </button>
+          ) : null}
         </div>
       </article>
     );
@@ -148,6 +198,50 @@ export function PortalAgendaPage({ api }: PortalAgendaPageProps) {
         <h2>Agenda</h2>
         <p>Acompanhe próximos eventos e histórico concluído da sua operação com a Holand.</p>
       </header>
+
+      {isInternal ? (
+        <section className="portal-operator-panel">
+          <div className="portal-panel-header portal-panel-header-row">
+            <div>
+              <h3>Ajustes internos de agenda</h3>
+              <p>Inclua ou remova eventos manuais exibidos apenas no portal do cliente.</p>
+            </div>
+            <button type="button" className="portal-secondary-btn" onClick={() => setShowOperatorForm((prev) => !prev)}>
+              {showOperatorForm ? 'Fechar ajuste' : 'Novo ajuste de agenda'}
+            </button>
+          </div>
+          {showOperatorForm ? (
+            <form className="portal-ticket-form" onSubmit={createOperatorAgendaItem}>
+              <label>
+                Título
+                <input value={operatorTitle} onChange={(event) => setOperatorTitle(event.target.value)} placeholder="Ex.: Reunião de alinhamento" />
+              </label>
+              <label>
+                Data
+                <input type="date" value={operatorDate} onChange={(event) => setOperatorDate(event.target.value)} />
+              </label>
+              <label>
+                Status
+                <select value={operatorStatus} onChange={(event) => setOperatorStatus(event.target.value as 'Planejada' | 'Em_andamento' | 'Concluida' | 'Cancelada')}>
+                  <option value="Planejada">Planejada</option>
+                  <option value="Em_andamento">Em andamento</option>
+                  <option value="Concluida">Concluída</option>
+                  <option value="Cancelada">Cancelada</option>
+                </select>
+              </label>
+              <label>
+                Observações
+                <textarea rows={2} value={operatorNotes} onChange={(event) => setOperatorNotes(event.target.value)} />
+              </label>
+              <div className="actions actions-compact">
+                <button type="submit" className="portal-primary-btn" disabled={savingOperatorItem}>
+                  {savingOperatorItem ? 'Salvando...' : 'Adicionar ajuste'}
+                </button>
+              </div>
+            </form>
+          ) : null}
+        </section>
+      ) : null}
 
       <section className="portal-agenda-section">
         <div className="portal-agenda-section-head">

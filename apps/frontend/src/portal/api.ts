@@ -4,7 +4,9 @@ import type {
   PortalLoginPayload,
   PortalLoginResponse,
   PortalMe,
+  PortalOperatorDisplaySettings,
   PortalOverview,
+  PortalTicketThreadResponse,
   PortalTicketsResponse
 } from './types';
 
@@ -74,9 +76,32 @@ export const portalApi = {
     overview: () => portalReq<PortalOverview>('/portal/api/overview', {}, { token, onUnauthorized }),
     planning: () => portalReq('/portal/api/planning', {}, { token, onUnauthorized }),
     agenda: () => portalReq('/portal/api/agenda', {}, { token, onUnauthorized }),
+    operatorDisplaySettings: () =>
+      portalReq<PortalOperatorDisplaySettings>('/portal/api/operator/display-settings', {}, { token, onUnauthorized }),
+    updateOperatorDisplaySettings: (payload) =>
+      portalReq('/portal/api/operator/display-settings', {
+        method: 'PUT',
+        body: JSON.stringify(payload)
+      }, { token, onUnauthorized }),
+    operatorAgendaItems: () =>
+      portalReq('/portal/api/operator/agenda-items', {}, { token, onUnauthorized }),
+    createOperatorAgendaItem: (payload) =>
+      portalReq('/portal/api/operator/agenda-items', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      }, { token, onUnauthorized }),
+    deleteOperatorAgendaItem: (id) =>
+      portalReq(`/portal/api/operator/agenda-items/${id}`, {
+        method: 'DELETE'
+      }, { token, onUnauthorized }),
+    updateTicketWorkflow: (ticketId, payload) =>
+      portalReq(`/portal/api/operator/tickets/${ticketId}/workflow`, {
+        method: 'PATCH',
+        body: JSON.stringify(payload)
+      }, { token, onUnauthorized }),
     tickets: () => portalReq<PortalTicketsResponse>('/portal/api/tickets', {}, { token, onUnauthorized }),
     ticketThread: (ticketId: string) =>
-      portalReq(`/portal/api/tickets/${ticketId}/thread`, {}, { token, onUnauthorized }),
+      portalReq<PortalTicketThreadResponse>(`/portal/api/tickets/${ticketId}/thread`, {}, { token, onUnauthorized }),
     createTicket: (payload: CreatePortalTicketPayload) =>
       portalReq('/portal/api/tickets', {
         method: 'POST',
@@ -86,6 +111,10 @@ export const portalApi = {
       portalReq(`/portal/api/tickets/${ticketId}/messages`, {
         method: 'POST',
         body: JSON.stringify(payload)
+      }, { token, onUnauthorized }),
+    markTicketRead: (ticketId) =>
+      portalReq(`/portal/api/tickets/${ticketId}/read`, {
+        method: 'POST'
       }, { token, onUnauthorized })
   })
 };

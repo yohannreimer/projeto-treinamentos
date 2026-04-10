@@ -168,6 +168,20 @@ function findPortalSessionByToken(token: string): PortalSessionRow | null {
   return row ?? null;
 }
 
+export function readPortalSessionByToken(token: string): PortalSessionContext | null {
+  const session = findPortalSessionByToken(token);
+  if (!session) return null;
+  return {
+    company_id: session.company_id,
+    portal_client_id: session.portal_client_id,
+    portal_user_id: session.portal_user_id,
+    slug: session.slug,
+    username: session.username,
+    company_name: session.company_name,
+    is_internal: Number(session.is_internal) === 1
+  };
+}
+
 function extractBearerToken(authorizationHeader: string | undefined): string | null {
   if (!authorizationHeader) return null;
   const match = authorizationHeader.match(/^Bearer\s+(.+)$/i);

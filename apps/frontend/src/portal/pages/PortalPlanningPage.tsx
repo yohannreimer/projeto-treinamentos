@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
-import type { PortalAuthedApi, PortalPlanningItem } from '../types';
+import { useEffect, useMemo, useState } from 'react';
+import type { PortalAuthedApi, PortalOperatorDisplaySettings, PortalPlanningItem } from '../types';
 
 type PortalPlanningPageProps = {
   api: PortalAuthedApi;
+  isInternal: boolean;
 };
 
 function planningStatusTone(status: string) {
@@ -29,18 +30,40 @@ function formatDateListBr(values: string[] | undefined) {
   return values.slice(0, 3).map((value) => formatDateBr(value)).join(' · ');
 }
 
-export function PortalPlanningPage({ api }: PortalPlanningPageProps) {
+const emptySettings: PortalOperatorDisplaySettings = {
+  support_intro_text: null,
+  hidden_module_ids: [],
+  module_date_overrides: [],
+  module_status_overrides: []
+};
+
+export function PortalPlanningPage({ api, isInternal }: PortalPlanningPageProps) {
   const [items, setItems] = useState<PortalPlanningItem[]>([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [settings, setSettings] = useState<PortalOperatorDisplaySettings>(emptySettings);
+
+  async function load() {
+    const planningResponse = await api.planning();
+    setItems(planningResponse.items ?? []);
+    if (isInternal) {
+      const displaySettings = await api.operatorDisplaySettings();
+      setSettings({
+        support_intro_text: displaySettings.support_intro_text ?? null,
+        hidden_module_ids: displaySettings.hidden_module_ids ?? [],
+        module_date_overrides: displaySettings.module_date_overrides ?? [],
+        module_status_overrides: displaySettings.module_status_overrides ?? []
+      });
+    }
+  }
 
   useEffect(() => {
     let mounted = true;
     setLoading(true);
-    api.planning()
-      .then((response) => {
+    load()
+      .then(() => {
         if (!mounted) return;
-        setItems(response.items ?? []);
         setError('');
       })
       .catch((loadError) => {
@@ -54,7 +77,59 @@ export function PortalPlanningPage({ api }: PortalPlanningPageProps) {
     return () => {
       mounted = false;
     };
-  }, [api]);
+  }, [api, isInternal]);
+
+  const hiddenSet = useMemo(() => new Set(settings.hidden_module_ids), [settings.hidden_module_ids]);
+  const dateOverrideMap = useMemo(
+    () => new Map(settings.module_date_overrides.map((entry) => [entry.module_id, entry.next_date])),
+    [settings.module_date_overrides]
+  );
+  const statusOverrideMap = useMemo(
+    () => new Map(settings.module_status_overrides.map((entry) => [entry.module_id, entry.status])),
+    [settings.module_status_overrides]
+  );
+
+  function setModuleDateOverride(moduleId: string, nextDate: string) {
+    setSettings((prev) => ({
+      ...prev,
+      module_date_overrides: [
+        ...prev.module_date_overrides.filter((entry) => entry.module_id !== moduleId),
+        ...(nextDate ? [{ module_id: moduleId, next_date: nextDate }] : [])
+      ]
+    }));
+  }
+
+  function setModuleStatusOverride(moduleId: string, status: '' | 'Planejado' | 'Em_execucao' | 'Concluido') {
+    setSettings((prev) => ({
+      ...prev,
+      module_status_overrides: [
+        ...prev.module_status_overrides.filter((entry) => entry.module_id !== moduleId),
+        ...(status ? [{ module_id: moduleId, status }] : [])
+      ]
+    }));
+  }
+
+  function toggleModuleHidden(moduleId: string, checked: boolean) {
+    setSettings((prev) => ({
+      ...prev,
+      hidden_module_ids: checked
+        ? Array.from(new Set([...prev.hidden_module_ids, moduleId]))
+        : prev.hidden_module_ids.filter((value) => value !== moduleId)
+    }));
+  }
+
+  async function saveOperatorSettings() {
+    setSavingSettings(true);
+    try {
+      await api.updateOperatorDisplaySettings(settings);
+      await load();
+      setError('');
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'Falha ao salvar ajustes internos de planejamento.');
+    } finally {
+      setSavingSettings(false);
+    }
+  }
 
   if (loading) return <p>Carregando planejamento...</p>;
   if (error) return <p className="error">{error}</p>;
@@ -65,6 +140,28 @@ export function PortalPlanningPage({ api }: PortalPlanningPageProps) {
         <h2>Planejamento</h2>
         <p>Acompanhe os módulos previstos, concluídos e em andamento com leitura rápida por status.</p>
       </header>
+
+      {isInternal ? (
+        <section className="portal-operator-panel">
+          <h3>Ajustes internos da visão do cliente</h3>
+          <label>
+            Texto de abertura do suporte
+            <textarea
+              rows={2}
+              value={settings.support_intro_text ?? ''}
+              onChange={(event) => setSettings((prev) => ({ ...prev, support_intro_text: event.target.value || null }))}
+              placeholder="Texto visível na aba de suporte do cliente."
+            />
+          </label>
+          <div className="actions actions-compact">
+            <button type="button" className="portal-primary-btn" onClick={() => void saveOperatorSettings()} disabled={savingSettings}>
+              {savingSettings ? 'Salvando...' : 'Salvar ajustes do planejamento'}
+            </button>
+          </div>
+          <p className="form-hint">Esses ajustes são de mão única no portal do cliente e não alteram o planejamento principal no orquestrador.</p>
+        </section>
+      ) : null}
+
       {items.length === 0 ? (
         <div className="portal-empty-state">
           <strong>Nenhum módulo disponível no planejamento.</strong>
@@ -79,6 +176,7 @@ export function PortalPlanningPage({ api }: PortalPlanningPageProps) {
                 <th>Nome</th>
                 <th>Status</th>
                 <th>Concluído em</th>
+                {isInternal ? <th>Ajustes internos</th> : null}
               </tr>
             </thead>
             <tbody>
@@ -101,6 +199,40 @@ export function PortalPlanningPage({ api }: PortalPlanningPageProps) {
                     </span>
                   </td>
                   <td>{formatDateBr(item.completed_at)}</td>
+                  {isInternal ? (
+                    <td>
+                      <div className="portal-inline-operator-grid">
+                        <label>
+                          Status
+                          <select
+                            value={statusOverrideMap.get(item.module_id) ?? ''}
+                            onChange={(event) => setModuleStatusOverride(item.module_id, event.target.value as '' | 'Planejado' | 'Em_execucao' | 'Concluido')}
+                          >
+                            <option value="">Automático</option>
+                            <option value="Planejado">Não iniciado</option>
+                            <option value="Em_execucao">Em andamento</option>
+                            <option value="Concluido">Concluído</option>
+                          </select>
+                        </label>
+                        <label>
+                          Próxima data
+                          <input
+                            type="date"
+                            value={dateOverrideMap.get(item.module_id) ?? ''}
+                            onChange={(event) => setModuleDateOverride(item.module_id, event.target.value)}
+                          />
+                        </label>
+                        <label className="portal-inline-check">
+                          <input
+                            type="checkbox"
+                            checked={hiddenSet.has(item.module_id)}
+                            onChange={(event) => toggleModuleHidden(item.module_id, event.target.checked)}
+                          />
+                          Ocultar no portal
+                        </label>
+                      </div>
+                    </td>
+                  ) : null}
                 </tr>
               ))}
             </tbody>

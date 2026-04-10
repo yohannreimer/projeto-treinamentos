@@ -13,5 +13,5 @@ test('submits username and password', async () => {
   await user.type(screen.getByLabelText(/senha/i), '123456');
   await user.click(screen.getByRole('button', { name: /entrar/i }));
 
-  expect(onSubmit).toHaveBeenCalledWith({ username: 'cliente', password: '123456', is_internal: false });
+  expect(onSubmit).toHaveBeenCalledWith({ username: 'cliente', password: '123456' });
 });

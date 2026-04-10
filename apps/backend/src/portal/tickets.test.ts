@@ -67,6 +67,28 @@ async function loginPortal(app: ReturnType<typeof createApp>) {
   return token;
 }
 
+async function loginInternalOperator(app: ReturnType<typeof createApp>) {
+  const saveAccessRes = await request(app)
+    .put('/admin/portal-operator-access')
+    .send({
+      username: 'operador.holand',
+      password: 'SenhaGlobal#123'
+    });
+
+  assert.equal(saveAccessRes.status, 200);
+  assert.equal(saveAccessRes.body.ok, true);
+
+  const loginRes = await request(app)
+    .post('/portal/api/auth/login')
+    .send({ slug: 'cliente-tickets', username: 'operador.holand', password: 'SenhaGlobal#123' });
+
+  assert.equal(loginRes.status, 200);
+  assert.equal(loginRes.body.is_internal, true);
+  const token = loginRes.body.token as string;
+  assert.equal(typeof token, 'string');
+  return token;
+}
+
 test('POST /portal/api/tickets creates portal_ticket and implementation_kanban_card', async () => {
   const { app, dbPath } = await createPortalTicketsFixture('portal-tickets-create-bridge');
 
@@ -79,6 +101,7 @@ test('POST /portal/api/tickets creates portal_ticket and implementation_kanban_c
         title: 'Erro no acesso',
         description: 'Detalhes do problema no login do usuário final.',
         priority: 'Alta',
+        whatsapp_number: '+55 (47) 99999-4444',
         attachments: [
           {
             file_name: 'evidencia.txt',
@@ -91,7 +114,7 @@ test('POST /portal/api/tickets creates portal_ticket and implementation_kanban_c
     assert.equal(typeof createRes.body.id, 'string');
 
     const ticket = db.prepare(`
-      select id, company_id, portal_user_id, title, priority, status, origin, kanban_card_id
+      select id, company_id, portal_user_id, title, priority, status, origin, whatsapp_number, kanban_card_id
       from portal_ticket
       where id = ?
     `).get(createRes.body.id) as
@@ -103,6 +126,7 @@ test('POST /portal/api/tickets creates portal_ticket and implementation_kanban_c
         priority: string;
         status: string;
         origin: string;
+        whatsapp_number: string | null;
         kanban_card_id: string | null;
       }
       | undefined;
@@ -113,6 +137,7 @@ test('POST /portal/api/tickets creates portal_ticket and implementation_kanban_c
     assert.equal(ticket.priority, 'Alta');
     assert.equal(ticket.status, 'Aberto');
     assert.equal(ticket.origin, 'portal_cliente');
+    assert.equal(ticket.whatsapp_number, '5547999994444');
     assert.equal(typeof ticket.kanban_card_id, 'string');
 
     const card = db.prepare(`
@@ -224,6 +249,7 @@ test('POST /portal/api/tickets creates portal_ticket and implementation_kanban_c
       | { title: string; client_status: string; workflow_stage?: string; status?: string; column_title?: string }
       | undefined;
     assert.ok(createdItem);
+    assert.equal((createdItem as { whatsapp_number?: string }).whatsapp_number, '5547999994444');
     assert.equal(
       listRes.body.items.some((item: { title: string; client_status: string }) =>
         item.title === 'Erro no acesso' && typeof item.client_status === 'string'),
@@ -258,6 +284,8 @@ test('POST /portal/api/tickets creates portal_ticket and implementation_kanban_c
       .get(`/portal/api/tickets/${createRes.body.id as string}/thread`)
       .set('Authorization', `Bearer ${token}`);
     assert.equal(threadRes.status, 200);
+    assert.equal(threadRes.body.whatsapp_number, '5547999994444');
+    assert.equal(threadRes.body.unread_for_cliente, false);
     assert.equal(Array.isArray(threadRes.body.messages), true);
     assert.equal(threadRes.body.messages.length, 1);
     assert.equal(threadRes.body.messages[0].attachments.length, 1);
@@ -310,6 +338,106 @@ test('POST /portal/api/tickets creates portal_ticket and implementation_kanban_c
     assert.equal(mirroredMessage.body, 'Aplicamos ajuste no perfil e validamos com o time do cliente.');
     assert.equal(mirroredMessage.attachments.length, 1);
     assert.equal(mirroredMessage.attachments[0].file_name, 'checklist-final.pdf');
+  } finally {
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('POST /portal/api/tickets/:id/read marks thread as read and suppresses pending webhook queue', async () => {
+  const { app, dbPath } = await createPortalTicketsFixture('portal-tickets-read-and-webhook');
+
+  try {
+    const clientToken = await loginPortal(app);
+    const operatorToken = await loginInternalOperator(app);
+
+    const createRes = await request(app)
+      .post('/portal/api/tickets')
+      .set('Authorization', `Bearer ${clientToken}`)
+      .send({
+        title: 'Erro com licenca',
+        description: 'Preciso de ajuda com a ativacao.',
+        whatsapp_number: '+55 47 98888-7777'
+      });
+    assert.equal(createRes.status, 201);
+
+    const operatorMessageRes = await request(app)
+      .post(`/portal/api/tickets/${createRes.body.id as string}/messages`)
+      .set('Authorization', `Bearer ${operatorToken}`)
+      .send({ body: 'Estamos analisando e ja iniciamos o atendimento.' });
+    assert.equal(operatorMessageRes.status, 201);
+
+    const pendingAfterMessage = await request(app)
+      .get('/portal/api/operator/webhook-queue')
+      .set('Authorization', `Bearer ${operatorToken}`);
+    assert.equal(pendingAfterMessage.status, 200);
+    assert.equal(pendingAfterMessage.body.items.length, 1);
+    assert.equal(pendingAfterMessage.body.items[0].trigger_event, 'message_created');
+    assert.equal(pendingAfterMessage.body.items[0].recipient_whatsapp, '5547988887777');
+    assert.equal(pendingAfterMessage.body.items[0].payload.trigger.type, 'message_created');
+    assert.equal(pendingAfterMessage.body.items[0].payload.ticket.id, createRes.body.id);
+
+    const readRes = await request(app)
+      .post(`/portal/api/tickets/${createRes.body.id as string}/read`)
+      .set('Authorization', `Bearer ${clientToken}`)
+      .send({});
+    assert.equal(readRes.status, 200);
+    assert.equal(readRes.body.ok, true);
+    assert.equal(readRes.body.side, 'cliente');
+    assert.equal(readRes.body.has_unread, false);
+
+    const ticketAfterRead = db.prepare(`
+      select last_read_cliente_at
+      from portal_ticket
+      where id = ?
+    `).get(createRes.body.id) as { last_read_cliente_at: string | null };
+    assert.equal(typeof ticketAfterRead.last_read_cliente_at, 'string');
+
+    const pendingAfterRead = await request(app)
+      .get('/portal/api/operator/webhook-queue')
+      .set('Authorization', `Bearer ${operatorToken}`);
+    assert.equal(pendingAfterRead.status, 200);
+    assert.equal(pendingAfterRead.body.items.length, 0);
+  } finally {
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('operator workflow change enqueues webhook payload for future Evolution API', async () => {
+  const { app, dbPath } = await createPortalTicketsFixture('portal-tickets-workflow-webhook');
+
+  try {
+    const clientToken = await loginPortal(app);
+    const operatorToken = await loginInternalOperator(app);
+
+    const createRes = await request(app)
+      .post('/portal/api/tickets')
+      .set('Authorization', `Bearer ${clientToken}`)
+      .send({
+        title: 'Chamado para workflow',
+        description: 'Aguardando atualizacao operacional.',
+        whatsapp_number: '47 97777-6666'
+      });
+    assert.equal(createRes.status, 201);
+
+    const workflowRes = await request(app)
+      .patch(`/portal/api/operator/tickets/${createRes.body.id as string}/workflow`)
+      .set('Authorization', `Bearer ${operatorToken}`)
+      .send({ workflow_stage: 'Em_andamento' });
+    assert.equal(workflowRes.status, 200);
+    assert.equal(workflowRes.body.workflow_stage, 'Em_andamento');
+
+    const queueRes = await request(app)
+      .get('/portal/api/operator/webhook-queue')
+      .set('Authorization', `Bearer ${operatorToken}`);
+    assert.equal(queueRes.status, 200);
+    assert.equal(queueRes.body.items.length, 1);
+    assert.equal(queueRes.body.items[0].trigger_event, 'workflow_changed');
+    assert.equal(queueRes.body.items[0].payload.version, 'portal_ticket_webhook_v1');
+    assert.equal(queueRes.body.items[0].payload.provider, 'evolution');
+    assert.equal(queueRes.body.items[0].payload.channel, 'whatsapp');
+    assert.equal(queueRes.body.items[0].payload.trigger.type, 'workflow_changed');
+    assert.equal(queueRes.body.items[0].payload.trigger.workflow_stage, 'Em_andamento');
+    assert.equal(queueRes.body.items[0].payload.recipient.whatsapp_number, '47977776666');
   } finally {
     cleanupDbFiles(dbPath);
   }

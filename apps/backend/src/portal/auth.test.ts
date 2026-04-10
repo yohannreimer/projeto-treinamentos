@@ -165,8 +165,7 @@ test('admin portal operator credentials allow internal login in any portal slug'
       .send({
         slug: 'grupo-cbm',
         username: 'operador.holand',
-        password: 'SenhaGlobal#123',
-        is_internal: true
+        password: 'SenhaGlobal#123'
       });
     assert.equal(loginRes.status, 200);
     assert.equal(loginRes.body.is_internal, true);

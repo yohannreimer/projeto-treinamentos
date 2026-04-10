@@ -149,6 +149,10 @@ export function initDb() {
       company_id text not null unique,
       slug text not null unique,
       is_active integer not null default 1,
+      support_intro_text text,
+      hidden_module_ids_json text not null default '[]',
+      module_date_overrides_json text not null default '{}',
+      module_status_overrides_json text not null default '{}',
       created_at text not null,
       updated_at text not null,
       unique(id, company_id),
@@ -196,6 +200,9 @@ export function initDb() {
       priority text not null default 'Normal',
       status text not null default 'Aberto',
       origin text not null default 'portal_cliente',
+      whatsapp_number text,
+      last_read_cliente_at text,
+      last_read_holand_at text,
       kanban_card_id text,
       created_at text not null,
       updated_at text not null,
@@ -223,6 +230,43 @@ export function initDb() {
       file_size_bytes integer not null default 0,
       created_at text not null,
       foreign key(ticket_message_id) references portal_ticket_message(id) on delete cascade
+    );
+
+    create table if not exists portal_ticket_webhook_queue (
+      id text primary key,
+      ticket_id text not null,
+      company_id text not null,
+      recipient_side text not null,
+      recipient_whatsapp text not null,
+      trigger_event text not null,
+      event_created_at text not null,
+      available_at text not null,
+      payload_json text not null,
+      sent_at text,
+      suppressed_at text,
+      suppression_reason text,
+      last_error text,
+      created_at text not null,
+      updated_at text not null,
+      foreign key(ticket_id) references portal_ticket(id) on delete cascade,
+      foreign key(company_id) references company(id) on delete cascade
+    );
+
+    create table if not exists portal_agenda_item (
+      id text primary key,
+      portal_client_id text not null,
+      title text not null,
+      activity_type text not null default 'Outro',
+      start_date text not null,
+      end_date text not null,
+      all_day integer not null default 1,
+      start_time text,
+      end_time text,
+      status text not null default 'Planejada',
+      notes text,
+      created_at text not null,
+      updated_at text not null,
+      foreign key(portal_client_id) references portal_client(id) on delete cascade
     );
 
     create table if not exists app_setting (
@@ -527,10 +571,14 @@ export function initDb() {
   ensureColumn('implementation_kanban_card', 'attachment_file_name', 'attachment_file_name text');
   ensureColumn('implementation_kanban_card', 'attachment_file_data_base64', 'attachment_file_data_base64 text');
   ensureColumn('portal_session', 'is_internal', 'is_internal integer not null default 0');
+  ensureColumn('portal_ticket', 'whatsapp_number', 'whatsapp_number text');
+  ensureColumn('portal_ticket', 'last_read_cliente_at', 'last_read_cliente_at text');
+  ensureColumn('portal_ticket', 'last_read_holand_at', 'last_read_holand_at text');
   ensureColumn('portal_ticket', 'kanban_card_id', 'kanban_card_id text');
   ensureColumn('portal_client', 'support_intro_text', 'support_intro_text text');
   ensureColumn('portal_client', 'hidden_module_ids_json', "hidden_module_ids_json text not null default '[]'");
   ensureColumn('portal_client', 'module_date_overrides_json', "module_date_overrides_json text not null default '{}'");
+  ensureColumn('portal_client', 'module_status_overrides_json', "module_status_overrides_json text not null default '{}'");
 
   db.exec(`
     drop index if exists idx_portal_user_username;
@@ -541,6 +589,9 @@ export function initDb() {
     create index if not exists idx_portal_ticket_kanban on portal_ticket(kanban_card_id);
     create index if not exists idx_portal_ticket_message_ticket_created on portal_ticket_message(ticket_id, created_at asc);
     create index if not exists idx_portal_ticket_attachment_message on portal_ticket_attachment(ticket_message_id);
+    create index if not exists idx_portal_ticket_webhook_queue_pending
+      on portal_ticket_webhook_queue(company_id, recipient_side, sent_at, suppressed_at, available_at, created_at);
+    create index if not exists idx_portal_agenda_item_client_date on portal_agenda_item(portal_client_id, start_date, end_date);
   `);
 
   db.exec(`
@@ -809,9 +860,11 @@ export function seedDb() {
 
 export function clearAllData() {
   db.exec(`
+    delete from portal_ticket_webhook_queue;
     delete from portal_ticket;
     delete from portal_ticket_attachment;
     delete from portal_ticket_message;
+    delete from portal_agenda_item;
     delete from portal_session;
     delete from portal_user;
     delete from portal_client;
