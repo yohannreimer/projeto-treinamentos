@@ -237,3 +237,28 @@ Regra: o cliente nunca visualiza nomenclatura técnica interna; sempre recebe o 
 
 ## 16. Próximo Passo
 Com este design aprovado e documentado, o próximo passo é elaborar o plano de implementação detalhado com o skill `writing-plans`.
+
+## 17. Notas de Implementação (2026-04-09)
+Status da execução nesta branch:
+- backend:
+  - auth portal com hash `scrypt`, sessão própria, middleware tenant e rate limit de login;
+  - rotas `/portal/api/me`, `/portal/api/overview`, `/portal/api/planning`, `/portal/api/agenda`;
+  - bridge de chamados: `POST/GET /portal/api/tickets` com criação atômica de card no Kanban interno;
+  - provisionamento interno por cliente:
+    - `GET /companies/:id/portal-access`
+    - `PUT /companies/:id/portal-access`
+  - garantias de isolamento:
+    - triggers de consistência tenant em `portal_session` e `portal_ticket`;
+    - testes cobrindo escopo por `company_id`.
+- frontend:
+  - área cliente em `/portal/:slug/*` com shell dedicado;
+  - páginas:
+    - `Visão Geral`
+    - `Planejamento`
+    - `Agenda`
+    - `Chamados`
+  - login do portal com sessão local separada da sessão interna;
+  - seção de provisionamento no detalhe do cliente para slug/usuário/senha/status;
+  - polimento visual premium no tema claro, seguindo paleta Holand.
+- testes:
+  - backend e frontend com suites automatizadas verdes na data de execução.
