@@ -14,7 +14,7 @@ function createFakeApi() {
   };
 }
 
-test('abre o formulário premium e envia ticket com WhatsApp normalizado', async () => {
+test('abre o formulário de suporte e envia ticket com WhatsApp normalizado', async () => {
   const fakeApi = createFakeApi();
   fakeApi.tickets
     .mockResolvedValueOnce({
@@ -60,7 +60,7 @@ test('abre o formulário premium e envia ticket com WhatsApp normalizado', async
 
   render(<PortalTicketsPage api={fakeApi} isInternal={false} sessionToken="token-123" />);
 
-  expect(await screen.findByText(/inbox premium holand/i)).toBeInTheDocument();
+  expect(await screen.findByText(/canal oficial para dúvidas do time/i)).toBeInTheDocument();
   await userEvent.click(screen.getByRole('button', { name: /nova solicitação/i }));
 
   await userEvent.type(screen.getByLabelText(/assunto/i), 'Novo chamado');

@@ -68,6 +68,7 @@ const MAX_ATTACHMENTS = 8;
 const ACCEPTED_ATTACHMENT_TYPES = 'image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt';
 const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
 const API_BASE_URL = env?.VITE_API_BASE_URL ?? `http://${window.location.hostname}:4000`;
+const PORTAL_REALTIME_ENABLED = env?.VITE_PORTAL_REALTIME === '1';
 const dateFormatter = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'medium' });
 const dateTimeFormatter = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'medium', timeStyle: 'short' });
 
@@ -186,19 +187,8 @@ function resolveRealtimeApiBase(rawBaseUrl: string) {
 function makePortalWsUrl(sessionToken: string) {
   const base = resolveRealtimeApiBase(API_BASE_URL);
   const protocol = base.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsPath = `${base.pathPrefix}/portal/ws`.replace(/\/{2,}/g, '/');
+  const wsPath = '/portal/ws';
   return `${protocol}//${base.host}${wsPath}?token=${encodeURIComponent(sessionToken)}`;
-}
-
-function presenceLabel(sideLabel: string, isOnline?: boolean | null) {
-  if (isOnline === true) return `${sideLabel} online`;
-  if (isOnline === false) return `${sideLabel} offline`;
-  return `${sideLabel} aguardando presença`;
-}
-
-function typingLabel(typing: ThreadRealtimeState['typing']) {
-  if (!typing.is_typing || !typing.side) return 'Sem digitação no momento';
-  return typing.side === 'holand' ? 'Holand está digitando...' : 'Cliente está digitando...';
 }
 
 function initialWorkflowFromStage(stage?: string): WorkflowStage {
@@ -332,15 +322,6 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
     () => items.find((item) => item.id === selectedTicketId) ?? null,
     [items, selectedTicketId]
   );
-  const selectedIsReadonlyOperational = Boolean(selectedTicket && selectedTicket.id.startsWith('kcard-'));
-  const openCount = useMemo(() => items.filter((item) => item.client_status !== 'Resolvido').length, [items]);
-  const criticalCount = useMemo(() => items.filter((item) => item.priority === 'Critica' || item.priority === 'Alta').length, [items]);
-  const unreadCount = useMemo(
-    () => items.reduce((sum, item) => sum + Math.max(0, item.realtime?.unread_count ?? 0), 0),
-    [items]
-  );
-  const realtimeReady = Boolean(sessionToken);
-  const hasSelectedThread = Boolean(selectedTicketId);
 
   function sendSocketEvent(event: Record<string, unknown>) {
     const socket = socketRef.current;
@@ -349,7 +330,7 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
   }
 
   useEffect(() => {
-    if (!sessionToken || typeof WebSocket === 'undefined') return undefined;
+    if (!PORTAL_REALTIME_ENABLED || !sessionToken || typeof WebSocket === 'undefined') return undefined;
     let socket: WebSocket;
     try {
       socket = new WebSocket(makePortalWsUrl(sessionToken));
@@ -508,6 +489,38 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
       setError(fileError instanceof Error ? fileError.message : 'Falha ao anexar arquivo.');
     } finally {
       event.target.value = '';
+    }
+  }
+
+  async function downloadAttachment(
+    attachment: { file_name: string; download_url: string }
+  ) {
+    const url = `${API_BASE_URL}${attachment.download_url}`;
+    try {
+      if (!sessionToken) {
+        window.open(url, '_blank', 'noopener,noreferrer');
+        return;
+      }
+
+      const response = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${sessionToken}`
+        }
+      });
+      if (!response.ok) {
+        throw new Error('Falha ao baixar anexo.');
+      }
+      const blob = await response.blob();
+      const objectUrl = window.URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      anchor.download = attachment.file_name || 'anexo';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(objectUrl);
+    } catch (downloadError) {
+      setError(downloadError instanceof Error ? downloadError.message : 'Falha ao baixar anexo.');
     }
   }
 
@@ -699,48 +712,27 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
     <section className="portal-panel portal-support-shell">
       <header className="portal-panel-header portal-panel-header-row portal-support-header">
         <div className="portal-support-heading">
-          <span className="portal-support-kicker">Inbox premium Holand</span>
-          <h2>Suporte com contexto, leitura clara e conversa contínua.</h2>
+          <span className="portal-support-kicker">Suporte</span>
+          <h2>Suporte</h2>
           <p>
-            {supportIntroText || 'Abra solicitações, acompanhe a etapa do workflow e mantenha toda a conversa do atendimento no mesmo lugar.'}
+            {supportIntroText || 'Abra solicitações e acompanhe a conversa do atendimento no mesmo lugar.'}
           </p>
         </div>
         <div className="portal-support-header-actions">
-          <span className={`portal-support-realtime-pill ${realtimeReady ? 'is-ready' : ''}`}>
-            {realtimeReady ? 'Canal pronto para realtime' : 'Canal visual pronto para realtime'}
-          </span>
           <button type="button" className="portal-primary-btn portal-support-cta" onClick={() => setShowForm((prev) => !prev)}>
             {showForm ? 'Fechar abertura' : 'Nova solicitação'}
           </button>
         </div>
       </header>
 
-      <section className="portal-support-hero-grid">
-        <article className="portal-support-hero-card portal-support-hero-card-primary">
-          <span className="portal-support-card-label">Leitura rápida</span>
-          <strong className="portal-support-metric">{openCount}</strong>
-          <p>Solicitações ativas na sua fila com CTA direto para abrir a conversa.</p>
-        </article>
-        <article className="portal-support-hero-card">
-          <span className="portal-support-card-label">Atenção</span>
-          <strong className="portal-support-metric">{criticalCount}</strong>
-          <p>Chamados com prioridade alta ou crítica para priorização imediata.</p>
-        </article>
-        <article className="portal-support-hero-card">
-          <span className="portal-support-card-label">Não lidas</span>
-          <strong className="portal-support-metric">{unreadCount}</strong>
-          <p>Indicador preparado para unread mesmo quando a API ainda não preencher todos os sinais.</p>
-        </article>
-      </section>
-
       {showForm ? (
         <form className="portal-ticket-form portal-ticket-form-premium" onSubmit={submit}>
           <div className="portal-support-form-head">
             <div>
               <span className="portal-support-card-label">Abrir nova solicitação</span>
-              <strong>Conte o contexto uma vez e deixe a thread nascer organizada.</strong>
+              <strong>Descreva o problema para iniciar o suporte.</strong>
             </div>
-            <p className="form-hint">Anexe imagens ou documentos. O WhatsApp abaixo é opcional e serve como contato de apoio.</p>
+            <p className="form-hint">Você pode anexar imagens e documentos.</p>
           </div>
           <div className="portal-support-form-grid">
             <label>
@@ -818,10 +810,9 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
           <div className="portal-support-column">
             <div className="portal-support-list-head">
               <div>
-                <span className="portal-support-card-label">Fila de atendimento</span>
-                <strong>{items.length === 0 ? 'Nenhuma solicitação ainda.' : `${items.length} solicitações na inbox`}</strong>
+                <span className="portal-support-card-label">Chamados</span>
+                <strong>{items.length === 0 ? 'Nenhuma solicitação ainda.' : `${items.length} chamado(s)`}</strong>
               </div>
-              <span className="portal-support-list-note">Timestamps em PT-BR, badges claros e CTA de conversa sempre visível.</span>
             </div>
 
             <div className="portal-ticket-list portal-ticket-list-premium">
@@ -843,9 +834,6 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
                     <div className="portal-ticket-main portal-ticket-main-premium">
                       <div className="portal-ticket-main-topline">
                         <span className="portal-support-thread-id">{item.id}</span>
-                        <span className={`portal-support-presence-pill ${item.realtime?.holand_online ? 'is-online' : item.realtime?.holand_online === false ? 'is-offline' : ''}`}>
-                          {presenceLabel('Holand', item.realtime?.holand_online)}
-                        </span>
                       </div>
                       <strong>{item.title}</strong>
                       <p>{summarizeTicket(item)}</p>
@@ -867,15 +855,6 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
                         </span>
                         <span className={`portal-status-chip ${unread > 0 ? 'is-analysis' : 'is-muted'}`}>
                           {unread > 0 ? `${unread} não lida${unread > 1 ? 's' : ''}` : 'Sem novas'}
-                        </span>
-                      </div>
-                      <div className="portal-ticket-realtime-strip">
-                        <span className={`portal-support-typing-indicator ${(item.realtime?.typing_side ?? null) ? 'is-active' : ''}`}>
-                          {item.realtime?.typing_side === 'holand'
-                            ? 'Holand digitando'
-                            : item.realtime?.typing_side === 'cliente'
-                              ? 'Cliente digitando'
-                              : 'Typing pronto'}
                         </span>
                       </div>
                       {isInternal ? (
@@ -915,23 +894,6 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
             </div>
           </div>
 
-          <aside className="portal-support-sidecards">
-            <article className="portal-support-sidecard">
-              <span className="portal-support-card-label">Leitura lógica</span>
-              <strong>Prioridade, etapa, status e origem aparecem sempre na mesma ordem.</strong>
-              <p>Isso reduz o esforço para entender o momento de cada chamado, no desktop e no mobile.</p>
-            </article>
-            <article className="portal-support-sidecard">
-              <span className="portal-support-card-label">Realtime-ready</span>
-              <strong>{realtimeReady ? 'Sessão apta para presença e typing futuro.' : 'Estados visuais prontos para presença e typing.'}</strong>
-              <p>Mesmo sem todos os sinais da API, a interface já reserva unread, presença e digitação de forma elegante.</p>
-            </article>
-            <article className="portal-support-sidecard">
-              <span className="portal-support-card-label">Anexos preservados</span>
-              <strong>Imagens e documentos continuam no fluxo.</strong>
-              <p>O histórico da thread mantém CTA claro para download e resposta com contexto completo.</p>
-            </article>
-          </aside>
         </div>
       ) : null}
 
@@ -943,9 +905,6 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
               <div className="portal-ticket-overlay-heading">
                 <span className="portal-support-kicker">Conversa do suporte</span>
                 <h3 id="portal-ticket-overlay-title">{selectedTicket.title}</h3>
-                <p>
-                  Thread organizada para responder rápido, acompanhar anexos e enxergar sinais de realtime sem ruído.
-                </p>
               </div>
               <button type="button" className="portal-secondary-btn" onClick={closeThread}>
                 Fechar
@@ -965,17 +924,6 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
                   {threadRealtime.unreadCount > 0
                     ? `${threadRealtime.unreadCount} não lida${threadRealtime.unreadCount > 1 ? 's' : ''}`
                     : 'Sem novas'}
-                </span>
-              </div>
-              <div className="portal-ticket-overlay-realtime-row">
-                <span className={`portal-support-presence-pill ${threadRealtime.presence.holand_online ? 'is-online' : threadRealtime.presence.holand_online === false ? 'is-offline' : ''}`}>
-                  {presenceLabel('Holand', threadRealtime.presence.holand_online ?? selectedTicket.realtime?.holand_online ?? null)}
-                </span>
-                <span className={`portal-support-presence-pill ${threadRealtime.presence.client_online ? 'is-online' : threadRealtime.presence.client_online === false ? 'is-offline' : ''}`}>
-                  {presenceLabel('Cliente', threadRealtime.presence.client_online ?? selectedTicket.realtime?.client_online ?? null)}
-                </span>
-                <span className={`portal-support-typing-indicator ${threadRealtime.typing.is_typing ? 'is-active' : ''}`}>
-                  {typingLabel(threadRealtime.typing)}
                 </span>
               </div>
             </div>
@@ -1008,15 +956,14 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
                         {message.attachments.length > 0 ? (
                           <div className="portal-ticket-message-attachments">
                             {message.attachments.map((attachment) => (
-                              <a
+                              <button
                                 key={attachment.id}
-                                href={`${API_BASE_URL}${attachment.download_url}`}
-                                target="_blank"
-                                rel="noreferrer"
+                                type="button"
                                 className="portal-secondary-btn portal-ticket-attachment-link"
+                                onClick={() => void downloadAttachment(attachment)}
                               >
                                 {attachment.file_name}
-                              </a>
+                              </button>
                             ))}
                           </div>
                         ) : null}
@@ -1025,118 +972,51 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
                   ))}
                 </div>
               </div>
-
-              <aside className="portal-ticket-overlay-sidebar">
-                <div className="portal-ticket-sidebar-card">
-                  <span className="portal-support-card-label">Resumo do ticket</span>
-                  <strong>{sourceLabel(selectedTicket.source)}</strong>
-                  <p>{summarizeTicket(selectedTicket)}</p>
-                  <div className="portal-ticket-sidebar-meta">
-                    <span>Criado em {formatDateTime(selectedTicket.created_at)}</span>
-                    <span>Atualizado em {formatDateTime(selectedTicket.updated_at)}</span>
-                    <span>
-                      {threadRealtime.lastReadAt
-                        ? `Última leitura em ${formatDateTime(threadRealtime.lastReadAt)}`
-                        : 'Última leitura aguardando sinal'}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="portal-ticket-sidebar-card">
-                  <span className="portal-support-card-label">Realtime visual</span>
-                  <strong>Presença, typing e unread já têm lugar na interface.</strong>
-                  <p>Quando a API começar a preencher esses campos, a conversa absorve o sinal sem precisar redesenhar a UX.</p>
-                </div>
-
-                {isInternal ? (
-                  <div className="portal-ticket-sidebar-card portal-ticket-sidebar-card-operator">
-                    <span className="portal-support-card-label">Controle interno</span>
-                    <strong>Atualize a etapa do workflow com a mesma leitura premium.</strong>
-                    <label>
-                      Etapa do workflow
-                      <select
-                        value={workflowByTicket[selectedTicket.id] ?? initialWorkflowFromStage(selectedTicket.workflow_stage)}
-                        onChange={(event) => setWorkflowByTicket((prev) => ({
-                          ...prev,
-                          [selectedTicket.id]: event.target.value as WorkflowStage
-                        }))}
-                      >
-                        {workflowOptions.map((option) => (
-                          <option key={option.value} value={option.value}>{option.label}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <button
-                      type="button"
-                      className="portal-primary-btn"
-                      onClick={() => void updateTicketWorkflow(selectedTicket.id)}
-                      disabled={workflowSavingTicketId === selectedTicket.id}
-                    >
-                      {workflowSavingTicketId === selectedTicket.id ? 'Atualizando...' : 'Salvar etapa'}
-                    </button>
-                  </div>
-                ) : null}
-              </aside>
             </div>
 
-            {!selectedIsReadonlyOperational ? (
-              <form className="portal-ticket-form portal-ticket-form-reply" onSubmit={submitReply}>
-                <div className="portal-support-form-head">
-                  <div>
-                    <span className="portal-support-card-label">Responder na thread</span>
-                    <strong>Envie atualização, confirmação ou novo contexto.</strong>
-                  </div>
-                  <p className="form-hint">A conversa permanece encadeada, com anexos e timestamps locais.</p>
+            <form className="portal-ticket-form portal-ticket-form-reply" onSubmit={submitReply}>
+              <div className="portal-support-form-head">
+                <div>
+                  <span className="portal-support-card-label">Responder na thread</span>
                 </div>
-                <label>
-                  Nova mensagem
-                  <textarea
-                    rows={4}
-                    value={replyBody}
-                    onChange={(event) => handleReplyBodyChange(event.target.value)}
-                    placeholder="Compartilhe a próxima ação, retorno do time ou validação do cliente."
-                  />
-                </label>
-                <label>
-                  Anexos
-                  <input type="file" accept={ACCEPTED_ATTACHMENT_TYPES} multiple onChange={onPickReplyAttachments} />
-                </label>
-                {replyAttachments.length > 0 ? (
-                  <div className="portal-ticket-attachments portal-ticket-attachments-premium">
-                    {replyAttachments.map((attachment, index) => (
-                      <span key={`${attachment.file_name}-${index}`} className="portal-status-chip is-muted">
-                        {attachment.file_name}
-                        <small>{formatBytes(attachment.size_bytes)}</small>
-                        <button
-                          type="button"
-                          className="portal-attachment-remove"
-                          onClick={() => setReplyAttachments((prev) => prev.filter((_, current) => current !== index))}
-                        >
-                          remover
-                        </button>
-                      </span>
-                    ))}
-                  </div>
-                ) : null}
-                <div className="actions actions-compact">
-                  <button type="submit" className="portal-primary-btn" disabled={threadSubmitting}>
-                    {threadSubmitting ? 'Enviando...' : 'Enviar resposta'}
-                  </button>
+              </div>
+              <label>
+                Nova mensagem
+                <textarea
+                  rows={4}
+                  value={replyBody}
+                  onChange={(event) => handleReplyBodyChange(event.target.value)}
+                  placeholder="Digite sua mensagem..."
+                />
+              </label>
+              <label>
+                Anexos
+                <input type="file" accept={ACCEPTED_ATTACHMENT_TYPES} multiple onChange={onPickReplyAttachments} />
+              </label>
+              {replyAttachments.length > 0 ? (
+                <div className="portal-ticket-attachments portal-ticket-attachments-premium">
+                  {replyAttachments.map((attachment, index) => (
+                    <span key={`${attachment.file_name}-${index}`} className="portal-status-chip is-muted">
+                      {attachment.file_name}
+                      <small>{formatBytes(attachment.size_bytes)}</small>
+                      <button
+                        type="button"
+                        className="portal-attachment-remove"
+                        onClick={() => setReplyAttachments((prev) => prev.filter((_, current) => current !== index))}
+                      >
+                        remover
+                      </button>
+                    </span>
+                  ))}
                 </div>
-              </form>
-            ) : (
-              <p className="form-hint portal-thread-note">
-                Este item veio da operação interna e fica em modo somente leitura no portal, mas o histórico visual continua acessível.
-              </p>
-            )}
+              ) : null}
+              <div className="actions actions-compact">
+                <button type="submit" className="portal-primary-btn" disabled={threadSubmitting}>
+                  {threadSubmitting ? 'Enviando...' : 'Enviar mensagem'}
+                </button>
+              </div>
+            </form>
           </section>
-        </div>
-      ) : null}
-
-      {!hasSelectedThread ? (
-        <div className="portal-support-overlay-hint" aria-hidden="true">
-          <span className="portal-support-card-label">Popup overlay</span>
-          <strong>Abra qualquer solicitação para ver a conversa em modo mensageria.</strong>
         </div>
       ) : null}
     </section>

@@ -2812,6 +2812,12 @@ button:focus-visible,
   line-height: 1;
 }
 
+.kanban-card-conversation-pending {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: #9c2d1c;
+}
+
 .kanban-card-danger-btn {
   color: #7c2436;
   background: #fff5f7;

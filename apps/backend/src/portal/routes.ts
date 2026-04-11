@@ -1146,7 +1146,7 @@ function resolvePortalTicketForContext(
   if (!ticketRef.startsWith('kcard-')) {
     return null;
   }
-  if (!context.is_internal || options?.materializeOperationalForInternal !== true) {
+  if (options?.materializeOperationalForInternal !== true) {
     return null;
   }
   return materializeOperationalPortalTicket(ticketRef, context);
@@ -2314,10 +2314,6 @@ export function registerPortalRoutes(app: Express) {
     const parsed = ticketMessageSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json(parsed.error.flatten());
-    }
-
-    if (req.params.id.startsWith('kcard-') && !context.is_internal) {
-      return res.status(400).json({ message: 'Este item da operação não possui thread editável no portal.' });
     }
 
     const ticket = resolvePortalTicketForContext(req.params.id, context, {

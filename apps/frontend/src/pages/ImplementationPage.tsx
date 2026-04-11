@@ -1137,7 +1137,7 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
                                       ) : null}
                                       <div className="actions actions-compact">
                                         <button type="button" className="kanban-card-secondary-btn" onClick={() => editCard(card)}>Abrir</button>
-                                        {card.subcategory === 'Suporte' ? (
+                                        {boardMode === 'support' ? (
                                           <button
                                             type="button"
                                             className={`kanban-card-conversation-btn ${card.support_unread_count > 0 ? 'has-unread' : ''}`}
@@ -1149,6 +1149,7 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
                                                 {card.support_unread_count > 99 ? '99+' : card.support_unread_count}
                                               </span>
                                             ) : null}
+                                            {card.support_unread_count > 0 ? <small className="kanban-card-conversation-pending">pendente</small> : null}
                                           </button>
                                         ) : null}
                                         <button type="button" className="kanban-card-danger-btn" onClick={() => deleteCard(card)}>Excluir</button>
