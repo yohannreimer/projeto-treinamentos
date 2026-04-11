@@ -2488,6 +2488,7 @@ button:focus-visible,
 .kanban-create-note-btn:focus-visible,
 .kanban-delete-column-btn:focus-visible,
 .kanban-card-secondary-btn:focus-visible,
+.kanban-card-conversation-btn:focus-visible,
 .kanban-card-danger-btn:focus-visible {
   box-shadow: var(--focus-ring);
 }
@@ -2773,6 +2774,42 @@ button:focus-visible,
 .kanban-card-secondary-btn {
   background: #f3f6f8;
   color: #334556;
+}
+
+.kanban-card-conversation-btn {
+  background: #ffffff;
+  color: #24384a;
+  border-color: #ccd8e4;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.kanban-card-conversation-btn:hover {
+  background: #f5f8fb;
+  border-color: #bccbda;
+}
+
+.kanban-card-conversation-btn.has-unread {
+  border-color: #ef2f0f;
+  color: #7f2719;
+  background: #fff5f2;
+}
+
+.kanban-card-conversation-badge {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #ef2f0f;
+  color: #ffffff;
+  font-size: 0.68rem;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
 }
 
 .kanban-card-danger-btn {

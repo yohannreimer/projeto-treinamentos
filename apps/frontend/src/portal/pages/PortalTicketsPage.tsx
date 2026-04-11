@@ -153,12 +153,41 @@ function normalizeContactPhone(value: string) {
   return digits;
 }
 
+function resolveRealtimeApiBase(rawBaseUrl: string) {
+  const trimmed = rawBaseUrl.trim();
+  if (/^https?:\/\//i.test(trimmed)) {
+    try {
+      const absolute = new URL(trimmed);
+      return {
+        protocol: absolute.protocol,
+        host: absolute.host,
+        pathPrefix: absolute.pathname.replace(/\/$/, '')
+      };
+    } catch {
+      return {
+        protocol: window.location.protocol,
+        host: window.location.host,
+        pathPrefix: ''
+      };
+    }
+  }
+
+  const normalizedPath = trimmed
+    ? `/${trimmed.replace(/^\/+|\/+$/g, '')}`
+    : '';
+
+  return {
+    protocol: window.location.protocol,
+    host: window.location.host,
+    pathPrefix: normalizedPath
+  };
+}
+
 function makePortalWsUrl(sessionToken: string) {
-  const base = new URL(API_BASE_URL);
+  const base = resolveRealtimeApiBase(API_BASE_URL);
   const protocol = base.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsUrl = new URL(`${protocol}//${base.host}/portal/ws`);
-  wsUrl.searchParams.set('token', sessionToken);
-  return wsUrl.toString();
+  const wsPath = `${base.pathPrefix}/portal/ws`.replace(/\/{2,}/g, '/');
+  return `${protocol}//${base.host}${wsPath}?token=${encodeURIComponent(sessionToken)}`;
 }
 
 function presenceLabel(sideLabel: string, isOnline?: boolean | null) {
@@ -321,7 +350,13 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
 
   useEffect(() => {
     if (!sessionToken || typeof WebSocket === 'undefined') return undefined;
-    const socket = new WebSocket(makePortalWsUrl(sessionToken));
+    let socket: WebSocket;
+    try {
+      socket = new WebSocket(makePortalWsUrl(sessionToken));
+    } catch {
+      setError('Falha ao iniciar realtime da conversa. Recarregue a página.');
+      return undefined;
+    }
     socketRef.current = socket;
 
     socket.onmessage = (rawEvent) => {

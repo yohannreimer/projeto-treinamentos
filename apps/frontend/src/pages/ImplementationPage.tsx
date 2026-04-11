@@ -13,6 +13,7 @@ const KANBAN_PRIORITY_OPTIONS: KanbanPriority[] = ['Alta', 'Normal', 'Baixa', 'C
 const KANBAN_SUBCATEGORY_OPTIONS_IMPLEMENTATION: Exclude<KanbanSubcategory, 'Suporte'>[] = ['Pre_vendas', 'Pos_vendas', 'Implementacao'];
 const KANBAN_IMAGE_MAX_BYTES = 750_000;
 const KANBAN_FILE_MAX_BYTES = 8_000_000;
+const KANBAN_CONVERSATION_MAX_ATTACHMENTS = 8;
 const KANBAN_FILTERS_COLLAPSED_STORAGE_KEY = 'orquestrador_kanban_filters_collapsed_v1';
 
 type KanbanCard = {
@@ -30,6 +31,8 @@ type KanbanCard = {
   support_handoff_date: string | null;
   support_alert_level: 'none' | 'stale' | 'done';
   support_alert_message: string | null;
+  support_ticket_id: string | null;
+  support_unread_count: number;
   priority: KanbanPriority;
   due_date: string | null;
   attachment_image_data_url: string | null;
@@ -80,6 +83,27 @@ type CardDetailDraft = {
   attachment_file_name: string;
   attachment_file_data_base64: string | null;
 } | null;
+
+type ConversationAttachmentDraft = {
+  file_name: string;
+  file_data_base64: string;
+  size_bytes: number;
+};
+
+type ConversationMessage = {
+  id: string;
+  author_type: 'Cliente' | 'Holand';
+  author_label: string | null;
+  body: string | null;
+  created_at: string;
+  attachments: Array<{
+    id: string;
+    file_name: string;
+    mime_type: string;
+    file_size_bytes: number;
+    created_at: string;
+  }>;
+};
 
 type ClientOption = {
   id: string;
@@ -143,6 +167,16 @@ function formatDateBr(dateIso?: string | null): string {
   return date.toLocaleDateString('pt-BR');
 }
 
+function formatDateTimeBr(dateIso?: string | null): string {
+  if (!dateIso) return '-';
+  const parsed = new Date(dateIso);
+  if (Number.isNaN(parsed.getTime())) return dateIso;
+  return parsed.toLocaleString('pt-BR', {
+    dateStyle: 'short',
+    timeStyle: 'short'
+  });
+}
+
 function todayIsoLocal(): string {
   const now = new Date();
   const year = now.getFullYear();
@@ -195,6 +229,16 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
 
   const [cardDetail, setCardDetail] = useState<CardDetailDraft>(null);
   const [isSavingCardDetail, setIsSavingCardDetail] = useState(false);
+  const [conversationCard, setConversationCard] = useState<KanbanCard | null>(null);
+  const [conversationMessages, setConversationMessages] = useState<ConversationMessage[]>([]);
+  const [conversationTicketId, setConversationTicketId] = useState<string | null>(null);
+  const [conversationNote, setConversationNote] = useState('');
+  const [conversationUnreadCount, setConversationUnreadCount] = useState(0);
+  const [conversationLoading, setConversationLoading] = useState(false);
+  const [conversationSubmitting, setConversationSubmitting] = useState(false);
+  const [conversationReply, setConversationReply] = useState('');
+  const [conversationAttachments, setConversationAttachments] = useState<ConversationAttachmentDraft[]>([]);
+  const [conversationError, setConversationError] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [filterClientName, setFilterClientName] = useState('');
@@ -205,7 +249,16 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
 
   async function loadBoard() {
     const response = await api.implementationKanban() as { columns: KanbanColumn[] };
-    const loadedColumns = (response.columns ?? []).sort((a, b) => a.position - b.position);
+    const loadedColumns = (response.columns ?? [])
+      .map((column) => ({
+        ...column,
+        cards: (column.cards ?? []).map((card) => ({
+          ...card,
+          support_ticket_id: card.support_ticket_id ?? null,
+          support_unread_count: Math.max(0, Number(card.support_unread_count ?? 0))
+        }))
+      }))
+      .sort((a, b) => a.position - b.position);
     setColumns(loadedColumns);
     return loadedColumns;
   }
@@ -228,6 +281,143 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
     setTechnicianOptions((technicians ?? [])
       .map((technician) => ({ id: technician.id, name: technician.name }))
       .sort((a, b) => a.name.localeCompare(b.name)));
+  }
+
+  function patchCardConversationMeta(cardId: string, patch: Partial<Pick<KanbanCard, 'support_unread_count' | 'support_ticket_id'>>) {
+    setColumns((prev) => prev.map((column) => ({
+      ...column,
+      cards: column.cards.map((card) => (
+        card.id === cardId
+          ? {
+            ...card,
+            support_unread_count: Object.prototype.hasOwnProperty.call(patch, 'support_unread_count')
+              ? Math.max(0, patch.support_unread_count ?? 0)
+              : card.support_unread_count,
+            support_ticket_id: Object.prototype.hasOwnProperty.call(patch, 'support_ticket_id')
+              ? (patch.support_ticket_id ?? null)
+              : card.support_ticket_id
+          }
+          : card
+      ))
+    })));
+  }
+
+  async function loadConversation(card: KanbanCard) {
+    setConversationLoading(true);
+    setConversationError('');
+    try {
+      const response = await api.implementationKanbanConversation(card.id) as {
+        linked: boolean;
+        ticket_id: string | null;
+        unread_count: number;
+        note?: string;
+        messages: ConversationMessage[];
+      };
+      setConversationTicketId(response.ticket_id ?? null);
+      setConversationNote(response.note ?? '');
+      setConversationUnreadCount(Math.max(0, response.unread_count ?? 0));
+      setConversationMessages(response.messages ?? []);
+      patchCardConversationMeta(card.id, {
+        support_ticket_id: response.ticket_id ?? null,
+        support_unread_count: Math.max(0, response.unread_count ?? 0)
+      });
+    } catch (loadError) {
+      setConversationError(loadError instanceof Error ? loadError.message : 'Falha ao carregar a conversa.');
+      setConversationMessages([]);
+      setConversationTicketId(null);
+      setConversationUnreadCount(0);
+    } finally {
+      setConversationLoading(false);
+    }
+  }
+
+  async function markConversationAsRead(cardId: string) {
+    try {
+      await api.markImplementationKanbanConversationRead(cardId);
+      setConversationUnreadCount(0);
+      patchCardConversationMeta(cardId, { support_unread_count: 0 });
+    } catch {
+      // leitura silenciosa para não atrapalhar o operador
+    }
+  }
+
+  async function openConversation(card: KanbanCard) {
+    setConversationCard(card);
+    setConversationReply('');
+    setConversationAttachments([]);
+    setConversationMessages([]);
+    setConversationTicketId(card.support_ticket_id ?? null);
+    setConversationUnreadCount(Math.max(0, card.support_unread_count ?? 0));
+    setConversationNote('');
+    await loadConversation(card);
+    await markConversationAsRead(card.id);
+  }
+
+  function closeConversation() {
+    setConversationCard(null);
+    setConversationMessages([]);
+    setConversationTicketId(null);
+    setConversationUnreadCount(0);
+    setConversationReply('');
+    setConversationAttachments([]);
+    setConversationNote('');
+    setConversationLoading(false);
+    setConversationSubmitting(false);
+    setConversationError('');
+  }
+
+  async function onPickConversationFiles(event: ChangeEvent<HTMLInputElement>) {
+    try {
+      const files = Array.from(event.target.files ?? []);
+      if (files.length === 0) return;
+      const nextDrafts: ConversationAttachmentDraft[] = [];
+      for (const file of files) {
+        if (file.size > KANBAN_FILE_MAX_BYTES) {
+          throw new Error(`Arquivo "${file.name}" excede 8 MB.`);
+        }
+        const fileDataUrl = await toDataUrl(file);
+        nextDrafts.push({
+          file_name: file.name,
+          file_data_base64: fileDataUrl,
+          size_bytes: file.size
+        });
+      }
+      setConversationAttachments((prev) => [...prev, ...nextDrafts].slice(0, KANBAN_CONVERSATION_MAX_ATTACHMENTS));
+      setConversationError('');
+    } catch (fileError) {
+      setConversationError(fileError instanceof Error ? fileError.message : 'Falha ao anexar arquivo.');
+    } finally {
+      event.target.value = '';
+    }
+  }
+
+  async function sendConversationReply() {
+    if (!conversationCard) return;
+    const body = conversationReply.trim();
+    if (!body && conversationAttachments.length === 0) {
+      setConversationError('Escreva uma mensagem ou adicione um anexo.');
+      return;
+    }
+
+    setConversationSubmitting(true);
+    setConversationError('');
+    try {
+      await api.createImplementationKanbanConversationMessage(conversationCard.id, {
+        body: body || null,
+        attachments: conversationAttachments.map((item) => ({
+          file_name: item.file_name,
+          file_data_base64: item.file_data_base64
+        }))
+      });
+      setConversationReply('');
+      setConversationAttachments([]);
+      await loadConversation(conversationCard);
+      await markConversationAsRead(conversationCard.id);
+    } catch (submitError) {
+      setConversationError(submitError instanceof Error ? submitError.message : 'Falha ao enviar resposta.');
+    } finally {
+      setConversationSubmitting(false);
+    }
   }
 
   useEffect(() => {
@@ -947,6 +1137,20 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
                                       ) : null}
                                       <div className="actions actions-compact">
                                         <button type="button" className="kanban-card-secondary-btn" onClick={() => editCard(card)}>Abrir</button>
+                                        {card.subcategory === 'Suporte' ? (
+                                          <button
+                                            type="button"
+                                            className={`kanban-card-conversation-btn ${card.support_unread_count > 0 ? 'has-unread' : ''}`}
+                                            onClick={() => void openConversation(card)}
+                                          >
+                                            Conversa
+                                            {card.support_unread_count > 0 ? (
+                                              <span className="kanban-card-conversation-badge" aria-label={`${card.support_unread_count} mensagem(ns) não lida(s)`}>
+                                                {card.support_unread_count > 99 ? '99+' : card.support_unread_count}
+                                              </span>
+                                            ) : null}
+                                          </button>
+                                        ) : null}
                                         <button type="button" className="kanban-card-danger-btn" onClick={() => deleteCard(card)}>Excluir</button>
                                       </div>
                                     </article>
@@ -975,6 +1179,142 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
         </Droppable>
         </DragDropContext>
       </section>
+
+      {conversationCard ? (
+        <div className="portal-ticket-overlay" role="dialog" aria-modal="true">
+          <button
+            type="button"
+            className="portal-ticket-overlay-backdrop"
+            onClick={closeConversation}
+            aria-label="Fechar conversa"
+          />
+          <section className="portal-ticket-overlay-panel">
+            <header className="portal-ticket-overlay-header">
+              <div className="portal-ticket-overlay-heading">
+                <span className="portal-support-kicker">Conversa do suporte</span>
+                <h2>{conversationCard.title}</h2>
+                <p>
+                  Canal direto com o cliente para atualizar andamento e registrar anexos.
+                </p>
+              </div>
+              <button type="button" className="portal-secondary-btn" onClick={closeConversation}>Fechar</button>
+            </header>
+
+            <div className="portal-ticket-overlay-meta">
+              <div className="portal-ticket-badges portal-ticket-badges-premium">
+                <span className="portal-status-chip is-muted">Card: {conversationCard.id}</span>
+                <span className="portal-status-chip is-muted">Ticket: {conversationTicketId ?? 'Aguardando vínculo'}</span>
+                <span className={`portal-status-chip ${conversationUnreadCount > 0 ? 'is-analysis' : 'is-muted'}`}>
+                  {conversationUnreadCount > 0
+                    ? `${conversationUnreadCount} não lida${conversationUnreadCount > 1 ? 's' : ''}`
+                    : 'Sem pendências'}
+                </span>
+              </div>
+            </div>
+
+            {conversationError ? <p className="error">{conversationError}</p> : null}
+            {conversationNote ? <p className="form-hint">{conversationNote}</p> : null}
+
+            <div className="portal-ticket-overlay-body">
+              <div className="portal-ticket-conversation-column">
+                <div className="portal-ticket-thread-messages portal-ticket-thread-messages-premium">
+                  {conversationLoading ? <p>Carregando conversa...</p> : null}
+                  {!conversationLoading && conversationMessages.length === 0 ? (
+                    <div className="portal-empty-state portal-support-empty-state">
+                      <strong>Nenhuma mensagem ainda.</strong>
+                      <p>Assim que o cliente enviar algo, a thread aparece aqui.</p>
+                    </div>
+                  ) : null}
+                  {conversationMessages.map((messageItem) => (
+                    <article
+                      key={messageItem.id}
+                      className={`portal-ticket-message portal-ticket-message-premium ${messageItem.author_type === 'Holand' ? 'is-holand' : 'is-client'}`}
+                    >
+                      <div className="portal-ticket-message-avatar" aria-hidden="true">
+                        {messageItem.author_type === 'Holand' ? 'H' : 'C'}
+                      </div>
+                      <div className="portal-ticket-message-bubble">
+                        <div className="portal-ticket-message-head">
+                          <strong>{messageItem.author_label || messageItem.author_type}</strong>
+                          <span>{formatDateTimeBr(messageItem.created_at)}</span>
+                        </div>
+                        <p>{messageItem.body || 'Mensagem sem texto.'}</p>
+                        {messageItem.attachments.length > 0 ? (
+                          <div className="portal-ticket-message-attachments">
+                            {messageItem.attachments.map((attachment) => (
+                              <a
+                                key={attachment.id}
+                                href={api.implementationKanbanConversationAttachmentUrl(conversationCard.id, attachment.id)}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="portal-secondary-btn portal-ticket-attachment-link"
+                              >
+                                {attachment.file_name}
+                              </a>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <form
+              className="portal-ticket-form portal-ticket-form-reply"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void sendConversationReply();
+              }}
+            >
+              <div className="portal-support-form-head">
+                <div>
+                  <span className="portal-support-card-label">Responder na thread</span>
+                  <strong>Mensagem direta ao cliente</strong>
+                </div>
+                <p className="form-hint">A conversa fica centralizada no mesmo padrão do portal.</p>
+              </div>
+              <label>
+                Nova mensagem
+                <textarea
+                  rows={4}
+                  value={conversationReply}
+                  onChange={(event) => setConversationReply(event.target.value)}
+                  placeholder="Escreva a atualização para o cliente."
+                  disabled={!conversationTicketId}
+                />
+              </label>
+              <label>
+                Anexos
+                <input type="file" multiple onChange={onPickConversationFiles} disabled={!conversationTicketId} />
+              </label>
+              {conversationAttachments.length > 0 ? (
+                <div className="portal-ticket-attachments portal-ticket-attachments-premium">
+                  {conversationAttachments.map((attachment, index) => (
+                    <span key={`${attachment.file_name}-${index}`} className="portal-status-chip is-muted">
+                      {attachment.file_name}
+                      <small>{formatFileSize(attachment.size_bytes)}</small>
+                      <button
+                        type="button"
+                        className="portal-attachment-remove"
+                        onClick={() => setConversationAttachments((prev) => prev.filter((_, current) => current !== index))}
+                      >
+                        remover
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+              <div className="actions actions-compact">
+                <button type="submit" className="portal-primary-btn" disabled={!conversationTicketId || conversationSubmitting}>
+                  {conversationSubmitting ? 'Enviando...' : 'Enviar resposta'}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      ) : null}
 
       {cardDetail ? (
         <div className="kanban-detail-overlay" role="dialog" aria-modal="true">

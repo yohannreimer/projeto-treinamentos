@@ -288,6 +288,46 @@ export const api = {
       body: JSON.stringify(payload)
     }),
   implementationKanban: () => req('/implementation/kanban'),
+  implementationKanbanConversation: (cardId: string) =>
+    req<{
+      linked: boolean;
+      ticket_id: string | null;
+      unread_count: number;
+      note?: string;
+      messages: Array<{
+        id: string;
+        author_type: 'Cliente' | 'Holand';
+        author_label: string | null;
+        body: string | null;
+        created_at: string;
+        attachments: Array<{
+          id: string;
+          file_name: string;
+          mime_type: string;
+          file_size_bytes: number;
+          created_at: string;
+          download_url: string;
+        }>;
+      }>;
+    }>(`/implementation/kanban/cards/${cardId}/conversation`),
+  createImplementationKanbanConversationMessage: (
+    cardId: string,
+    payload: {
+      body?: string | null;
+      attachments?: Array<{ file_name: string; file_data_base64: string }>;
+    }
+  ) =>
+    req<{ id: string }>(`/implementation/kanban/cards/${cardId}/conversation/messages`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  markImplementationKanbanConversationRead: (cardId: string) =>
+    req<{ ok: boolean; linked: boolean; ticket_id: string | null; read_at?: string }>(
+      `/implementation/kanban/cards/${cardId}/conversation/read`,
+      { method: 'POST' }
+    ),
+  implementationKanbanConversationAttachmentUrl: (cardId: string, attachmentId: string) =>
+    `${BASE_URL}/implementation/kanban/cards/${cardId}/conversation/attachments/${attachmentId}/download`,
   createImplementationKanbanCard: (payload: {
     title: string;
     description?: string | null;

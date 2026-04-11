@@ -223,6 +223,16 @@ const kanbanCardUpdateSchema = z.object({
   attachment_file_data_base64: kanbanCardFileDataSchema.nullable().optional()
 });
 
+const kanbanConversationAttachmentSchema = z.object({
+  file_name: z.string().min(1).max(220),
+  file_data_base64: kanbanCardFileDataSchema
+});
+
+const kanbanConversationMessageCreateSchema = z.object({
+  body: z.string().max(4000).nullable().optional(),
+  attachments: z.array(kanbanConversationAttachmentSchema).max(8).optional()
+});
+
 const calendarActivityDateScheduleSchema = z.object({
   day_date: z.string().regex(ISO_DATE_REGEX),
   all_day: z.boolean().optional().default(true),
@@ -705,6 +715,20 @@ function createPortalMessageFromKanbanUpdate(params: {
     set updated_at = ?
     where id = ?
   `).run(params.nowIso, linkedTicket.id);
+}
+
+function readLinkedPortalTicketByKanbanCardId(kanbanCardId: string) {
+  return db.prepare(`
+    select id, company_id, last_read_holand_at
+    from portal_ticket
+    where kanban_card_id = ?
+    order by datetime(created_at) desc, id desc
+    limit 1
+  `).get(kanbanCardId) as {
+    id: string;
+    company_id: string;
+    last_read_holand_at: string | null;
+  } | undefined;
 }
 
 function requireDestructiveConfirmation(
@@ -5035,12 +5059,70 @@ export function registerCoreRoutes(app: Express) {
       created_at: string;
       updated_at: string;
     }>;
+
+    const linkedTicketByCardId = new Map<string, { ticket_id: string; last_read_holand_at: string | null }>();
+    const unreadCountByTicketId = new Map<string, number>();
+    if (cards.length > 0) {
+      const cardIds = cards.map((card) => card.id);
+      const cardPlaceholders = cardIds.map(() => '?').join(', ');
+      const linkedRows = db.prepare(`
+        select kanban_card_id, id as ticket_id, last_read_holand_at
+        from portal_ticket
+        where kanban_card_id in (${cardPlaceholders})
+        order by datetime(created_at) desc, id desc
+      `).all(...cardIds) as Array<{
+        kanban_card_id: string | null;
+        ticket_id: string;
+        last_read_holand_at: string | null;
+      }>;
+
+      linkedRows.forEach((row) => {
+        if (!row.kanban_card_id) return;
+        if (linkedTicketByCardId.has(row.kanban_card_id)) return;
+        linkedTicketByCardId.set(row.kanban_card_id, {
+          ticket_id: row.ticket_id,
+          last_read_holand_at: row.last_read_holand_at
+        });
+      });
+
+      const ticketIds = Array.from(new Set(Array.from(linkedTicketByCardId.values()).map((row) => row.ticket_id)));
+      if (ticketIds.length > 0) {
+        const ticketPlaceholders = ticketIds.map(() => '?').join(', ');
+        const unreadRows = db.prepare(`
+          select
+            pt.id as ticket_id,
+            sum(
+              case
+                when m.author_type = 'Cliente'
+                  and (pt.last_read_holand_at is null or datetime(m.created_at) > datetime(pt.last_read_holand_at))
+                then 1
+                else 0
+              end
+            ) as unread_count
+          from portal_ticket pt
+          left join portal_ticket_message m on m.ticket_id = pt.id
+          where pt.id in (${ticketPlaceholders})
+          group by pt.id
+        `).all(...ticketIds) as Array<{
+          ticket_id: string;
+          unread_count: number | null;
+        }>;
+
+        unreadRows.forEach((row) => {
+          unreadCountByTicketId.set(row.ticket_id, Number(row.unread_count ?? 0));
+        });
+      }
+    }
   
     const columnById = new Map(hydratedColumns.map((column) => [column.id, column]));
     const today = new Date(`${nowDateIso()}T00:00:00`);
     const cardsWithSupportAlerts = cards.map((card) => {
       let support_alert_level: 'none' | 'stale' | 'done' = 'none';
       let support_alert_message: string | null = null;
+      const linkedTicket = linkedTicketByCardId.get(card.id);
+      const support_unread_count = linkedTicket
+        ? (unreadCountByTicketId.get(linkedTicket.ticket_id) ?? 0)
+        : 0;
   
       if (card.subcategory === 'Suporte') {
         const columnTitle = (columnById.get(card.column_id ?? '')?.title ?? '').toLowerCase();
@@ -5066,6 +5148,8 @@ export function registerCoreRoutes(app: Express) {
   
       return {
         ...card,
+        support_ticket_id: linkedTicket?.ticket_id ?? null,
+        support_unread_count,
         support_alert_level,
         support_alert_message
       };
@@ -5077,6 +5161,274 @@ export function registerCoreRoutes(app: Express) {
         cards: cardsWithSupportAlerts.filter((card) => card.column_id === column.id)
       }))
     });
+  });
+
+  app.get('/implementation/kanban/cards/:id/conversation', (req, res) => {
+    const card = db.prepare(`
+      select id, subcategory
+      from implementation_kanban_card
+      where id = ?
+      limit 1
+    `).get(req.params.id) as {
+      id: string;
+      subcategory: (typeof KANBAN_SUBCATEGORY_VALUES)[number] | null;
+    } | undefined;
+
+    if (!card) {
+      return res.status(404).json({ message: 'Card não encontrado.' });
+    }
+    if (card.subcategory !== 'Suporte') {
+      return res.status(400).json({ message: 'Conversa disponível apenas para cards de suporte.' });
+    }
+
+    const linkedTicket = readLinkedPortalTicketByKanbanCardId(card.id);
+    if (!linkedTicket) {
+      return res.status(200).json({
+        linked: false,
+        ticket_id: null,
+        unread_count: 0,
+        messages: [],
+        note: 'Este card ainda não possui um ticket do portal vinculado.'
+      });
+    }
+
+    const messages = db.prepare(`
+      select id, author_type, author_label, body, created_at
+      from portal_ticket_message
+      where ticket_id = ?
+      order by datetime(created_at) asc, id asc
+    `).all(linkedTicket.id) as Array<{
+      id: string;
+      author_type: 'Cliente' | 'Holand';
+      author_label: string | null;
+      body: string | null;
+      created_at: string;
+    }>;
+
+    const attachments = db.prepare(`
+      select id, ticket_message_id, file_name, mime_type, file_size_bytes, created_at
+      from portal_ticket_attachment
+      where ticket_message_id in (
+        select id
+        from portal_ticket_message
+        where ticket_id = ?
+      )
+      order by datetime(created_at) asc, id asc
+    `).all(linkedTicket.id) as Array<{
+      id: string;
+      ticket_message_id: string;
+      file_name: string;
+      mime_type: string;
+      file_size_bytes: number;
+      created_at: string;
+    }>;
+
+    const attachmentsByMessage = new Map<string, Array<{
+      id: string;
+      file_name: string;
+      mime_type: string;
+      file_size_bytes: number;
+      created_at: string;
+      download_url: string;
+    }>>();
+    attachments.forEach((item) => {
+      const list = attachmentsByMessage.get(item.ticket_message_id) ?? [];
+      list.push({
+        id: item.id,
+        file_name: item.file_name,
+        mime_type: item.mime_type,
+        file_size_bytes: item.file_size_bytes,
+        created_at: item.created_at,
+        download_url: `/implementation/kanban/cards/${card.id}/conversation/attachments/${item.id}/download`
+      });
+      attachmentsByMessage.set(item.ticket_message_id, list);
+    });
+
+    const unreadRow = db.prepare(`
+      select count(1) as unread_count
+      from portal_ticket_message
+      where ticket_id = ?
+        and author_type = 'Cliente'
+        and (? is null or datetime(created_at) > datetime(?))
+    `).get(
+      linkedTicket.id,
+      linkedTicket.last_read_holand_at,
+      linkedTicket.last_read_holand_at
+    ) as { unread_count: number | null };
+
+    return res.status(200).json({
+      linked: true,
+      ticket_id: linkedTicket.id,
+      unread_count: Number(unreadRow.unread_count ?? 0),
+      messages: messages.map((message) => ({
+        id: message.id,
+        author_type: message.author_type,
+        author_label: message.author_label,
+        body: message.body,
+        created_at: message.created_at,
+        attachments: attachmentsByMessage.get(message.id) ?? []
+      }))
+    });
+  });
+
+  app.post('/implementation/kanban/cards/:id/conversation/messages', (req, res) => {
+    const card = db.prepare(`
+      select id, subcategory
+      from implementation_kanban_card
+      where id = ?
+      limit 1
+    `).get(req.params.id) as {
+      id: string;
+      subcategory: (typeof KANBAN_SUBCATEGORY_VALUES)[number] | null;
+    } | undefined;
+    if (!card) {
+      return res.status(404).json({ message: 'Card não encontrado.' });
+    }
+    if (card.subcategory !== 'Suporte') {
+      return res.status(400).json({ message: 'Conversa disponível apenas para cards de suporte.' });
+    }
+
+    const parsed = kanbanConversationMessageCreateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+
+    const linkedTicket = readLinkedPortalTicketByKanbanCardId(card.id);
+    if (!linkedTicket) {
+      return res.status(404).json({ message: 'Sem ticket portal vinculado a este card.' });
+    }
+
+    const body = parsed.data.body?.trim() || null;
+    const attachments = parsed.data.attachments ?? [];
+    if (!body && attachments.length === 0) {
+      return res.status(400).json({ message: 'Informe uma mensagem ou anexo.' });
+    }
+
+    const nowIso = new Date().toISOString();
+    const messageId = uuid('ptmsg');
+    db.prepare(`
+      insert into portal_ticket_message (
+        id, ticket_id, author_type, author_label, body, created_at
+      ) values (?, ?, 'Holand', 'Equipe Holand', ?, ?)
+    `).run(
+      messageId,
+      linkedTicket.id,
+      body,
+      nowIso
+    );
+
+    if (attachments.length > 0) {
+      const insertAttachment = db.prepare(`
+        insert into portal_ticket_attachment (
+          id, ticket_message_id, file_name, mime_type, file_data_base64, file_size_bytes, created_at
+        ) values (?, ?, ?, ?, ?, ?, ?)
+      `);
+      attachments.forEach((attachment) => {
+        const decoded = validateKanbanAttachmentDataUrl(attachment.file_data_base64);
+        insertAttachment.run(
+          uuid('ptatt'),
+          messageId,
+          normalizeAttachmentFileName(attachment.file_name, 'anexo'),
+          decoded.mimeType,
+          attachment.file_data_base64,
+          decoded.fileSizeBytes,
+          nowIso
+        );
+      });
+    }
+
+    db.prepare(`
+      update portal_ticket
+      set updated_at = ?, last_read_holand_at = ?
+      where id = ?
+    `).run(nowIso, nowIso, linkedTicket.id);
+
+    return res.status(201).json({ id: messageId });
+  });
+
+  app.post('/implementation/kanban/cards/:id/conversation/read', (req, res) => {
+    const card = db.prepare(`
+      select id, subcategory
+      from implementation_kanban_card
+      where id = ?
+      limit 1
+    `).get(req.params.id) as {
+      id: string;
+      subcategory: (typeof KANBAN_SUBCATEGORY_VALUES)[number] | null;
+    } | undefined;
+    if (!card) {
+      return res.status(404).json({ message: 'Card não encontrado.' });
+    }
+    if (card.subcategory !== 'Suporte') {
+      return res.status(400).json({ message: 'Conversa disponível apenas para cards de suporte.' });
+    }
+
+    const linkedTicket = readLinkedPortalTicketByKanbanCardId(card.id);
+    if (!linkedTicket) {
+      return res.status(200).json({ ok: true, linked: false, ticket_id: null });
+    }
+
+    const readAt = new Date().toISOString();
+    db.prepare(`
+      update portal_ticket
+      set last_read_holand_at = ?
+      where id = ?
+    `).run(readAt, linkedTicket.id);
+
+    return res.status(200).json({
+      ok: true,
+      linked: true,
+      ticket_id: linkedTicket.id,
+      read_at: readAt
+    });
+  });
+
+  app.get('/implementation/kanban/cards/:id/conversation/attachments/:attachmentId/download', (req, res) => {
+    const card = db.prepare(`
+      select id, subcategory
+      from implementation_kanban_card
+      where id = ?
+      limit 1
+    `).get(req.params.id) as {
+      id: string;
+      subcategory: (typeof KANBAN_SUBCATEGORY_VALUES)[number] | null;
+    } | undefined;
+    if (!card) {
+      return res.status(404).json({ message: 'Card não encontrado.' });
+    }
+    if (card.subcategory !== 'Suporte') {
+      return res.status(400).json({ message: 'Conversa disponível apenas para cards de suporte.' });
+    }
+
+    const linkedTicket = readLinkedPortalTicketByKanbanCardId(card.id);
+    if (!linkedTicket) {
+      return res.status(404).json({ message: 'Sem ticket portal vinculado a este card.' });
+    }
+
+    const row = db.prepare(`
+      select
+        a.file_name,
+        a.mime_type,
+        a.file_data_base64
+      from portal_ticket_attachment a
+      join portal_ticket_message m on m.id = a.ticket_message_id
+      where a.id = ?
+        and m.ticket_id = ?
+      limit 1
+    `).get(
+      req.params.attachmentId,
+      linkedTicket.id
+    ) as { file_name: string; mime_type: string; file_data_base64: string } | undefined;
+
+    if (!row) {
+      return res.status(404).json({ message: 'Anexo não encontrado.' });
+    }
+
+    const decoded = decodeDataUrl(row.file_data_base64);
+    const fileName = encodeURIComponent(row.file_name);
+    res.setHeader('Content-Type', row.mime_type || decoded.mimeType || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${fileName}`);
+    return res.status(200).send(decoded.buffer);
   });
   
   app.post('/implementation/kanban/cards', (req, res) => {
