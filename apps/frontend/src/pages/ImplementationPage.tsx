@@ -3,6 +3,7 @@ import { DragDropContext, Draggable, Droppable, type DropResult } from '@hello-p
 import { Section } from '../components/Section';
 import { api } from '../services/api';
 import { askDestructiveConfirmation } from '../utils/destructive';
+import holandSeloIcon from '../assets/holand-selo.svg';
 
 type KanbanPriority = 'Alta' | 'Normal' | 'Baixa' | 'Critica';
 type KanbanSubcategory = 'Pre_vendas' | 'Pos_vendas' | 'Suporte' | 'Implementacao';
@@ -1700,8 +1701,13 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
                         key={messageItem.id}
                         className={`portal-ticket-message portal-ticket-message-premium ${isOwnMessage ? 'is-client' : 'is-holand'}`}
                       >
-                        <div className="portal-ticket-message-avatar" aria-hidden="true">
-                          {authorSide === 'holand' ? 'H' : 'C'}
+                        <div
+                          className={`portal-ticket-message-avatar ${authorSide === 'holand' ? 'has-logo' : ''}`}
+                          aria-hidden="true"
+                        >
+                          {authorSide === 'holand' ? (
+                            <img src={holandSeloIcon} alt="" className="portal-ticket-message-avatar-logo" />
+                          ) : 'C'}
                         </div>
                         <div className="portal-ticket-message-bubble">
                           <div className="portal-ticket-message-head">

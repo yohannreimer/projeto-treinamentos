@@ -4288,8 +4288,23 @@ button:focus-visible,
   font-size: 0.88rem;
 }
 
+.portal-ticket-message-avatar.has-logo {
+  background: #fff;
+  border: 1px solid #d7e1e8;
+}
+
 .portal-ticket-message-premium.is-client .portal-ticket-message-avatar {
   background: linear-gradient(180deg, #ef6447 0%, #ef2f0f 100%);
+}
+
+.portal-ticket-message-premium.is-client .portal-ticket-message-avatar.has-logo {
+  background: #fff;
+}
+
+.portal-ticket-message-avatar-logo {
+  width: 18px;
+  height: 18px;
+  display: block;
 }
 
 .portal-ticket-message-bubble {

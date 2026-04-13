@@ -6,6 +6,7 @@ import {
   type ChangeEvent,
   type FormEvent
 } from 'react';
+import holandSeloIcon from '../../assets/holand-selo.svg';
 import type {
   CreatePortalTicketPayload,
   PortalAuthedApi,
@@ -1192,8 +1193,13 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
                         key={message.id}
                         className={`portal-ticket-message portal-ticket-message-premium ${isOwnMessage ? 'is-client' : 'is-holand'}`}
                       >
-                        <div className="portal-ticket-message-avatar" aria-hidden="true">
-                          {messageSide === 'holand' ? 'H' : 'C'}
+                        <div
+                          className={`portal-ticket-message-avatar ${messageSide === 'holand' ? 'has-logo' : ''}`}
+                          aria-hidden="true"
+                        >
+                          {messageSide === 'holand' ? (
+                            <img src={holandSeloIcon} alt="" className="portal-ticket-message-avatar-logo" />
+                          ) : 'C'}
                         </div>
                         <div className="portal-ticket-message-bubble">
                           <div className="portal-ticket-message-head">
