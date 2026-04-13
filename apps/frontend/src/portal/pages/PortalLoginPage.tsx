@@ -2,11 +2,11 @@ import { useState, type FormEvent } from 'react';
 import holandHorizontalLogo from '../../assets/holand-horizontal.svg';
 
 type PortalLoginPageProps = {
-  slug: string;
+  companyName?: string | null;
   onSubmit: (payload: { username: string; password: string }) => Promise<boolean> | boolean;
 };
 
-export function PortalLoginPage({ slug, onSubmit }: PortalLoginPageProps) {
+export function PortalLoginPage({ companyName, onSubmit }: PortalLoginPageProps) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -37,7 +37,9 @@ export function PortalLoginPage({ slug, onSubmit }: PortalLoginPageProps) {
           <p className="portal-login-kicker">Portal do Cliente Holand</p>
         </div>
         <h1>Acesso da operação</h1>
-        <p className="portal-login-subtitle">Ambiente exclusivo do cliente: <strong>{slug}</strong></p>
+        <p className="portal-login-subtitle">
+          Ambiente exclusivo do cliente: <strong>{companyName?.trim() || 'Cliente'}</strong>
+        </p>
 
         <form className="portal-login-form" onSubmit={submit}>
           <label>

@@ -110,13 +110,14 @@ function findPortalClientBySlug(slug: string) {
       pc.id as portal_client_id,
       pc.company_id,
       pc.slug,
+      pc.is_active,
       c.name as company_name
     from portal_client pc
     join company c on c.id = pc.company_id
     where pc.slug = ?
     limit 1
   `).get(slug.trim()) as
-    | { portal_client_id: string; company_id: string; slug: string; company_name: string }
+    | { portal_client_id: string; company_id: string; slug: string; is_active: number; company_name: string }
     | undefined;
 }
 
@@ -1002,7 +1003,7 @@ function readAuthorTypeForContext(context: NonNullable<ReturnType<typeof getPort
 }
 
 function readAuthorLabelForContext(context: NonNullable<ReturnType<typeof getPortalContextOrNull>>) {
-  return context.is_internal ? 'Operador Holand' : context.username;
+  return context.is_internal ? 'Equipe Holand' : context.company_name;
 }
 
 function readTicketReadColumn(side: PortalTicketSide) {
@@ -1411,6 +1412,21 @@ function insertTicketMessageWithAttachments(params: {
 
 export function registerPortalRoutes(app: Express) {
   const router = express.Router();
+
+  router.get('/auth/branding/:slug', (req, res) => {
+    const slug = req.params.slug?.trim();
+    if (!slug) {
+      return res.status(400).json({ message: 'Slug do portal não informado.' });
+    }
+    const portalClient = findPortalClientBySlug(slug);
+    if (!portalClient || portalClient.is_active !== 1) {
+      return res.status(404).json({ message: 'Portal não encontrado ou inativo.' });
+    }
+    return res.status(200).json({
+      slug: portalClient.slug,
+      company_name: portalClient.company_name
+    });
+  });
 
   router.post('/auth/login', async (req, res, next) => {
     try {

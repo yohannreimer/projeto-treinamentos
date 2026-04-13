@@ -10,6 +10,11 @@ export type PortalLoginResponse = {
   is_internal: boolean;
 };
 
+export type PortalAuthBranding = {
+  slug: string;
+  company_name: string;
+};
+
 export type PortalSessionData = {
   token: string;
   expires_at: string;

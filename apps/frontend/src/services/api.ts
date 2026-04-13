@@ -326,6 +326,11 @@ export const api = {
       `/implementation/kanban/cards/${cardId}/conversation/read`,
       { method: 'POST' }
     ),
+  implementationKanbanConversationRealtimeSession: (cardId: string) =>
+    req<{ linked: boolean; ticket_id: string | null; realtime_token: string; expires_at: string }>(
+      `/implementation/kanban/cards/${cardId}/conversation/realtime-session`,
+      { method: 'POST' }
+    ),
   implementationKanbanConversationAttachmentUrl: (cardId: string, attachmentId: string) =>
     `${BASE_URL}/implementation/kanban/cards/${cardId}/conversation/attachments/${attachmentId}/download`,
   createImplementationKanbanCard: (payload: {

@@ -5,7 +5,8 @@ import express, { type Express } from 'express';
 import puppeteer from 'puppeteer-core';
 import { z } from 'zod';
 import { clearAllData, db, nowDateIso, uuid } from './db.js';
-import { hashPassword } from './portal/auth.js';
+import { createPortalSession, hashPassword } from './portal/auth.js';
+import { portalRealtimeHub } from './portal/realtime.js';
 import { importWorkbook } from './workbookImport.js';
 import type { AllocationStatus, ModuleProgressStatus } from './types.js';
 
@@ -27,6 +28,8 @@ const CALENDAR_ACTIVITY_TYPE_VALUES = ['Visita_cliente', 'Pre_vendas', 'Pos_vend
 const CALENDAR_ACTIVITY_STATUS_VALUES = ['Planejada', 'Em_andamento', 'Concluida', 'Cancelada'] as const;
 const PORTAL_OPERATOR_USERNAME_SETTING_KEY = 'portal_operator_username';
 const PORTAL_OPERATOR_PASSWORD_HASH_SETTING_KEY = 'portal_operator_password_hash';
+const INTERNAL_PORTAL_USER_USERNAME = '__holand_internal_operator__';
+const DUMMY_PASSWORD_HASH = 'scrypt:00112233445566778899aabbccddeeff:5232aa4cb8582e8f374f25579c6f9ad17d5a9af5ba6d42d4c44df702d20c9d4faef25ea0fca6a5aa69b8bb25439ee4c45cb8e173ceb7f0972b0a8f7fbf2bbd99';
 const ISO_DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const IMPLEMENTATION_KANBAN_DEFAULT_COLUMNS = [
   { id: 'kcol-todo', title: 'A fazer', color: '#7b8ea8' },
@@ -668,12 +671,12 @@ function createPortalMessageFromKanbanUpdate(params: {
   nowIso: string;
 }) {
   const linkedTicket = db.prepare(`
-    select id
+    select id, company_id
     from portal_ticket
     where kanban_card_id = ?
     order by datetime(created_at) desc, id desc
     limit 1
-  `).get(params.kanbanCardId) as { id: string } | undefined;
+  `).get(params.kanbanCardId) as { id: string; company_id: string } | undefined;
 
   if (!linkedTicket) return;
   if (!params.body && params.attachments.length === 0) return;
@@ -715,6 +718,14 @@ function createPortalMessageFromKanbanUpdate(params: {
     set updated_at = ?
     where id = ?
   `).run(params.nowIso, linkedTicket.id);
+
+  portalRealtimeHub.emitMessageCreated({
+    companyId: linkedTicket.company_id,
+    ticketId: linkedTicket.id,
+    messageId,
+    authorSide: 'holand',
+    createdAt: params.nowIso
+  });
 }
 
 function readLinkedPortalTicketByKanbanCardId(kanbanCardId: string) {
@@ -1764,6 +1775,72 @@ function readPortalOperatorCredentials() {
   return {
     username: username?.trim() || null,
     password_hash: passwordHash?.trim() || null
+  };
+}
+
+function readPortalClientByCompanyId(companyId: string) {
+  return db.prepare(`
+    select id as portal_client_id, slug, company_id
+    from portal_client
+    where company_id = ?
+    order by datetime(updated_at) desc, id desc
+    limit 1
+  `).get(companyId) as {
+    portal_client_id: string;
+    slug: string;
+    company_id: string;
+  } | undefined;
+}
+
+function ensureInternalPortalUser(portalClientId: string) {
+  const nowIso = new Date().toISOString();
+  const existing = db.prepare(`
+    select id
+    from portal_user
+    where portal_client_id = ?
+      and username = ?
+    limit 1
+  `).get(portalClientId, INTERNAL_PORTAL_USER_USERNAME) as { id: string } | undefined;
+
+  if (existing) {
+    db.prepare(`
+      update portal_user
+      set is_active = 1, updated_at = ?
+      where id = ?
+    `).run(nowIso, existing.id);
+    return existing.id;
+  }
+
+  const portalUserId = uuid('pusr');
+  db.prepare(`
+    insert into portal_user (
+      id, portal_client_id, username, password_hash, is_active, last_login_at, created_at, updated_at
+    ) values (?, ?, ?, ?, 1, null, ?, ?)
+  `).run(
+    portalUserId,
+    portalClientId,
+    INTERNAL_PORTAL_USER_USERNAME,
+    DUMMY_PASSWORD_HASH,
+    nowIso,
+    nowIso
+  );
+  return portalUserId;
+}
+
+async function createInternalRealtimeSessionForCompany(companyId: string) {
+  const portalClient = readPortalClientByCompanyId(companyId);
+  if (!portalClient) return null;
+  const portalUserId = ensureInternalPortalUser(portalClient.portal_client_id);
+  const session = await createPortalSession({
+    company_id: companyId,
+    portal_client_id: portalClient.portal_client_id,
+    portal_user_id: portalUserId,
+    slug: portalClient.slug,
+    username: INTERNAL_PORTAL_USER_USERNAME
+  }, { isInternal: true });
+  return {
+    token: session.token,
+    expires_at: session.expires_at
   };
 }
 
@@ -5271,6 +5348,47 @@ export function registerCoreRoutes(app: Express) {
     });
   });
 
+  app.post('/implementation/kanban/cards/:id/conversation/realtime-session', async (req, res) => {
+    const card = db.prepare(`
+      select id, subcategory
+      from implementation_kanban_card
+      where id = ?
+      limit 1
+    `).get(req.params.id) as {
+      id: string;
+      subcategory: (typeof KANBAN_SUBCATEGORY_VALUES)[number] | null;
+    } | undefined;
+    if (!card) {
+      return res.status(404).json({ message: 'Card não encontrado.' });
+    }
+    if (card.subcategory !== 'Suporte') {
+      return res.status(400).json({ message: 'Conversa disponível apenas para cards de suporte.' });
+    }
+
+    const linkedTicket = readLinkedPortalTicketByKanbanCardId(card.id);
+    if (!linkedTicket) {
+      return res.status(404).json({ message: 'Sem ticket portal vinculado a este card.' });
+    }
+
+    try {
+      const realtimeSession = await createInternalRealtimeSessionForCompany(linkedTicket.company_id);
+      if (!realtimeSession) {
+        return res.status(404).json({ message: 'Acesso do portal não configurado para este cliente.' });
+      }
+      return res.status(200).json({
+        linked: true,
+        ticket_id: linkedTicket.id,
+        realtime_token: realtimeSession.token,
+        expires_at: realtimeSession.expires_at
+      });
+    } catch (error) {
+      return res.status(500).json({
+        message: 'Não foi possível iniciar sessão realtime da conversa.',
+        detail: errorMessage(error)
+      });
+    }
+  });
+
   app.post('/implementation/kanban/cards/:id/conversation/messages', (req, res) => {
     const card = db.prepare(`
       select id, subcategory
@@ -5343,6 +5461,14 @@ export function registerCoreRoutes(app: Express) {
       where id = ?
     `).run(nowIso, nowIso, linkedTicket.id);
 
+    portalRealtimeHub.emitMessageCreated({
+      companyId: linkedTicket.company_id,
+      ticketId: linkedTicket.id,
+      messageId,
+      authorSide: 'holand',
+      createdAt: nowIso
+    });
+
     return res.status(201).json({ id: messageId });
   });
 
@@ -5374,6 +5500,13 @@ export function registerCoreRoutes(app: Express) {
       set last_read_holand_at = ?
       where id = ?
     `).run(readAt, linkedTicket.id);
+
+    portalRealtimeHub.emitRead({
+      companyId: linkedTicket.company_id,
+      ticketId: linkedTicket.id,
+      side: 'holand',
+      readAt
+    });
 
     return res.status(200).json({
       ok: true,

@@ -68,7 +68,7 @@ const MAX_ATTACHMENTS = 8;
 const ACCEPTED_ATTACHMENT_TYPES = 'image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt';
 const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
 const API_BASE_URL = env?.VITE_API_BASE_URL ?? `http://${window.location.hostname}:4000`;
-const PORTAL_REALTIME_ENABLED = env?.VITE_PORTAL_REALTIME === '1';
+const PORTAL_REALTIME_ENABLED = env?.VITE_PORTAL_REALTIME !== '0';
 const dateFormatter = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'medium' });
 const dateTimeFormatter = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'medium', timeStyle: 'short' });
 
@@ -140,6 +140,12 @@ function workflowStageLabel(stage?: string | null) {
   return normalized.charAt(0).toUpperCase() + normalized.slice(1);
 }
 
+function presenceTone(online: boolean | null | undefined) {
+  if (online === true) return 'is-online';
+  if (online === false) return 'is-offline';
+  return 'is-muted';
+}
+
 function sourceLabel(source: PortalTicket['source']) {
   return source === 'Portal' ? 'Cliente via portal' : 'Operação Holand';
 }
@@ -156,6 +162,14 @@ function normalizeContactPhone(value: string) {
 
 function resolveRealtimeApiBase(rawBaseUrl: string) {
   const trimmed = rawBaseUrl.trim();
+  if (!trimmed) {
+    return {
+      protocol: window.location.protocol,
+      host: window.location.host,
+      pathPrefix: ''
+    };
+  }
+
   if (/^https?:\/\//i.test(trimmed)) {
     try {
       const absolute = new URL(trimmed);
@@ -173,22 +187,27 @@ function resolveRealtimeApiBase(rawBaseUrl: string) {
     }
   }
 
-  const normalizedPath = trimmed
-    ? `/${trimmed.replace(/^\/+|\/+$/g, '')}`
-    : '';
-
   return {
     protocol: window.location.protocol,
     host: window.location.host,
-    pathPrefix: normalizedPath
+    pathPrefix: `/${trimmed.replace(/^\/+|\/+$/g, '')}`
   };
 }
 
-function makePortalWsUrl(sessionToken: string) {
+function makePortalWsUrls(sessionToken: string) {
   const base = resolveRealtimeApiBase(API_BASE_URL);
   const protocol = base.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsPath = '/portal/ws';
-  return `${protocol}//${base.host}${wsPath}?token=${encodeURIComponent(sessionToken)}`;
+  const tokenParam = `token=${encodeURIComponent(sessionToken)}`;
+  const candidates = [
+    `${protocol}//${base.host}/portal/ws?${tokenParam}`
+  ];
+  if (base.pathPrefix) {
+    candidates.push(`${protocol}//${base.host}${base.pathPrefix}/portal/ws?${tokenParam}`);
+  }
+  if (window.location.port === '5173') {
+    candidates.push(`${protocol}//${window.location.hostname}:4000/portal/ws?${tokenParam}`);
+  }
+  return Array.from(new Set(candidates));
 }
 
 function initialWorkflowFromStage(stage?: string): WorkflowStage {
@@ -212,6 +231,25 @@ function threadRealtimeFromResponse(response: PortalTicketThreadResponse): Threa
       side: response.typing?.side ?? null,
       is_typing: response.typing?.is_typing ?? null,
       created_at: response.typing?.created_at ?? null
+    }
+  };
+}
+
+function mergeThreadRealtimeFromResponse(
+  previous: ThreadRealtimeState,
+  response: PortalTicketThreadResponse
+): ThreadRealtimeState {
+  const snapshot = threadRealtimeFromResponse(response);
+  return {
+    ...snapshot,
+    presence: {
+      client_online: response.presence?.client_online ?? previous.presence.client_online ?? null,
+      holand_online: response.presence?.holand_online ?? previous.presence.holand_online ?? null
+    },
+    typing: {
+      side: response.typing?.side ?? previous.typing.side ?? null,
+      is_typing: response.typing?.is_typing ?? previous.typing.is_typing ?? null,
+      created_at: response.typing?.created_at ?? previous.typing.created_at ?? null
     }
   };
 }
@@ -268,10 +306,14 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
   const [workflowByTicket, setWorkflowByTicket] = useState<Record<string, WorkflowStage>>({});
   const [workflowSavingTicketId, setWorkflowSavingTicketId] = useState<string | null>(null);
   const [threadRealtime, setThreadRealtime] = useState<ThreadRealtimeState>(emptyThreadRealtime);
+  const [showThreadJumpToLatest, setShowThreadJumpToLatest] = useState(false);
   const latestThreadRequestRef = useRef(0);
   const selectedTicketIdRef = useRef<string | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const typingStopTimerRef = useRef<number | null>(null);
+  const reconnectTimerRef = useRef<number | null>(null);
+  const threadMessagesContainerRef = useRef<HTMLDivElement | null>(null);
+  const shouldAutoScrollThreadRef = useRef(false);
 
   async function load() {
     setLoading(true);
@@ -310,10 +352,31 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [selectedTicketId]);
 
+  useEffect(() => {
+    if (!selectedTicketId) {
+      setShowThreadJumpToLatest(false);
+      shouldAutoScrollThreadRef.current = false;
+      return;
+    }
+    const container = threadMessagesContainerRef.current;
+    if (!container) return;
+    const nearBottom = isThreadNearBottom(container);
+    if (shouldAutoScrollThreadRef.current || nearBottom) {
+      window.requestAnimationFrame(() => scrollThreadToBottom('auto'));
+    } else {
+      setShowThreadJumpToLatest(true);
+    }
+    shouldAutoScrollThreadRef.current = false;
+  }, [selectedTicketId, threadMessages]);
+
   useEffect(() => () => {
     if (typingStopTimerRef.current) {
       window.clearTimeout(typingStopTimerRef.current);
       typingStopTimerRef.current = null;
+    }
+    if (reconnectTimerRef.current) {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
     }
   }, []);
 
@@ -322,6 +385,36 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
     () => items.find((item) => item.id === selectedTicketId) ?? null,
     [items, selectedTicketId]
   );
+  const viewerSide: PortalRealtimeSide = isInternal ? 'holand' : 'cliente';
+  const counterpartLabel = viewerSide === 'holand' ? 'Cliente' : 'Equipe Holand';
+  const counterpartPresence = viewerSide === 'holand'
+    ? threadRealtime.presence.client_online
+    : threadRealtime.presence.holand_online;
+  const isCounterpartTyping = Boolean(
+    threadRealtime.typing.is_typing
+    && threadRealtime.typing.side
+    && threadRealtime.typing.side !== viewerSide
+  );
+
+  function isThreadNearBottom(container: HTMLDivElement) {
+    const distance = container.scrollHeight - (container.scrollTop + container.clientHeight);
+    return distance <= 56;
+  }
+
+  function scrollThreadToBottom(behavior: ScrollBehavior = 'auto') {
+    const container = threadMessagesContainerRef.current;
+    if (!container) return;
+    container.scrollTo({ top: container.scrollHeight, behavior });
+    setShowThreadJumpToLatest(false);
+  }
+
+  function onThreadMessagesScroll() {
+    const container = threadMessagesContainerRef.current;
+    if (!container) return;
+    if (isThreadNearBottom(container)) {
+      setShowThreadJumpToLatest(false);
+    }
+  }
 
   function sendSocketEvent(event: Record<string, unknown>) {
     const socket = socketRef.current;
@@ -331,124 +424,224 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
 
   useEffect(() => {
     if (!PORTAL_REALTIME_ENABLED || !sessionToken || typeof WebSocket === 'undefined') return undefined;
-    let socket: WebSocket;
-    try {
-      socket = new WebSocket(makePortalWsUrl(sessionToken));
-    } catch {
-      setError('Falha ao iniciar realtime da conversa. Recarregue a página.');
-      return undefined;
-    }
-    socketRef.current = socket;
+    let disposed = false;
+    let socket: WebSocket | null = null;
+    let retryDelayMs = 1000;
+    let bootTimer: number | null = null;
+    let wsCandidateIndex = 0;
+    const wsUrls = makePortalWsUrls(sessionToken);
 
-    socket.onmessage = (rawEvent) => {
-      let payload: PortalSocketEvent | null = null;
-      try {
-        payload = JSON.parse(rawEvent.data as string) as PortalSocketEvent;
-      } catch {
-        return;
-      }
-      if (!payload) return;
-      if (payload.type === 'ready') {
-        if (selectedTicketIdRef.current) {
-          sendSocketEvent({ type: 'join_ticket', ticket_id: selectedTicketIdRef.current });
-        }
-        return;
-      }
-      if (payload.type === 'error') return;
-
-      if (payload.type === 'ticket_presence') {
-        setItems((prev) => prev.map((item) => (
-          item.id !== payload.ticket_id
-            ? item
-            : {
-              ...item,
-              realtime: {
-                ...item.realtime,
-                client_online: payload.side === 'cliente' ? payload.online : item.realtime?.client_online ?? null,
-                holand_online: payload.side === 'holand' ? payload.online : item.realtime?.holand_online ?? null
-              }
-            }
-        )));
-        if (selectedTicketIdRef.current === payload.ticket_id) {
-          setThreadRealtime((prev) => ({
-            ...prev,
-            presence: {
-              ...prev.presence,
-              client_online: payload.side === 'cliente' ? payload.online : prev.presence.client_online,
-              holand_online: payload.side === 'holand' ? payload.online : prev.presence.holand_online
-            }
-          }));
-        }
-        return;
-      }
-
-      if (payload.type === 'ticket_typing') {
-        setItems((prev) => prev.map((item) => (
-          item.id !== payload.ticket_id
-            ? item
-            : {
-              ...item,
-              realtime: {
-                ...item.realtime,
-                typing_side: payload.is_typing ? payload.side : null,
-                typing_at: payload.is_typing ? payload.created_at : null
-              }
-            }
-        )));
-        if (selectedTicketIdRef.current === payload.ticket_id) {
-          setThreadRealtime((prev) => ({
-            ...prev,
-            typing: {
-              side: payload.is_typing ? payload.side : null,
-              is_typing: payload.is_typing,
-              created_at: payload.created_at
-            }
-          }));
-        }
-        return;
-      }
-
-      if (payload.type === 'ticket_read') {
-        setItems((prev) => prev.map((item) => (
-          item.id !== payload.ticket_id
-            ? item
-            : {
-              ...item,
-              realtime: {
-                ...item.realtime,
-                unread_count: payload.side === 'cliente'
-                  ? (item.realtime?.unread_count ?? 0)
-                  : 0
-              }
-            }
-        )));
-        if (selectedTicketIdRef.current === payload.ticket_id) {
-          setThreadRealtime((prev) => ({
-            ...prev,
-            unreadCount: payload.side === 'holand' ? 0 : prev.unreadCount,
-            lastReadAt: payload.read_at
-          }));
-        }
-        return;
-      }
-
-      if (
-        payload.type === 'ticket_message_created'
-        || payload.type === 'ticket_workflow_changed'
-      ) {
-        void load();
-        if (selectedTicketIdRef.current === payload.ticket_id) {
-          void loadThread(payload.ticket_id);
-        }
+    const clearReconnectTimer = () => {
+      if (reconnectTimerRef.current) {
+        window.clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
       }
     };
 
+    const scheduleReconnect = () => {
+      if (disposed || reconnectTimerRef.current) return;
+      reconnectTimerRef.current = window.setTimeout(() => {
+        reconnectTimerRef.current = null;
+        retryDelayMs = Math.min(Math.round(retryDelayMs * 1.7), 10_000);
+        connect();
+      }, retryDelayMs);
+    };
+
+    const connect = () => {
+      if (disposed) return;
+      let nextSocket: WebSocket;
+      try {
+        const targetUrl = wsUrls[wsCandidateIndex % wsUrls.length] ?? wsUrls[0];
+        wsCandidateIndex += 1;
+        nextSocket = new WebSocket(targetUrl);
+      } catch {
+        scheduleReconnect();
+        return;
+      }
+      socket = nextSocket;
+      socketRef.current = nextSocket;
+
+      nextSocket.onopen = () => {
+        retryDelayMs = 1000;
+      };
+
+      nextSocket.onmessage = (rawEvent) => {
+        let payload: PortalSocketEvent | null = null;
+        try {
+          payload = JSON.parse(rawEvent.data as string) as PortalSocketEvent;
+        } catch {
+          return;
+        }
+        if (!payload) return;
+        if (payload.type === 'ready') {
+          sendSocketEvent({ type: 'subscribe_company' });
+          if (selectedTicketIdRef.current) {
+            sendSocketEvent({ type: 'join_ticket', ticket_id: selectedTicketIdRef.current });
+          }
+          return;
+        }
+        if (payload.type === 'error') return;
+
+        if (payload.type === 'ticket_presence') {
+          setItems((prev) => prev.map((item) => (
+            item.id !== payload.ticket_id
+              ? item
+              : {
+                ...item,
+                realtime: {
+                  ...item.realtime,
+                  client_online: payload.side === 'cliente' ? payload.online : item.realtime?.client_online ?? null,
+                  holand_online: payload.side === 'holand' ? payload.online : item.realtime?.holand_online ?? null
+                }
+              }
+          )));
+          if (selectedTicketIdRef.current === payload.ticket_id) {
+            setThreadRealtime((prev) => ({
+              ...prev,
+              presence: {
+                ...prev.presence,
+                client_online: payload.side === 'cliente' ? payload.online : prev.presence.client_online,
+                holand_online: payload.side === 'holand' ? payload.online : prev.presence.holand_online
+              }
+            }));
+          }
+          return;
+        }
+
+        if (payload.type === 'ticket_typing') {
+          setItems((prev) => prev.map((item) => (
+            item.id !== payload.ticket_id
+              ? item
+              : {
+                ...item,
+                realtime: {
+                  ...item.realtime,
+                  typing_side: payload.is_typing ? payload.side : null,
+                  typing_at: payload.is_typing ? payload.created_at : null
+                }
+              }
+          )));
+          if (selectedTicketIdRef.current === payload.ticket_id) {
+            setThreadRealtime((prev) => ({
+              ...prev,
+              typing: {
+                side: payload.is_typing ? payload.side : null,
+                is_typing: payload.is_typing,
+                created_at: payload.created_at
+              }
+            }));
+          }
+          return;
+        }
+
+        if (payload.type === 'ticket_read') {
+          setItems((prev) => prev.map((item) => (
+            item.id !== payload.ticket_id
+              ? item
+              : {
+                ...item,
+                realtime: {
+                  ...item.realtime,
+                  unread_count: payload.side === viewerSide
+                    ? 0
+                    : (item.realtime?.unread_count ?? 0)
+                }
+              }
+          )));
+          if (selectedTicketIdRef.current === payload.ticket_id) {
+            setThreadRealtime((prev) => ({
+              ...prev,
+              unreadCount: payload.side === viewerSide ? 0 : prev.unreadCount,
+              lastReadAt: payload.read_at
+            }));
+          }
+          return;
+        }
+
+        if (payload.type === 'ticket_message_created') {
+          const isSelectedTicket = selectedTicketIdRef.current === payload.ticket_id;
+          const isOwnMessage = payload.author_side === viewerSide;
+          setItems((prev) => prev.map((item) => (
+            item.id !== payload.ticket_id
+              ? item
+              : {
+                ...item,
+                realtime: {
+                  ...item.realtime,
+                  unread_count: isSelectedTicket || isOwnMessage
+                    ? 0
+                    : Math.max(0, (item.realtime?.unread_count ?? 0) + 1)
+                }
+              }
+          )));
+          if (isSelectedTicket) {
+            if (!isOwnMessage) {
+              void markThreadAsRead(payload.ticket_id);
+            }
+            setThreadRealtime((prev) => ({
+              ...prev,
+              unreadCount: isOwnMessage ? prev.unreadCount : 0
+            }));
+            void loadThread(payload.ticket_id);
+            return;
+          }
+          void load();
+          return;
+        }
+
+        if (payload.type === 'ticket_workflow_changed') {
+          void load();
+          if (selectedTicketIdRef.current === payload.ticket_id) {
+            void loadThread(payload.ticket_id);
+          }
+          return;
+        }
+      };
+
+      nextSocket.onerror = () => {
+        // reconexão acontece no onclose
+      };
+
+      nextSocket.onclose = (event) => {
+        if (socketRef.current === nextSocket) {
+          socketRef.current = null;
+        }
+        if (!disposed && event.code !== 4401) {
+          scheduleReconnect();
+        }
+      };
+    };
+
+    // Evita conexão fantasma no primeiro ciclo do StrictMode em dev.
+    bootTimer = window.setTimeout(() => connect(), 0);
+
     return () => {
+      disposed = true;
+      clearReconnectTimer();
+      if (bootTimer) {
+        window.clearTimeout(bootTimer);
+        bootTimer = null;
+      }
       if (socketRef.current === socket) {
         socketRef.current = null;
       }
-      socket.close();
+      if (socket) {
+        socket.close();
+      }
     };
+  }, [sessionToken]);
+
+  useEffect(() => {
+    if (!sessionToken) return undefined;
+    const pollId = window.setInterval(() => {
+      const socketOpen = socketRef.current?.readyState === WebSocket.OPEN;
+      if (socketOpen) return;
+      void load();
+      if (selectedTicketIdRef.current) {
+        void loadThread(selectedTicketIdRef.current);
+      }
+    }, 2000);
+    return () => window.clearInterval(pollId);
   }, [sessionToken]);
 
   async function filesToDraftAttachments(files: FileList | null) {
@@ -524,16 +717,19 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
     }
   }
 
-  async function loadThread(ticketId: string) {
+  async function loadThread(ticketId: string, options?: { autoScrollOnLoad?: boolean }) {
     const requestId = latestThreadRequestRef.current + 1;
     latestThreadRequestRef.current = requestId;
     setThreadLoading(true);
     try {
       const response = await api.ticketThread(ticketId);
       if (latestThreadRequestRef.current !== requestId) return;
+      if (options?.autoScrollOnLoad) {
+        shouldAutoScrollThreadRef.current = true;
+      }
       setThreadMessages(response.messages ?? []);
       setThreadNote(response.note ?? '');
-      setThreadRealtime(threadRealtimeFromResponse(response));
+      setThreadRealtime((previous) => mergeThreadRealtimeFromResponse(previous, response));
       setError('');
     } catch (threadError) {
       if (latestThreadRequestRef.current !== requestId) return;
@@ -563,13 +759,16 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
     if (selectedTicketId && selectedTicketId !== ticketId) {
       sendSocketEvent({ type: 'leave_ticket', ticket_id: selectedTicketId });
     }
+    shouldAutoScrollThreadRef.current = true;
+    setShowThreadJumpToLatest(false);
+    selectedTicketIdRef.current = ticketId;
     setSelectedTicketId(ticketId);
     setReplyBody('');
     setReplyAttachments([]);
     setThreadMessages([]);
     setThreadNote('');
     setThreadRealtime(emptyThreadRealtime);
-    await loadThread(ticketId);
+    await loadThread(ticketId, { autoScrollOnLoad: true });
     sendSocketEvent({ type: 'join_ticket', ticket_id: ticketId });
     await markThreadAsRead(ticketId);
   }
@@ -585,12 +784,15 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
     if (selectedTicketId) {
       sendSocketEvent({ type: 'leave_ticket', ticket_id: selectedTicketId });
     }
+    selectedTicketIdRef.current = null;
     setSelectedTicketId(null);
     setThreadMessages([]);
     setThreadNote('');
     setReplyBody('');
     setReplyAttachments([]);
     setThreadRealtime(emptyThreadRealtime);
+    setShowThreadJumpToLatest(false);
+    shouldAutoScrollThreadRef.current = false;
   }
 
   function emitTypingSignal(ticketId: string, isTyping: boolean) {
@@ -669,6 +871,7 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
     }
 
     setThreadSubmitting(true);
+    shouldAutoScrollThreadRef.current = true;
     try {
       await api.createTicketMessage(selectedTicketId, {
         body: replyBody.trim() || null,
@@ -680,7 +883,7 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
       emitTypingSignal(selectedTicketId, false);
       setReplyBody('');
       setReplyAttachments([]);
-      await loadThread(selectedTicketId);
+      await loadThread(selectedTicketId, { autoScrollOnLoad: true });
       await markThreadAsRead(selectedTicketId);
       await load();
       setError('');
@@ -826,6 +1029,13 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
               {sortedItems.map((item) => {
                 const unread = Math.max(0, item.realtime?.unread_count ?? 0);
                 const workflowStage = workflowByTicket[item.id] ?? initialWorkflowFromStage(item.workflow_stage);
+                const itemCounterpartOnline = viewerSide === 'holand'
+                  ? item.realtime?.client_online
+                  : item.realtime?.holand_online;
+                const itemIsCounterpartTyping = Boolean(
+                  item.realtime?.typing_side
+                  && item.realtime.typing_side !== viewerSide
+                );
                 return (
                   <article
                     key={item.id}
@@ -846,7 +1056,9 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
 
                     <div className="portal-ticket-meta portal-ticket-meta-premium">
                       <div className="portal-ticket-badges portal-ticket-badges-premium">
-                        <span className={`portal-status-chip ${priorityTone(item.priority)}`}>Prioridade: {item.priority}</span>
+                        {isInternal ? (
+                          <span className={`portal-status-chip ${priorityTone(item.priority)}`}>Prioridade: {item.priority}</span>
+                        ) : null}
                         <span className={`portal-status-chip ${workflowStageTone(item.workflow_stage)}`}>
                           Etapa: {workflowStageLabel(item.workflow_stage)}
                         </span>
@@ -856,6 +1068,18 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
                         <span className={`portal-status-chip ${unread > 0 ? 'is-analysis' : 'is-muted'}`}>
                           {unread > 0 ? `${unread} não lida${unread > 1 ? 's' : ''}` : 'Sem novas'}
                         </span>
+                      </div>
+                      <div className="portal-ticket-realtime-strip">
+                        <span className={`portal-support-presence-pill ${presenceTone(itemCounterpartOnline)}`}>
+                          {itemCounterpartOnline === true
+                            ? `${counterpartLabel} online`
+                            : `${counterpartLabel} offline`}
+                        </span>
+                        {itemIsCounterpartTyping ? (
+                          <span className="portal-support-typing-indicator is-active">
+                            {counterpartLabel} digitando...
+                          </span>
+                        ) : null}
                       </div>
                       {isInternal ? (
                         <div className="portal-ticket-operator-inline">
@@ -905,6 +1129,7 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
               <div className="portal-ticket-overlay-heading">
                 <span className="portal-support-kicker">Conversa do suporte</span>
                 <h3 id="portal-ticket-overlay-title">{selectedTicket.title}</h3>
+                <p className="portal-ticket-overlay-subtitle">{selectedTicket.id}</p>
               </div>
               <button type="button" className="portal-secondary-btn" onClick={closeThread}>
                 Fechar
@@ -913,7 +1138,9 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
 
             <div className="portal-ticket-overlay-meta">
               <div className="portal-ticket-badges portal-ticket-badges-premium">
-                <span className={`portal-status-chip ${priorityTone(selectedTicket.priority)}`}>Prioridade: {selectedTicket.priority}</span>
+                {isInternal ? (
+                  <span className={`portal-status-chip ${priorityTone(selectedTicket.priority)}`}>Prioridade: {selectedTicket.priority}</span>
+                ) : null}
                 <span className={`portal-status-chip ${workflowStageTone(selectedTicket.workflow_stage)}`}>
                   Etapa: {workflowStageLabel(selectedTicket.workflow_stage)}
                 </span>
@@ -926,12 +1153,30 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
                     : 'Sem novas'}
                 </span>
               </div>
+              <div className="portal-ticket-overlay-realtime-row">
+                <span className={`portal-support-presence-pill ${presenceTone(counterpartPresence)}`}>
+                  {counterpartPresence === true
+                    ? `${counterpartLabel} online`
+                    : `${counterpartLabel} offline`}
+                </span>
+                {isCounterpartTyping ? (
+                  <span className="portal-support-typing-indicator is-active">
+                    {counterpartLabel} digitando...
+                  </span>
+                ) : (
+                  <span className="portal-support-typing-indicator">Sem digitação no momento</span>
+                )}
+              </div>
             </div>
 
             <div className="portal-ticket-overlay-body">
               <div className="portal-ticket-conversation-column">
                 {threadNote ? <p className="form-hint portal-thread-note">{threadNote}</p> : null}
-                <div className="portal-ticket-thread-messages portal-ticket-thread-messages-premium">
+                <div
+                  ref={threadMessagesContainerRef}
+                  onScroll={onThreadMessagesScroll}
+                  className="portal-ticket-thread-messages portal-ticket-thread-messages-premium"
+                >
                   {threadLoading ? <p>Carregando conversa...</p> : null}
                   {!threadLoading && threadMessages.length === 0 ? (
                     <div className="portal-empty-state portal-support-empty-state">
@@ -939,60 +1184,76 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
                       <p>Use o composer abaixo para iniciar esta conversa com o time Holand.</p>
                     </div>
                   ) : null}
-                  {threadMessages.map((message) => (
-                    <article
-                      key={message.id}
-                      className={`portal-ticket-message portal-ticket-message-premium ${message.author_type === 'Holand' ? 'is-holand' : 'is-client'}`}
-                    >
-                      <div className="portal-ticket-message-avatar" aria-hidden="true">
-                        {message.author_type === 'Holand' ? 'H' : 'C'}
-                      </div>
-                      <div className="portal-ticket-message-bubble">
-                        <div className="portal-ticket-message-head">
-                          <strong>{message.author_label || message.author_type}</strong>
-                          <span>{formatDateTime(message.created_at)}</span>
+                  {threadMessages.map((message) => {
+                    const messageSide: PortalRealtimeSide = message.author_type === 'Holand' ? 'holand' : 'cliente';
+                    const isOwnMessage = messageSide === viewerSide;
+                    return (
+                      <article
+                        key={message.id}
+                        className={`portal-ticket-message portal-ticket-message-premium ${isOwnMessage ? 'is-client' : 'is-holand'}`}
+                      >
+                        <div className="portal-ticket-message-avatar" aria-hidden="true">
+                          {messageSide === 'holand' ? 'H' : 'C'}
                         </div>
-                        <p>{message.body || 'Mensagem sem texto.'}</p>
-                        {message.attachments.length > 0 ? (
-                          <div className="portal-ticket-message-attachments">
-                            {message.attachments.map((attachment) => (
-                              <button
-                                key={attachment.id}
-                                type="button"
-                                className="portal-secondary-btn portal-ticket-attachment-link"
-                                onClick={() => void downloadAttachment(attachment)}
-                              >
-                                {attachment.file_name}
-                              </button>
-                            ))}
+                        <div className="portal-ticket-message-bubble">
+                          <div className="portal-ticket-message-head">
+                            <strong>{message.author_label || message.author_type}</strong>
+                            <span>{formatDateTime(message.created_at)}</span>
                           </div>
-                        ) : null}
-                      </div>
-                    </article>
-                  ))}
+                          <p>{message.body || 'Mensagem sem texto.'}</p>
+                          {message.attachments.length > 0 ? (
+                            <div className="portal-ticket-message-attachments">
+                              {message.attachments.map((attachment) => (
+                                <button
+                                  key={attachment.id}
+                                  type="button"
+                                  className="portal-secondary-btn portal-ticket-attachment-link"
+                                  onClick={() => void downloadAttachment(attachment)}
+                                >
+                                  {attachment.file_name}
+                                </button>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                      </article>
+                    );
+                  })}
                 </div>
+                {showThreadJumpToLatest ? (
+                  <button
+                    type="button"
+                    className="portal-thread-jump-latest-btn"
+                    onClick={() => {
+                      shouldAutoScrollThreadRef.current = true;
+                      scrollThreadToBottom('smooth');
+                    }}
+                  >
+                    Nova mensagem
+                  </button>
+                ) : null}
               </div>
             </div>
 
             <form className="portal-ticket-form portal-ticket-form-reply" onSubmit={submitReply}>
-              <div className="portal-support-form-head">
-                <div>
-                  <span className="portal-support-card-label">Responder na thread</span>
-                </div>
+              <div className="portal-chat-composer-row">
+                <label className="portal-chat-input-wrap">
+                  <span className="portal-chat-input-label">Nova mensagem</span>
+                  <textarea
+                    rows={2}
+                    value={replyBody}
+                    onChange={(event) => handleReplyBodyChange(event.target.value)}
+                    placeholder="Digite sua mensagem..."
+                  />
+                </label>
+                <label className="portal-secondary-btn portal-chat-attach-btn">
+                  + Arquivo
+                  <input type="file" accept={ACCEPTED_ATTACHMENT_TYPES} multiple onChange={onPickReplyAttachments} />
+                </label>
+                <button type="submit" className="portal-primary-btn" disabled={threadSubmitting}>
+                  {threadSubmitting ? 'Enviando...' : 'Enviar'}
+                </button>
               </div>
-              <label>
-                Nova mensagem
-                <textarea
-                  rows={4}
-                  value={replyBody}
-                  onChange={(event) => handleReplyBodyChange(event.target.value)}
-                  placeholder="Digite sua mensagem..."
-                />
-              </label>
-              <label>
-                Anexos
-                <input type="file" accept={ACCEPTED_ATTACHMENT_TYPES} multiple onChange={onPickReplyAttachments} />
-              </label>
               {replyAttachments.length > 0 ? (
                 <div className="portal-ticket-attachments portal-ticket-attachments-premium">
                   {replyAttachments.map((attachment, index) => (
@@ -1010,11 +1271,6 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
                   ))}
                 </div>
               ) : null}
-              <div className="actions actions-compact">
-                <button type="submit" className="portal-primary-btn" disabled={threadSubmitting}>
-                  {threadSubmitting ? 'Enviando...' : 'Enviar mensagem'}
-                </button>
-              </div>
             </form>
           </section>
         </div>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ChangeEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { DragDropContext, Draggable, Droppable, type DropResult } from '@hello-pangea/dnd';
 import { Section } from '../components/Section';
 import { api } from '../services/api';
@@ -15,6 +15,9 @@ const KANBAN_IMAGE_MAX_BYTES = 750_000;
 const KANBAN_FILE_MAX_BYTES = 8_000_000;
 const KANBAN_CONVERSATION_MAX_ATTACHMENTS = 8;
 const KANBAN_FILTERS_COLLAPSED_STORAGE_KEY = 'orquestrador_kanban_filters_collapsed_v1';
+const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
+const API_BASE_URL = env?.VITE_API_BASE_URL ?? `http://${window.location.hostname}:4000`;
+const KANBAN_REALTIME_ENABLED = env?.VITE_PORTAL_REALTIME !== '0';
 
 type KanbanCard = {
   id: string;
@@ -103,6 +106,37 @@ type ConversationMessage = {
     file_size_bytes: number;
     created_at: string;
   }>;
+};
+
+type PortalRealtimeSide = 'cliente' | 'holand';
+type ConversationRealtimeState = {
+  unreadCount: number;
+  lastReadAt: string | null;
+  presence: {
+    client_online?: boolean | null;
+    holand_online?: boolean | null;
+  };
+  typing: {
+    side?: PortalRealtimeSide | null;
+    is_typing?: boolean | null;
+    created_at?: string | null;
+  };
+};
+
+type ConversationSocketEvent =
+  | { type: 'ready' }
+  | { type: 'ticket_message_created'; ticket_id: string; message_id: string; author_side: PortalRealtimeSide; created_at: string }
+  | { type: 'ticket_read'; ticket_id: string; side: PortalRealtimeSide; read_at: string }
+  | { type: 'ticket_workflow_changed'; ticket_id: string; workflow_stage: string; updated_at: string }
+  | { type: 'ticket_presence'; ticket_id: string; side: PortalRealtimeSide; online: boolean }
+  | { type: 'ticket_typing'; ticket_id: string; side: PortalRealtimeSide; is_typing: boolean; created_at: string }
+  | { type: 'error'; message: string };
+
+const emptyConversationRealtime: ConversationRealtimeState = {
+  unreadCount: 0,
+  lastReadAt: null,
+  presence: {},
+  typing: {}
 };
 
 type ClientOption = {
@@ -207,6 +241,62 @@ function dataUrlSizeBytes(dataUrl: string): number {
   return Math.max(0, Math.floor((base64.length * 3) / 4) - padding);
 }
 
+function resolveRealtimeApiBase(rawBaseUrl: string) {
+  const trimmed = rawBaseUrl.trim();
+  if (!trimmed) {
+    return {
+      protocol: window.location.protocol,
+      host: window.location.host,
+      pathPrefix: ''
+    };
+  }
+
+  if (/^https?:\/\//i.test(trimmed)) {
+    try {
+      const absolute = new URL(trimmed);
+      return {
+        protocol: absolute.protocol,
+        host: absolute.host,
+        pathPrefix: absolute.pathname === '/' ? '' : absolute.pathname.replace(/\/+$/g, '')
+      };
+    } catch {
+      return {
+        protocol: window.location.protocol,
+        host: window.location.host,
+        pathPrefix: ''
+      };
+    }
+  }
+
+  return {
+    protocol: window.location.protocol,
+    host: window.location.host,
+    pathPrefix: `/${trimmed.replace(/^\/+|\/+$/g, '')}`
+  };
+}
+
+function makePortalWsUrls(sessionToken: string) {
+  const base = resolveRealtimeApiBase(API_BASE_URL);
+  const protocol = base.protocol === 'https:' ? 'wss:' : 'ws:';
+  const tokenParam = `token=${encodeURIComponent(sessionToken)}`;
+  const candidates = [
+    `${protocol}//${base.host}/portal/ws?${tokenParam}`
+  ];
+  if (base.pathPrefix) {
+    candidates.push(`${protocol}//${base.host}${base.pathPrefix}/portal/ws?${tokenParam}`);
+  }
+  if (window.location.port === '5173') {
+    candidates.push(`${protocol}//${window.location.hostname}:4000/portal/ws?${tokenParam}`);
+  }
+  return Array.from(new Set(candidates));
+}
+
+function presenceTone(online: boolean | null | undefined) {
+  if (online === true) return 'is-online';
+  if (online === false) return 'is-offline';
+  return 'is-muted';
+}
+
 type ImplementationPageProps = {
   boardMode?: KanbanBoardMode;
 };
@@ -239,6 +329,9 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
   const [conversationReply, setConversationReply] = useState('');
   const [conversationAttachments, setConversationAttachments] = useState<ConversationAttachmentDraft[]>([]);
   const [conversationError, setConversationError] = useState('');
+  const [conversationRealtimeToken, setConversationRealtimeToken] = useState<string | null>(null);
+  const [conversationRealtime, setConversationRealtime] = useState<ConversationRealtimeState>(emptyConversationRealtime);
+  const [showConversationJumpToLatest, setShowConversationJumpToLatest] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [filterClientName, setFilterClientName] = useState('');
@@ -246,6 +339,14 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
   const [filterPriority, setFilterPriority] = useState<'ALL' | KanbanPriority>('ALL');
   const [filterDueFrom, setFilterDueFrom] = useState('');
   const [filterDueTo, setFilterDueTo] = useState('');
+  const selectedConversationCardIdRef = useRef<string | null>(null);
+  const selectedConversationTicketIdRef = useRef<string | null>(null);
+  const joinedConversationTicketIdRef = useRef<string | null>(null);
+  const conversationSocketRef = useRef<WebSocket | null>(null);
+  const conversationTypingStopTimerRef = useRef<number | null>(null);
+  const conversationReconnectTimerRef = useRef<number | null>(null);
+  const conversationMessagesContainerRef = useRef<HTMLDivElement | null>(null);
+  const shouldAutoScrollConversationRef = useRef(false);
 
   async function loadBoard() {
     const response = await api.implementationKanban() as { columns: KanbanColumn[] };
@@ -260,6 +361,13 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
       }))
       .sort((a, b) => a.position - b.position);
     setColumns(loadedColumns);
+    setConversationCard((prev) => {
+      if (!prev) return prev;
+      const refreshed = loadedColumns
+        .flatMap((column) => column.cards)
+        .find((card) => card.id === prev.id);
+      return refreshed ?? prev;
+    });
     return loadedColumns;
   }
 
@@ -302,11 +410,11 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
     })));
   }
 
-  async function loadConversation(card: KanbanCard) {
+  async function loadConversation(cardId: string, options?: { autoScrollOnLoad?: boolean }) {
     setConversationLoading(true);
     setConversationError('');
     try {
-      const response = await api.implementationKanbanConversation(card.id) as {
+      const response = await api.implementationKanbanConversation(cardId) as {
         linked: boolean;
         ticket_id: string | null;
         unread_count: number;
@@ -314,18 +422,30 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
         messages: ConversationMessage[];
       };
       setConversationTicketId(response.ticket_id ?? null);
+      selectedConversationTicketIdRef.current = response.ticket_id ?? null;
       setConversationNote(response.note ?? '');
       setConversationUnreadCount(Math.max(0, response.unread_count ?? 0));
+      setConversationRealtime((prev) => ({
+        ...prev,
+        unreadCount: Math.max(0, response.unread_count ?? 0)
+      }));
+      if (options?.autoScrollOnLoad) {
+        shouldAutoScrollConversationRef.current = true;
+      }
       setConversationMessages(response.messages ?? []);
-      patchCardConversationMeta(card.id, {
+      patchCardConversationMeta(cardId, {
         support_ticket_id: response.ticket_id ?? null,
         support_unread_count: Math.max(0, response.unread_count ?? 0)
       });
+      return response;
     } catch (loadError) {
       setConversationError(loadError instanceof Error ? loadError.message : 'Falha ao carregar a conversa.');
       setConversationMessages([]);
       setConversationTicketId(null);
+      selectedConversationTicketIdRef.current = null;
       setConversationUnreadCount(0);
+      setConversationRealtime((prev) => ({ ...prev, unreadCount: 0 }));
+      return null;
     } finally {
       setConversationLoading(false);
     }
@@ -335,28 +455,73 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
     try {
       await api.markImplementationKanbanConversationRead(cardId);
       setConversationUnreadCount(0);
+      setConversationRealtime((prev) => ({
+        ...prev,
+        unreadCount: 0,
+        lastReadAt: new Date().toISOString()
+      }));
       patchCardConversationMeta(cardId, { support_unread_count: 0 });
     } catch {
       // leitura silenciosa para não atrapalhar o operador
     }
   }
 
+  async function loadConversationRealtimeSession(cardId: string) {
+    try {
+      const response = await api.implementationKanbanConversationRealtimeSession(cardId) as {
+        linked: boolean;
+        ticket_id: string | null;
+        realtime_token: string;
+        expires_at: string;
+      };
+      setConversationRealtimeToken(response.realtime_token ?? null);
+      if (response.ticket_id) {
+        setConversationTicketId(response.ticket_id);
+        selectedConversationTicketIdRef.current = response.ticket_id;
+      }
+      return response;
+    } catch {
+      setConversationRealtimeToken(null);
+      return null;
+    }
+  }
+
   async function openConversation(card: KanbanCard) {
+    shouldAutoScrollConversationRef.current = true;
+    setShowConversationJumpToLatest(false);
     setConversationCard(card);
     setConversationReply('');
     setConversationAttachments([]);
     setConversationMessages([]);
     setConversationTicketId(card.support_ticket_id ?? null);
+    selectedConversationTicketIdRef.current = card.support_ticket_id ?? null;
     setConversationUnreadCount(Math.max(0, card.support_unread_count ?? 0));
     setConversationNote('');
-    await loadConversation(card);
+    setConversationRealtime(emptyConversationRealtime);
+    setConversationRealtimeToken(null);
+    const response = await loadConversation(card.id, { autoScrollOnLoad: true });
+    if ((response?.ticket_id ?? card.support_ticket_id) != null) {
+      await loadConversationRealtimeSession(card.id);
+    }
     await markConversationAsRead(card.id);
   }
 
   function closeConversation() {
+    if (conversationTypingStopTimerRef.current) {
+      window.clearTimeout(conversationTypingStopTimerRef.current);
+      conversationTypingStopTimerRef.current = null;
+    }
+    if (selectedConversationTicketIdRef.current) {
+      const socket = conversationSocketRef.current;
+      if (socket?.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: 'typing', ticket_id: selectedConversationTicketIdRef.current, is_typing: false }));
+        socket.send(JSON.stringify({ type: 'leave_ticket', ticket_id: selectedConversationTicketIdRef.current }));
+      }
+    }
     setConversationCard(null);
     setConversationMessages([]);
     setConversationTicketId(null);
+    selectedConversationTicketIdRef.current = null;
     setConversationUnreadCount(0);
     setConversationReply('');
     setConversationAttachments([]);
@@ -364,6 +529,59 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
     setConversationLoading(false);
     setConversationSubmitting(false);
     setConversationError('');
+    setConversationRealtimeToken(null);
+    setConversationRealtime(emptyConversationRealtime);
+    setShowConversationJumpToLatest(false);
+    shouldAutoScrollConversationRef.current = false;
+  }
+
+  function sendConversationSocketEvent(event: Record<string, unknown>) {
+    const socket = conversationSocketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    socket.send(JSON.stringify(event));
+  }
+
+  function emitConversationTypingSignal(ticketId: string, isTyping: boolean) {
+    sendConversationSocketEvent({
+      type: 'typing',
+      ticket_id: ticketId,
+      is_typing: isTyping
+    });
+  }
+
+  function isConversationNearBottom(container: HTMLDivElement) {
+    const distance = container.scrollHeight - (container.scrollTop + container.clientHeight);
+    return distance <= 56;
+  }
+
+  function scrollConversationToBottom(behavior: ScrollBehavior = 'auto') {
+    const container = conversationMessagesContainerRef.current;
+    if (!container) return;
+    container.scrollTo({ top: container.scrollHeight, behavior });
+    setShowConversationJumpToLatest(false);
+  }
+
+  function onConversationMessagesScroll() {
+    const container = conversationMessagesContainerRef.current;
+    if (!container) return;
+    if (isConversationNearBottom(container)) {
+      setShowConversationJumpToLatest(false);
+    }
+  }
+
+  function handleConversationReplyChange(value: string) {
+    setConversationReply(value);
+    if (!conversationTicketId) return;
+    emitConversationTypingSignal(conversationTicketId, value.trim().length > 0);
+    if (conversationTypingStopTimerRef.current) {
+      window.clearTimeout(conversationTypingStopTimerRef.current);
+      conversationTypingStopTimerRef.current = null;
+    }
+    if (!value.trim()) return;
+    conversationTypingStopTimerRef.current = window.setTimeout(() => {
+      emitConversationTypingSignal(conversationTicketId, false);
+      conversationTypingStopTimerRef.current = null;
+    }, 1400);
   }
 
   async function onPickConversationFiles(event: ChangeEvent<HTMLInputElement>) {
@@ -402,6 +620,13 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
     setConversationSubmitting(true);
     setConversationError('');
     try {
+      if (conversationTicketId) {
+        emitConversationTypingSignal(conversationTicketId, false);
+      }
+      if (conversationTypingStopTimerRef.current) {
+        window.clearTimeout(conversationTypingStopTimerRef.current);
+        conversationTypingStopTimerRef.current = null;
+      }
       await api.createImplementationKanbanConversationMessage(conversationCard.id, {
         body: body || null,
         attachments: conversationAttachments.map((item) => ({
@@ -411,7 +636,8 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
       });
       setConversationReply('');
       setConversationAttachments([]);
-      await loadConversation(conversationCard);
+      shouldAutoScrollConversationRef.current = true;
+      await loadConversation(conversationCard.id, { autoScrollOnLoad: true });
       await markConversationAsRead(conversationCard.id);
     } catch (submitError) {
       setConversationError(submitError instanceof Error ? submitError.message : 'Falha ao enviar resposta.');
@@ -423,6 +649,226 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
   useEffect(() => {
     Promise.all([loadBoard(), loadOptions()]).catch((err: Error) => setError(err.message));
   }, []);
+
+  useEffect(() => {
+    selectedConversationCardIdRef.current = conversationCard?.id ?? null;
+  }, [conversationCard?.id]);
+
+  useEffect(() => {
+    selectedConversationTicketIdRef.current = conversationTicketId;
+  }, [conversationTicketId]);
+
+  useEffect(() => {
+    if (!conversationCard) {
+      setShowConversationJumpToLatest(false);
+      shouldAutoScrollConversationRef.current = false;
+      return;
+    }
+    const container = conversationMessagesContainerRef.current;
+    if (!container) return;
+    const nearBottom = isConversationNearBottom(container);
+    if (shouldAutoScrollConversationRef.current || nearBottom) {
+      window.requestAnimationFrame(() => scrollConversationToBottom('auto'));
+    } else {
+      setShowConversationJumpToLatest(true);
+    }
+    shouldAutoScrollConversationRef.current = false;
+  }, [conversationCard?.id, conversationMessages]);
+
+  useEffect(() => () => {
+    if (conversationTypingStopTimerRef.current) {
+      window.clearTimeout(conversationTypingStopTimerRef.current);
+      conversationTypingStopTimerRef.current = null;
+    }
+    if (conversationReconnectTimerRef.current) {
+      window.clearTimeout(conversationReconnectTimerRef.current);
+      conversationReconnectTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!conversationCard || !conversationTicketId || conversationRealtimeToken) return;
+    void loadConversationRealtimeSession(conversationCard.id);
+  }, [conversationCard?.id, conversationTicketId, conversationRealtimeToken]);
+
+  useEffect(() => {
+    if (!KANBAN_REALTIME_ENABLED || !conversationRealtimeToken || typeof WebSocket === 'undefined') {
+      return undefined;
+    }
+
+    let disposed = false;
+    let socket: WebSocket | null = null;
+    let retryDelayMs = 1000;
+    let wsCandidateIndex = 0;
+    const wsUrls = makePortalWsUrls(conversationRealtimeToken);
+
+    const clearReconnectTimer = () => {
+      if (conversationReconnectTimerRef.current) {
+        window.clearTimeout(conversationReconnectTimerRef.current);
+        conversationReconnectTimerRef.current = null;
+      }
+    };
+
+    const scheduleReconnect = () => {
+      if (disposed || conversationReconnectTimerRef.current) return;
+      conversationReconnectTimerRef.current = window.setTimeout(() => {
+        conversationReconnectTimerRef.current = null;
+        retryDelayMs = Math.min(Math.round(retryDelayMs * 1.7), 10_000);
+        connect();
+      }, retryDelayMs);
+    };
+
+    const connect = () => {
+      if (disposed) return;
+      let nextSocket: WebSocket;
+      try {
+        const targetUrl = wsUrls[wsCandidateIndex % wsUrls.length] ?? wsUrls[0];
+        wsCandidateIndex += 1;
+        nextSocket = new WebSocket(targetUrl);
+      } catch {
+        scheduleReconnect();
+        return;
+      }
+      socket = nextSocket;
+      conversationSocketRef.current = nextSocket;
+
+      nextSocket.onopen = () => {
+        retryDelayMs = 1000;
+      };
+
+      nextSocket.onmessage = (rawEvent) => {
+        let payload: ConversationSocketEvent | null = null;
+        try {
+          payload = JSON.parse(rawEvent.data as string) as ConversationSocketEvent;
+        } catch {
+          return;
+        }
+        if (!payload) return;
+        if (payload.type === 'ready') {
+          sendConversationSocketEvent({ type: 'subscribe_company' });
+          if (selectedConversationTicketIdRef.current) {
+            sendConversationSocketEvent({ type: 'join_ticket', ticket_id: selectedConversationTicketIdRef.current });
+            joinedConversationTicketIdRef.current = selectedConversationTicketIdRef.current;
+          }
+          return;
+        }
+        if (payload.type === 'error') return;
+        if (selectedConversationTicketIdRef.current !== payload.ticket_id) return;
+
+        if (payload.type === 'ticket_presence') {
+          setConversationRealtime((prev) => ({
+            ...prev,
+            presence: {
+              ...prev.presence,
+              client_online: payload.side === 'cliente' ? payload.online : prev.presence.client_online,
+              holand_online: payload.side === 'holand' ? payload.online : prev.presence.holand_online
+            }
+          }));
+          return;
+        }
+
+        if (payload.type === 'ticket_typing') {
+          setConversationRealtime((prev) => ({
+            ...prev,
+            typing: {
+              side: payload.is_typing ? payload.side : null,
+              is_typing: payload.is_typing,
+              created_at: payload.created_at
+            }
+          }));
+          return;
+        }
+
+        if (payload.type === 'ticket_read') {
+          setConversationRealtime((prev) => ({
+            ...prev,
+            unreadCount: payload.side === 'holand' ? 0 : prev.unreadCount,
+            lastReadAt: payload.read_at
+          }));
+          return;
+        }
+
+        if (payload.type === 'ticket_message_created' || payload.type === 'ticket_workflow_changed') {
+          const activeCardId = selectedConversationCardIdRef.current;
+          if (!activeCardId) return;
+          void loadConversation(activeCardId);
+          void markConversationAsRead(activeCardId);
+        }
+      };
+
+      nextSocket.onclose = (event) => {
+        if (conversationSocketRef.current === nextSocket) {
+          conversationSocketRef.current = null;
+        }
+        if (joinedConversationTicketIdRef.current) {
+          joinedConversationTicketIdRef.current = null;
+        }
+        if (!disposed && event.code !== 4401) {
+          scheduleReconnect();
+        }
+      };
+    };
+
+    connect();
+
+    return () => {
+      disposed = true;
+      clearReconnectTimer();
+      if (socket?.readyState === WebSocket.OPEN && joinedConversationTicketIdRef.current) {
+        socket.send(JSON.stringify({ type: 'typing', ticket_id: joinedConversationTicketIdRef.current, is_typing: false }));
+        socket.send(JSON.stringify({ type: 'leave_ticket', ticket_id: joinedConversationTicketIdRef.current }));
+        joinedConversationTicketIdRef.current = null;
+      }
+      if (conversationSocketRef.current === socket) {
+        conversationSocketRef.current = null;
+      }
+      if (socket) {
+        socket.close();
+      }
+    };
+  }, [conversationRealtimeToken]);
+
+  useEffect(() => {
+    const socket = conversationSocketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    const currentTicketId = joinedConversationTicketIdRef.current;
+    const nextTicketId = conversationTicketId;
+    if (currentTicketId && currentTicketId !== nextTicketId) {
+      socket.send(JSON.stringify({ type: 'typing', ticket_id: currentTicketId, is_typing: false }));
+      socket.send(JSON.stringify({ type: 'leave_ticket', ticket_id: currentTicketId }));
+    }
+    if (nextTicketId && currentTicketId !== nextTicketId) {
+      socket.send(JSON.stringify({ type: 'join_ticket', ticket_id: nextTicketId }));
+    }
+    joinedConversationTicketIdRef.current = nextTicketId ?? null;
+  }, [conversationTicketId, conversationRealtimeToken]);
+
+  useEffect(() => {
+    if (boardMode !== 'support') return undefined;
+    const intervalId = window.setInterval(() => {
+      if (document.hidden) return;
+      if (conversationCard && conversationSocketRef.current?.readyState === WebSocket.OPEN) return;
+      void loadBoard().catch((err: Error) => setError(err.message));
+    }, 4500);
+    return () => window.clearInterval(intervalId);
+  }, [boardMode, conversationCard]);
+
+  useEffect(() => {
+    if (!conversationCard) return undefined;
+    const intervalId = window.setInterval(() => {
+      if (document.hidden) return;
+      if (conversationSocketRef.current?.readyState === WebSocket.OPEN) return;
+      void (async () => {
+        try {
+          await loadConversation(conversationCard.id);
+          await markConversationAsRead(conversationCard.id);
+        } catch {
+          // atualização silenciosa
+        }
+      })();
+    }, 3500);
+    return () => window.clearInterval(intervalId);
+  }, [conversationCard?.id]);
 
   useEffect(() => {
     window.localStorage.setItem(KANBAN_FILTERS_COLLAPSED_STORAGE_KEY, isFiltersCollapsed ? '1' : '0');
@@ -867,6 +1313,12 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
     setFilterPriority('ALL');
   }
 
+  const counterpartPresence = conversationRealtime.presence.client_online;
+  const isClientTyping = Boolean(
+    conversationRealtime.typing.is_typing
+    && conversationRealtime.typing.side === 'cliente'
+  );
+
   return (
     <div className="page implementation-page">
       <header className="page-header">
@@ -1194,9 +1646,7 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
               <div className="portal-ticket-overlay-heading">
                 <span className="portal-support-kicker">Conversa do suporte</span>
                 <h2>{conversationCard.title}</h2>
-                <p>
-                  Canal direto com o cliente para atualizar andamento e registrar anexos.
-                </p>
+                <p className="portal-ticket-overlay-subtitle">{conversationTicketId ?? conversationCard.id}</p>
               </div>
               <button type="button" className="portal-secondary-btn" onClick={closeConversation}>Fechar</button>
             </header>
@@ -1211,6 +1661,18 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
                     : 'Sem pendências'}
                 </span>
               </div>
+              <div className="portal-ticket-overlay-realtime-row">
+                <span className={`portal-support-presence-pill ${presenceTone(counterpartPresence)}`}>
+                  {counterpartPresence === true
+                    ? 'Cliente online'
+                    : 'Cliente offline'}
+                </span>
+                {isClientTyping ? (
+                  <span className="portal-support-typing-indicator is-active">Cliente digitando...</span>
+                ) : (
+                  <span className="portal-support-typing-indicator">Sem digitação no momento</span>
+                )}
+              </div>
             </div>
 
             {conversationError ? <p className="error">{conversationError}</p> : null}
@@ -1218,7 +1680,11 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
 
             <div className="portal-ticket-overlay-body">
               <div className="portal-ticket-conversation-column">
-                <div className="portal-ticket-thread-messages portal-ticket-thread-messages-premium">
+                <div
+                  ref={conversationMessagesContainerRef}
+                  onScroll={onConversationMessagesScroll}
+                  className="portal-ticket-thread-messages portal-ticket-thread-messages-premium"
+                >
                   {conversationLoading ? <p>Carregando conversa...</p> : null}
                   {!conversationLoading && conversationMessages.length === 0 ? (
                     <div className="portal-empty-state portal-support-empty-state">
@@ -1226,39 +1692,55 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
                       <p>Assim que o cliente enviar algo, a thread aparece aqui.</p>
                     </div>
                   ) : null}
-                  {conversationMessages.map((messageItem) => (
-                    <article
-                      key={messageItem.id}
-                      className={`portal-ticket-message portal-ticket-message-premium ${messageItem.author_type === 'Holand' ? 'is-holand' : 'is-client'}`}
-                    >
-                      <div className="portal-ticket-message-avatar" aria-hidden="true">
-                        {messageItem.author_type === 'Holand' ? 'H' : 'C'}
-                      </div>
-                      <div className="portal-ticket-message-bubble">
-                        <div className="portal-ticket-message-head">
-                          <strong>{messageItem.author_label || messageItem.author_type}</strong>
-                          <span>{formatDateTimeBr(messageItem.created_at)}</span>
+                  {conversationMessages.map((messageItem) => {
+                    const authorSide: PortalRealtimeSide = messageItem.author_type === 'Holand' ? 'holand' : 'cliente';
+                    const isOwnMessage = authorSide === 'holand';
+                    return (
+                      <article
+                        key={messageItem.id}
+                        className={`portal-ticket-message portal-ticket-message-premium ${isOwnMessage ? 'is-client' : 'is-holand'}`}
+                      >
+                        <div className="portal-ticket-message-avatar" aria-hidden="true">
+                          {authorSide === 'holand' ? 'H' : 'C'}
                         </div>
-                        <p>{messageItem.body || 'Mensagem sem texto.'}</p>
-                        {messageItem.attachments.length > 0 ? (
-                          <div className="portal-ticket-message-attachments">
-                            {messageItem.attachments.map((attachment) => (
-                              <a
-                                key={attachment.id}
-                                href={api.implementationKanbanConversationAttachmentUrl(conversationCard.id, attachment.id)}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="portal-secondary-btn portal-ticket-attachment-link"
-                              >
-                                {attachment.file_name}
-                              </a>
-                            ))}
+                        <div className="portal-ticket-message-bubble">
+                          <div className="portal-ticket-message-head">
+                            <strong>{messageItem.author_label || messageItem.author_type}</strong>
+                            <span>{formatDateTimeBr(messageItem.created_at)}</span>
                           </div>
-                        ) : null}
-                      </div>
-                    </article>
-                  ))}
+                          <p>{messageItem.body || 'Mensagem sem texto.'}</p>
+                          {messageItem.attachments.length > 0 ? (
+                            <div className="portal-ticket-message-attachments">
+                              {messageItem.attachments.map((attachment) => (
+                                <a
+                                  key={attachment.id}
+                                  href={api.implementationKanbanConversationAttachmentUrl(conversationCard.id, attachment.id)}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="portal-secondary-btn portal-ticket-attachment-link"
+                                >
+                                  {attachment.file_name}
+                                </a>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                      </article>
+                    );
+                  })}
                 </div>
+                {showConversationJumpToLatest ? (
+                  <button
+                    type="button"
+                    className="portal-thread-jump-latest-btn"
+                    onClick={() => {
+                      shouldAutoScrollConversationRef.current = true;
+                      scrollConversationToBottom('smooth');
+                    }}
+                  >
+                    Nova mensagem
+                  </button>
+                ) : null}
               </div>
             </div>
 
@@ -1269,27 +1751,25 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
                 void sendConversationReply();
               }}
             >
-              <div className="portal-support-form-head">
-                <div>
-                  <span className="portal-support-card-label">Responder na thread</span>
-                  <strong>Mensagem direta ao cliente</strong>
-                </div>
-                <p className="form-hint">A conversa fica centralizada no mesmo padrão do portal.</p>
+              <div className="portal-chat-composer-row">
+                <label className="portal-chat-input-wrap">
+                  <span className="portal-chat-input-label">Nova mensagem</span>
+                  <textarea
+                    rows={2}
+                    value={conversationReply}
+                    onChange={(event) => handleConversationReplyChange(event.target.value)}
+                    placeholder="Escreva a atualização para o cliente."
+                    disabled={!conversationTicketId}
+                  />
+                </label>
+                <label className="portal-secondary-btn portal-chat-attach-btn">
+                  + Arquivo
+                  <input type="file" multiple onChange={onPickConversationFiles} disabled={!conversationTicketId} />
+                </label>
+                <button type="submit" className="portal-primary-btn" disabled={!conversationTicketId || conversationSubmitting}>
+                  {conversationSubmitting ? 'Enviando...' : 'Enviar'}
+                </button>
               </div>
-              <label>
-                Nova mensagem
-                <textarea
-                  rows={4}
-                  value={conversationReply}
-                  onChange={(event) => setConversationReply(event.target.value)}
-                  placeholder="Escreva a atualização para o cliente."
-                  disabled={!conversationTicketId}
-                />
-              </label>
-              <label>
-                Anexos
-                <input type="file" multiple onChange={onPickConversationFiles} disabled={!conversationTicketId} />
-              </label>
               {conversationAttachments.length > 0 ? (
                 <div className="portal-ticket-attachments portal-ticket-attachments-premium">
                   {conversationAttachments.map((attachment, index) => (
@@ -1307,11 +1787,6 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
                   ))}
                 </div>
               ) : null}
-              <div className="actions actions-compact">
-                <button type="submit" className="portal-primary-btn" disabled={!conversationTicketId || conversationSubmitting}>
-                  {conversationSubmitting ? 'Enviando...' : 'Enviar resposta'}
-                </button>
-              </div>
             </form>
           </section>
         </div>

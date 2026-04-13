@@ -13,6 +13,8 @@ type PortalRealtimeEvent =
   | { type: 'error'; message: string };
 
 type IncomingClientEvent =
+  | { type: 'subscribe_company' }
+  | { type: 'unsubscribe_company' }
   | { type: 'join_ticket'; ticket_id: string }
   | { type: 'leave_ticket'; ticket_id: string }
   | { type: 'typing'; ticket_id: string; is_typing: boolean }
@@ -38,6 +40,7 @@ type ClientState = {
   socket: ClientSocket;
   context: PortalSessionContext;
   side: PortalRealtimeSide;
+  companySubscribed: boolean;
   tickets: Set<string>;
 };
 
@@ -85,6 +88,12 @@ function safeJsonParse(value: string): IncomingClientEvent | null {
     if (parsed.type === 'ping') {
       return { type: 'ping' };
     }
+    if (parsed.type === 'subscribe_company') {
+      return { type: 'subscribe_company' };
+    }
+    if (parsed.type === 'unsubscribe_company') {
+      return { type: 'unsubscribe_company' };
+    }
   } catch {
     return null;
   }
@@ -93,6 +102,7 @@ function safeJsonParse(value: string): IncomingClientEvent | null {
 
 class PortalRealtimeHub {
   private clients = new Set<ClientState>();
+  private byCompany = new Map<string, Set<ClientState>>();
   private byTicket = new Map<string, Set<ClientState>>();
   private presenceCounts = new Map<string, number>();
 
@@ -128,6 +138,7 @@ class PortalRealtimeHub {
         socket,
         context,
         side: context.is_internal ? 'holand' : 'cliente',
+        companySubscribed: false,
         tickets: new Set<string>()
       };
 
@@ -142,6 +153,14 @@ class PortalRealtimeHub {
         }
         if (incoming.type === 'ping') {
           this.send(client, { type: 'ready' });
+          return;
+        }
+        if (incoming.type === 'subscribe_company') {
+          this.subscribeCompany(client);
+          return;
+        }
+        if (incoming.type === 'unsubscribe_company') {
+          this.unsubscribeCompany(client);
           return;
         }
         if (incoming.type === 'join_ticket') {
@@ -165,6 +184,7 @@ class PortalRealtimeHub {
 
       const teardown = () => {
         this.clients.delete(client);
+        this.unsubscribeCompany(client);
         Array.from(client.tickets).forEach((ticketId) => this.leaveTicket(client, ticketId));
       };
       socket.on('close', teardown);
@@ -176,12 +196,50 @@ class PortalRealtimeHub {
     return `${ticketId}::${side}`;
   }
 
+  private subscribeCompany(client: ClientState) {
+    if (client.companySubscribed) return;
+    client.companySubscribed = true;
+    const room = this.byCompany.get(client.context.company_id) ?? new Set<ClientState>();
+    room.add(client);
+    this.byCompany.set(client.context.company_id, room);
+  }
+
+  private unsubscribeCompany(client: ClientState) {
+    if (!client.companySubscribed) return;
+    client.companySubscribed = false;
+    const room = this.byCompany.get(client.context.company_id);
+    if (!room) return;
+    room.delete(client);
+    if (room.size === 0) {
+      this.byCompany.delete(client.context.company_id);
+    }
+  }
+
+  private sendPresenceSnapshot(client: ClientState, ticketId: string) {
+    const sides: PortalRealtimeSide[] = ['cliente', 'holand'];
+    sides.forEach((side) => {
+      const key = this.presenceKey(ticketId, side);
+      const online = (this.presenceCounts.get(key) ?? 0) > 0;
+      this.send(client, {
+        type: 'ticket_presence',
+        ticket_id: ticketId,
+        side,
+        online
+      });
+    });
+  }
+
   private joinTicket(client: ClientState, ticketId: string) {
     if (!canAccessTicket(client.context, ticketId)) {
       this.send(client, { type: 'error', message: 'Acesso negado ao ticket.' });
       return;
     }
-    if (client.tickets.has(ticketId)) return;
+    if (client.tickets.has(ticketId)) {
+      // Rejoin idempotente: mantém contagem, mas reenvia snapshot para evitar
+      // perda visual de presença no frontend após reabrir thread.
+      this.sendPresenceSnapshot(client, ticketId);
+      return;
+    }
     client.tickets.add(ticketId);
     const room = this.byTicket.get(ticketId) ?? new Set<ClientState>();
     room.add(client);
@@ -198,6 +256,7 @@ class PortalRealtimeHub {
         online: true
       });
     }
+    this.sendPresenceSnapshot(client, ticketId);
   }
 
   private leaveTicket(client: ClientState, ticketId: string) {
@@ -246,34 +305,48 @@ class PortalRealtimeHub {
     });
   }
 
+  private sendToCompany(companyId: string, payload: PortalRealtimeEvent, ticketId?: string) {
+    const room = this.byCompany.get(companyId);
+    if (!room || room.size === 0) return;
+    room.forEach((client) => {
+      if (ticketId && client.tickets.has(ticketId)) return;
+      this.send(client, payload);
+    });
+  }
+
   emitMessageCreated(params: { companyId: string; ticketId: string; messageId: string; authorSide: PortalRealtimeSide; createdAt: string }) {
-    this.sendToTicket(params.companyId, params.ticketId, {
+    const payload: PortalRealtimeEvent = {
       type: 'ticket_message_created',
       ticket_id: params.ticketId,
       message_id: params.messageId,
       author_side: params.authorSide,
       created_at: params.createdAt
-    });
+    };
+    this.sendToTicket(params.companyId, params.ticketId, payload);
+    this.sendToCompany(params.companyId, payload, params.ticketId);
   }
 
   emitRead(params: { companyId: string; ticketId: string; side: PortalRealtimeSide; readAt: string }) {
-    this.sendToTicket(params.companyId, params.ticketId, {
+    const payload: PortalRealtimeEvent = {
       type: 'ticket_read',
       ticket_id: params.ticketId,
       side: params.side,
       read_at: params.readAt
-    });
+    };
+    this.sendToTicket(params.companyId, params.ticketId, payload);
+    this.sendToCompany(params.companyId, payload, params.ticketId);
   }
 
   emitWorkflowChanged(params: { companyId: string; ticketId: string; workflowStage: string; updatedAt: string }) {
-    this.sendToTicket(params.companyId, params.ticketId, {
+    const payload: PortalRealtimeEvent = {
       type: 'ticket_workflow_changed',
       ticket_id: params.ticketId,
       workflow_stage: params.workflowStage,
       updated_at: params.updatedAt
-    });
+    };
+    this.sendToTicket(params.companyId, params.ticketId, payload);
+    this.sendToCompany(params.companyId, payload, params.ticketId);
   }
 }
 
 export const portalRealtimeHub = new PortalRealtimeHub();
-

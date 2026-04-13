@@ -13,12 +13,31 @@ export function PortalShell() {
   const { slug = '' } = useParams();
   const [session, setSession] = useState<PortalSessionData | null>(() => portalSessionStore.read(slug));
   const [profile, setProfile] = useState<PortalMe | null>(null);
+  const [portalBrandCompanyName, setPortalBrandCompanyName] = useState<string>('');
   const [authError, setAuthError] = useState('');
 
   useEffect(() => {
     setSession(portalSessionStore.read(slug));
     setProfile(null);
+    setPortalBrandCompanyName('');
     setAuthError('');
+  }, [slug]);
+
+  useEffect(() => {
+    if (!slug) return;
+    let cancelled = false;
+    portalApi.authBranding(slug)
+      .then((response) => {
+        if (cancelled) return;
+        setPortalBrandCompanyName(response.company_name?.trim() || '');
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setPortalBrandCompanyName('');
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [slug]);
 
   const clearSession = useCallback(() => {
@@ -67,7 +86,7 @@ export function PortalShell() {
   }
 
   if (!session || !apiClient) {
-    return <PortalLoginPage slug={slug} onSubmit={handleLogin} />;
+    return <PortalLoginPage companyName={portalBrandCompanyName || null} onSubmit={handleLogin} />;
   }
 
   return (
@@ -89,7 +108,7 @@ export function PortalShell() {
         </nav>
         <div className="portal-sidebar-footer">
           <small>
-            {profile?.username ? `Acesso: ${profile.username}` : 'Sessão ativa'}
+            {profile?.company_name || 'Sessão ativa'}
           </small>
           <button type="button" className="portal-logout-btn" onClick={clearSession}>Sair</button>
         </div>

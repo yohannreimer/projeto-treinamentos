@@ -7,7 +7,7 @@ test('submits username and password', async () => {
   const user = userEvent.setup();
   const onSubmit = vi.fn().mockResolvedValue(true);
 
-  render(<PortalLoginPage slug="grupo-cbm" onSubmit={onSubmit} />);
+  render(<PortalLoginPage companyName="Grupo CBM" onSubmit={onSubmit} />);
 
   await user.type(screen.getByLabelText(/login/i), 'cliente');
   await user.type(screen.getByLabelText(/senha/i), '123456');

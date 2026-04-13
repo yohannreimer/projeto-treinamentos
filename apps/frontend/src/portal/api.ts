@@ -1,4 +1,5 @@
 import type {
+  PortalAuthBranding,
   CreatePortalTicketPayload,
   PortalAuthedApi,
   PortalLoginPayload,
@@ -66,6 +67,8 @@ async function portalReq<T>(
 }
 
 export const portalApi = {
+  authBranding: (slug: string) =>
+    portalReq<PortalAuthBranding>(`/portal/api/auth/branding/${encodeURIComponent(slug)}`),
   login: (payload: PortalLoginPayload) =>
     portalReq<PortalLoginResponse>('/portal/api/auth/login', {
       method: 'POST',
