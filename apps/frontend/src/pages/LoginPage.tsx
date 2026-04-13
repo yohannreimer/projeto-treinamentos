@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import holandHorizontal from '../assets/holand-horizontal.svg';
 
 type LoginPageProps = {
   onLogin: (username: string, password: string) => boolean;
@@ -22,10 +23,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
   return (
     <div className="login-screen">
       <div className="login-card">
-        <div className="login-brand-row">
-          <span className="brand-mark" aria-hidden="true" />
-          <strong>HOLAND</strong>
-        </div>
+        <img className="login-brand-logo" src={holandHorizontal} alt="Holand" />
         <h1>Orquestrador de Jornadas</h1>
         <p>Transformando complexidade em eficiência operacional.</p>
         <div className="login-direction-accent" aria-hidden="true" />

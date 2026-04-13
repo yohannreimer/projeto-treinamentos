@@ -348,15 +348,10 @@ h1, h2, h3, h4, h5, h6,
   gap: 12px;
 }
 
-.login-brand-row {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.login-brand-row strong {
-  font-size: 1.7rem;
-  letter-spacing: 0.03em;
+.login-brand-logo {
+  width: min(280px, 100%);
+  height: auto;
+  display: block;
 }
 
 .login-card h1 {
