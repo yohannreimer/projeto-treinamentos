@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { clearAllData, db, nowDateIso, uuid } from './db.js';
 import { createPortalSession, hashPassword } from './portal/auth.js';
 import { portalRealtimeHub } from './portal/realtime.js';
+import { readPortalRealtimeSnapshot, setPortalTypingState, touchPortalPresence } from './portal/realtimeState.js';
 import { importWorkbook } from './workbookImport.js';
 import type { AllocationStatus, ModuleProgressStatus } from './types.js';
 
@@ -234,6 +235,11 @@ const kanbanConversationAttachmentSchema = z.object({
 const kanbanConversationMessageCreateSchema = z.object({
   body: z.string().max(4000).nullable().optional(),
   attachments: z.array(kanbanConversationAttachmentSchema).max(8).optional()
+});
+
+const kanbanConversationRealtimeHeartbeatSchema = z.object({
+  active: z.boolean().optional(),
+  is_typing: z.boolean().optional()
 });
 
 const calendarActivityDateScheduleSchema = z.object({
@@ -5264,6 +5270,15 @@ export function registerCoreRoutes(app: Express) {
         linked: false,
         ticket_id: null,
         unread_count: 0,
+        presence: {
+          client_online: false,
+          holand_online: false
+        },
+        typing: {
+          side: null,
+          is_typing: false,
+          created_at: null
+        },
         messages: [],
         note: 'Este card ainda não possui um ticket do portal vinculado.'
       });
@@ -5332,11 +5347,24 @@ export function registerCoreRoutes(app: Express) {
       linkedTicket.last_read_holand_at,
       linkedTicket.last_read_holand_at
     ) as { unread_count: number | null };
+    const realtimeSnapshot = readPortalRealtimeSnapshot({
+      companyId: linkedTicket.company_id,
+      ticketId: linkedTicket.id
+    });
 
     return res.status(200).json({
       linked: true,
       ticket_id: linkedTicket.id,
       unread_count: Number(unreadRow.unread_count ?? 0),
+      presence: {
+        client_online: realtimeSnapshot.presence.client_online,
+        holand_online: realtimeSnapshot.presence.holand_online
+      },
+      typing: {
+        side: realtimeSnapshot.typing.side,
+        is_typing: realtimeSnapshot.typing.is_typing,
+        created_at: realtimeSnapshot.typing.created_at
+      },
       messages: messages.map((message) => ({
         id: message.id,
         author_type: message.author_type,
@@ -5387,6 +5415,75 @@ export function registerCoreRoutes(app: Express) {
         detail: errorMessage(error)
       });
     }
+  });
+
+  app.post('/implementation/kanban/cards/:id/conversation/realtime-heartbeat', (req, res) => {
+    const card = db.prepare(`
+      select id, subcategory
+      from implementation_kanban_card
+      where id = ?
+      limit 1
+    `).get(req.params.id) as {
+      id: string;
+      subcategory: (typeof KANBAN_SUBCATEGORY_VALUES)[number] | null;
+    } | undefined;
+    if (!card) {
+      return res.status(404).json({ message: 'Card não encontrado.' });
+    }
+    if (card.subcategory !== 'Suporte') {
+      return res.status(400).json({ message: 'Conversa disponível apenas para cards de suporte.' });
+    }
+
+    const linkedTicket = readLinkedPortalTicketByKanbanCardId(card.id);
+    if (!linkedTicket) {
+      return res.status(404).json({ message: 'Sem ticket portal vinculado a este card.' });
+    }
+
+    const parsed = kanbanConversationRealtimeHeartbeatSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+
+    const active = parsed.data.active !== false;
+    touchPortalPresence({
+      companyId: linkedTicket.company_id,
+      ticketId: linkedTicket.id,
+      side: 'holand',
+      active
+    });
+
+    if (!active) {
+      setPortalTypingState({
+        companyId: linkedTicket.company_id,
+        ticketId: linkedTicket.id,
+        side: 'holand',
+        isTyping: false
+      });
+    } else if (typeof parsed.data.is_typing === 'boolean') {
+      setPortalTypingState({
+        companyId: linkedTicket.company_id,
+        ticketId: linkedTicket.id,
+        side: 'holand',
+        isTyping: parsed.data.is_typing
+      });
+    }
+
+    const snapshot = readPortalRealtimeSnapshot({
+      companyId: linkedTicket.company_id,
+      ticketId: linkedTicket.id
+    });
+    return res.status(200).json({
+      ticket_id: linkedTicket.id,
+      presence: {
+        client_online: snapshot.presence.client_online,
+        holand_online: snapshot.presence.holand_online
+      },
+      typing: {
+        side: snapshot.typing.side,
+        is_typing: snapshot.typing.is_typing,
+        created_at: snapshot.typing.created_at
+      }
+    });
   });
 
   app.post('/implementation/kanban/cards/:id/conversation/messages', (req, res) => {

@@ -10,7 +10,11 @@ function createFakeApi() {
     ticketThread: vi.fn().mockResolvedValue({ ticket_id: 'ptk-01', messages: [] }),
     createTicketMessage: vi.fn().mockResolvedValue({ id: 'ptmsg-01' }),
     updateTicketWorkflow: vi.fn().mockResolvedValue({ ok: true, workflow_stage: 'A_fazer' }),
-    markTicketRead: vi.fn().mockResolvedValue({ ok: true, ticket_id: 'ptk-01', read_at: '2026-04-10T10:00:00.000Z' })
+    markTicketRead: vi.fn().mockResolvedValue({ ok: true, ticket_id: 'ptk-01', read_at: '2026-04-10T10:00:00.000Z' }),
+    ticketRealtimeHeartbeat: vi.fn().mockResolvedValue({
+      presence: { client_online: false, holand_online: false },
+      typing: { side: null, is_typing: false, created_at: null }
+    })
   };
 }
 

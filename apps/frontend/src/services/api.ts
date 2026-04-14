@@ -331,6 +331,28 @@ export const api = {
       `/implementation/kanban/cards/${cardId}/conversation/realtime-session`,
       { method: 'POST' }
     ),
+  implementationKanbanConversationRealtimeHeartbeat: (
+    cardId: string,
+    payload?: { active?: boolean; is_typing?: boolean }
+  ) =>
+    req<{
+      ticket_id: string;
+      presence: {
+        client_online?: boolean | null;
+        holand_online?: boolean | null;
+      };
+      typing: {
+        side?: 'cliente' | 'holand' | null;
+        is_typing?: boolean | null;
+        created_at?: string | null;
+      };
+    }>(
+      `/implementation/kanban/cards/${cardId}/conversation/realtime-heartbeat`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload ?? {})
+      }
+    ),
   implementationKanbanConversationAttachmentUrl: (cardId: string, attachmentId: string) =>
     `${BASE_URL}/implementation/kanban/cards/${cardId}/conversation/attachments/${attachmentId}/download`,
   createImplementationKanbanCard: (payload: {

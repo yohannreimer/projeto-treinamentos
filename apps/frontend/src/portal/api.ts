@@ -118,6 +118,11 @@ export const portalApi = {
     markTicketRead: (ticketId) =>
       portalReq(`/portal/api/tickets/${ticketId}/read`, {
         method: 'POST'
+      }, { token, onUnauthorized }),
+    ticketRealtimeHeartbeat: (ticketId, payload) =>
+      portalReq(`/portal/api/tickets/${ticketId}/realtime-heartbeat`, {
+        method: 'POST',
+        body: JSON.stringify(payload ?? {})
       }, { token, onUnauthorized })
   })
 };

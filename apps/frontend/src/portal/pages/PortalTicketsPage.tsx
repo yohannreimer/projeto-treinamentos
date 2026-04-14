@@ -20,7 +20,13 @@ import type {
 type PortalTicketsPageProps = {
   api: Pick<
     PortalAuthedApi,
-    'tickets' | 'createTicket' | 'ticketThread' | 'createTicketMessage' | 'updateTicketWorkflow' | 'markTicketRead'
+    'tickets'
+    | 'createTicket'
+    | 'ticketThread'
+    | 'createTicketMessage'
+    | 'updateTicketWorkflow'
+    | 'markTicketRead'
+    | 'ticketRealtimeHeartbeat'
   >;
   isInternal: boolean;
   sessionToken?: string;
@@ -322,6 +328,7 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
   const socketRef = useRef<WebSocket | null>(null);
   const typingStopTimerRef = useRef<number | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
+  const threadHeartbeatTimerRef = useRef<number | null>(null);
   const threadMessagesContainerRef = useRef<HTMLDivElement | null>(null);
   const shouldAutoScrollThreadRef = useRef(false);
 
@@ -413,6 +420,10 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
       window.clearTimeout(typingStopTimerRef.current);
       typingStopTimerRef.current = null;
     }
+    if (threadHeartbeatTimerRef.current) {
+      window.clearInterval(threadHeartbeatTimerRef.current);
+      threadHeartbeatTimerRef.current = null;
+    }
     if (reconnectTimerRef.current) {
       window.clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = null;
@@ -463,6 +474,44 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
     const socket = socketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) return;
     socket.send(JSON.stringify(event));
+  }
+
+  async function heartbeatTicketRealtime(ticketId: string, payload?: { active?: boolean; is_typing?: boolean }) {
+    try {
+      const snapshot = await api.ticketRealtimeHeartbeat(ticketId, payload);
+      setItems((prev) => prev.map((item) => (
+        item.id !== ticketId
+          ? item
+          : {
+            ...item,
+            realtime: {
+              ...item.realtime,
+              client_online: snapshot.presence?.client_online ?? item.realtime?.client_online ?? null,
+              holand_online: snapshot.presence?.holand_online ?? item.realtime?.holand_online ?? null,
+              typing_side: snapshot.typing?.is_typing ? (snapshot.typing.side ?? null) : null,
+              typing_at: snapshot.typing?.is_typing ? (snapshot.typing.created_at ?? null) : null
+            }
+          }
+      )));
+
+      if (selectedTicketIdRef.current === ticketId) {
+        setThreadRealtime((prev) => ({
+          ...prev,
+          presence: {
+            ...prev.presence,
+            client_online: snapshot.presence?.client_online ?? prev.presence.client_online,
+            holand_online: snapshot.presence?.holand_online ?? prev.presence.holand_online
+          },
+          typing: {
+            side: snapshot.typing?.is_typing ? (snapshot.typing.side ?? null) : null,
+            is_typing: snapshot.typing?.is_typing ?? false,
+            created_at: snapshot.typing?.created_at ?? null
+          }
+        }));
+      }
+    } catch {
+      // heartbeat silencioso para não quebrar UX
+    }
   }
 
   useEffect(() => {
@@ -715,6 +764,28 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
     return () => window.clearInterval(pollId);
   }, [sessionToken]);
 
+  useEffect(() => {
+    if (!selectedTicketId) return undefined;
+    if (threadHeartbeatTimerRef.current) {
+      window.clearInterval(threadHeartbeatTimerRef.current);
+      threadHeartbeatTimerRef.current = null;
+    }
+    void heartbeatTicketRealtime(selectedTicketId, { active: true, is_typing: false });
+    threadHeartbeatTimerRef.current = window.setInterval(() => {
+      if (document.hidden) return;
+      const currentTicketId = selectedTicketIdRef.current;
+      if (!currentTicketId) return;
+      void heartbeatTicketRealtime(currentTicketId, { active: true, is_typing: false });
+    }, 5000);
+
+    return () => {
+      if (threadHeartbeatTimerRef.current) {
+        window.clearInterval(threadHeartbeatTimerRef.current);
+        threadHeartbeatTimerRef.current = null;
+      }
+    };
+  }, [selectedTicketId]);
+
   async function filesToDraftAttachments(files: FileList | null) {
     if (!files || files.length === 0) return [] as DraftAttachment[];
     const nextAttachments: DraftAttachment[] = [];
@@ -832,6 +903,7 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
   async function openThread(ticketId: string) {
     if (selectedTicketId && selectedTicketId !== ticketId) {
       sendSocketEvent({ type: 'leave_ticket', ticket_id: selectedTicketId });
+      await heartbeatTicketRealtime(selectedTicketId, { active: false, is_typing: false });
     }
     shouldAutoScrollThreadRef.current = true;
     setShowThreadJumpToLatest(false);
@@ -844,6 +916,7 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
     setThreadRealtime(emptyThreadRealtime);
     sendSocketEvent({ type: 'join_ticket', ticket_id: ticketId });
     await loadThread(ticketId, { autoScrollOnLoad: true });
+    await heartbeatTicketRealtime(ticketId, { active: true, is_typing: false });
     await markThreadAsRead(ticketId);
   }
 
@@ -857,6 +930,7 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
     }
     if (selectedTicketId) {
       sendSocketEvent({ type: 'leave_ticket', ticket_id: selectedTicketId });
+      void heartbeatTicketRealtime(selectedTicketId, { active: false, is_typing: false });
     }
     selectedTicketIdRef.current = null;
     setSelectedTicketId(null);
@@ -880,7 +954,9 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
   function handleReplyBodyChange(value: string) {
     setReplyBody(value);
     if (!selectedTicketId) return;
-    emitTypingSignal(selectedTicketId, value.trim().length > 0);
+    const isTyping = value.trim().length > 0;
+    emitTypingSignal(selectedTicketId, isTyping);
+    void heartbeatTicketRealtime(selectedTicketId, { active: true, is_typing: isTyping });
     if (typingStopTimerRef.current) {
       window.clearTimeout(typingStopTimerRef.current);
       typingStopTimerRef.current = null;
@@ -888,6 +964,7 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
     if (!value.trim()) return;
     typingStopTimerRef.current = window.setTimeout(() => {
       emitTypingSignal(selectedTicketId, false);
+      void heartbeatTicketRealtime(selectedTicketId, { active: true, is_typing: false });
       typingStopTimerRef.current = null;
     }, 1400);
   }
@@ -955,6 +1032,7 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
         }))
       });
       emitTypingSignal(selectedTicketId, false);
+      await heartbeatTicketRealtime(selectedTicketId, { active: true, is_typing: false });
       setReplyBody('');
       setReplyAttachments([]);
       await loadThread(selectedTicketId, { autoScrollOnLoad: true, background: true });

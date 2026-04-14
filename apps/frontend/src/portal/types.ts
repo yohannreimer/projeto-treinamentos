@@ -225,4 +225,18 @@ export type PortalAuthedApi = {
     unread_for_cliente?: boolean;
     unread_for_holand?: boolean;
   }>;
+  ticketRealtimeHeartbeat: (
+    ticketId: string,
+    payload?: { active?: boolean; is_typing?: boolean }
+  ) => Promise<{
+    presence: {
+      client_online?: boolean | null;
+      holand_online?: boolean | null;
+    };
+    typing: {
+      side?: PortalRealtimeSide | null;
+      is_typing?: boolean | null;
+      created_at?: string | null;
+    };
+  }>;
 };

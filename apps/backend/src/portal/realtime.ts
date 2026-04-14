@@ -1,6 +1,7 @@
 import type { IncomingMessage, Server as HttpServer } from 'node:http';
 import { db } from '../db.js';
 import { readPortalSessionByToken, type PortalSessionContext } from './auth.js';
+import { setPortalTypingState, touchPortalPresence } from './realtimeState.js';
 
 type PortalRealtimeSide = 'holand' | 'cliente';
 type PortalRealtimeEvent =
@@ -172,6 +173,18 @@ class PortalRealtimeHub {
           return;
         }
         if (incoming.type === 'typing') {
+          touchPortalPresence({
+            companyId: client.context.company_id,
+            ticketId: incoming.ticket_id,
+            side: client.side,
+            active: true
+          });
+          setPortalTypingState({
+            companyId: client.context.company_id,
+            ticketId: incoming.ticket_id,
+            side: client.side,
+            isTyping: incoming.is_typing
+          });
           this.sendToTicket(client.context.company_id, incoming.ticket_id, {
             type: 'ticket_typing',
             ticket_id: incoming.ticket_id,
@@ -248,6 +261,12 @@ class PortalRealtimeHub {
     const key = this.presenceKey(ticketId, client.side);
     const currentCount = this.presenceCounts.get(key) ?? 0;
     this.presenceCounts.set(key, currentCount + 1);
+    touchPortalPresence({
+      companyId: client.context.company_id,
+      ticketId,
+      side: client.side,
+      active: true
+    });
     if (currentCount === 0) {
       this.sendToTicket(client.context.company_id, ticketId, {
         type: 'ticket_presence',
@@ -276,6 +295,18 @@ class PortalRealtimeHub {
     const nextCount = Math.max(0, currentCount - 1);
     if (nextCount === 0) {
       this.presenceCounts.delete(key);
+      touchPortalPresence({
+        companyId: client.context.company_id,
+        ticketId,
+        side: client.side,
+        active: false
+      });
+      setPortalTypingState({
+        companyId: client.context.company_id,
+        ticketId,
+        side: client.side,
+        isTyping: false
+      });
       this.sendToTicket(client.context.company_id, ticketId, {
         type: 'ticket_presence',
         ticket_id: ticketId,

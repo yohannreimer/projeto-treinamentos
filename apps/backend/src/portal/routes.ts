@@ -9,6 +9,7 @@ import {
   verifyPassword
 } from './auth.js';
 import { portalRealtimeHub } from './realtime.js';
+import { readPortalRealtimeSnapshot, setPortalTypingState, touchPortalPresence } from './realtimeState.js';
 import { toClientFacingStatus, toWorkflowStage } from './status.js';
 
 const DUMMY_PASSWORD_HASH = 'scrypt:00112233445566778899aabbccddeeff:5232aa4cb8582e8f374f25579c6f9ad17d5a9af5ba6d42d4c44df702d20c9d4faef25ea0fca6a5aa69b8bb25439ee4c45cb8e173ceb7f0972b0a8f7fbf2bbd99';
@@ -82,6 +83,11 @@ const operatorAgendaItemSchema = z.object({
 
 const operatorTicketWorkflowSchema = z.object({
   workflow_stage: z.enum(['Backlog', 'A_fazer', 'Em_andamento', 'Concluido'])
+});
+
+const realtimeHeartbeatSchema = z.object({
+  active: z.boolean().optional(),
+  is_typing: z.boolean().optional()
 });
 
 function buildLoginThrottleKey(ip: string, userAgent: string, slug: string, username: string) {
@@ -1176,11 +1182,31 @@ function buildPortalTicketReadState(ticket: PortalTicketRecord): PortalTicketRea
   };
 }
 
+function buildPortalTicketRealtimeSnapshot(ticket: Pick<PortalTicketRecord, 'id' | 'company_id'>) {
+  const snapshot = readPortalRealtimeSnapshot({
+    companyId: ticket.company_id,
+    ticketId: ticket.id
+  });
+
+  return {
+    presence: {
+      client_online: snapshot.presence.client_online,
+      holand_online: snapshot.presence.holand_online
+    },
+    typing: {
+      side: snapshot.typing.side,
+      is_typing: snapshot.typing.is_typing,
+      created_at: snapshot.typing.created_at
+    }
+  };
+}
+
 function buildPortalTicketMetadata(
   ticket: PortalTicketRecord,
   viewerSide?: PortalTicketSide
 ) {
   const readState = buildPortalTicketReadState(ticket);
+  const realtime = buildPortalTicketRealtimeSnapshot(ticket);
   return {
     whatsapp_number: ticket.whatsapp_number,
     source: (ticket.origin === 'operacao_interna' || ticket.id.startsWith('kcard-'))
@@ -1202,7 +1228,9 @@ function buildPortalTicketMetadata(
     unread_for_holand: readState.unread_for_holand,
     has_unread: viewerSide
       ? (viewerSide === 'cliente' ? readState.unread_for_cliente : readState.unread_for_holand)
-      : false
+      : false,
+    presence: realtime.presence,
+    typing: realtime.typing
   };
 }
 
@@ -2202,6 +2230,10 @@ export function registerPortalRoutes(app: Express) {
         && lastMessageAuthorSide === 'cliente'
         && (!row.last_read_holand_at || row.last_read_holand_at < row.last_message_at)
       );
+      const realtime = buildPortalTicketRealtimeSnapshot({
+        id: row.id,
+        company_id: context.company_id
+      });
       return {
         id: row.id,
         title: row.title,
@@ -2227,7 +2259,15 @@ export function registerPortalRoutes(app: Express) {
         last_read_holand_at: row.last_read_holand_at,
         unread_for_cliente: unreadForCliente,
         unread_for_holand: unreadForHoland,
-        has_unread: viewerSide === 'cliente' ? unreadForCliente : unreadForHoland
+        has_unread: viewerSide === 'cliente' ? unreadForCliente : unreadForHoland,
+        realtime: {
+          unread_count: viewerSide === 'cliente' ? (unreadForCliente ? 1 : 0) : (unreadForHoland ? 1 : 0),
+          client_online: realtime.presence.client_online,
+          holand_online: realtime.presence.holand_online,
+          typing_side: realtime.typing.is_typing ? realtime.typing.side : null,
+          typing_at: realtime.typing.created_at,
+          last_message_preview: row.description
+        }
       };
     });
     return res.status(200).json({
@@ -2319,6 +2359,68 @@ export function registerPortalRoutes(app: Express) {
         attachments: attachmentsByMessage.get(message.id) ?? []
       }))
     });
+  });
+
+  router.get('/tickets/:id/realtime-state', requirePortalAuth, (req, res) => {
+    const context = getPortalContextOrNull(res);
+    if (!context) {
+      return res.status(401).json({ message: 'Sessão inválida ou expirada.' });
+    }
+
+    const ticket = resolvePortalTicketForContext(req.params.id, context, {
+      materializeOperationalForInternal: true
+    });
+    if (!ticket) {
+      return res.status(404).json({ message: 'Chamado não encontrado para este cliente.' });
+    }
+
+    return res.status(200).json(buildPortalTicketRealtimeSnapshot(ticket));
+  });
+
+  router.post('/tickets/:id/realtime-heartbeat', requirePortalAuth, (req, res) => {
+    const context = getPortalContextOrNull(res);
+    if (!context) {
+      return res.status(401).json({ message: 'Sessão inválida ou expirada.' });
+    }
+
+    const parsed = realtimeHeartbeatSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+
+    const ticket = resolvePortalTicketForContext(req.params.id, context, {
+      materializeOperationalForInternal: true
+    });
+    if (!ticket) {
+      return res.status(404).json({ message: 'Chamado não encontrado para este cliente.' });
+    }
+
+    const side = readContextSide(context);
+    const active = parsed.data.active !== false;
+    touchPortalPresence({
+      companyId: context.company_id,
+      ticketId: ticket.id,
+      side,
+      active
+    });
+
+    if (!active) {
+      setPortalTypingState({
+        companyId: context.company_id,
+        ticketId: ticket.id,
+        side,
+        isTyping: false
+      });
+    } else if (typeof parsed.data.is_typing === 'boolean') {
+      setPortalTypingState({
+        companyId: context.company_id,
+        ticketId: ticket.id,
+        side,
+        isTyping: parsed.data.is_typing
+      });
+    }
+
+    return res.status(200).json(buildPortalTicketRealtimeSnapshot(ticket));
   });
 
   router.post('/tickets/:id/messages', requirePortalAuth, (req, res) => {

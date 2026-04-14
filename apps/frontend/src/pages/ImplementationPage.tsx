@@ -351,6 +351,7 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
   const conversationSocketRef = useRef<WebSocket | null>(null);
   const conversationTypingStopTimerRef = useRef<number | null>(null);
   const conversationReconnectTimerRef = useRef<number | null>(null);
+  const conversationHeartbeatTimerRef = useRef<number | null>(null);
   const conversationMessagesContainerRef = useRef<HTMLDivElement | null>(null);
   const shouldAutoScrollConversationRef = useRef(false);
 
@@ -427,6 +428,15 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
         linked: boolean;
         ticket_id: string | null;
         unread_count: number;
+        presence?: {
+          client_online?: boolean | null;
+          holand_online?: boolean | null;
+        };
+        typing?: {
+          side?: PortalRealtimeSide | null;
+          is_typing?: boolean | null;
+          created_at?: string | null;
+        };
         note?: string;
         messages: ConversationMessage[];
       };
@@ -436,7 +446,16 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
       setConversationUnreadCount(Math.max(0, response.unread_count ?? 0));
       setConversationRealtime((prev) => ({
         ...prev,
-        unreadCount: Math.max(0, response.unread_count ?? 0)
+        unreadCount: Math.max(0, response.unread_count ?? 0),
+        presence: {
+          client_online: response.presence?.client_online ?? prev.presence.client_online ?? null,
+          holand_online: response.presence?.holand_online ?? prev.presence.holand_online ?? null
+        },
+        typing: {
+          side: response.typing?.side ?? prev.typing.side ?? null,
+          is_typing: response.typing?.is_typing ?? prev.typing.is_typing ?? null,
+          created_at: response.typing?.created_at ?? prev.typing.created_at ?? null
+        }
       }));
       if (options?.autoScrollOnLoad) {
         shouldAutoScrollConversationRef.current = true;
@@ -516,10 +535,15 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
     if ((response?.ticket_id ?? card.support_ticket_id) != null) {
       await loadConversationRealtimeSession(card.id);
     }
+    await heartbeatConversationRealtime(card.id, { active: true, is_typing: false });
     await markConversationAsRead(card.id);
   }
 
   function closeConversation() {
+    if (conversationHeartbeatTimerRef.current) {
+      window.clearInterval(conversationHeartbeatTimerRef.current);
+      conversationHeartbeatTimerRef.current = null;
+    }
     if (conversationTypingStopTimerRef.current) {
       window.clearTimeout(conversationTypingStopTimerRef.current);
       conversationTypingStopTimerRef.current = null;
@@ -530,6 +554,9 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
         socket.send(JSON.stringify({ type: 'typing', ticket_id: selectedConversationTicketIdRef.current, is_typing: false }));
         socket.send(JSON.stringify({ type: 'leave_ticket', ticket_id: selectedConversationTicketIdRef.current }));
       }
+    }
+    if (conversationCard?.id) {
+      void heartbeatConversationRealtime(conversationCard.id, { active: false, is_typing: false });
     }
     setConversationCard(null);
     setConversationMessages([]);
@@ -552,6 +579,26 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
     const socket = conversationSocketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) return;
     socket.send(JSON.stringify(event));
+  }
+
+  async function heartbeatConversationRealtime(cardId: string, payload?: { active?: boolean; is_typing?: boolean }) {
+    try {
+      const snapshot = await api.implementationKanbanConversationRealtimeHeartbeat(cardId, payload);
+      setConversationRealtime((prev) => ({
+        ...prev,
+        presence: {
+          client_online: snapshot.presence?.client_online ?? prev.presence.client_online ?? null,
+          holand_online: snapshot.presence?.holand_online ?? prev.presence.holand_online ?? null
+        },
+        typing: {
+          side: snapshot.typing?.is_typing ? (snapshot.typing.side ?? null) : null,
+          is_typing: snapshot.typing?.is_typing ?? false,
+          created_at: snapshot.typing?.created_at ?? null
+        }
+      }));
+    } catch {
+      // heartbeat silencioso para não quebrar UX
+    }
   }
 
   function emitConversationTypingSignal(ticketId: string, isTyping: boolean) {
@@ -589,7 +636,11 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
   function handleConversationReplyChange(value: string) {
     setConversationReply(value);
     if (!conversationTicketId) return;
-    emitConversationTypingSignal(conversationTicketId, value.trim().length > 0);
+    const isTyping = value.trim().length > 0;
+    emitConversationTypingSignal(conversationTicketId, isTyping);
+    if (conversationCard?.id) {
+      void heartbeatConversationRealtime(conversationCard.id, { active: true, is_typing: isTyping });
+    }
     if (conversationTypingStopTimerRef.current) {
       window.clearTimeout(conversationTypingStopTimerRef.current);
       conversationTypingStopTimerRef.current = null;
@@ -597,6 +648,9 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
     if (!value.trim()) return;
     conversationTypingStopTimerRef.current = window.setTimeout(() => {
       emitConversationTypingSignal(conversationTicketId, false);
+      if (conversationCard?.id) {
+        void heartbeatConversationRealtime(conversationCard.id, { active: true, is_typing: false });
+      }
       conversationTypingStopTimerRef.current = null;
     }, 1400);
   }
@@ -640,6 +694,7 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
       if (conversationTicketId) {
         emitConversationTypingSignal(conversationTicketId, false);
       }
+      await heartbeatConversationRealtime(conversationCard.id, { active: true, is_typing: false });
       if (conversationTypingStopTimerRef.current) {
         window.clearTimeout(conversationTypingStopTimerRef.current);
         conversationTypingStopTimerRef.current = null;
@@ -676,6 +731,33 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
   }, [conversationTicketId]);
 
   useEffect(() => {
+    const cardId = conversationCard?.id;
+    const ticketId = conversationTicketId;
+    if (!cardId || !ticketId) return undefined;
+
+    if (conversationHeartbeatTimerRef.current) {
+      window.clearInterval(conversationHeartbeatTimerRef.current);
+      conversationHeartbeatTimerRef.current = null;
+    }
+
+    void heartbeatConversationRealtime(cardId, { active: true, is_typing: false });
+    conversationHeartbeatTimerRef.current = window.setInterval(() => {
+      if (document.hidden) return;
+      const activeCardId = selectedConversationCardIdRef.current;
+      if (!activeCardId) return;
+      void heartbeatConversationRealtime(activeCardId, { active: true, is_typing: false });
+    }, 5000);
+
+    return () => {
+      if (conversationHeartbeatTimerRef.current) {
+        window.clearInterval(conversationHeartbeatTimerRef.current);
+        conversationHeartbeatTimerRef.current = null;
+      }
+      void heartbeatConversationRealtime(cardId, { active: false, is_typing: false });
+    };
+  }, [conversationCard?.id, conversationTicketId]);
+
+  useEffect(() => {
     if (!conversationCard) {
       setShowConversationJumpToLatest(false);
       shouldAutoScrollConversationRef.current = false;
@@ -696,6 +778,10 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
     if (conversationTypingStopTimerRef.current) {
       window.clearTimeout(conversationTypingStopTimerRef.current);
       conversationTypingStopTimerRef.current = null;
+    }
+    if (conversationHeartbeatTimerRef.current) {
+      window.clearInterval(conversationHeartbeatTimerRef.current);
+      conversationHeartbeatTimerRef.current = null;
     }
     if (conversationReconnectTimerRef.current) {
       window.clearTimeout(conversationReconnectTimerRef.current);
