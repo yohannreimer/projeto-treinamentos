@@ -280,15 +280,15 @@ function makePortalWsUrls(sessionToken: string) {
   const base = resolveRealtimeApiBase(API_BASE_URL);
   const protocol = base.protocol === 'https:' ? 'wss:' : 'ws:';
   const tokenParam = `token=${encodeURIComponent(sessionToken)}`;
-  const candidates = [
-    `${protocol}//${base.host}/portal/ws?${tokenParam}`
-  ];
+  const candidates: string[] = [];
+  if (window.location.port === '5173') {
+    candidates.push(`${protocol}//${window.location.hostname}:4000/portal/ws?${tokenParam}`);
+    candidates.push(`${protocol}//${window.location.hostname}:4010/portal/ws?${tokenParam}`);
+  }
   if (base.pathPrefix) {
     candidates.push(`${protocol}//${base.host}${base.pathPrefix}/portal/ws?${tokenParam}`);
   }
-  if (window.location.port === '5173') {
-    candidates.push(`${protocol}//${window.location.hostname}:4000/portal/ws?${tokenParam}`);
-  }
+  candidates.push(`${protocol}//${base.host}/portal/ws?${tokenParam}`);
   return Array.from(new Set(candidates));
 }
 
@@ -300,6 +300,11 @@ function presenceTone(online: boolean | null | undefined) {
 
 type ImplementationPageProps = {
   boardMode?: KanbanBoardMode;
+};
+
+type LoadConversationOptions = {
+  autoScrollOnLoad?: boolean;
+  background?: boolean;
 };
 
 export function ImplementationPage({ boardMode = 'implementation' }: ImplementationPageProps) {
@@ -411,9 +416,12 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
     })));
   }
 
-  async function loadConversation(cardId: string, options?: { autoScrollOnLoad?: boolean }) {
-    setConversationLoading(true);
-    setConversationError('');
+  async function loadConversation(cardId: string, options?: LoadConversationOptions) {
+    const background = options?.background === true;
+    if (!background) {
+      setConversationLoading(true);
+      setConversationError('');
+    }
     try {
       const response = await api.implementationKanbanConversation(cardId) as {
         linked: boolean;
@@ -440,15 +448,19 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
       });
       return response;
     } catch (loadError) {
-      setConversationError(loadError instanceof Error ? loadError.message : 'Falha ao carregar a conversa.');
-      setConversationMessages([]);
-      setConversationTicketId(null);
-      selectedConversationTicketIdRef.current = null;
-      setConversationUnreadCount(0);
-      setConversationRealtime((prev) => ({ ...prev, unreadCount: 0 }));
+      if (!background) {
+        setConversationError(loadError instanceof Error ? loadError.message : 'Falha ao carregar a conversa.');
+        setConversationMessages([]);
+        setConversationTicketId(null);
+        selectedConversationTicketIdRef.current = null;
+        setConversationUnreadCount(0);
+        setConversationRealtime((prev) => ({ ...prev, unreadCount: 0 }));
+      }
       return null;
     } finally {
-      setConversationLoading(false);
+      if (!background) {
+        setConversationLoading(false);
+      }
     }
   }
 
@@ -558,7 +570,11 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
   function scrollConversationToBottom(behavior: ScrollBehavior = 'auto') {
     const container = conversationMessagesContainerRef.current;
     if (!container) return;
-    container.scrollTo({ top: container.scrollHeight, behavior });
+    if (typeof container.scrollTo === 'function') {
+      container.scrollTo({ top: container.scrollHeight, behavior });
+    } else {
+      container.scrollTop = container.scrollHeight;
+    }
     setShowConversationJumpToLatest(false);
   }
 
@@ -638,7 +654,7 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
       setConversationReply('');
       setConversationAttachments([]);
       shouldAutoScrollConversationRef.current = true;
-      await loadConversation(conversationCard.id, { autoScrollOnLoad: true });
+      await loadConversation(conversationCard.id, { autoScrollOnLoad: true, background: true });
       await markConversationAsRead(conversationCard.id);
     } catch (submitError) {
       setConversationError(submitError instanceof Error ? submitError.message : 'Falha ao enviar resposta.');
@@ -700,6 +716,8 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
     let disposed = false;
     let socket: WebSocket | null = null;
     let retryDelayMs = 1000;
+    let pingTimer: number | null = null;
+    let bootTimer: number | null = null;
     let wsCandidateIndex = 0;
     const wsUrls = makePortalWsUrls(conversationRealtimeToken);
 
@@ -710,17 +728,28 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
       }
     };
 
-    const scheduleReconnect = () => {
+    const clearPingTimer = () => {
+      if (pingTimer) {
+        window.clearInterval(pingTimer);
+        pingTimer = null;
+      }
+    };
+
+    const scheduleReconnect = (delayOverrideMs?: number) => {
       if (disposed || conversationReconnectTimerRef.current) return;
+      const delayMs = delayOverrideMs ?? retryDelayMs;
       conversationReconnectTimerRef.current = window.setTimeout(() => {
         conversationReconnectTimerRef.current = null;
-        retryDelayMs = Math.min(Math.round(retryDelayMs * 1.7), 10_000);
+        if (typeof delayOverrideMs !== 'number') {
+          retryDelayMs = Math.min(Math.round(retryDelayMs * 1.7), 10_000);
+        }
         connect();
-      }, retryDelayMs);
+      }, delayMs);
     };
 
     const connect = () => {
       if (disposed) return;
+      let opened = false;
       let nextSocket: WebSocket;
       try {
         const targetUrl = wsUrls[wsCandidateIndex % wsUrls.length] ?? wsUrls[0];
@@ -734,7 +763,18 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
       conversationSocketRef.current = nextSocket;
 
       nextSocket.onopen = () => {
+        opened = true;
         retryDelayMs = 1000;
+        clearPingTimer();
+        pingTimer = window.setInterval(() => {
+          try {
+            if (nextSocket.readyState === WebSocket.OPEN) {
+              nextSocket.send(JSON.stringify({ type: 'ping' }));
+            }
+          } catch {
+            // noop
+          }
+        }, 15000);
       };
 
       nextSocket.onmessage = (rawEvent) => {
@@ -792,7 +832,10 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
         if (payload.type === 'ticket_message_created' || payload.type === 'ticket_workflow_changed') {
           const activeCardId = selectedConversationCardIdRef.current;
           if (!activeCardId) return;
-          void loadConversation(activeCardId);
+          void loadConversation(activeCardId, {
+            background: true,
+            autoScrollOnLoad: payload.type === 'ticket_message_created' && payload.author_side === 'cliente'
+          });
           void markConversationAsRead(activeCardId);
         }
       };
@@ -801,20 +844,27 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
         if (conversationSocketRef.current === nextSocket) {
           conversationSocketRef.current = null;
         }
+        clearPingTimer();
         if (joinedConversationTicketIdRef.current) {
           joinedConversationTicketIdRef.current = null;
         }
         if (!disposed && event.code !== 4401) {
-          scheduleReconnect();
+          scheduleReconnect(!opened && wsUrls.length > 1 ? 120 : undefined);
         }
       };
     };
 
-    connect();
+    // Evita conexão fantasma no primeiro ciclo do StrictMode em dev.
+    bootTimer = window.setTimeout(() => connect(), 0);
 
     return () => {
       disposed = true;
       clearReconnectTimer();
+      clearPingTimer();
+      if (bootTimer) {
+        window.clearTimeout(bootTimer);
+        bootTimer = null;
+      }
       if (socket?.readyState === WebSocket.OPEN && joinedConversationTicketIdRef.current) {
         socket.send(JSON.stringify({ type: 'typing', ticket_id: joinedConversationTicketIdRef.current, is_typing: false }));
         socket.send(JSON.stringify({ type: 'leave_ticket', ticket_id: joinedConversationTicketIdRef.current }));
@@ -861,7 +911,7 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
       if (conversationSocketRef.current?.readyState === WebSocket.OPEN) return;
       void (async () => {
         try {
-          await loadConversation(conversationCard.id);
+          await loadConversation(conversationCard.id, { background: true });
           await markConversationAsRead(conversationCard.id);
         } catch {
           // atualização silenciosa
