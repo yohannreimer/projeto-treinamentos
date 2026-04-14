@@ -26,6 +26,15 @@ type PortalTicketsPageProps = {
   sessionToken?: string;
 };
 
+type LoadOptions = {
+  background?: boolean;
+};
+
+type LoadThreadOptions = {
+  autoScrollOnLoad?: boolean;
+  background?: boolean;
+};
+
 type WorkflowStage = 'Backlog' | 'A_fazer' | 'Em_andamento' | 'Concluido';
 
 type DraftAttachment = {
@@ -199,15 +208,15 @@ function makePortalWsUrls(sessionToken: string) {
   const base = resolveRealtimeApiBase(API_BASE_URL);
   const protocol = base.protocol === 'https:' ? 'wss:' : 'ws:';
   const tokenParam = `token=${encodeURIComponent(sessionToken)}`;
-  const candidates = [
-    `${protocol}//${base.host}/portal/ws?${tokenParam}`
-  ];
+  const candidates: string[] = [];
+  if (window.location.port === '5173') {
+    candidates.push(`${protocol}//${window.location.hostname}:4000/portal/ws?${tokenParam}`);
+    candidates.push(`${protocol}//${window.location.hostname}:4010/portal/ws?${tokenParam}`);
+  }
   if (base.pathPrefix) {
     candidates.push(`${protocol}//${base.host}${base.pathPrefix}/portal/ws?${tokenParam}`);
   }
-  if (window.location.port === '5173') {
-    candidates.push(`${protocol}//${window.location.hostname}:4000/portal/ws?${tokenParam}`);
-  }
+  candidates.push(`${protocol}//${base.host}/portal/ws?${tokenParam}`);
   return Array.from(new Set(candidates));
 }
 
@@ -316,21 +325,50 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
   const threadMessagesContainerRef = useRef<HTMLDivElement | null>(null);
   const shouldAutoScrollThreadRef = useRef(false);
 
-  async function load() {
-    setLoading(true);
+  async function load(options?: LoadOptions) {
+    const background = options?.background === true;
+    if (!background) {
+      setLoading(true);
+    }
     try {
       const response = await api.tickets();
       const nextItems = (response.items ?? []).map(hydrateTicketRealtime);
-      setItems(nextItems);
+      setItems((previousItems) => {
+        const previousById = new Map(previousItems.map((item) => [item.id, item]));
+        return nextItems.map((item) => {
+          const previous = previousById.get(item.id);
+          const realtime = item.realtime ?? previous?.realtime;
+          return {
+            ...item,
+            realtime: {
+              ...realtime,
+              unread_count: Math.max(
+                0,
+                Number(item.realtime?.unread_count ?? 0),
+                Number(previous?.realtime?.unread_count ?? 0)
+              ),
+              client_online: realtime?.client_online ?? previous?.realtime?.client_online ?? null,
+              holand_online: realtime?.holand_online ?? previous?.realtime?.holand_online ?? null,
+              typing_side: realtime?.typing_side ?? previous?.realtime?.typing_side ?? null,
+              typing_at: realtime?.typing_at ?? previous?.realtime?.typing_at ?? null,
+              last_message_preview: realtime?.last_message_preview ?? previous?.realtime?.last_message_preview ?? item.description
+            }
+          };
+        });
+      });
       setSupportIntroText(response.support_intro_text?.trim() ?? '');
       setWorkflowByTicket(
-        Object.fromEntries(nextItems.map((item) => [item.id, initialWorkflowFromStage(item.workflow_stage)]))
+        (previous) => Object.fromEntries(
+          nextItems.map((item) => [item.id, previous[item.id] ?? initialWorkflowFromStage(item.workflow_stage)])
+        )
       );
       setError('');
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Falha ao carregar a inbox de suporte.');
     } finally {
-      setLoading(false);
+      if (!background) {
+        setLoading(false);
+      }
     }
   }
 
@@ -405,7 +443,11 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
   function scrollThreadToBottom(behavior: ScrollBehavior = 'auto') {
     const container = threadMessagesContainerRef.current;
     if (!container) return;
-    container.scrollTo({ top: container.scrollHeight, behavior });
+    if (typeof container.scrollTo === 'function') {
+      container.scrollTo({ top: container.scrollHeight, behavior });
+    } else {
+      container.scrollTop = container.scrollHeight;
+    }
     setShowThreadJumpToLatest(false);
   }
 
@@ -429,6 +471,7 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
     let socket: WebSocket | null = null;
     let retryDelayMs = 1000;
     let bootTimer: number | null = null;
+    let pingTimer: number | null = null;
     let wsCandidateIndex = 0;
     const wsUrls = makePortalWsUrls(sessionToken);
 
@@ -439,18 +482,29 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
       }
     };
 
-    const scheduleReconnect = () => {
+    const clearPingTimer = () => {
+      if (pingTimer) {
+        window.clearInterval(pingTimer);
+        pingTimer = null;
+      }
+    };
+
+    const scheduleReconnect = (delayOverrideMs?: number) => {
       if (disposed || reconnectTimerRef.current) return;
+      const delayMs = delayOverrideMs ?? retryDelayMs;
       reconnectTimerRef.current = window.setTimeout(() => {
         reconnectTimerRef.current = null;
-        retryDelayMs = Math.min(Math.round(retryDelayMs * 1.7), 10_000);
+        if (typeof delayOverrideMs !== 'number') {
+          retryDelayMs = Math.min(Math.round(retryDelayMs * 1.7), 10_000);
+        }
         connect();
-      }, retryDelayMs);
+      }, delayMs);
     };
 
     const connect = () => {
       if (disposed) return;
       let nextSocket: WebSocket;
+      let opened = false;
       try {
         const targetUrl = wsUrls[wsCandidateIndex % wsUrls.length] ?? wsUrls[0];
         wsCandidateIndex += 1;
@@ -463,7 +517,18 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
       socketRef.current = nextSocket;
 
       nextSocket.onopen = () => {
+        opened = true;
         retryDelayMs = 1000;
+        clearPingTimer();
+        pingTimer = window.setInterval(() => {
+          try {
+            if (nextSocket.readyState === WebSocket.OPEN) {
+              nextSocket.send(JSON.stringify({ type: 'ping' }));
+            }
+          } catch {
+            // noop
+          }
+        }, 15000);
       };
 
       nextSocket.onmessage = (rawEvent) => {
@@ -583,17 +648,20 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
               ...prev,
               unreadCount: isOwnMessage ? prev.unreadCount : 0
             }));
-            void loadThread(payload.ticket_id);
+            void loadThread(payload.ticket_id, {
+              autoScrollOnLoad: !isOwnMessage,
+              background: true
+            });
             return;
           }
-          void load();
+          void load({ background: true });
           return;
         }
 
         if (payload.type === 'ticket_workflow_changed') {
-          void load();
+          void load({ background: true });
           if (selectedTicketIdRef.current === payload.ticket_id) {
-            void loadThread(payload.ticket_id);
+            void loadThread(payload.ticket_id, { background: true });
           }
           return;
         }
@@ -607,8 +675,9 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
         if (socketRef.current === nextSocket) {
           socketRef.current = null;
         }
+        clearPingTimer();
         if (!disposed && event.code !== 4401) {
-          scheduleReconnect();
+          scheduleReconnect(!opened && wsUrls.length > 1 ? 120 : undefined);
         }
       };
     };
@@ -619,6 +688,7 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
     return () => {
       disposed = true;
       clearReconnectTimer();
+      clearPingTimer();
       if (bootTimer) {
         window.clearTimeout(bootTimer);
         bootTimer = null;
@@ -637,9 +707,9 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
     const pollId = window.setInterval(() => {
       const socketOpen = socketRef.current?.readyState === WebSocket.OPEN;
       if (socketOpen) return;
-      void load();
+      void load({ background: true });
       if (selectedTicketIdRef.current) {
-        void loadThread(selectedTicketIdRef.current);
+        void loadThread(selectedTicketIdRef.current, { background: true });
       }
     }, 2000);
     return () => window.clearInterval(pollId);
@@ -718,10 +788,13 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
     }
   }
 
-  async function loadThread(ticketId: string, options?: { autoScrollOnLoad?: boolean }) {
+  async function loadThread(ticketId: string, options?: LoadThreadOptions) {
+    const background = options?.background === true;
     const requestId = latestThreadRequestRef.current + 1;
     latestThreadRequestRef.current = requestId;
-    setThreadLoading(true);
+    if (!background) {
+      setThreadLoading(true);
+    }
     try {
       const response = await api.ticketThread(ticketId);
       if (latestThreadRequestRef.current !== requestId) return;
@@ -736,7 +809,7 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
       if (latestThreadRequestRef.current !== requestId) return;
       setError(threadError instanceof Error ? threadError.message : 'Falha ao carregar a conversa do suporte.');
     } finally {
-      if (latestThreadRequestRef.current === requestId) {
+      if (latestThreadRequestRef.current === requestId && !background) {
         setThreadLoading(false);
       }
     }
@@ -769,8 +842,8 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
     setThreadMessages([]);
     setThreadNote('');
     setThreadRealtime(emptyThreadRealtime);
-    await loadThread(ticketId, { autoScrollOnLoad: true });
     sendSocketEvent({ type: 'join_ticket', ticket_id: ticketId });
+    await loadThread(ticketId, { autoScrollOnLoad: true });
     await markThreadAsRead(ticketId);
   }
 
@@ -852,7 +925,7 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
       setContactPhone('');
       setPriority('Normal');
       setCreateAttachments([]);
-      await load();
+      await load({ background: true });
       if (created?.id) {
         await openThread(created.id);
       }
@@ -884,9 +957,9 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
       emitTypingSignal(selectedTicketId, false);
       setReplyBody('');
       setReplyAttachments([]);
-      await loadThread(selectedTicketId, { autoScrollOnLoad: true });
+      await loadThread(selectedTicketId, { autoScrollOnLoad: true, background: true });
       await markThreadAsRead(selectedTicketId);
-      await load();
+      await load({ background: true });
       setError('');
     } catch (replyError) {
       setError(replyError instanceof Error ? replyError.message : 'Falha ao enviar resposta no suporte.');
@@ -900,9 +973,9 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
     setWorkflowSavingTicketId(ticketId);
     try {
       await api.updateTicketWorkflow(ticketId, { workflow_stage: workflowStage });
-      await load();
+      await load({ background: true });
       if (selectedTicketId === ticketId) {
-        await loadThread(ticketId);
+        await loadThread(ticketId, { background: true });
       }
       setError('');
     } catch (workflowError) {
