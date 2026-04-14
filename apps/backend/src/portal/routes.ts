@@ -1,6 +1,7 @@
 import express, { type Express } from 'express';
 import { z } from 'zod';
 import { db, uuid } from '../db.js';
+import { reconcileCompanyHours } from '../hours/reconcile.js';
 import {
   createPortalSession,
   findPortalUserBySlugAndUsername,
@@ -1549,6 +1550,7 @@ export function registerPortalRoutes(app: Express) {
     }
 
     const displaySettings = readPortalClientDisplaySettings(context.portal_client_id);
+    const hoursSummary = reconcileCompanyHours(context.company_id);
     const journeyReadModel = buildPortalJourneyReadModel(context.company_id);
     const planningItems = applyPlanningDisplaySettings(
       buildPortalPlanningItems(context.company_id, journeyReadModel.moduleById),
@@ -1589,6 +1591,12 @@ export function registerPortalRoutes(app: Express) {
     return res.status(200).json({
       company_id: context.company_id,
       company_name: context.company_name,
+      hours_summary: {
+        available_hours: hoursSummary.available_hours,
+        consumed_hours: hoursSummary.consumed_hours,
+        balance_hours: hoursSummary.balance_hours,
+        remaining_diarias: hoursSummary.remaining_diarias
+      },
       planning: {
         total: planning.total,
         completed: planning.completed,
@@ -1609,6 +1617,7 @@ export function registerPortalRoutes(app: Express) {
     }
 
     const displaySettings = readPortalClientDisplaySettings(context.portal_client_id);
+    const hoursSummary = reconcileCompanyHours(context.company_id);
     const journeyReadModel = buildPortalJourneyReadModel(context.company_id);
     const effectiveSettings = context.is_internal
       ? { ...displaySettings, hiddenModuleIds: new Set<string>() }
@@ -1618,7 +1627,15 @@ export function registerPortalRoutes(app: Express) {
       effectiveSettings
     );
 
-    return res.status(200).json({ items });
+    return res.status(200).json({
+      items,
+      hours_summary: {
+        available_hours: hoursSummary.available_hours,
+        consumed_hours: hoursSummary.consumed_hours,
+        balance_hours: hoursSummary.balance_hours,
+        remaining_diarias: hoursSummary.remaining_diarias
+      }
+    });
   });
 
   router.get('/agenda', requirePortalAuth, (_req, res) => {

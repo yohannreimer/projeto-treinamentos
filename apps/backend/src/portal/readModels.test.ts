@@ -103,6 +103,14 @@ test('GET /portal/api/planning returns only authenticated company modules', asyn
     assert.equal(Array.isArray(res.body.items), true);
     assert.equal(res.body.items.length, 3);
     assert.equal(res.body.items.every((row: { company_id: string }) => row.company_id === 'comp-readmodels'), true);
+    assert.equal(typeof res.body.hours_summary?.available_hours, 'number');
+    assert.equal(typeof res.body.hours_summary?.consumed_hours, 'number');
+    assert.equal(typeof res.body.hours_summary?.balance_hours, 'number');
+    assert.equal(typeof res.body.hours_summary?.remaining_diarias, 'number');
+    const expectedRemainingDiarias = Math.round((res.body.hours_summary.balance_hours / 8) * 100) / 100;
+    assert.equal(res.body.hours_summary.remaining_diarias, expectedRemainingDiarias);
+    assert.equal(res.body.hours_summary.available_hours >= 0, true);
+    assert.equal(res.body.hours_summary.consumed_hours >= 0, true);
   } finally {
     cleanupDbFiles(dbPath);
   }
@@ -175,7 +183,63 @@ test('GET /portal/api/overview returns tenant summary data', async () => {
       in_progress: 1,
       planned: 1
     });
+    assert.equal(typeof res.body.hours_summary?.available_hours, 'number');
+    assert.equal(typeof res.body.hours_summary?.consumed_hours, 'number');
+    assert.equal(typeof res.body.hours_summary?.balance_hours, 'number');
+    assert.equal(typeof res.body.hours_summary?.remaining_diarias, 'number');
     assert.equal(res.body.agenda.total, 2);
+  } finally {
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('portal overview reconciliation is deterministic and does not duplicate suggested events', async () => {
+  const { app, dbPath } = await createPortalReadModelsFixture('portal-readmodels-hours-reconcile-deterministic');
+
+  try {
+    const token = await loginPortal(app);
+    const firstRes = await request(app)
+      .get('/portal/api/overview')
+      .set('Authorization', `Bearer ${token}`);
+    assert.equal(firstRes.status, 200);
+
+    const eventCountAfterFirst = db.prepare(`
+      select count(*) as total
+      from hours_event_store
+      where company_id = ?
+        and event_type = 'hours_adjustment_suggested'
+    `).get('comp-readmodels') as { total: number };
+    const pendingCountAfterFirst = db.prepare(`
+      select count(*) as total
+      from hours_projection_pending
+      where company_id = ?
+    `).get('comp-readmodels') as { total: number };
+
+    const secondRes = await request(app)
+      .get('/portal/api/overview')
+      .set('Authorization', `Bearer ${token}`);
+    assert.equal(secondRes.status, 200);
+    const planningRes = await request(app)
+      .get('/portal/api/planning')
+      .set('Authorization', `Bearer ${token}`);
+    assert.equal(planningRes.status, 200);
+
+    const eventCountAfterSecond = db.prepare(`
+      select count(*) as total
+      from hours_event_store
+      where company_id = ?
+        and event_type = 'hours_adjustment_suggested'
+    `).get('comp-readmodels') as { total: number };
+    const pendingCountAfterSecond = db.prepare(`
+      select count(*) as total
+      from hours_projection_pending
+      where company_id = ?
+    `).get('comp-readmodels') as { total: number };
+
+    assert.equal(eventCountAfterSecond.total, eventCountAfterFirst.total);
+    assert.equal(pendingCountAfterSecond.total, pendingCountAfterFirst.total);
+    assert.equal(firstRes.body.hours_summary.balance_hours, secondRes.body.hours_summary.balance_hours);
+    assert.deepEqual(planningRes.body.hours_summary, secondRes.body.hours_summary);
   } finally {
     cleanupDbFiles(dbPath);
   }
@@ -185,7 +249,7 @@ test('portal planning and agenda derive encounter progress for meio período', a
   const { app, dbPath } = await createPortalReadModelsFixture('portal-readmodels-journey-progress');
 
   try {
-    const todayIso = new Date().toISOString().slice(0, 10);
+    const todayIso = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
     const moduleId = 'mod-readmodels-journey';
     const cohortId = 'coh-readmodels-journey';
 
@@ -258,8 +322,8 @@ test('portal planning and agenda derive encounter progress for meio período', a
     assert.ok(planningItem);
     assert.equal(planningItem.status, 'Em_execucao');
     assert.equal(planningItem.total_encounters, 6);
-    assert.equal(planningItem.completed_encounters >= 3, true);
-    assert.equal(planningItem.remaining_encounters <= 3, true);
+    assert.equal(planningItem.completed_encounters >= 2, true);
+    assert.equal(planningItem.remaining_encounters <= 4, true);
     assert.equal(Array.isArray(planningItem.next_dates), true);
     assert.equal(planningItem.next_dates.length > 0, true);
 

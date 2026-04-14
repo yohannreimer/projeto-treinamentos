@@ -13,6 +13,15 @@ export type AppendAndProjectResult = {
   event: HoursEventRow;
 };
 
+function toSummary(balance: HoursBalanceRow | null) {
+  return {
+    available_hours: balance?.available_hours ?? 0,
+    consumed_hours: balance?.consumed_hours ?? 0,
+    balance_hours: balance?.balance_hours ?? 0,
+    remaining_diarias: balance?.remaining_diarias ?? 0
+  };
+}
+
 export function appendAndProject(input: AppendHoursEventInput): AppendAndProjectResult {
   const tx = db.transaction(() => {
     const result = appendHoursEvent(input);
@@ -27,6 +36,10 @@ export function appendAndProject(input: AppendHoursEventInput): AppendAndProject
 
 export function getHoursBalance(companyId: string): HoursBalanceRow | null {
   return readHoursBalance(companyId);
+}
+
+export function getHoursSummary(companyId: string) {
+  return toSummary(readHoursBalance(companyId));
 }
 
 export function getHoursLedger(companyId: string): HoursLedgerRow[] {
