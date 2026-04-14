@@ -449,6 +449,8 @@ export function initDb() {
       start_date text not null,
       end_date text not null,
       selected_dates text,
+      linked_module_id text,
+      hours_scope text not null default 'none',
       all_day integer not null default 1,
       start_time text,
       end_time text,
@@ -527,6 +529,54 @@ export function initDb() {
       created_at text not null,
       updated_at text not null
     );
+
+    create table if not exists hours_event_store (
+      id text primary key,
+      aggregate_type text not null,
+      aggregate_id text not null,
+      company_id text not null,
+      event_type text not null,
+      payload_json text not null,
+      idempotency_key text not null,
+      actor_type text not null,
+      actor_id text,
+      correlation_id text,
+      occurred_at text not null,
+      created_at text not null
+    );
+
+    create table if not exists hours_projection_balance (
+      company_id text primary key,
+      available_hours real not null default 0,
+      consumed_hours real not null default 0,
+      balance_hours real not null default 0,
+      remaining_diarias real not null default 0,
+      updated_at text not null
+    );
+
+    create table if not exists hours_projection_ledger (
+      id text primary key,
+      company_id text not null,
+      event_id text not null,
+      event_type text not null,
+      delta_hours real not null default 0,
+      balance_after real not null default 0,
+      payload_json text not null,
+      created_at text not null
+    );
+
+    create table if not exists hours_projection_pending (
+      id text primary key,
+      company_id text not null,
+      event_id text not null,
+      event_type text not null,
+      delta_hours real not null default 0,
+      reason text,
+      status text not null default 'Pendente',
+      payload_json text not null,
+      created_at text not null,
+      updated_at text not null
+    );
   `);
 
   ensureColumn('company', 'priority', 'priority integer not null default 0');
@@ -554,6 +604,10 @@ export function initDb() {
   ensureColumn('company_license', 'module_list', 'module_list text');
   ensureColumn('company_license', 'license_identifier', 'license_identifier text');
   ensureColumn('calendar_activity', 'selected_dates', 'selected_dates text');
+  ensureColumn('module_template', 'delivery_mode', "delivery_mode text not null default 'ministrado'");
+  ensureColumn('module_template', 'client_hours_policy', "client_hours_policy text not null default 'consome'");
+  ensureColumn('calendar_activity', 'linked_module_id', 'linked_module_id text');
+  ensureColumn('calendar_activity', 'hours_scope', "hours_scope text not null default 'none'");
   ensureColumn('technician', 'hourly_cost', 'hourly_cost real');
   ensureColumn('implementation_kanban_card', 'column_id', 'column_id text');
   ensureColumn('implementation_kanban_card', 'client_name', 'client_name text');
@@ -592,6 +646,7 @@ export function initDb() {
     create index if not exists idx_portal_ticket_webhook_queue_pending
       on portal_ticket_webhook_queue(company_id, recipient_side, sent_at, suppressed_at, available_at, created_at);
     create index if not exists idx_portal_agenda_item_client_date on portal_agenda_item(portal_client_id, start_date, end_date);
+    create unique index if not exists idx_hours_event_store_idempotency_key on hours_event_store(idempotency_key);
   `);
 
   db.exec(`
