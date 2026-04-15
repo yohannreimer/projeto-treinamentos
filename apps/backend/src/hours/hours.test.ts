@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import request from 'supertest';
 
+import { createApp } from '../app.js';
 import { db, initDb, resetDbConnection } from '../db.js';
 import { assignTestDbPath } from '../test/testDb.js';
 import {
@@ -70,6 +72,138 @@ test('initDb creates hour-bank schema base', () => {
     assert.equal(eventIndexes.length, 1);
   } finally {
     db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('POST /companies/:id/hours/adjustments creates manual event and updates ledger', { concurrency: false }, async () => {
+  const dbPath = assignTestDbPath('hours-api-manual-adjustment');
+  cleanupDbFiles(dbPath);
+
+  try {
+    const app = createApp({ forceDbRefresh: true });
+    db.prepare(`
+      insert into company (id, name, status, notes, priority)
+      values ('comp-hours-api-01', 'Cliente Horas API 01', 'Ativo', null, 0)
+    `).run();
+
+    const createRes = await request(app)
+      .post('/companies/comp-hours-api-01/hours/adjustments')
+      .send({
+        delta_hours: 3.5,
+        reason: 'Credito manual para ajuste comercial'
+      });
+
+    assert.equal(createRes.status, 201);
+    assert.equal(createRes.body.ok, true);
+    assert.equal(createRes.body.inserted, true);
+
+    const duplicateRes = await request(app)
+      .post('/companies/comp-hours-api-01/hours/adjustments')
+      .send({
+        delta_hours: 3.5,
+        reason: 'Credito manual para ajuste comercial'
+      });
+    assert.equal(duplicateRes.status, 201);
+    assert.equal(duplicateRes.body.ok, true);
+    assert.equal(duplicateRes.body.inserted, false);
+
+    const ledgerRes = await request(app).get('/companies/comp-hours-api-01/hours/ledger');
+    assert.equal(ledgerRes.status, 200);
+    assert.equal(Array.isArray(ledgerRes.body.items), true);
+    assert.equal(ledgerRes.body.items.length, 1);
+    assert.equal(ledgerRes.body.items[0]?.event_type, 'hours_manual_adjustment_added');
+    assert.equal(ledgerRes.body.items[0]?.delta_hours, 3.5);
+  } finally {
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('POST /companies/:id/hours/pending/:pendingId/confirm resolves pending adjustment', { concurrency: false }, async () => {
+  const dbPath = assignTestDbPath('hours-api-confirm-pending');
+  cleanupDbFiles(dbPath);
+
+  try {
+    const app = createApp({ forceDbRefresh: true });
+    db.prepare(`
+      insert into company (id, name, status, notes, priority)
+      values ('comp-hours-api-02', 'Cliente Horas API 02', 'Ativo', null, 0)
+    `).run();
+
+    appendAndProject({
+      aggregate_type: 'company_hours_account',
+      aggregate_id: 'comp-hours-api-02',
+      company_id: 'comp-hours-api-02',
+      event_type: 'hours_adjustment_suggested',
+      payload: {
+        delta_hours: 8,
+        reason: 'Sugestao automatica de saldo.'
+      },
+      idempotency_key: 'hours-api-pending-01',
+      actor_type: 'system'
+    });
+
+    const pendingRes = await request(app).get('/companies/comp-hours-api-02/hours/pending');
+    assert.equal(pendingRes.status, 200);
+    assert.equal(Array.isArray(pendingRes.body.items), true);
+    assert.equal(pendingRes.body.items.length, 1);
+    const pendingId = pendingRes.body.items[0]?.id as string;
+    assert.equal(typeof pendingId, 'string');
+
+    const confirmRes = await request(app)
+      .post(`/companies/comp-hours-api-02/hours/pending/${pendingId}/confirm`)
+      .send({ reason: 'Confirmado pela operacao.' });
+    assert.equal(confirmRes.status, 200);
+    assert.equal(confirmRes.body.ok, true);
+
+    const confirmRetryRes = await request(app)
+      .post(`/companies/comp-hours-api-02/hours/pending/${pendingId}/confirm`)
+      .send({ reason: 'Confirmado pela operacao.' });
+    assert.equal(confirmRetryRes.status, 200);
+    assert.equal(confirmRetryRes.body.ok, true);
+    assert.equal(confirmRetryRes.body.inserted, false);
+
+    const pendingAfter = await request(app).get('/companies/comp-hours-api-02/hours/pending');
+    assert.equal(pendingAfter.status, 200);
+    assert.equal(pendingAfter.body.items[0]?.status, 'Confirmado');
+
+    const summaryRes = await request(app).get('/companies/comp-hours-api-02/hours/summary');
+    assert.equal(summaryRes.status, 200);
+    assert.equal(typeof summaryRes.body.balance_hours, 'number');
+    assert.equal(summaryRes.body.balance_hours, 8);
+  } finally {
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('GET /companies/:id/hours/summary is read-only for projections', { concurrency: false }, async () => {
+  const dbPath = assignTestDbPath('hours-api-summary-read-only');
+  cleanupDbFiles(dbPath);
+
+  try {
+    const app = createApp({ forceDbRefresh: true });
+    db.prepare(`
+      insert into company (id, name, status, notes, priority)
+      values ('comp-hours-api-03', 'Cliente Horas API 03', 'Ativo', null, 0)
+    `).run();
+
+    const before = db.prepare(`
+      select count(*) as total
+      from hours_event_store
+      where company_id = 'comp-hours-api-03'
+    `).get() as { total: number };
+
+    const summaryRes = await request(app).get('/companies/comp-hours-api-03/hours/summary');
+    assert.equal(summaryRes.status, 200);
+    assert.equal(summaryRes.body.balance_hours, 0);
+
+    const after = db.prepare(`
+      select count(*) as total
+      from hours_event_store
+      where company_id = 'comp-hours-api-03'
+    `).get() as { total: number };
+    assert.equal(after.total, before.total);
+  } finally {
     cleanupDbFiles(dbPath);
   }
 });

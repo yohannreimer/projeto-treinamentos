@@ -39,6 +39,45 @@ export type Module = {
   duration_days: number;
   profile: string;
   is_mandatory: number;
+  delivery_mode?: 'ministrado' | 'entregavel';
+  client_hours_policy?: 'consome' | 'nao_consome';
+};
+
+export type CompanyHoursSummary = {
+  available_hours: number;
+  consumed_hours: number;
+  balance_hours: number;
+  remaining_diarias: number;
+  projection?: {
+    available_hours: number;
+    consumed_hours: number;
+    balance_hours: number;
+    remaining_diarias: number;
+  };
+};
+
+export type CompanyHoursLedgerItem = {
+  id: string;
+  company_id: string;
+  event_id: string;
+  event_type: string;
+  delta_hours: number;
+  balance_after: number;
+  payload_json: string;
+  created_at: string;
+};
+
+export type CompanyHoursPendingItem = {
+  id: string;
+  company_id: string;
+  event_id: string;
+  event_type: string;
+  delta_hours: number;
+  reason: string | null;
+  status: string;
+  payload_json: string;
+  created_at: string;
+  updated_at: string;
 };
 
 export type LicenseRow = {

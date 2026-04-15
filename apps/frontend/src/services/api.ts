@@ -1,3 +1,9 @@
+import type {
+  CompanyHoursLedgerItem,
+  CompanyHoursPendingItem,
+  CompanyHoursSummary
+} from '../types';
+
 const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
 const BASE_URL = env?.VITE_API_BASE_URL ?? `http://${window.location.hostname}:4000`;
 
@@ -258,6 +264,30 @@ export const api = {
   updateCompanyProgress: (companyId: string, moduleId: string, payload: unknown) =>
     req(`/companies/${companyId}/progress/${moduleId}`, {
       method: 'PATCH',
+      body: JSON.stringify(payload)
+    }),
+  companyHoursSummary: (companyId: string) =>
+    req<CompanyHoursSummary>(`/companies/${companyId}/hours/summary`),
+  companyHoursLedger: (companyId: string) =>
+    req<{ items: CompanyHoursLedgerItem[] }>(`/companies/${companyId}/hours/ledger`),
+  companyHoursPending: (companyId: string) =>
+    req<{ items: CompanyHoursPendingItem[] }>(`/companies/${companyId}/hours/pending`),
+  confirmCompanyHoursPending: (companyId: string, pendingId: string, payload?: { reason?: string }) =>
+    req<{ ok: boolean; inserted: boolean; event_id: string }>(`/companies/${companyId}/hours/pending/${pendingId}/confirm`, {
+      method: 'POST',
+      body: JSON.stringify(payload ?? {})
+    }),
+  rejectCompanyHoursPending: (companyId: string, pendingId: string, payload?: { reason?: string }) =>
+    req<{ ok: boolean; inserted: boolean; event_id: string }>(`/companies/${companyId}/hours/pending/${pendingId}/reject`, {
+      method: 'POST',
+      body: JSON.stringify(payload ?? {})
+    }),
+  createCompanyHoursAdjustment: (
+    companyId: string,
+    payload: { delta_hours: number; reason: string; idempotency_key?: string }
+  ) =>
+    req<{ ok: boolean; inserted: boolean; event_id: string }>(`/companies/${companyId}/hours/adjustments`, {
+      method: 'POST',
       body: JSON.stringify(payload)
     }),
   technicians: () => req('/technicians'),

@@ -1,10 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 import express, { type Express } from 'express';
 import puppeteer from 'puppeteer-core';
 import { z } from 'zod';
 import { clearAllData, db, nowDateIso, uuid } from './db.js';
+import { appendAndProject, getHoursLedger, getHoursPending, getHoursSummary } from './hours/service.js';
 import { createPortalSession, hashPassword } from './portal/auth.js';
 import { portalRealtimeHub } from './portal/realtime.js';
 import { readPortalRealtimeSnapshot, setPortalTypingState, touchPortalPresence } from './portal/realtimeState.js';
@@ -314,6 +316,18 @@ const kanbanColumnUpdateSchema = z.object({
 
 const kanbanColumnReorderSchema = z.object({
   column_ids: z.array(z.string()).min(1)
+});
+
+const hoursManualAdjustmentSchema = z.object({
+  delta_hours: z.number().finite().refine((value) => value !== 0, {
+    message: 'delta_hours deve ser diferente de zero.'
+  }),
+  reason: z.string().trim().min(5).max(500),
+  idempotency_key: z.string().trim().min(10).max(200).optional()
+});
+
+const hoursPendingResolutionSchema = z.object({
+  reason: z.string().trim().min(5).max(500).optional()
 });
 
 function getInstallationModule(): { id: string; code: string } | null {
@@ -3652,6 +3666,44 @@ export function registerCoreRoutes(app: Express) {
       return {} as Record<string, string>;
     }
   }
+
+  function ensureCompanyExists(companyId: string) {
+    const company = db.prepare('select id from company where id = ?').get(companyId) as { id: string } | undefined;
+    return company ?? null;
+  }
+
+  function readHoursPendingById(companyId: string, pendingId: string) {
+    return db.prepare(`
+      select
+        id,
+        company_id,
+        event_id,
+        event_type,
+        delta_hours,
+        reason,
+        status,
+        payload_json,
+        created_at,
+        updated_at
+      from hours_projection_pending
+      where id = ?
+        and company_id = ?
+      limit 1
+    `).get(pendingId, companyId) as
+      | {
+        id: string;
+        company_id: string;
+        event_id: string;
+        event_type: string;
+        delta_hours: number;
+        reason: string | null;
+        status: string;
+        payload_json: string;
+        created_at: string;
+        updated_at: string;
+      }
+      | undefined;
+  }
   
   app.get('/companies', (req, res) => {
     const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
@@ -4071,6 +4123,152 @@ export function registerCoreRoutes(app: Express) {
     `).all(req.params.id);
   
     res.json({ company: companyPayload, timeline, optionals, history });
+  });
+
+  app.get('/companies/:id/hours/summary', (req, res) => {
+    const companyId = req.params.id;
+    if (!ensureCompanyExists(companyId)) {
+      return res.status(404).json({ message: 'Empresa nao encontrada' });
+    }
+
+    const projection = getHoursSummary(companyId);
+
+    return res.json({
+      available_hours: projection.available_hours,
+      consumed_hours: projection.consumed_hours,
+      balance_hours: projection.balance_hours,
+      remaining_diarias: projection.remaining_diarias
+    });
+  });
+
+  app.get('/companies/:id/hours/ledger', (req, res) => {
+    const companyId = req.params.id;
+    if (!ensureCompanyExists(companyId)) {
+      return res.status(404).json({ message: 'Empresa nao encontrada' });
+    }
+    const items = getHoursLedger(companyId);
+    return res.json({ items });
+  });
+
+  app.get('/companies/:id/hours/pending', (req, res) => {
+    const companyId = req.params.id;
+    if (!ensureCompanyExists(companyId)) {
+      return res.status(404).json({ message: 'Empresa nao encontrada' });
+    }
+    const items = getHoursPending(companyId);
+    return res.json({ items });
+  });
+
+  app.post('/companies/:id/hours/pending/:pendingId/confirm', (req, res) => {
+    const companyId = req.params.id;
+    if (!ensureCompanyExists(companyId)) {
+      return res.status(404).json({ message: 'Empresa nao encontrada' });
+    }
+    const parsed = hoursPendingResolutionSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+
+    const pending = readHoursPendingById(companyId, req.params.pendingId);
+    if (!pending) {
+      return res.status(404).json({ message: 'Pendencia de horas nao encontrada.' });
+    }
+    if (pending.status === 'Confirmado') {
+      return res.json({ ok: true, inserted: false, event_id: pending.event_id, already_resolved: true });
+    }
+    if (pending.status !== 'Pendente') {
+      return res.status(409).json({ message: `Pendencia ja resolvida como ${pending.status}.` });
+    }
+
+    const reason = parsed.data.reason?.trim() || pending.reason || 'Ajuste sugerido confirmado manualmente.';
+    const result = appendAndProject({
+      aggregate_type: 'company_hours_account',
+      aggregate_id: companyId,
+      company_id: companyId,
+      event_type: 'hours_adjustment_confirmed',
+      payload: {
+        delta_hours: Number(pending.delta_hours),
+        reason,
+        source_event_id: pending.event_id
+      },
+      idempotency_key: `pending-confirm:${companyId}:${pending.event_id}`,
+      actor_type: 'operator'
+    });
+
+    return res.json({ ok: true, inserted: result.inserted, event_id: result.event.id });
+  });
+
+  app.post('/companies/:id/hours/pending/:pendingId/reject', (req, res) => {
+    const companyId = req.params.id;
+    if (!ensureCompanyExists(companyId)) {
+      return res.status(404).json({ message: 'Empresa nao encontrada' });
+    }
+    const parsed = hoursPendingResolutionSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+
+    const pending = readHoursPendingById(companyId, req.params.pendingId);
+    if (!pending) {
+      return res.status(404).json({ message: 'Pendencia de horas nao encontrada.' });
+    }
+    if (pending.status === 'Rejeitado') {
+      return res.json({ ok: true, inserted: false, event_id: pending.event_id, already_resolved: true });
+    }
+    if (pending.status !== 'Pendente') {
+      return res.status(409).json({ message: `Pendencia ja resolvida como ${pending.status}.` });
+    }
+
+    const reason = parsed.data.reason?.trim() || pending.reason || 'Ajuste sugerido rejeitado manualmente.';
+    const result = appendAndProject({
+      aggregate_type: 'company_hours_account',
+      aggregate_id: companyId,
+      company_id: companyId,
+      event_type: 'hours_adjustment_rejected',
+      payload: {
+        delta_hours: 0,
+        reason,
+        source_event_id: pending.event_id
+      },
+      idempotency_key: `pending-reject:${companyId}:${pending.event_id}`,
+      actor_type: 'operator'
+    });
+
+    return res.json({ ok: true, inserted: result.inserted, event_id: result.event.id });
+  });
+
+  app.post('/companies/:id/hours/adjustments', (req, res) => {
+    const companyId = req.params.id;
+    if (!ensureCompanyExists(companyId)) {
+      return res.status(404).json({ message: 'Empresa nao encontrada' });
+    }
+
+    const parsed = hoursManualAdjustmentSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+
+    const payload = parsed.data;
+    const normalizedReason = payload.reason.trim();
+    const generatedIdempotencyKey = `manual-adjustment:${companyId}:${createHash('sha1')
+      .update(`${companyId}|${Number(payload.delta_hours).toFixed(2)}|${normalizedReason.toLowerCase()}`)
+      .digest('hex')
+      .slice(0, 24)}`;
+    const idempotencyKey = payload.idempotency_key?.trim() || generatedIdempotencyKey;
+    const result = appendAndProject({
+      aggregate_type: 'company_hours_account',
+      aggregate_id: companyId,
+      company_id: companyId,
+      event_type: 'hours_manual_adjustment_added',
+      payload: {
+        delta_hours: Number(payload.delta_hours),
+        reason: normalizedReason
+      },
+      idempotency_key: idempotencyKey,
+      actor_type: 'operator'
+    });
+
+    return res.status(201).json({ ok: true, inserted: result.inserted, event_id: result.event.id });
   });
 
   app.get('/companies/:id/portal-access', (req, res) => {
