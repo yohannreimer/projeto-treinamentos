@@ -4,6 +4,7 @@ import { api } from '../services/api';
 import { Section } from '../components/Section';
 import { StatusChip } from '../components/StatusChip';
 import { statusLabel } from '../utils/labels';
+import type { CompanyHoursLedgerItem, CompanyHoursPendingItem, CompanyHoursSummary } from '../types';
 
 type ModuleEdit = {
   status: 'Nao_iniciado' | 'Planejado' | 'Em_execucao' | 'Concluido';
@@ -12,6 +13,7 @@ type ModuleEdit = {
 };
 
 type JourneyFilter = 'all' | 'Concluido' | 'Em_execucao' | 'Planejado' | 'Nao_iniciado';
+type HoursPendingAction = 'confirm' | 'reject';
 
 const statusOptions = ['Em_treinamento', 'Finalizado', 'Ativo', 'Inativo'] as const;
 const priorityOptions = ['Alta', 'Normal', 'Baixa', 'Parado', 'Aguardando_liberacao'] as const;
@@ -19,6 +21,43 @@ const modalityOptions = ['Turma_Online', 'Exclusivo_Online', 'Presencial'] as co
 const relationshipOptions = ['Nosso', 'Terceiro'] as const;
 const progressStatusOptions = ['Nao_iniciado', 'Planejado', 'Em_execucao', 'Concluido'] as const;
 type HistorySortKey = 'cohort_code' | 'start_date' | 'module_code' | 'entry_day' | 'status' | 'cohort_status' | 'executed_at';
+
+function formatDateTimeBr(value: string | null | undefined) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString('pt-BR');
+}
+
+function formatHoursValue(value: number | null | undefined) {
+  const safe = Number(value ?? 0);
+  if (!Number.isFinite(safe)) return '0';
+  return safe.toLocaleString('pt-BR', {
+    minimumFractionDigits: Number.isInteger(safe) ? 0 : 1,
+    maximumFractionDigits: 2
+  });
+}
+
+function hoursEventLabel(eventType: string) {
+  if (eventType === 'hours_adjustment_suggested') return 'Sugestão automática';
+  if (eventType === 'hours_adjustment_confirmed') return 'Sugestão confirmada';
+  if (eventType === 'hours_adjustment_rejected') return 'Sugestão rejeitada';
+  if (eventType === 'hours_manual_adjustment_added') return 'Ajuste manual';
+  if (eventType === 'training_encounter_completed') return 'Encontro de treinamento';
+  if (eventType === 'deliverable_worklog_logged') return 'Worklog de entregável';
+  if (eventType === 'module_scope_defined') return 'Escopo de horas definido';
+  return eventType;
+}
+
+function extractHoursPayloadReason(payloadJson: string) {
+  if (!payloadJson?.trim()) return '';
+  try {
+    const parsed = JSON.parse(payloadJson) as { reason?: string | null };
+    return parsed.reason?.trim() ?? '';
+  } catch {
+    return '';
+  }
+}
 
 export function ClientDetailPage() {
   const { id } = useParams();
@@ -45,6 +84,14 @@ export function ClientDetailPage() {
   const [portalDateOverrides, setPortalDateOverrides] = useState<Record<string, string>>({});
   const [savingPortalAccess, setSavingPortalAccess] = useState(false);
 
+  const [hoursSummary, setHoursSummary] = useState<CompanyHoursSummary | null>(null);
+  const [hoursPending, setHoursPending] = useState<CompanyHoursPendingItem[]>([]);
+  const [hoursLedger, setHoursLedger] = useState<CompanyHoursLedgerItem[]>([]);
+  const [hoursActionLoadingId, setHoursActionLoadingId] = useState<string | null>(null);
+  const [hoursAdjustmentDelta, setHoursAdjustmentDelta] = useState('');
+  const [hoursAdjustmentReason, setHoursAdjustmentReason] = useState('');
+  const [savingHoursAdjustment, setSavingHoursAdjustment] = useState(false);
+
   const [moduleEdits, setModuleEdits] = useState<Record<string, ModuleEdit>>({});
   const [savingCompany, setSavingCompany] = useState(false);
   const [savingModuleId, setSavingModuleId] = useState<string | null>(null);
@@ -53,13 +100,27 @@ export function ClientDetailPage() {
   const [journeyFilter, setJourneyFilter] = useState<JourneyFilter>('all');
   const [showDisabledModules, setShowDisabledModules] = useState(false);
 
+  async function loadCompanyHours(companyId: string) {
+    const [summary, ledgerResponse, pendingResponse] = await Promise.all([
+      api.companyHoursSummary(companyId),
+      api.companyHoursLedger(companyId),
+      api.companyHoursPending(companyId)
+    ]);
+    setHoursSummary(summary);
+    setHoursLedger(ledgerResponse.items ?? []);
+    setHoursPending(pendingResponse.items ?? []);
+  }
+
   function load() {
     if (!id) return;
     Promise.all([
       api.companyById(id),
-      api.portalAccessByCompany(id)
+      api.portalAccessByCompany(id),
+      api.companyHoursSummary(id),
+      api.companyHoursLedger(id),
+      api.companyHoursPending(id)
     ])
-      .then(([response, portalAccess]) => {
+      .then(([response, portalAccess, summaryResponse, ledgerResponse, pendingResponse]) => {
         setData(response);
         setPortalSlug(portalAccess.slug ?? '');
         setPortalUsername(portalAccess.username ?? '');
@@ -71,11 +132,17 @@ export function ClientDetailPage() {
           acc[row.module_id] = row.next_date;
           return acc;
         }, {} as Record<string, string>));
+        setHoursSummary(summaryResponse ?? null);
+        setHoursLedger(ledgerResponse.items ?? []);
+        setHoursPending(pendingResponse.items ?? []);
         setPortalPassword('');
         setError('');
       })
       .catch((err: Error) => {
         setData(null);
+        setHoursSummary(null);
+        setHoursLedger([]);
+        setHoursPending([]);
         setError(err.message);
       });
   }
@@ -113,6 +180,16 @@ export function ClientDetailPage() {
   }, [data]);
 
   const timeline = useMemo(() => data?.timeline ?? [], [data]);
+  const resolvedHoursSummary = useMemo(() => ({
+    available_hours: hoursSummary?.available_hours ?? 0,
+    consumed_hours: hoursSummary?.consumed_hours ?? 0,
+    balance_hours: hoursSummary?.balance_hours ?? 0,
+    remaining_diarias: hoursSummary?.remaining_diarias ?? 0
+  }), [hoursSummary]);
+  const ledgerRowsLatestFirst = useMemo(
+    () => [...hoursLedger].reverse(),
+    [hoursLedger]
+  );
   const activeTimeline = useMemo(
     () => timeline.filter((item: any) => Boolean(item.is_enabled)),
     [timeline]
@@ -276,6 +353,58 @@ export function ClientDetailPage() {
       setError((err as Error).message);
     } finally {
       setSavingPortalAccess(false);
+    }
+  }
+
+  async function resolveHoursPending(pendingId: string, action: HoursPendingAction) {
+    if (!id) return;
+    setHoursActionLoadingId(`${action}:${pendingId}`);
+    setError('');
+    setMessage('');
+    try {
+      if (action === 'confirm') {
+        await api.confirmCompanyHoursPending(id, pendingId);
+      } else {
+        await api.rejectCompanyHoursPending(id, pendingId);
+      }
+      await loadCompanyHours(id);
+      setMessage(action === 'confirm' ? 'Pendência confirmada no banco de horas.' : 'Pendência rejeitada no banco de horas.');
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setHoursActionLoadingId(null);
+    }
+  }
+
+  async function createManualHoursAdjustment() {
+    if (!id) return;
+    const delta = Number(hoursAdjustmentDelta);
+    const reason = hoursAdjustmentReason.trim();
+    if (!Number.isFinite(delta) || delta === 0) {
+      setError('Informe um ajuste de horas diferente de zero.');
+      return;
+    }
+    if (reason.length < 5) {
+      setError('Descreva o motivo do ajuste com pelo menos 5 caracteres.');
+      return;
+    }
+
+    setSavingHoursAdjustment(true);
+    setError('');
+    setMessage('');
+    try {
+      await api.createCompanyHoursAdjustment(id, {
+        delta_hours: delta,
+        reason
+      });
+      setHoursAdjustmentDelta('');
+      setHoursAdjustmentReason('');
+      await loadCompanyHours(id);
+      setMessage('Ajuste manual registrado no banco de horas.');
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSavingHoursAdjustment(false);
     }
   }
 
@@ -540,6 +669,139 @@ export function ClientDetailPage() {
                   {savingPortalAccess ? 'Salvando acesso...' : 'Salvar acesso do portal'}
                 </button>
               </div>
+            </div>
+          </Section>
+
+          <Section title="Banco de horas (interno)">
+            <div className="hours-bank-summary-grid">
+              <article className="mini-stat">
+                <span>Disponível</span>
+                <strong>{formatHoursValue(resolvedHoursSummary.available_hours)} h</strong>
+              </article>
+              <article className="mini-stat">
+                <span>Consumido</span>
+                <strong>{formatHoursValue(resolvedHoursSummary.consumed_hours)} h</strong>
+              </article>
+              <article className="mini-stat">
+                <span>Saldo</span>
+                <strong>{formatHoursValue(resolvedHoursSummary.balance_hours)} h</strong>
+              </article>
+              <article className="mini-stat">
+                <span>Diárias restantes</span>
+                <strong>{formatHoursValue(resolvedHoursSummary.remaining_diarias)}</strong>
+              </article>
+            </div>
+
+            <div className="two-col">
+              <div className="form-subcard hours-bank-panel">
+                <h3>Pendências de conciliação</h3>
+                <p className="form-hint">Sugestões automáticas aguardando decisão manual para refletir no saldo.</p>
+                {hoursPending.length === 0 ? (
+                  <p className="muted">Sem pendências no momento.</p>
+                ) : (
+                  <div className="table-wrap hours-bank-table-wrap">
+                    <table className="table table-tight">
+                      <thead>
+                        <tr>
+                          <th>Evento</th>
+                          <th>Δ horas</th>
+                          <th>Status</th>
+                          <th>Motivo</th>
+                          <th>Criado em</th>
+                          <th>Ações</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {hoursPending.map((pending) => (
+                          <tr key={pending.id}>
+                            <td>{hoursEventLabel(pending.event_type)}</td>
+                            <td>{pending.delta_hours > 0 ? '+' : ''}{formatHoursValue(pending.delta_hours)} h</td>
+                            <td><StatusChip value={pending.status} /></td>
+                            <td>{pending.reason || extractHoursPayloadReason(pending.payload_json) || '-'}</td>
+                            <td>{formatDateTimeBr(pending.created_at)}</td>
+                            <td className="actions">
+                              <button
+                                type="button"
+                                onClick={() => resolveHoursPending(pending.id, 'confirm')}
+                                disabled={hoursActionLoadingId === `confirm:${pending.id}` || pending.status !== 'Pendente'}
+                              >
+                                Confirmar
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => resolveHoursPending(pending.id, 'reject')}
+                                disabled={hoursActionLoadingId === `reject:${pending.id}` || pending.status !== 'Pendente'}
+                              >
+                                Rejeitar
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              <div className="form-subcard hours-bank-panel">
+                <h3>Ajuste manual</h3>
+                <p className="form-hint">Use para crédito/débito pontual no saldo com trilha auditável no extrato.</p>
+                <label>
+                  Δ horas (positivo ou negativo)
+                  <input
+                    type="number"
+                    step="0.5"
+                    value={hoursAdjustmentDelta}
+                    onChange={(event) => setHoursAdjustmentDelta(event.target.value)}
+                    placeholder="Ex: 8 ou -4"
+                  />
+                </label>
+                <label>
+                  Motivo do ajuste
+                  <textarea
+                    rows={3}
+                    value={hoursAdjustmentReason}
+                    onChange={(event) => setHoursAdjustmentReason(event.target.value)}
+                    placeholder="Explique o contexto operacional/comercial do ajuste."
+                  />
+                </label>
+                <div className="actions actions-compact">
+                  <button type="button" onClick={createManualHoursAdjustment} disabled={savingHoursAdjustment}>
+                    {savingHoursAdjustment ? 'Registrando...' : 'Registrar ajuste manual'}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="table-wrap hours-bank-table-wrap">
+              <table className="table table-hover table-tight">
+                <thead>
+                  <tr>
+                    <th>Data</th>
+                    <th>Evento</th>
+                    <th>Δ horas</th>
+                    <th>Saldo após</th>
+                    <th>Motivo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ledgerRowsLatestFirst.length === 0 ? (
+                    <tr>
+                      <td colSpan={5}>Sem movimentações no extrato de horas.</td>
+                    </tr>
+                  ) : (
+                    ledgerRowsLatestFirst.map((entry) => (
+                      <tr key={entry.id}>
+                        <td>{formatDateTimeBr(entry.created_at)}</td>
+                        <td>{hoursEventLabel(entry.event_type)}</td>
+                        <td>{entry.delta_hours > 0 ? '+' : ''}{formatHoursValue(entry.delta_hours)} h</td>
+                        <td>{formatHoursValue(entry.balance_after)} h</td>
+                        <td>{extractHoursPayloadReason(entry.payload_json) || '-'}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
             </div>
           </Section>
 

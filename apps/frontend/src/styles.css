@@ -920,6 +920,22 @@ button:focus-visible,
   margin-bottom: 8px;
 }
 
+.hours-bank-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.hours-bank-panel h3 {
+  margin: 0 0 4px;
+  color: #243441;
+}
+
+.hours-bank-table-wrap .table {
+  min-width: 780px;
+}
+
 .journey-kpi-btn {
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -2894,6 +2910,7 @@ button:focus-visible,
 
 @media (max-width: 1160px) {
   .two-col { grid-template-columns: 1fr; }
+  .hours-bank-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .calendar-content-grid { grid-template-columns: 1fr; }
   .kpi-grid { grid-template-columns: repeat(2, minmax(160px, 1fr)); }
   .stats-grid { grid-template-columns: repeat(2, minmax(160px, 1fr)); }
@@ -4682,6 +4699,9 @@ button:focus-visible,
   .check-grid { grid-template-columns: 1fr; }
   .three-col,
   .stats-grid {
+    grid-template-columns: 1fr;
+  }
+  .hours-bank-summary-grid {
     grid-template-columns: 1fr;
   }
   .block-card {
