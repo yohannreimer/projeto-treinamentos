@@ -2,11 +2,13 @@ import type {
   PortalAuthBranding,
   CreatePortalTicketPayload,
   PortalAuthedApi,
+  PortalHoursSummary,
   PortalLoginPayload,
   PortalLoginResponse,
   PortalMe,
   PortalOperatorDisplaySettings,
   PortalOverview,
+  PortalPlanningItem,
   PortalTicketThreadResponse,
   PortalTicketsResponse
 } from './types';
@@ -77,7 +79,11 @@ export const portalApi = {
   createAuthedClient: (token: string, onUnauthorized?: () => void): PortalAuthedApi => ({
     me: () => portalReq<PortalMe>('/portal/api/me', {}, { token, onUnauthorized }),
     overview: () => portalReq<PortalOverview>('/portal/api/overview', {}, { token, onUnauthorized }),
-    planning: () => portalReq('/portal/api/planning', {}, { token, onUnauthorized }),
+    planning: () => portalReq<{ items: PortalPlanningItem[]; hours_summary?: PortalHoursSummary | null }>(
+      '/portal/api/planning',
+      {},
+      { token, onUnauthorized }
+    ),
     agenda: () => portalReq('/portal/api/agenda', {}, { token, onUnauthorized }),
     operatorDisplaySettings: () =>
       portalReq<PortalOperatorDisplaySettings>('/portal/api/operator/display-settings', {}, { token, onUnauthorized }),

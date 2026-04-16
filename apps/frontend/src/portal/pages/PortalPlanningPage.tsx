@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { PortalAuthedApi, PortalOperatorDisplaySettings, PortalPlanningItem } from '../types';
+import type { PortalAuthedApi, PortalHoursSummary, PortalOperatorDisplaySettings, PortalPlanningItem } from '../types';
 
 type PortalPlanningPageProps = {
   api: PortalAuthedApi;
@@ -30,6 +30,13 @@ function formatDateListBr(values: string[] | undefined) {
   return values.slice(0, 3).map((value) => formatDateBr(value)).join(' · ');
 }
 
+function formatHours(value: number) {
+  return value.toLocaleString('pt-BR', {
+    minimumFractionDigits: Number.isInteger(value) ? 0 : 1,
+    maximumFractionDigits: 1
+  });
+}
+
 const emptySettings: PortalOperatorDisplaySettings = {
   support_intro_text: null,
   hidden_module_ids: [],
@@ -43,10 +50,12 @@ export function PortalPlanningPage({ api, isInternal }: PortalPlanningPageProps)
   const [loading, setLoading] = useState(true);
   const [savingSettings, setSavingSettings] = useState(false);
   const [settings, setSettings] = useState<PortalOperatorDisplaySettings>(emptySettings);
+  const [hoursSummary, setHoursSummary] = useState<PortalHoursSummary | null>(null);
 
   async function load() {
     const planningResponse = await api.planning();
     setItems(planningResponse.items ?? []);
+    setHoursSummary(planningResponse.hours_summary ?? null);
     if (isInternal) {
       const displaySettings = await api.operatorDisplaySettings();
       setSettings({
@@ -88,6 +97,12 @@ export function PortalPlanningPage({ api, isInternal }: PortalPlanningPageProps)
     () => new Map(settings.module_status_overrides.map((entry) => [entry.module_id, entry.status])),
     [settings.module_status_overrides]
   );
+  const summary = hoursSummary ?? {
+    available_hours: 0,
+    consumed_hours: 0,
+    balance_hours: 0,
+    remaining_diarias: 0
+  };
 
   function setModuleDateOverride(moduleId: string, nextDate: string) {
     setSettings((prev) => ({
@@ -140,6 +155,31 @@ export function PortalPlanningPage({ api, isInternal }: PortalPlanningPageProps)
         <h2>Planejamento</h2>
         <p>Acompanhe os módulos previstos, concluídos e em andamento com leitura rápida por status.</p>
       </header>
+      <section className="portal-hours-summary">
+        <div className="portal-hours-summary-head">
+          <span className="portal-support-kicker">Banco de horas</span>
+          <strong>{formatHours(summary.balance_hours)} h de saldo disponível</strong>
+          <p>Leitura automática do contrato atual, execução confirmada e saldo restante em diárias.</p>
+        </div>
+        <div className="portal-hours-summary-grid">
+          <article className="portal-hours-summary-item">
+            <span>Disponível</span>
+            <strong>{formatHours(summary.available_hours)} h</strong>
+          </article>
+          <article className="portal-hours-summary-item">
+            <span>Consumido</span>
+            <strong>{formatHours(summary.consumed_hours)} h</strong>
+          </article>
+          <article className="portal-hours-summary-item portal-hours-summary-item-accent">
+            <span>Saldo</span>
+            <strong>{formatHours(summary.balance_hours)} h</strong>
+          </article>
+          <article className="portal-hours-summary-item">
+            <span>Diárias restantes</span>
+            <strong>{formatHours(summary.remaining_diarias)}</strong>
+          </article>
+        </div>
+      </section>
 
       {isInternal ? (
         <section className="portal-operator-panel">

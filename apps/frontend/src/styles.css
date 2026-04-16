@@ -3307,6 +3307,71 @@ button:focus-visible,
   line-height: 1.45;
 }
 
+.portal-hours-summary {
+  margin-top: 14px;
+  border: 1px solid #efc1b7;
+  border-radius: 16px;
+  background:
+    linear-gradient(110deg, rgba(239, 47, 15, 0.1) 0%, transparent 56%),
+    linear-gradient(180deg, #fffefe 0%, #fff6f3 100%);
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+}
+
+.portal-hours-summary-head {
+  display: grid;
+  gap: 4px;
+}
+
+.portal-hours-summary-head strong {
+  color: #1f2d38;
+  font-size: 1.1rem;
+  line-height: 1.25;
+}
+
+.portal-hours-summary-head p {
+  margin: 0;
+  color: #5f6e79;
+  line-height: 1.4;
+}
+
+.portal-hours-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.portal-hours-summary-item {
+  border: 1px solid #e4ccd2;
+  border-radius: 12px;
+  padding: 10px 11px;
+  background: rgba(255, 255, 255, 0.86);
+  display: grid;
+  gap: 4px;
+}
+
+.portal-hours-summary-item span {
+  color: #647482;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.portal-hours-summary-item strong {
+  color: #253745;
+  font-size: 1.2rem;
+  line-height: 1.2;
+}
+
+.portal-hours-summary-item-accent {
+  border-color: #e39b8d;
+  background:
+    linear-gradient(145deg, rgba(239, 47, 15, 0.14) 0%, transparent 72%),
+    rgba(255, 255, 255, 0.92);
+}
+
 .portal-panel-header-row {
   display: flex;
   align-items: flex-start;
@@ -4408,6 +4473,9 @@ button:focus-visible,
   .portal-kpi-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+  .portal-hours-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .portal-topbar {
     flex-direction: column;
   }
@@ -4432,6 +4500,12 @@ button:focus-visible,
   }
   .portal-ticket-badges {
     justify-content: flex-start;
+  }
+}
+
+@media (max-width: 640px) {
+  .portal-hours-summary-grid {
+    grid-template-columns: 1fr;
   }
 }
 

@@ -32,6 +32,7 @@ export type PortalMe = {
 export type PortalOverview = {
   company_id: string;
   company_name: string;
+  hours_summary?: PortalHoursSummary | null;
   planning: {
     total: number;
     completed: number;
@@ -42,6 +43,14 @@ export type PortalOverview = {
     total: number;
     next_date: string | null;
   };
+};
+
+export type PortalHoursSummary = {
+  available_hours: number;
+  consumed_hours: number;
+  balance_hours: number;
+  remaining_diarias: number;
+  updated_at?: string;
 };
 
 export type PortalPlanningItem = {
@@ -186,7 +195,7 @@ export type PortalTicketThreadResponse = {
 export type PortalAuthedApi = {
   me: () => Promise<PortalMe>;
   overview: () => Promise<PortalOverview>;
-  planning: () => Promise<{ items: PortalPlanningItem[] }>;
+  planning: () => Promise<{ items: PortalPlanningItem[]; hours_summary?: PortalHoursSummary | null }>;
   agenda: () => Promise<{ items: PortalAgendaItem[] }>;
   operatorDisplaySettings: () => Promise<PortalOperatorDisplaySettings>;
   updateOperatorDisplaySettings: (payload: PortalOperatorDisplaySettings) => Promise<{ ok: boolean }>;
