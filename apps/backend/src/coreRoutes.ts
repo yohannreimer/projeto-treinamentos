@@ -29,6 +29,7 @@ const KANBAN_SUBCATEGORY_VALUES = ['Pre_vendas', 'Pos_vendas', 'Suporte', 'Imple
 const KANBAN_SUPPORT_HANDOFF_VALUES = ['Conosco', 'Sao_Paulo'] as const;
 const CALENDAR_ACTIVITY_TYPE_VALUES = ['Visita_cliente', 'Pre_vendas', 'Pos_vendas', 'Suporte', 'Implementacao', 'Reuniao', 'Outro'] as const;
 const CALENDAR_ACTIVITY_STATUS_VALUES = ['Planejada', 'Em_andamento', 'Concluida', 'Cancelada'] as const;
+const CALENDAR_ACTIVITY_HOURS_SCOPE_VALUES = ['none', 'client_consumption', 'internal_effort'] as const;
 const MODULE_DELIVERY_MODE_VALUES = ['ministrado', 'entregavel'] as const;
 const MODULE_CLIENT_HOURS_POLICY_VALUES = ['consome', 'nao_consume'] as const;
 const PORTAL_OPERATOR_USERNAME_SETTING_KEY = 'portal_operator_username';
@@ -266,6 +267,8 @@ const calendarActivityCreateSchema = z.object({
   technician_id: z.string().nullable().optional(),
   technician_ids: z.array(z.string()).optional(),
   company_id: z.string().nullable().optional(),
+  linked_module_id: z.string().nullable().optional(),
+  hours_scope: z.enum(CALENDAR_ACTIVITY_HOURS_SCOPE_VALUES).optional().default('none'),
   status: z.enum(CALENDAR_ACTIVITY_STATUS_VALUES).optional().default('Planejada'),
   notes: z.string().max(2000).nullable().optional()
 });
@@ -283,6 +286,8 @@ const calendarActivityUpdateSchema = z.object({
   technician_id: z.string().nullable().optional(),
   technician_ids: z.array(z.string()).optional(),
   company_id: z.string().nullable().optional(),
+  linked_module_id: z.string().nullable().optional(),
+  hours_scope: z.enum(CALENDAR_ACTIVITY_HOURS_SCOPE_VALUES).optional(),
   status: z.enum(CALENDAR_ACTIVITY_STATUS_VALUES).optional(),
   notes: z.string().max(2000).nullable().optional()
 });
@@ -1148,6 +1153,129 @@ function activityTimeToMinutes(value: string | null): number | null {
   if (!Number.isInteger(hour) || !Number.isInteger(minute)) return null;
   if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
   return hour * 60 + minute;
+}
+
+function activityScheduleMinutes(schedule: ActivityDateSchedule): number {
+  if (schedule.all_day) return 8 * 60;
+  const startMinutes = activityTimeToMinutes(schedule.start_time);
+  const endMinutes = activityTimeToMinutes(schedule.end_time);
+  if (startMinutes === null || endMinutes === null || endMinutes <= startMinutes) return 0;
+  return endMinutes - startMinutes;
+}
+
+function activitySchedulesTotalMinutes(schedules: ActivityDateSchedule[]): number {
+  return schedules.reduce((total, schedule) => total + activityScheduleMinutes(schedule), 0);
+}
+
+type ActivityHoursScope = (typeof CALENDAR_ACTIVITY_HOURS_SCOPE_VALUES)[number];
+type ActivityLinkedModule = {
+  id: string;
+  delivery_mode: (typeof MODULE_DELIVERY_MODE_VALUES)[number];
+  client_hours_policy: (typeof MODULE_CLIENT_HOURS_POLICY_VALUES)[number];
+};
+
+function resolveActivityHoursContext(args: {
+  companyId: string | null | undefined;
+  linkedModuleId: string | null | undefined;
+  hoursScope: ActivityHoursScope;
+}): {
+  companyId: string | null;
+  linkedModuleId: string | null;
+  linkedModule: ActivityLinkedModule | null;
+  hoursScope: ActivityHoursScope;
+} {
+  const normalizedCompanyId = args.companyId?.trim() ? args.companyId.trim() : null;
+  const normalizedLinkedModuleId = args.linkedModuleId?.trim() ? args.linkedModuleId.trim() : null;
+  const normalizedScope = args.hoursScope ?? 'none';
+
+  if (normalizedScope !== 'none' && !normalizedLinkedModuleId) {
+    throw new Error('Selecione um módulo vinculado para registrar horas da atividade.');
+  }
+
+  const linkedModule = normalizedLinkedModuleId
+    ? db.prepare(`
+      select id, delivery_mode, client_hours_policy
+      from module_template
+      where id = ?
+      limit 1
+    `).get(normalizedLinkedModuleId) as ActivityLinkedModule | undefined
+    : undefined;
+
+  if (normalizedLinkedModuleId && !linkedModule) {
+    throw new Error('Módulo vinculado não encontrado.');
+  }
+
+  if (normalizedScope === 'internal_effort') {
+    if (!normalizedCompanyId) {
+      throw new Error('Escopo interno exige cliente vinculado na atividade.');
+    }
+    if (!linkedModule || linkedModule.delivery_mode !== 'entregavel') {
+      throw new Error('Escopo interno só pode ser usado com módulo do tipo entregável.');
+    }
+  }
+
+  if (normalizedScope === 'client_consumption') {
+    if (!normalizedCompanyId) {
+      throw new Error('Consumo de horas exige cliente vinculado na atividade.');
+    }
+    if (!linkedModule || linkedModule.client_hours_policy !== 'consome') {
+      throw new Error('Módulo selecionado não está configurado para consumir horas do cliente.');
+    }
+  }
+
+  return {
+    companyId: normalizedCompanyId,
+    linkedModuleId: normalizedLinkedModuleId,
+    linkedModule: linkedModule ?? null,
+    hoursScope: normalizedScope
+  };
+}
+
+function maybeAppendDeliverableWorklogFromActivity(args: {
+  activityId: string;
+  companyId: string | null;
+  linkedModuleId: string | null;
+  linkedModule: ActivityLinkedModule | null;
+  hoursScope: ActivityHoursScope;
+  dateSchedules: ActivityDateSchedule[];
+}) {
+  if (!args.companyId || !args.linkedModuleId || !args.linkedModule) return;
+  if (args.hoursScope !== 'internal_effort') return;
+  if (args.linkedModule.delivery_mode !== 'entregavel') return;
+
+  const minutesLogged = activitySchedulesTotalMinutes(args.dateSchedules);
+  if (minutesLogged <= 0) return;
+
+  const snapshotHash = createHash('sha1')
+    .update(JSON.stringify({
+      company_id: args.companyId,
+      module_id: args.linkedModuleId,
+      hours_scope: args.hoursScope,
+      schedules: args.dateSchedules.map((schedule) => ({
+        day_date: schedule.day_date,
+        all_day: schedule.all_day,
+        start_time: schedule.start_time,
+        end_time: schedule.end_time
+      })),
+      minutes_logged: minutesLogged
+    }))
+    .digest('hex')
+    .slice(0, 24);
+
+  appendAndProject({
+    aggregate_type: 'deliverable_worklog',
+    aggregate_id: args.activityId,
+    company_id: args.companyId,
+    event_type: 'deliverable_worklog_logged',
+    payload: {
+      minutes_logged: minutesLogged,
+      module_id: args.linkedModuleId,
+      activity_id: args.activityId,
+      reason: 'Registro de esforço interno via atividade de calendário.'
+    },
+    idempotency_key: `deliverable-worklog:${args.activityId}:${snapshotHash}`,
+    actor_type: 'operator'
+  });
 }
 
 function activitySlotsOverlap(left: ActivityDateSchedule, right: ActivityDateSchedule): boolean {
@@ -2153,6 +2281,16 @@ export function registerCoreRoutes(app: Express) {
         return res.status(404).json({ message: 'Cliente não encontrado.' });
       }
     }
+    let hoursContext: ReturnType<typeof resolveActivityHoursContext>;
+    try {
+      hoursContext = resolveActivityHoursContext({
+        companyId: payload.company_id ?? null,
+        linkedModuleId: payload.linked_module_id ?? null,
+        hoursScope: payload.hours_scope
+      });
+    } catch (error) {
+      return res.status(400).json({ message: errorMessage(error) });
+    }
     const conflictMessage = assertNoActivityTechnicianConflicts({
       technicianIds,
       schedules: normalizedDates.dateSchedules
@@ -2167,9 +2305,9 @@ export function registerCoreRoutes(app: Express) {
       db.prepare(`
         insert into calendar_activity (
           id, title, activity_type, start_date, end_date, selected_dates, all_day, start_time, end_time,
-          technician_id, company_id, status, notes, created_at, updated_at
+          technician_id, company_id, linked_module_id, hours_scope, status, notes, created_at, updated_at
         )
-        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         activityId,
         payload.title.trim(),
@@ -2181,7 +2319,9 @@ export function registerCoreRoutes(app: Express) {
         normalizedDates.summaryStartTime,
         normalizedDates.summaryEndTime,
         technicianIds[0] ?? null,
-        payload.company_id ?? null,
+        hoursContext.companyId,
+        hoursContext.linkedModuleId,
+        hoursContext.hoursScope,
         payload.status,
         payload.notes?.trim() || null,
         nowIso,
@@ -2208,6 +2348,19 @@ export function registerCoreRoutes(app: Express) {
       });
     });
     tx();
+
+    try {
+      maybeAppendDeliverableWorklogFromActivity({
+        activityId,
+        companyId: hoursContext.companyId,
+        linkedModuleId: hoursContext.linkedModuleId,
+        linkedModule: hoursContext.linkedModule,
+        hoursScope: hoursContext.hoursScope,
+        dateSchedules: normalizedDates.dateSchedules
+      });
+    } catch (error) {
+      console.error('Falha ao registrar worklog interno da atividade:', errorMessage(error));
+    }
   
     return res.status(201).json({ id: activityId });
   });
@@ -2219,7 +2372,7 @@ export function registerCoreRoutes(app: Express) {
     }
   
     const existing = db.prepare(`
-      select id, start_date, end_date, selected_dates, all_day, start_time, end_time, technician_id
+      select id, start_date, end_date, selected_dates, all_day, start_time, end_time, technician_id, company_id, linked_module_id, hours_scope
       from calendar_activity
       where id = ?
     `).get(req.params.id) as {
@@ -2231,6 +2384,9 @@ export function registerCoreRoutes(app: Express) {
       start_time: string | null;
       end_time: string | null;
       technician_id: string | null;
+      company_id: string | null;
+      linked_module_id: string | null;
+      hours_scope: ActivityHoursScope;
     } | undefined;
     if (!existing) {
       return res.status(404).json({ message: 'Atividade não encontrada.' });
@@ -2333,6 +2489,22 @@ export function registerCoreRoutes(app: Express) {
         return res.status(404).json({ message: 'Cliente não encontrado.' });
       }
     }
+    const hasCompanyPatch = Object.prototype.hasOwnProperty.call(payload, 'company_id');
+    const hasLinkedModulePatch = Object.prototype.hasOwnProperty.call(payload, 'linked_module_id');
+    const hasHoursScopePatch = Object.prototype.hasOwnProperty.call(payload, 'hours_scope');
+    const nextCompanyId = hasCompanyPatch ? (payload.company_id ?? null) : existing.company_id;
+    const nextLinkedModuleId = hasLinkedModulePatch ? (payload.linked_module_id ?? null) : existing.linked_module_id;
+    const nextHoursScope = hasHoursScopePatch ? (payload.hours_scope ?? 'none') : existing.hours_scope;
+    let hoursContext: ReturnType<typeof resolveActivityHoursContext>;
+    try {
+      hoursContext = resolveActivityHoursContext({
+        companyId: nextCompanyId,
+        linkedModuleId: nextLinkedModuleId,
+        hoursScope: nextHoursScope
+      });
+    } catch (error) {
+      return res.status(400).json({ message: errorMessage(error) });
+    }
     const conflictMessage = assertNoActivityTechnicianConflicts({
       technicianIds: finalTechnicianIds,
       schedules: normalizedDates.dateSchedules,
@@ -2374,7 +2546,15 @@ export function registerCoreRoutes(app: Express) {
     }
     if (Object.prototype.hasOwnProperty.call(payload, 'company_id')) {
       fields.push('company_id = ?');
-      values.push(payload.company_id ?? null);
+      values.push(hoursContext.companyId);
+    }
+    if (hasLinkedModulePatch) {
+      fields.push('linked_module_id = ?');
+      values.push(hoursContext.linkedModuleId);
+    }
+    if (hasHoursScopePatch) {
+      fields.push('hours_scope = ?');
+      values.push(hoursContext.hoursScope);
     }
     if (typeof payload.status === 'string') {
       fields.push('status = ?');
@@ -2422,6 +2602,19 @@ export function registerCoreRoutes(app: Express) {
       }
     });
     tx();
+
+    try {
+      maybeAppendDeliverableWorklogFromActivity({
+        activityId: req.params.id,
+        companyId: hoursContext.companyId,
+        linkedModuleId: hoursContext.linkedModuleId,
+        linkedModule: hoursContext.linkedModule,
+        hoursScope: hoursContext.hoursScope,
+        dateSchedules: normalizedDates.dateSchedules
+      });
+    } catch (error) {
+      console.error('Falha ao registrar worklog interno da atividade:', errorMessage(error));
+    }
   
     return res.json({ ok: true });
   });

@@ -208,6 +208,134 @@ test('GET /companies/:id/hours/summary is read-only for projections', { concurre
   }
 });
 
+test('POST /calendar/activities logs deliverable worklog for internal effort scope', { concurrency: false }, async () => {
+  const dbPath = assignTestDbPath('hours-calendar-worklog-create');
+  cleanupDbFiles(dbPath);
+
+  try {
+    const app = createApp({ forceDbRefresh: true });
+    db.prepare(`
+      insert into company (id, name, status, notes, priority)
+      values ('comp-hours-api-04', 'Cliente Horas API 04', 'Ativo', null, 0)
+    `).run();
+    db.prepare(`
+      insert into module_template (
+        id, code, category, name, description, duration_days, profile, is_mandatory, delivery_mode, client_hours_policy
+      )
+      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'mod-hours-deliverable-01',
+      'HRS-DL-01',
+      'Implementacao',
+      'Entregável de Horas',
+      null,
+      1,
+      null,
+      0,
+      'entregavel',
+      'nao_consume'
+    );
+
+    const createRes = await request(app)
+      .post('/calendar/activities')
+      .send({
+        title: 'Execução entregável',
+        activity_type: 'Implementacao',
+        start_date: '2026-04-16',
+        end_date: '2026-04-16',
+        selected_dates: ['2026-04-16'],
+        date_schedules: [
+          {
+            day_date: '2026-04-16',
+            all_day: false,
+            start_time: '08:00',
+            end_time: '12:30'
+          }
+        ],
+        all_day: false,
+        start_time: '08:00',
+        end_time: '12:30',
+        company_id: 'comp-hours-api-04',
+        linked_module_id: 'mod-hours-deliverable-01',
+        hours_scope: 'internal_effort',
+        status: 'Planejada',
+        notes: 'Registro de horas internas'
+      });
+
+    assert.equal(createRes.status, 201);
+    const ledgerRes = await request(app).get('/companies/comp-hours-api-04/hours/ledger');
+    assert.equal(ledgerRes.status, 200);
+    assert.equal(Array.isArray(ledgerRes.body.items), true);
+    const worklogEntry = (ledgerRes.body.items as Array<{ event_type: string; payload_json: string }>).find(
+      (item) => item.event_type === 'deliverable_worklog_logged'
+    );
+    assert.ok(worklogEntry);
+    const payload = JSON.parse(worklogEntry?.payload_json ?? '{}') as { minutes_logged?: number; module_id?: string };
+    assert.equal(payload.minutes_logged, 270);
+    assert.equal(payload.module_id, 'mod-hours-deliverable-01');
+  } finally {
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('POST /calendar/activities rejects internal effort scope for non-deliverable module', { concurrency: false }, async () => {
+  const dbPath = assignTestDbPath('hours-calendar-worklog-validation');
+  cleanupDbFiles(dbPath);
+
+  try {
+    const app = createApp({ forceDbRefresh: true });
+    db.prepare(`
+      insert into company (id, name, status, notes, priority)
+      values ('comp-hours-api-05', 'Cliente Horas API 05', 'Ativo', null, 0)
+    `).run();
+    db.prepare(`
+      insert into module_template (
+        id, code, category, name, description, duration_days, profile, is_mandatory, delivery_mode, client_hours_policy
+      )
+      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'mod-hours-training-01',
+      'HRS-TR-01',
+      'Treinamento',
+      'Treinamento ministrado',
+      null,
+      2,
+      null,
+      1,
+      'ministrado',
+      'consome'
+    );
+
+    const createRes = await request(app)
+      .post('/calendar/activities')
+      .send({
+        title: 'Tentativa inválida',
+        activity_type: 'Implementacao',
+        start_date: '2026-04-17',
+        end_date: '2026-04-17',
+        selected_dates: ['2026-04-17'],
+        date_schedules: [
+          {
+            day_date: '2026-04-17',
+            all_day: false,
+            start_time: '13:30',
+            end_time: '17:00'
+          }
+        ],
+        company_id: 'comp-hours-api-05',
+        linked_module_id: 'mod-hours-training-01',
+        hours_scope: 'internal_effort',
+        status: 'Planejada'
+      });
+
+    assert.equal(createRes.status, 400);
+    assert.equal(typeof createRes.body.message, 'string');
+    assert.match(createRes.body.message, /entregável/i);
+  } finally {
+    cleanupDbFiles(dbPath);
+  }
+});
+
 test('hours_adjustment_suggested creates pending row without altering balance', () => {
   const dbPath = prepareHoursDb('hours-suggested-pending');
 

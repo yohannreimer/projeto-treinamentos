@@ -7,6 +7,31 @@ import type {
 const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
 const BASE_URL = env?.VITE_API_BASE_URL ?? `http://${window.location.hostname}:4000`;
 
+type CalendarActivityHoursScope = 'none' | 'client_consumption' | 'internal_effort';
+type CalendarActivityDateSchedulePayload = {
+  day_date: string;
+  all_day?: boolean;
+  start_time?: string | null;
+  end_time?: string | null;
+};
+type CalendarActivityUpsertPayload = {
+  title: string;
+  activity_type: 'Visita_cliente' | 'Pre_vendas' | 'Pos_vendas' | 'Suporte' | 'Implementacao' | 'Reuniao' | 'Outro';
+  start_date: string;
+  end_date: string;
+  selected_dates: string[];
+  date_schedules: CalendarActivityDateSchedulePayload[];
+  all_day: boolean;
+  start_time?: string | null;
+  end_time?: string | null;
+  company_id?: string | null;
+  technician_ids?: string[];
+  status: 'Planejada' | 'Em_andamento' | 'Concluida' | 'Cancelada';
+  notes?: string | null;
+  linked_module_id?: string | null;
+  hours_scope?: CalendarActivityHoursScope;
+};
+
 function withConfirmation(path: string, confirmationPhrase?: string): string {
   const normalized = confirmationPhrase?.trim();
   if (!normalized) {
@@ -56,12 +81,12 @@ export const api = {
   dashboard: () => req('/dashboard'),
   calendar: () => req('/calendar/cohorts'),
   calendarActivities: () => req('/calendar/activities'),
-  createCalendarActivity: (payload: unknown) =>
+  createCalendarActivity: (payload: CalendarActivityUpsertPayload) =>
     req('/calendar/activities', {
       method: 'POST',
       body: JSON.stringify(payload)
     }),
-  updateCalendarActivity: (id: string, payload: unknown) =>
+  updateCalendarActivity: (id: string, payload: Partial<CalendarActivityUpsertPayload>) =>
     req(`/calendar/activities/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(payload)

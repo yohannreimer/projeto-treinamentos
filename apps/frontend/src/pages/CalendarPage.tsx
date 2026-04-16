@@ -41,6 +41,8 @@ type ActivityDayScheduleDraft = {
   end_time: string;
 };
 
+type CalendarActivityHoursScope = 'none' | 'client_consumption' | 'internal_effort';
+
 type CalendarActivity = {
   id: string;
   title: string;
@@ -56,6 +58,8 @@ type CalendarActivity = {
   technician_names: string[];
   company_id: string | null;
   company_name: string | null;
+  linked_module_id: string | null;
+  hours_scope: CalendarActivityHoursScope;
   status: 'Planejada' | 'Em_andamento' | 'Concluida' | 'Cancelada';
   notes: string | null;
   created_at: string;
@@ -176,6 +180,12 @@ function shortDateLabel(dateIso: string): string {
   const [year, month, day] = dateIso.split('-').map(Number);
   if (!year || !month || !day) return dateIso;
   return new Date(year, month - 1, day).toLocaleDateString('pt-BR');
+}
+
+function hoursScopeLabel(scope: CalendarActivityHoursScope): string {
+  if (scope === 'client_consumption') return 'Consumo cliente';
+  if (scope === 'internal_effort') return 'Esforço interno';
+  return 'Sem impacto de horas';
 }
 
 function prevMonth(month: string): string {
@@ -377,6 +387,8 @@ export function CalendarPage() {
   const [activityTitle, setActivityTitle] = useState('');
   const [activityType, setActivityType] = useState<CalendarActivity['activity_type']>('Visita_cliente');
   const [activityCompanyId, setActivityCompanyId] = useState('');
+  const [activityLinkedModuleId, setActivityLinkedModuleId] = useState('');
+  const [activityHoursScope, setActivityHoursScope] = useState<CalendarActivityHoursScope>('none');
   const [activityTechnicianIds, setActivityTechnicianIds] = useState<string[]>([]);
   const [activityStatus, setActivityStatus] = useState<CalendarActivity['status']>('Planejada');
   const [activityAllDay, setActivityAllDay] = useState(true);
@@ -404,13 +416,21 @@ export function CalendarPage() {
       api.companies()
     ]);
     setRows(calendarRows as Cohort[]);
-    const normalizedActivities = (activityRows as Array<Record<string, unknown>>).map((row) => ({
-      ...(row as unknown as Omit<CalendarActivity, 'technician_ids' | 'technician_names' | 'selected_dates' | 'day_schedules'>),
-      technician_ids: splitPipeList(String(row.technician_ids_raw ?? '')),
-      technician_names: splitPipeList(String(row.technician_names ?? '')),
-      selected_dates: splitPipeList(String(row.selected_dates_raw ?? '')),
-      day_schedules: parseActivityDaySchedulesRaw(String(row.day_schedules_raw ?? ''))
-    })) as CalendarActivity[];
+    const normalizedActivities = (activityRows as Array<Record<string, unknown>>).map((row) => {
+      const rawScope = String(row.hours_scope ?? 'none');
+      const hoursScope: CalendarActivityHoursScope = (
+        rawScope === 'client_consumption' || rawScope === 'internal_effort'
+      ) ? rawScope : 'none';
+      return {
+        ...(row as unknown as Omit<CalendarActivity, 'technician_ids' | 'technician_names' | 'selected_dates' | 'day_schedules' | 'hours_scope' | 'linked_module_id'>),
+        technician_ids: splitPipeList(String(row.technician_ids_raw ?? '')),
+        technician_names: splitPipeList(String(row.technician_names ?? '')),
+        selected_dates: splitPipeList(String(row.selected_dates_raw ?? '')),
+        day_schedules: parseActivityDaySchedulesRaw(String(row.day_schedules_raw ?? '')),
+        linked_module_id: String(row.linked_module_id ?? '').trim() || null,
+        hours_scope: hoursScope
+      };
+    }) as CalendarActivity[];
     setActivities(normalizedActivities);
     setModules(modulesRows as Module[]);
     setTechnicians(techRows as Array<{ id: string; name: string }>);
@@ -736,6 +756,8 @@ export function CalendarPage() {
     setActivityTitle('');
     setActivityType('Visita_cliente');
     setActivityCompanyId('');
+    setActivityLinkedModuleId('');
+    setActivityHoursScope('none');
     setActivityTechnicianIds([]);
     setActivityStatus('Planejada');
     setActivityAllDay(true);
@@ -893,6 +915,8 @@ export function CalendarPage() {
     setActivityTitle(activity.title);
     setActivityType(activity.activity_type);
     setActivityCompanyId(activity.company_id ?? '');
+    setActivityLinkedModuleId(activity.linked_module_id ?? '');
+    setActivityHoursScope(activity.hours_scope ?? 'none');
     setActivityTechnicianIds(activity.technician_ids ?? []);
     setActivityStatus(activity.status);
     setActivityAllDay(firstSchedule.all_day);
@@ -1004,6 +1028,23 @@ export function CalendarPage() {
       setMessage('Data final não pode ser menor que a data inicial.');
       return;
     }
+    if (activityHoursScope !== 'none' && !activityCompanyId) {
+      setMessage('Selecione um cliente para registrar horas da atividade.');
+      return;
+    }
+    if (activityHoursScope !== 'none' && !activityLinkedModuleId) {
+      setMessage('Selecione um módulo vinculado para registrar horas da atividade.');
+      return;
+    }
+    const linkedModule = modules.find((module) => module.id === activityLinkedModuleId);
+    if (activityHoursScope === 'internal_effort' && linkedModule?.delivery_mode !== 'entregavel') {
+      setMessage('Escopo "Esforço interno" só pode ser usado com módulos do tipo entregável.');
+      return;
+    }
+    if (activityHoursScope === 'client_consumption' && linkedModule?.client_hours_policy !== 'consome') {
+      setMessage('Módulo selecionado não está configurado para consumir horas do cliente.');
+      return;
+    }
 
     try {
       const allDatesAllDay = dateSchedules.every((item) => item.all_day);
@@ -1018,6 +1059,8 @@ export function CalendarPage() {
         start_time: allDatesAllDay ? null : (dateSchedules.find((item) => item.start_time)?.start_time ?? null),
         end_time: allDatesAllDay ? null : (dateSchedules.find((item) => item.end_time)?.end_time ?? null),
         company_id: activityCompanyId || null,
+        linked_module_id: activityLinkedModuleId || null,
+        hours_scope: activityHoursScope,
         technician_ids: activityTechnicianIds,
         status: activityStatus,
         notes: activityNotes.trim() || null
@@ -1249,6 +1292,9 @@ export function CalendarPage() {
                       <p className="calendar-event-title" title={activity.title}>{activity.title}</p>
                       <p className="calendar-event-meta">{statusLabel(activity.activity_type)}</p>
                       <p className="calendar-event-meta">Técnicos: {collapseList(activity.technician_names, 2)}</p>
+                      {activity.hours_scope !== 'none' ? (
+                        <p className="calendar-event-meta">{hoursScopeLabel(activity.hours_scope)}</p>
+                      ) : null}
                       <p className="calendar-event-meta">
                         {activityOccurrenceTimeLabel(activity)}
                       </p>
@@ -1338,6 +1384,9 @@ export function CalendarPage() {
                           <td title={activity.notes ?? undefined}>
                             {activity.title}
                             {activity.company_name ? <small className="muted"> · Cliente: {activity.company_name}</small> : null}
+                            {activity.hours_scope !== 'none' ? (
+                              <small className="muted"> · {hoursScopeLabel(activity.hours_scope)}</small>
+                            ) : null}
                           </td>
                           <td>{statusLabel(activity.activity_type)}</td>
                           <td>{collapseList(activity.technician_names, 3)}</td>
@@ -1461,6 +1510,33 @@ export function CalendarPage() {
                             ))}
                           </select>
                         </label>
+                        <label>Módulo vinculado (opcional)
+                          <select value={activityLinkedModuleId} onChange={(event) => setActivityLinkedModuleId(event.target.value)}>
+                            <option value="">Sem módulo vinculado</option>
+                            {modules.map((module) => (
+                              <option key={module.id} value={module.id}>
+                                {module.code} · {module.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>Escopo de horas
+                          <select
+                            value={activityHoursScope}
+                            onChange={(event) => setActivityHoursScope(event.target.value as CalendarActivityHoursScope)}
+                          >
+                            <option value="none">Sem impacto de horas</option>
+                            <option value="client_consumption">Consome banco de horas do cliente</option>
+                            <option value="internal_effort">Registrar esforço interno (entregável)</option>
+                          </select>
+                        </label>
+                        {activityHoursScope !== 'none' ? (
+                          <p className="form-hint">
+                            {activityHoursScope === 'internal_effort'
+                              ? 'Use para registrar esforço real de entregáveis internos por módulo.'
+                              : 'Use para registrar atividade que deve consumir banco de horas do cliente.'}
+                          </p>
+                        ) : null}
                       </div>
 
                       <div className="calendar-form-section">
