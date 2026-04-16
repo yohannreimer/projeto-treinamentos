@@ -12,6 +12,8 @@ type ModuleCatalog = {
   duration_days: number;
   profile: string | null;
   is_mandatory: number;
+  delivery_mode: 'ministrado' | 'entregavel';
+  client_hours_policy: 'consome' | 'nao_consume';
   prerequisites: Array<{ id: string; code: string; name: string }>;
 };
 type AdminModuleSortKey = 'code' | 'name' | 'category' | 'duration_days' | 'is_mandatory';
@@ -58,6 +60,8 @@ export function AdminPage() {
   const [editDuration, setEditDuration] = useState(1);
   const [editProfile, setEditProfile] = useState('');
   const [editMandatory, setEditMandatory] = useState(1);
+  const [editDeliveryMode, setEditDeliveryMode] = useState<'ministrado' | 'entregavel'>('ministrado');
+  const [editHoursPolicy, setEditHoursPolicy] = useState<'consome' | 'nao_consume'>('consome');
   const [prereqIds, setPrereqIds] = useState<string[]>([]);
 
   const [newCode, setNewCode] = useState('');
@@ -67,6 +71,8 @@ export function AdminPage() {
   const [newDuration, setNewDuration] = useState(1);
   const [newProfile, setNewProfile] = useState('');
   const [newMandatory, setNewMandatory] = useState(0);
+  const [newDeliveryMode, setNewDeliveryMode] = useState<'ministrado' | 'entregavel'>('ministrado');
+  const [newHoursPolicy, setNewHoursPolicy] = useState<'consome' | 'nao_consume'>('consome');
 
   const [loadingBootstrap, setLoadingBootstrap] = useState(false);
   const [loadingRealScenario, setLoadingRealScenario] = useState(false);
@@ -150,6 +156,8 @@ export function AdminPage() {
     setEditDuration(selectedModule.duration_days);
     setEditProfile(selectedModule.profile ?? '');
     setEditMandatory(selectedModule.is_mandatory ? 1 : 0);
+    setEditDeliveryMode(selectedModule.delivery_mode ?? 'ministrado');
+    setEditHoursPolicy(selectedModule.client_hours_policy ?? 'consome');
     setPrereqIds((selectedModule.prerequisites ?? []).map((item) => item.id));
   }, [selectedModuleId, selectedModule]);
 
@@ -195,7 +203,9 @@ export function AdminPage() {
         description: editDescription || null,
         duration_days: Math.max(1, Number(editDuration) || 1),
         profile: editProfile || null,
-        is_mandatory: editMandatory
+        is_mandatory: editMandatory,
+        delivery_mode: editDeliveryMode,
+        client_hours_policy: editHoursPolicy
       });
       await api.updateAdminModulePrerequisites(selectedModuleId, {
         prerequisite_module_ids: prereqIds
@@ -217,7 +227,9 @@ export function AdminPage() {
         description: newDescription || null,
         duration_days: Math.max(1, Number(newDuration) || 1),
         profile: newProfile || null,
-        is_mandatory: newMandatory
+        is_mandatory: newMandatory,
+        delivery_mode: newDeliveryMode,
+        client_hours_policy: newHoursPolicy
       });
       setMessage('Módulo criado com sucesso.');
       setNewCode('');
@@ -226,6 +238,8 @@ export function AdminPage() {
       setNewDuration(1);
       setNewProfile('');
       setNewMandatory(0);
+      setNewDeliveryMode('ministrado');
+      setNewHoursPolicy('consome');
       loadCatalog();
     } catch (error) {
       setMessage((error as Error).message);
@@ -487,7 +501,7 @@ export function AdminPage() {
                 <input value={editName} onChange={(e) => setEditName(e.target.value)} />
               </label>
 
-              <div className="two-col">
+              <div className="three-col">
                 <label>
                   Perfil
                   <input value={editProfile} onChange={(e) => setEditProfile(e.target.value)} />
@@ -499,7 +513,22 @@ export function AdminPage() {
                     <option value={0}>Não</option>
                   </select>
                 </label>
+                <label>
+                  Tipo de entrega
+                  <select value={editDeliveryMode} onChange={(e) => setEditDeliveryMode(e.target.value as 'ministrado' | 'entregavel')}>
+                    <option value="ministrado">Treinamento ministrado</option>
+                    <option value="entregavel">Entregável interno</option>
+                  </select>
+                </label>
               </div>
+
+              <label>
+                Política de horas para cliente
+                <select value={editHoursPolicy} onChange={(e) => setEditHoursPolicy(e.target.value as 'consome' | 'nao_consume')}>
+                  <option value="consome">Consome banco de horas do cliente</option>
+                  <option value="nao_consume">Não consome banco de horas do cliente</option>
+                </select>
+              </label>
 
               <label>
                 Descrição
@@ -561,7 +590,7 @@ export function AdminPage() {
             <input value={newName} onChange={(e) => setNewName(e.target.value)} />
           </label>
 
-          <div className="two-col">
+          <div className="three-col">
             <label>
               Perfil
               <input value={newProfile} onChange={(e) => setNewProfile(e.target.value)} />
@@ -573,7 +602,22 @@ export function AdminPage() {
                 <option value={0}>Não</option>
               </select>
             </label>
+            <label>
+              Tipo de entrega
+              <select value={newDeliveryMode} onChange={(e) => setNewDeliveryMode(e.target.value as 'ministrado' | 'entregavel')}>
+                <option value="ministrado">Treinamento ministrado</option>
+                <option value="entregavel">Entregável interno</option>
+              </select>
+            </label>
           </div>
+
+          <label>
+            Política de horas para cliente
+            <select value={newHoursPolicy} onChange={(e) => setNewHoursPolicy(e.target.value as 'consome' | 'nao_consume')}>
+              <option value="consome">Consome banco de horas do cliente</option>
+              <option value="nao_consume">Não consome banco de horas do cliente</option>
+            </select>
+          </label>
 
           <label>
             Descrição

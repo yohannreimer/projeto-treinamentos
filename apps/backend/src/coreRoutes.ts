@@ -29,6 +29,8 @@ const KANBAN_SUBCATEGORY_VALUES = ['Pre_vendas', 'Pos_vendas', 'Suporte', 'Imple
 const KANBAN_SUPPORT_HANDOFF_VALUES = ['Conosco', 'Sao_Paulo'] as const;
 const CALENDAR_ACTIVITY_TYPE_VALUES = ['Visita_cliente', 'Pre_vendas', 'Pos_vendas', 'Suporte', 'Implementacao', 'Reuniao', 'Outro'] as const;
 const CALENDAR_ACTIVITY_STATUS_VALUES = ['Planejada', 'Em_andamento', 'Concluida', 'Cancelada'] as const;
+const MODULE_DELIVERY_MODE_VALUES = ['ministrado', 'entregavel'] as const;
+const MODULE_CLIENT_HOURS_POLICY_VALUES = ['consome', 'nao_consume'] as const;
 const PORTAL_OPERATOR_USERNAME_SETTING_KEY = 'portal_operator_username';
 const PORTAL_OPERATOR_PASSWORD_HASH_SETTING_KEY = 'portal_operator_password_hash';
 const INTERNAL_PORTAL_USER_USERNAME = '__holand_internal_operator__';
@@ -1725,6 +1727,8 @@ function getAdminCatalog() {
     duration_days: number;
     profile: string | null;
     is_mandatory: number;
+    delivery_mode: (typeof MODULE_DELIVERY_MODE_VALUES)[number];
+    client_hours_policy: (typeof MODULE_CLIENT_HOURS_POLICY_VALUES)[number];
   }>;
 
   const prereqRows = db.prepare(`
@@ -6528,7 +6532,9 @@ export function registerCoreRoutes(app: Express) {
       description: z.string().nullable().optional(),
       duration_days: z.number().int().positive(),
       profile: z.string().nullable().optional(),
-      is_mandatory: z.number().int().min(0).max(1)
+      is_mandatory: z.number().int().min(0).max(1),
+      delivery_mode: z.enum(MODULE_DELIVERY_MODE_VALUES).default('ministrado'),
+      client_hours_policy: z.enum(MODULE_CLIENT_HOURS_POLICY_VALUES).default('consome')
     });
   
     const parsed = schema.safeParse(req.body);
@@ -6540,8 +6546,10 @@ export function registerCoreRoutes(app: Express) {
       const id = uuid('mod');
       const tx = db.transaction(() => {
         db.prepare(`
-        insert into module_template (id, code, category, name, description, duration_days, profile, is_mandatory)
-        values (?, ?, ?, ?, ?, ?, ?, ?)
+        insert into module_template (
+          id, code, category, name, description, duration_days, profile, is_mandatory, delivery_mode, client_hours_policy
+        )
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           id,
           parsed.data.code.toUpperCase(),
@@ -6550,7 +6558,9 @@ export function registerCoreRoutes(app: Express) {
           parsed.data.description ?? null,
           parsed.data.duration_days,
           parsed.data.profile ?? null,
-          parsed.data.is_mandatory
+          parsed.data.is_mandatory,
+          parsed.data.delivery_mode,
+          parsed.data.client_hours_policy
         );
   
         const companies = db.prepare('select id from company').all() as Array<{ id: string }>;
@@ -6583,7 +6593,9 @@ export function registerCoreRoutes(app: Express) {
       description: z.string().nullable().optional(),
       duration_days: z.number().int().positive().optional(),
       profile: z.string().nullable().optional(),
-      is_mandatory: z.number().int().min(0).max(1).optional()
+      is_mandatory: z.number().int().min(0).max(1).optional(),
+      delivery_mode: z.enum(MODULE_DELIVERY_MODE_VALUES).optional(),
+      client_hours_policy: z.enum(MODULE_CLIENT_HOURS_POLICY_VALUES).optional()
     });
   
     const parsed = schema.safeParse(req.body);

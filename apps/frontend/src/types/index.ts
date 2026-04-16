@@ -40,7 +40,7 @@ export type Module = {
   profile: string;
   is_mandatory: number;
   delivery_mode?: 'ministrado' | 'entregavel';
-  client_hours_policy?: 'consome' | 'nao_consome';
+  client_hours_policy?: 'consome' | 'nao_consume';
 };
 
 export type CompanyHoursSummary = {
