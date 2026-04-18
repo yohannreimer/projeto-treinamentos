@@ -18,6 +18,8 @@ const LOGIN_WINDOW_MS = 60_000;
 const LOGIN_BLOCK_MS = 5 * 60_000;
 const LOGIN_ATTEMPT_LIMIT = 8;
 const LOGIN_MAX_TRACKED_KEYS = 3_000;
+const PORTAL_ATTACHMENT_MAX_BYTES = 20_000_000;
+const PORTAL_ATTACHMENT_DATA_URL_MAX_CHARS = 30_000_000;
 const PORTAL_OPERATOR_USERNAME_SETTING_KEY = 'portal_operator_username';
 const PORTAL_OPERATOR_PASSWORD_HASH_SETTING_KEY = 'portal_operator_password_hash';
 const INTERNAL_PORTAL_USER_USERNAME = '__holand_internal_operator__';
@@ -45,7 +47,7 @@ const createTicketSchema = z.object({
   whatsapp_number: z.string().trim().max(40).nullable().optional(),
   attachments: z.array(z.object({
     file_name: z.string().trim().min(1).max(200),
-    file_data_base64: z.string().max(12_000_000)
+    file_data_base64: z.string().max(PORTAL_ATTACHMENT_DATA_URL_MAX_CHARS)
   })).max(8).optional().default([])
 });
 
@@ -53,7 +55,7 @@ const ticketMessageSchema = z.object({
   body: z.string().trim().max(4_000).nullable().optional(),
   attachments: z.array(z.object({
     file_name: z.string().trim().min(1).max(200),
-    file_data_base64: z.string().max(12_000_000)
+    file_data_base64: z.string().max(PORTAL_ATTACHMENT_DATA_URL_MAX_CHARS)
   })).max(8).optional().default([])
 });
 
@@ -343,8 +345,8 @@ function decodeAttachmentDataUrl(dataUrl: string) {
     throw new Error('Arquivo vazio.');
   }
 
-  if (binary.length > 8_000_000) {
-    throw new Error('Arquivo excede 8 MB.');
+  if (binary.length > PORTAL_ATTACHMENT_MAX_BYTES) {
+    throw new Error('Arquivo excede 20 MB.');
   }
 
   return {

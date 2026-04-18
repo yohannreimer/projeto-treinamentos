@@ -79,7 +79,6 @@ const statuses = ['Planejada', 'Aguardando_quorum', 'Confirmada', 'Concluida', '
 const periodOptions = ['Integral', 'Meio_periodo'] as const;
 const deliveryModeOptions = ['Online', 'Presencial', 'Hibrida'] as const;
 const activityTypeOptions: Array<CalendarActivity['activity_type']> = ['Visita_cliente', 'Pre_vendas', 'Pos_vendas', 'Suporte', 'Implementacao', 'Reuniao', 'Outro'];
-const activityStatusOptions: Array<CalendarActivity['status']> = ['Planejada', 'Em_andamento', 'Concluida', 'Cancelada'];
 const weekDays = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'];
 const CALENDAR_CONTROLS_COLLAPSED_STORAGE_KEY = 'orquestrador_calendar_controls_collapsed_v1';
 
@@ -395,7 +394,6 @@ export function CalendarPage() {
   const [activityLinkedModuleId, setActivityLinkedModuleId] = useState('');
   const [activityHoursScope, setActivityHoursScope] = useState<CalendarActivityHoursScope>('none');
   const [activityTechnicianIds, setActivityTechnicianIds] = useState<string[]>([]);
-  const [activityStatus, setActivityStatus] = useState<CalendarActivity['status']>('Planejada');
   const [activityAllDay, setActivityAllDay] = useState(true);
   const [activityDates, setActivityDates] = useState<string[]>([selectedDate]);
   const [activityDateSchedules, setActivityDateSchedules] = useState<Record<string, ActivityDayScheduleDraft>>({
@@ -777,7 +775,6 @@ export function CalendarPage() {
     setActivityLinkedModuleId('');
     setActivityHoursScope('none');
     setActivityTechnicianIds([]);
-    setActivityStatus('Planejada');
     setActivityAllDay(true);
     setActivityDates([baseDate]);
     setActivityDateSchedules({
@@ -936,7 +933,6 @@ export function CalendarPage() {
     setActivityLinkedModuleId(activity.linked_module_id ?? '');
     setActivityHoursScope(activity.hours_scope ?? 'none');
     setActivityTechnicianIds(activity.technician_ids ?? []);
-    setActivityStatus(activity.status);
     setActivityAllDay(firstSchedule.all_day);
     setActivityDates(dates.length > 0 ? dates : [activity.start_date]);
     setActivityDateSchedules(scheduleMap);
@@ -1080,7 +1076,6 @@ export function CalendarPage() {
         linked_module_id: activityLinkedModuleId || null,
         hours_scope: activityHoursScope,
         technician_ids: activityTechnicianIds,
-        status: activityStatus,
         notes: activityNotes.trim() || null
       };
       if (editingActivityId) {
@@ -1543,13 +1538,10 @@ export function CalendarPage() {
                               ))}
                             </select>
                           </label>
-                          <label>Status
-                            <select value={activityStatus} onChange={(event) => setActivityStatus(event.target.value as CalendarActivity['status'])}>
-                              {activityStatusOptions.map((option) => (
-                                <option key={option} value={option}>{statusLabel(option)}</option>
-                              ))}
-                            </select>
-                          </label>
+                          <div>
+                            <label>Status</label>
+                            <input value="Automático por data e horário" disabled />
+                          </div>
                         </div>
                         <label>Cliente (opcional)
                           <select value={activityCompanyId} onChange={(event) => setActivityCompanyId(event.target.value)}>

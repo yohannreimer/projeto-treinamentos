@@ -79,9 +79,10 @@ const workflowOptions: Array<{ value: WorkflowStage; label: string }> = [
   { value: 'Em_andamento', label: 'Em andamento' },
   { value: 'Concluido', label: 'Concluído' }
 ];
-const ATTACHMENT_MAX_BYTES = 8_000_000;
+const ATTACHMENT_MAX_BYTES = 20_000_000;
+const ATTACHMENT_MAX_MB = 20;
 const MAX_ATTACHMENTS = 8;
-const ACCEPTED_ATTACHMENT_TYPES = 'image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt';
+const ACCEPTED_ATTACHMENT_TYPES = 'image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.zip';
 const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
 const API_BASE_URL = env?.VITE_API_BASE_URL ?? `http://${window.location.hostname}:4000`;
 const PORTAL_REALTIME_ENABLED = env?.VITE_PORTAL_REALTIME !== '0';
@@ -791,7 +792,7 @@ export function PortalTicketsPage({ api, isInternal, sessionToken }: PortalTicke
     const nextAttachments: DraftAttachment[] = [];
     for (const file of Array.from(files)) {
       if (file.size > ATTACHMENT_MAX_BYTES) {
-        throw new Error(`Arquivo "${file.name}" excede 8 MB.`);
+        throw new Error(`Arquivo "${file.name}" excede ${ATTACHMENT_MAX_MB} MB.`);
       }
       const fileDataUrl = await toDataUrl(file);
       nextAttachments.push({

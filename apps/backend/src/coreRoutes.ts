@@ -42,6 +42,8 @@ const PORTAL_OPERATOR_PASSWORD_HASH_SETTING_KEY = 'portal_operator_password_hash
 const INTERNAL_PORTAL_USER_USERNAME = '__holand_internal_operator__';
 const DUMMY_PASSWORD_HASH = 'scrypt:00112233445566778899aabbccddeeff:5232aa4cb8582e8f374f25579c6f9ad17d5a9af5ba6d42d4c44df702d20c9d4faef25ea0fca6a5aa69b8bb25439ee4c45cb8e173ceb7f0972b0a8f7fbf2bbd99';
 const ISO_DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+const PORTAL_ATTACHMENT_MAX_BYTES = 20_000_000;
+const PORTAL_ATTACHMENT_DATA_URL_MAX_CHARS = 30_000_000;
 const IMPLEMENTATION_KANBAN_DEFAULT_COLUMNS = [
   { id: 'kcol-todo', title: 'A fazer', color: '#7b8ea8' },
   { id: 'kcol-doing', title: 'Em andamento', color: '#b17613' },
@@ -74,7 +76,7 @@ const kanbanCardImageSchema = z
 
 const kanbanCardFileDataSchema = z
   .string()
-  .max(12_000_000)
+  .max(PORTAL_ATTACHMENT_DATA_URL_MAX_CHARS)
   .refine((value) => /^data:[a-zA-Z0-9.+-]+\/[a-zA-Z0-9.+-]+;base64,/.test(value), 'Arquivo inválido.');
 
 const internalDocumentDataUrlSchema = z
@@ -687,8 +689,8 @@ function validateKanbanAttachmentDataUrl(dataUrl: string): { mimeType: string; f
   if (decoded.buffer.length === 0) {
     throw new Error('Arquivo inválido.');
   }
-  if (decoded.buffer.length > 8_000_000) {
-    throw new Error('Arquivo excede 8 MB.');
+  if (decoded.buffer.length > PORTAL_ATTACHMENT_MAX_BYTES) {
+    throw new Error('Arquivo excede 20 MB.');
   }
   return {
     mimeType: decoded.mimeType,
@@ -1645,8 +1647,180 @@ function resolveCohortDateSlots(params: {
   }));
 }
 
+function nowDateTimeMarker() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const hours = String(now.getHours()).padStart(2, '0');
+  const minutes = String(now.getMinutes()).padStart(2, '0');
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
+function syncCalendarActivityStatuses() {
+  const nowMarker = nowDateTimeMarker();
+  const rows = db.prepare(`
+    select
+      ca.id,
+      ca.status,
+      coalesce(
+        min(
+          case
+            when cad.all_day = 1 then cad.day_date || 'T00:00'
+            else cad.day_date || 'T' || coalesce(cad.start_time, '00:00')
+          end
+        ),
+        case
+          when ca.all_day = 1 then ca.start_date || 'T00:00'
+          else ca.start_date || 'T' || coalesce(ca.start_time, '00:00')
+        end
+      ) as start_marker,
+      coalesce(
+        max(
+          case
+            when cad.all_day = 1 then cad.day_date || 'T23:59'
+            else cad.day_date || 'T' || coalesce(cad.end_time, '23:59')
+          end
+        ),
+        case
+          when ca.all_day = 1 then coalesce(ca.end_date, ca.start_date) || 'T23:59'
+          else coalesce(ca.end_date, ca.start_date) || 'T' || coalesce(ca.end_time, '23:59')
+        end
+      ) as end_marker
+    from calendar_activity ca
+    left join calendar_activity_day cad on cad.activity_id = ca.id
+    where ca.status <> 'Cancelada'
+    group by ca.id, ca.status, ca.start_date, ca.end_date, ca.all_day, ca.start_time, ca.end_time
+  `).all() as Array<{
+    id: string;
+    status: 'Planejada' | 'Em_andamento' | 'Concluida' | 'Cancelada';
+    start_marker: string;
+    end_marker: string;
+  }>;
+
+  if (rows.length === 0) return;
+  const update = db.prepare('update calendar_activity set status = ?, updated_at = ? where id = ?');
+  const nowIso = nowDateIso();
+  const tx = db.transaction(() => {
+    rows.forEach((row) => {
+      const startMarker = row.start_marker || '0000-01-01T00:00';
+      const endMarker = row.end_marker || '9999-12-31T23:59';
+      const nextStatus = nowMarker < startMarker
+        ? 'Planejada'
+        : nowMarker > endMarker
+          ? 'Concluida'
+          : 'Em_andamento';
+      if (row.status !== nextStatus) {
+        update.run(nextStatus, nowIso, row.id);
+      }
+    });
+  });
+  tx();
+}
+
+function syncCohortLifecycleStatuses() {
+  const cohorts = db.prepare(`
+    select id, status, start_date, period, start_time, end_time
+    from cohort
+    where status <> 'Cancelada'
+    order by id asc
+  `).all() as Array<{
+    id: string;
+    status: 'Planejada' | 'Aguardando_quorum' | 'Confirmada' | 'Concluida' | 'Cancelada';
+    start_date: string;
+    period: 'Integral' | 'Meio_periodo' | null;
+    start_time: string | null;
+    end_time: string | null;
+  }>;
+  if (cohorts.length === 0) return;
+
+  const cohortIds = cohorts.map((item) => item.id);
+  const placeholders = cohortIds.map(() => '?').join(',');
+  const blockRows = db.prepare(`
+    select cohort_id, start_day_offset, duration_days
+    from cohort_module_block
+    where cohort_id in (${placeholders})
+    order by cohort_id asc, order_in_cohort asc
+  `).all(...cohortIds) as Array<{
+    cohort_id: string;
+    start_day_offset: number;
+    duration_days: number;
+  }>;
+  const scheduleRows = db.prepare(`
+    select cohort_id, day_index, day_date, start_time, end_time
+    from cohort_schedule_day
+    where cohort_id in (${placeholders})
+    order by cohort_id asc, day_index asc
+  `).all(...cohortIds) as Array<{
+    cohort_id: string;
+    day_index: number;
+    day_date: string;
+    start_time: string | null;
+    end_time: string | null;
+  }>;
+
+  const blocksByCohort = new Map<string, Array<{ start_day_offset: number; duration_days: number }>>();
+  blockRows.forEach((row) => {
+    const list = blocksByCohort.get(row.cohort_id) ?? [];
+    list.push({
+      start_day_offset: Number(row.start_day_offset) || 1,
+      duration_days: Number(row.duration_days) || 1
+    });
+    blocksByCohort.set(row.cohort_id, list);
+  });
+
+  const scheduleByCohort = new Map<string, Array<{ day_index: number; day_date: string; start_time?: string | null; end_time?: string | null }>>();
+  scheduleRows.forEach((row) => {
+    const list = scheduleByCohort.get(row.cohort_id) ?? [];
+    list.push({
+      day_index: Number(row.day_index) || 1,
+      day_date: row.day_date,
+      start_time: row.start_time,
+      end_time: row.end_time
+    });
+    scheduleByCohort.set(row.cohort_id, list);
+  });
+
+  const nowMarker = nowDateTimeMarker();
+  const update = db.prepare('update cohort set status = ? where id = ?');
+
+  const tx = db.transaction(() => {
+    cohorts.forEach((cohort) => {
+      const period = cohort.period ?? 'Integral';
+      const slots = resolveCohortDateSlots({
+        startDate: cohort.start_date,
+        blocks: blocksByCohort.get(cohort.id) ?? [],
+        period,
+        startTime: cohort.start_time ?? null,
+        endTime: cohort.end_time ?? null,
+        scheduleDays: scheduleByCohort.get(cohort.id) ?? []
+      });
+      if (slots.length === 0) return;
+
+      const firstSlot = slots[0];
+      const lastSlot = slots[slots.length - 1];
+      const startMarker = `${firstSlot.day_date}T${period === 'Meio_periodo' ? (firstSlot.start_time ?? cohort.start_time ?? '00:00') : '00:00'}`;
+      const endMarker = `${lastSlot.day_date}T${period === 'Meio_periodo' ? (lastSlot.end_time ?? cohort.end_time ?? '23:59') : '23:59'}`;
+
+      let nextStatus: 'Planejada' | 'Aguardando_quorum' | 'Confirmada' | 'Concluida';
+      if (nowMarker < startMarker) {
+        nextStatus = cohort.status === 'Aguardando_quorum' ? 'Aguardando_quorum' : 'Planejada';
+      } else if (nowMarker > endMarker) {
+        nextStatus = 'Concluida';
+      } else {
+        nextStatus = 'Confirmada';
+      }
+
+      if (cohort.status !== nextStatus) {
+        update.run(nextStatus, cohort.id);
+      }
+    });
+  });
+  tx();
+}
+
 function syncConfirmedCohortExecutions() {
-  const todayIso = nowDateIso();
+  const nowMarker = nowDateTimeMarker();
   const candidates = db.prepare(`
     select
       a.id as allocation_id,
@@ -1657,6 +1831,8 @@ function syncConfirmedCohortExecutions() {
       a.status as allocation_status,
       c.start_date,
       c.period,
+      c.start_time,
+      c.end_time,
       coalesce(cmb.duration_days, 1) as duration_days
     from cohort_allocation a
     join cohort c on c.id = a.cohort_id
@@ -1672,36 +1848,68 @@ function syncConfirmedCohortExecutions() {
     allocation_status: AllocationStatus;
     start_date: string;
     period: (typeof COHORT_PERIOD_VALUES)[number] | null;
+    start_time: string | null;
+    end_time: string | null;
     duration_days: number;
   }>;
 
   if (candidates.length === 0) return;
 
   const cohortIds = Array.from(new Set(candidates.map((item) => item.cohort_id)));
-  const scheduleByCohortAndIndex = new Map<string, string>();
+  const scheduleByCohortAndIndex = new Map<string, {
+    day_date: string;
+    start_time: string | null;
+    end_time: string | null;
+  }>();
   if (cohortIds.length > 0) {
     const placeholders = cohortIds.map(() => '?').join(',');
     const scheduleRows = db.prepare(`
-      select cohort_id, day_index, day_date
+      select cohort_id, day_index, day_date, start_time, end_time
       from cohort_schedule_day
       where cohort_id in (${placeholders})
     `).all(...cohortIds) as Array<{
       cohort_id: string;
       day_index: number;
       day_date: string;
+      start_time: string | null;
+      end_time: string | null;
     }>;
     scheduleRows.forEach((row) => {
-      scheduleByCohortAndIndex.set(`${row.cohort_id}:${row.day_index}`, row.day_date);
+      scheduleByCohortAndIndex.set(`${row.cohort_id}:${row.day_index}`, {
+        day_date: row.day_date,
+        start_time: row.start_time,
+        end_time: row.end_time
+      });
     });
   }
 
-  function resolveSlotDate(candidate: {
+  function resolveSlotMeta(candidate: {
     cohort_id: string;
     start_date: string;
-  }, slotIndex: number) {
+    period: (typeof COHORT_PERIOD_VALUES)[number];
+    start_time: string | null;
+    end_time: string | null;
+  }, slotIndex: number): {
+    dayDate: string;
+    startMarker: string;
+    endMarker: string;
+  } {
     const scheduled = scheduleByCohortAndIndex.get(`${candidate.cohort_id}:${slotIndex}`);
-    if (scheduled) return scheduled;
-    return addBusinessDays(candidate.start_date, Math.max(0, slotIndex - 1));
+    const dayDate = scheduled?.day_date ?? addBusinessDays(candidate.start_date, Math.max(0, slotIndex - 1));
+    if (candidate.period === 'Meio_periodo') {
+      const startTime = scheduled?.start_time ?? candidate.start_time ?? '00:00';
+      const endTime = scheduled?.end_time ?? candidate.end_time ?? '23:59';
+      return {
+        dayDate,
+        startMarker: `${dayDate}T${startTime}`,
+        endMarker: `${dayDate}T${endTime}`
+      };
+    }
+    return {
+      dayDate,
+      startMarker: `${dayDate}T00:00`,
+      endMarker: `${dayDate}T23:59`
+    };
   }
 
   function progressRank(status: ModuleProgressStatus) {
@@ -1752,10 +1960,31 @@ function syncConfirmedCohortExecutions() {
       const totalSlots = Math.max(1, Number(candidate.duration_days || 1)) * (normalizedPeriod === 'Meio_periodo' ? 2 : 1);
       const endSlot = startSlot + totalSlots - 1;
 
+      const slotStart = resolveSlotMeta({
+        cohort_id: candidate.cohort_id,
+        start_date: candidate.start_date,
+        period: normalizedPeriod,
+        start_time: candidate.start_time ?? null,
+        end_time: candidate.end_time ?? null
+      }, startSlot);
+      const slotEnd = resolveSlotMeta({
+        cohort_id: candidate.cohort_id,
+        start_date: candidate.start_date,
+        period: normalizedPeriod,
+        start_time: candidate.start_time ?? null,
+        end_time: candidate.end_time ?? null
+      }, endSlot);
+
       let completedSlots = 0;
       for (let slotIndex = startSlot; slotIndex <= endSlot; slotIndex += 1) {
-        const slotDate = resolveSlotDate(candidate, slotIndex);
-        if (slotDate <= todayIso) {
+        const slotMeta = resolveSlotMeta({
+          cohort_id: candidate.cohort_id,
+          start_date: candidate.start_date,
+          period: normalizedPeriod,
+          start_time: candidate.start_time ?? null,
+          end_time: candidate.end_time ?? null
+        }, slotIndex);
+        if (nowMarker > slotMeta.endMarker) {
           completedSlots += 1;
         }
       }
@@ -1763,11 +1992,11 @@ function syncConfirmedCohortExecutions() {
       let moduleStatus: ModuleProgressStatus = 'Planejado';
       let completedAt: string | null = null;
 
-      if (completedSlots >= totalSlots) {
+      if (nowMarker > slotEnd.endMarker || completedSlots >= totalSlots) {
         moduleStatus = 'Concluido';
-        completedAt = resolveSlotDate(candidate, endSlot);
+        completedAt = slotEnd.dayDate;
         markExecuted.run(completedAt, candidate.allocation_id);
-      } else if (completedSlots > 0) {
+      } else if (nowMarker >= slotStart.startMarker) {
         moduleStatus = 'Em_execucao';
       }
 
@@ -2156,8 +2385,18 @@ async function createInternalRealtimeSessionForCompany(companyId: string) {
 }
 
 export function registerCoreRoutes(app: Express) {
+  try {
+    syncCalendarActivityStatuses();
+    syncCohortLifecycleStatuses();
+    syncConfirmedCohortExecutions();
+  } catch (error) {
+    console.error('Erro ao sincronizar status iniciais de agenda/turmas:', errorMessage(error));
+  }
+
   app.use((_req, _res, next) => {
     try {
+      syncCalendarActivityStatuses();
+      syncCohortLifecycleStatuses();
       syncConfirmedCohortExecutions();
     } catch (error) {
       console.error('Erro ao sincronizar execucao automatica de turmas:', errorMessage(error));

@@ -27,7 +27,7 @@ export function createApp(options: CreateAppOptions = {}) {
   const app = express();
   app.set('trust proxy', process.env.TRUST_PROXY?.trim() || 'loopback, linklocal, uniquelocal');
   app.use(cors());
-  app.use(express.json({ limit: '15mb' }));
+  app.use(express.json({ limit: '35mb' }));
   registerCoreRoutes(app);
   registerPortalRoutes(app);
   app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {

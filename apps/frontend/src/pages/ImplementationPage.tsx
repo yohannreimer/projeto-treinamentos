@@ -13,7 +13,9 @@ type KanbanBoardMode = 'implementation' | 'support';
 const KANBAN_PRIORITY_OPTIONS: KanbanPriority[] = ['Alta', 'Normal', 'Baixa', 'Critica'];
 const KANBAN_SUBCATEGORY_OPTIONS_IMPLEMENTATION: Exclude<KanbanSubcategory, 'Suporte'>[] = ['Pre_vendas', 'Pos_vendas', 'Implementacao'];
 const KANBAN_IMAGE_MAX_BYTES = 750_000;
-const KANBAN_FILE_MAX_BYTES = 8_000_000;
+const KANBAN_FILE_MAX_BYTES = 20_000_000;
+const KANBAN_FILE_MAX_MB = 20;
+const KANBAN_ATTACHMENT_ACCEPT = 'image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.zip';
 const KANBAN_CONVERSATION_MAX_ATTACHMENTS = 8;
 const KANBAN_FILTERS_COLLAPSED_STORAGE_KEY = 'orquestrador_kanban_filters_collapsed_v1';
 const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
@@ -662,7 +664,7 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
       const nextDrafts: ConversationAttachmentDraft[] = [];
       for (const file of files) {
         if (file.size > KANBAN_FILE_MAX_BYTES) {
-          throw new Error(`Arquivo "${file.name}" excede 8 MB.`);
+          throw new Error(`Arquivo "${file.name}" excede ${KANBAN_FILE_MAX_MB} MB.`);
         }
         const fileDataUrl = await toDataUrl(file);
         nextDrafts.push({
@@ -1322,7 +1324,7 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
     if (!file || !cardDetail) return;
 
     if (file.size > KANBAN_FILE_MAX_BYTES) {
-      setError('O arquivo é grande demais. Use até 8 MB.');
+      setError(`O arquivo é grande demais. Use até ${KANBAN_FILE_MAX_MB} MB.`);
       return;
     }
 
@@ -1906,7 +1908,13 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
                 </label>
                 <label className="portal-secondary-btn portal-chat-attach-btn">
                   + Arquivo
-                  <input type="file" multiple onChange={onPickConversationFiles} disabled={!conversationTicketId} />
+                  <input
+                    type="file"
+                    accept={KANBAN_ATTACHMENT_ACCEPT}
+                    multiple
+                    onChange={onPickConversationFiles}
+                    disabled={!conversationTicketId}
+                  />
                 </label>
                 <button type="submit" className="portal-primary-btn" disabled={!conversationTicketId || conversationSubmitting}>
                   {conversationSubmitting ? 'Enviando...' : 'Enviar'}

@@ -27,7 +27,7 @@ type CalendarActivityUpsertPayload = {
   end_time?: string | null;
   company_id?: string | null;
   technician_ids?: string[];
-  status: 'Planejada' | 'Em_andamento' | 'Concluida' | 'Cancelada';
+  status?: 'Planejada' | 'Em_andamento' | 'Concluida' | 'Cancelada';
   notes?: string | null;
   linked_module_id?: string | null;
   hours_scope?: CalendarActivityHoursScope;
@@ -67,10 +67,17 @@ async function req<T = any>(path: string, init?: RequestInit): Promise<T> {
 
   if (!response.ok) {
     const body = await response.text();
+    const oversizedMessage = 'Arquivo muito grande. Use anexos de até 20 MB.';
+    if (response.status === 413) {
+      throw new Error(oversizedMessage);
+    }
     try {
       const parsed = JSON.parse(body) as { message?: string };
       throw new Error(parsed.message || body || 'Erro na API');
     } catch {
+      if (body.trim().startsWith('<')) {
+        throw new Error('Falha ao enviar anexo. Tente novamente em instantes.');
+      }
       throw new Error(body || 'Erro na API');
     }
   }
