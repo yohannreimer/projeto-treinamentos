@@ -1074,6 +1074,49 @@ button:focus-visible,
   min-width: 780px;
 }
 
+.hours-consumption-breakdown {
+  margin: 0 0 12px;
+  border: 1px solid #e2e8ef;
+  border-radius: 14px;
+  background: #fbfdff;
+  padding: 12px;
+}
+
+.hours-consumption-breakdown-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: flex-start;
+  margin-bottom: 10px;
+}
+
+.hours-consumption-breakdown-head h4 {
+  margin: 0;
+  font-size: 0.98rem;
+  color: #22313e;
+}
+
+.hours-consumption-breakdown-head p {
+  margin: 3px 0 0;
+  color: #556472;
+  font-size: 0.82rem;
+}
+
+.hours-consumption-breakdown-head strong {
+  color: #1f2f3d;
+  font-size: 0.9rem;
+}
+
+.hours-breakdown-positive {
+  color: #1f2f3d;
+  font-weight: 700;
+}
+
+.hours-breakdown-negative {
+  color: #9b2c24;
+  font-weight: 700;
+}
+
 .journey-kpi-btn {
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -1514,6 +1557,22 @@ button:focus-visible,
 .mini-stat:hover {
   transform: translateY(-1px);
   border-color: #d0d7de;
+}
+
+.mini-stat-button {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mini-stat-button.is-active {
+  border-color: #e7b2a5;
+  box-shadow: 0 10px 18px rgba(29, 40, 48, 0.08);
+}
+
+.mini-stat-button:focus-visible {
+  outline: 2px solid rgba(239, 47, 15, 0.28);
+  outline-offset: 2px;
 }
 
 .mini-stat span {

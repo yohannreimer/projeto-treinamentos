@@ -119,6 +119,44 @@ function canDeleteManualAdjustment(payloadJson: string, isDeletedOrigin: boolean
   return !meta.isDeletion;
 }
 
+function extractPayloadModuleId(payloadJson: string): string | null {
+  if (!payloadJson?.trim()) return null;
+  try {
+    const parsed = JSON.parse(payloadJson) as { module_id?: string | null };
+    const moduleId = parsed.module_id?.trim();
+    return moduleId ? moduleId : null;
+  } catch {
+    return null;
+  }
+}
+
+function extractLedgerConsumedDelta(entry: CompanyHoursLedgerItem): number | null {
+  let parsed: { consumed_delta?: number; hours_consumed?: number } = {};
+  if (entry.payload_json?.trim()) {
+    try {
+      parsed = JSON.parse(entry.payload_json) as { consumed_delta?: number; hours_consumed?: number };
+    } catch {
+      parsed = {};
+    }
+  }
+
+  const consumedDelta = Number(parsed.consumed_delta);
+  if (Number.isFinite(consumedDelta) && Math.abs(consumedDelta) >= 0.0001) {
+    return roundHours(consumedDelta);
+  }
+
+  const hoursConsumed = Number(parsed.hours_consumed);
+  if (Number.isFinite(hoursConsumed) && Math.abs(hoursConsumed) >= 0.0001) {
+    return roundHours(hoursConsumed);
+  }
+
+  if (entry.event_type === 'training_encounter_completed' && Number(entry.delta_hours) < 0) {
+    return roundHours(Math.abs(Number(entry.delta_hours)));
+  }
+
+  return null;
+}
+
 export function ClientDetailPage() {
   const { id } = useParams();
   const disabledModulesPanelId = 'client-detail-disabled-modules';
@@ -154,6 +192,7 @@ export function ClientDetailPage() {
   const [hoursAdjustmentReason, setHoursAdjustmentReason] = useState('');
   const [savingHoursAdjustment, setSavingHoursAdjustment] = useState(false);
   const [showHoursHistory, setShowHoursHistory] = useState(false);
+  const [hoursConsumptionBreakdownMode, setHoursConsumptionBreakdownMode] = useState<'projected' | 'confirmed' | null>(null);
 
   const [moduleEdits, setModuleEdits] = useState<Record<string, ModuleEdit>>({});
   const [savingCompany, setSavingCompany] = useState(false);
@@ -400,6 +439,12 @@ export function ClientDetailPage() {
     }
   }, [hoursAdjustmentModuleId, hoursAdjustmentModuleOptions]);
 
+  useEffect(() => {
+    if (!showHoursBankSection) {
+      setHoursConsumptionBreakdownMode(null);
+    }
+  }, [showHoursBankSection]);
+
   const sortedHistory = useMemo(() => {
     const rows = [...(data?.history ?? [])];
     rows.sort((a: any, b: any) => {
@@ -427,6 +472,108 @@ export function ClientDetailPage() {
     if (historySortKey !== nextKey) return '';
     return historySortDirection === 'asc' ? ' ↑' : ' ↓';
   }
+
+  const moduleInsightById = useMemo(
+    () => new Map(moduleHoursInsights.map((item) => [item.module_id, item])),
+    [moduleHoursInsights]
+  );
+  const confirmedConsumptionBreakdownRows = useMemo(() => {
+    const tracedRows = operationalLedgerRows
+      .map((entry) => {
+        const consumedDelta = extractLedgerConsumedDelta(entry);
+        if (consumedDelta === null) return null;
+        const moduleId = extractPayloadModuleId(entry.payload_json);
+        const moduleInsight = moduleId ? moduleInsightById.get(moduleId) : undefined;
+        const moduleLabel = moduleInsight
+          ? `${moduleInsight.code} - ${moduleInsight.name}`
+          : moduleId
+            ? `Módulo ${moduleId}`
+            : 'Sem vínculo de módulo';
+        return {
+          id: entry.id,
+          created_at: entry.created_at,
+          source_label: hoursEventLabel(entry.event_type),
+          module_label: moduleLabel,
+          reason: extractHoursPayloadReason(entry.payload_json) || '-',
+          hours: consumedDelta
+        };
+      })
+      .filter((row): row is {
+        id: string;
+        created_at: string;
+        source_label: string;
+        module_label: string;
+        reason: string;
+        hours: number;
+      } => Boolean(row));
+
+    const tracedTotal = roundHours(tracedRows.reduce((total, row) => total + row.hours, 0));
+    const residual = roundHours(confirmedConsumedForCards - tracedTotal);
+    if (Math.abs(residual) >= 0.01) {
+      tracedRows.unshift({
+        id: 'legacy-confirmed-residual',
+        created_at: '',
+        source_label: 'Ajuste legado',
+        module_label: 'Sem detalhamento de origem',
+        reason: 'Diferença histórica existente no saldo confirmado.',
+        hours: residual
+      });
+    }
+    return tracedRows;
+  }, [confirmedConsumedForCards, moduleInsightById, operationalLedgerRows]);
+  const projectedConsumptionBreakdownRows = useMemo(() => {
+    const futurePlannedRows = moduleHoursInsights
+      .map((insight) => {
+        const pendingHours = roundHours(Number(insight.projected_client_consumed_hours ?? 0) - Number(insight.actual_client_consumed_hours ?? 0));
+        if (pendingHours <= 0) return null;
+        return {
+          id: `pending-projection-${insight.module_id}`,
+          created_at: '',
+          source_label: 'Projeção futura',
+          module_label: `${insight.code} - ${insight.name}`,
+          reason: 'Planejado para execução futura e ainda não confirmado.',
+          hours: pendingHours
+        };
+      })
+      .filter((row): row is {
+        id: string;
+        created_at: string;
+        source_label: string;
+        module_label: string;
+        reason: string;
+        hours: number;
+      } => Boolean(row));
+
+    const combinedRows = [...confirmedConsumptionBreakdownRows, ...futurePlannedRows];
+    const combinedTotal = roundHours(combinedRows.reduce((total, row) => total + row.hours, 0));
+    const residual = roundHours(projectedConsumedForCards - combinedTotal);
+    if (Math.abs(residual) >= 0.01) {
+      combinedRows.unshift({
+        id: 'legacy-projected-residual',
+        created_at: '',
+        source_label: 'Ajuste de projeção',
+        module_label: 'Sem detalhamento de origem',
+        reason: 'Diferença agregada entre projeção consolidada e trilha detalhada.',
+        hours: residual
+      });
+    }
+    return combinedRows;
+  }, [confirmedConsumptionBreakdownRows, moduleHoursInsights, projectedConsumedForCards]);
+  const activeConsumptionBreakdownRows = hoursConsumptionBreakdownMode === 'projected'
+    ? projectedConsumptionBreakdownRows
+    : hoursConsumptionBreakdownMode === 'confirmed'
+      ? confirmedConsumptionBreakdownRows
+      : [];
+  const activeConsumptionBreakdownTotal = useMemo(
+    () => roundHours(activeConsumptionBreakdownRows.reduce((total, row) => total + row.hours, 0)),
+    [activeConsumptionBreakdownRows]
+  );
+  const activeConsumptionBreakdownTitle = hoursConsumptionBreakdownMode === 'projected'
+    ? 'Detalhamento do consumido (projetado)'
+    : 'Detalhamento do consumido (confirmado)';
+  const activeConsumptionBreakdownDescription = hoursConsumptionBreakdownMode === 'projected'
+    ? 'Inclui consumo já confirmado + projeções futuras por módulo.'
+    : 'Mostra apenas o consumo confirmado, evento por evento.';
 
   async function saveCompanyProfile() {
     if (!id) return;
@@ -937,10 +1084,14 @@ export function ClientDetailPage() {
                 <span>Disponível (projetado)</span>
                 <strong>{formatHoursValue(projectedHoursSummary.available_hours)} h</strong>
               </article>
-              <article className="mini-stat">
+              <button
+                type="button"
+                className={`mini-stat mini-stat-button ${hoursConsumptionBreakdownMode === 'projected' ? 'is-active' : ''}`}
+                onClick={() => setHoursConsumptionBreakdownMode((prev) => (prev === 'projected' ? null : 'projected'))}
+              >
                 <span>Consumido (projetado)</span>
                 <strong>{formatHoursValue(projectedHoursSummary.consumed_hours)} h</strong>
-              </article>
+              </button>
               <article className="mini-stat mini-stat-accent">
                 <span>Saldo (projetado)</span>
                 <strong>{formatHoursValue(projectedHoursSummary.balance_hours)} h</strong>
@@ -956,10 +1107,14 @@ export function ClientDetailPage() {
                 <span>Disponível (confirmado)</span>
                 <strong>{formatHoursValue(confirmedHoursSummary.available_hours)} h</strong>
               </article>
-              <article className="mini-stat mini-stat-muted">
+              <button
+                type="button"
+                className={`mini-stat mini-stat-muted mini-stat-button ${hoursConsumptionBreakdownMode === 'confirmed' ? 'is-active' : ''}`}
+                onClick={() => setHoursConsumptionBreakdownMode((prev) => (prev === 'confirmed' ? null : 'confirmed'))}
+              >
                 <span>Consumido (confirmado)</span>
                 <strong>{formatHoursValue(confirmedHoursSummary.consumed_hours)} h</strong>
-              </article>
+              </button>
               <article className="mini-stat mini-stat-muted">
                 <span>Saldo (confirmado)</span>
                 <strong>{formatHoursValue(confirmedHoursSummary.balance_hours)} h</strong>
@@ -969,6 +1124,48 @@ export function ClientDetailPage() {
                 <strong>{formatHoursValue(confirmedHoursSummary.remaining_diarias)}</strong>
               </article>
             </div>
+
+            {hoursConsumptionBreakdownMode ? (
+              <div className="hours-consumption-breakdown">
+                <div className="hours-consumption-breakdown-head">
+                  <div>
+                    <h4>{activeConsumptionBreakdownTitle}</h4>
+                    <p>{activeConsumptionBreakdownDescription}</p>
+                  </div>
+                  <strong>Total rastreado: {formatHoursValue(activeConsumptionBreakdownTotal)} h</strong>
+                </div>
+                {activeConsumptionBreakdownRows.length === 0 ? (
+                  <p className="muted">Sem lançamentos detalhados para este card.</p>
+                ) : (
+                  <div className="table-wrap hours-bank-table-wrap">
+                    <table className="table table-tight">
+                      <thead>
+                        <tr>
+                          <th>Data</th>
+                          <th>Origem</th>
+                          <th>Módulo</th>
+                          <th>Horas</th>
+                          <th>Motivo</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {activeConsumptionBreakdownRows.map((row) => (
+                          <tr key={`consumption-breakdown-${hoursConsumptionBreakdownMode}-${row.id}`}>
+                            <td>{row.created_at ? formatDateTimeBr(row.created_at) : '-'}</td>
+                            <td>{row.source_label}</td>
+                            <td>{row.module_label}</td>
+                            <td className={row.hours < 0 ? 'hours-breakdown-negative' : 'hours-breakdown-positive'}>
+                              {row.hours > 0 ? '+' : ''}{formatHoursValue(row.hours)} h
+                            </td>
+                            <td>{row.reason}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            ) : null}
 
             <div className="two-col hours-bank-grid">
               <div className="form-subcard hours-bank-panel">
