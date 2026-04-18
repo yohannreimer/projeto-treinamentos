@@ -5065,16 +5065,10 @@ export function registerCoreRoutes(app: Express) {
     let deltaHours = normalizedDelta;
     let consumedDelta = 0;
     if (moduleId) {
-      const absoluteHours = roundHours(Math.abs(normalizedDelta));
-      if (normalizedDelta >= 0) {
-        // Ajuste por módulo com valor positivo representa consumo retroativo.
-        deltaHours = -absoluteHours;
-        consumedDelta = absoluteHours;
-      } else {
-        // Valor negativo em ajuste por módulo representa estorno de consumo.
-        deltaHours = absoluteHours;
-        consumedDelta = -absoluteHours;
-      }
+      // Em ajuste por módulo, o sinal segue semântica financeira padrão:
+      // negativo = consumo (débito), positivo = estorno/crédito.
+      deltaHours = roundHours(normalizedDelta);
+      consumedDelta = roundHours(-normalizedDelta);
     }
     const result = appendAndProject({
       aggregate_type: 'company_hours_account',

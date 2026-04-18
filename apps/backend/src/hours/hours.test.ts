@@ -163,7 +163,7 @@ test('POST /companies/:id/hours/adjustments with module_id updates module insigh
     const createRes = await request(app)
       .post('/companies/comp-hours-api-13/hours/adjustments')
       .send({
-        delta_hours: 8,
+        delta_hours: -8,
         module_id: 'mod-hours-adjust-01',
         reason: 'Treinamento realizado sem turma no histórico.'
       });

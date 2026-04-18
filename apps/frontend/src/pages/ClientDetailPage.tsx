@@ -1221,12 +1221,12 @@ export function ClientDetailPage() {
               <div className="form-subcard hours-bank-panel">
                 <h3>Ajuste manual</h3>
                 <p className="form-hint">
-                  Use para crédito/débito pontual. Se selecionar um módulo, valor positivo registra consumo retroativo nesse módulo.
+                  Use para crédito/débito pontual. Com módulo selecionado: negativo consome retroativo, positivo estorna/credita.
                 </p>
                 <div className="form form-spacious">
                   <label>
                     {hoursAdjustmentModuleId
-                      ? 'Horas do módulo (positivo = consumo, negativo = estorno)'
+                      ? 'Horas do módulo (negativo = consumo, positivo = estorno)'
                       : 'Δ horas (positivo ou negativo)'}
                     <input
                       type="number"
