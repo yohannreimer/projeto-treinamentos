@@ -5105,70 +5105,68 @@ export function registerCoreRoutes(app: Express) {
       return res.status(404).json({ message: 'Lançamento do extrato não encontrado.' });
     }
 
-    const idempotencyKey = `ledger-revert:${companyId}:${entry.id}`;
-    if (entry.event_type === 'training_encounter_completed') {
-      let payload: { hours_consumed?: number; module_id?: string | null; reason?: string | null } = {};
-      try {
-        payload = JSON.parse(entry.payload_json) as { hours_consumed?: number; module_id?: string | null; reason?: string | null };
-      } catch {
-        payload = {};
-      }
-      const consumedHours = Math.abs(Number(payload.hours_consumed ?? 0));
-      if (!Number.isFinite(consumedHours) || consumedHours <= 0) {
-        return res.status(400).json({ message: 'Lançamento inválido para estorno manual.' });
-      }
-
-      const result = appendAndProject({
-        aggregate_type: 'company_hours_account',
-        aggregate_id: companyId,
-        company_id: companyId,
-        event_type: 'hours_manual_adjustment_added',
-        payload: {
-          delta_hours: consumedHours,
-          consumed_delta: -consumedHours,
-          module_id: payload.module_id ?? null,
-          reason: `Estorno manual do lançamento ${entry.id}.`
-        },
-        idempotency_key: idempotencyKey,
-        actor_type: 'operator'
+    if (entry.event_type !== 'hours_manual_adjustment_added') {
+      return res.status(400).json({
+        message: 'Somente ajustes manuais podem ser excluídos por esta ação.',
+        event_type: entry.event_type
       });
-      return res.status(201).json({ ok: true, inserted: result.inserted, event_id: result.event.id });
     }
 
-    if (entry.event_type === 'hours_manual_adjustment_added') {
-      let payload: { delta_hours?: number; consumed_delta?: number; module_id?: string | null } = {};
-      try {
-        payload = JSON.parse(entry.payload_json) as { delta_hours?: number; consumed_delta?: number; module_id?: string | null };
-      } catch {
-        payload = {};
-      }
-
-      const deltaHours = Number(payload.delta_hours ?? entry.delta_hours ?? 0);
-      const consumedDelta = Number(payload.consumed_delta ?? 0);
-      if (!Number.isFinite(deltaHours) || !Number.isFinite(consumedDelta)) {
-        return res.status(400).json({ message: 'Lançamento inválido para estorno manual.' });
-      }
-
-      const result = appendAndProject({
-        aggregate_type: 'company_hours_account',
-        aggregate_id: companyId,
-        company_id: companyId,
-        event_type: 'hours_manual_adjustment_added',
-        payload: {
-          delta_hours: -deltaHours,
-          consumed_delta: -consumedDelta,
-          module_id: payload.module_id ?? null,
-          reason: `Estorno manual do lançamento ${entry.id}.`
-        },
-        idempotency_key: idempotencyKey,
-        actor_type: 'operator'
-      });
-      return res.status(201).json({ ok: true, inserted: result.inserted, event_id: result.event.id });
+    let payload: {
+      delta_hours?: number;
+      consumed_delta?: number;
+      module_id?: string | null;
+      reason?: string | null;
+      deleted_ledger_id?: string | null;
+    } = {};
+    try {
+      payload = JSON.parse(entry.payload_json) as {
+        delta_hours?: number;
+        consumed_delta?: number;
+        module_id?: string | null;
+        reason?: string | null;
+        deleted_ledger_id?: string | null;
+      };
+    } catch {
+      payload = {};
     }
 
-    return res.status(400).json({
-      message: 'Este tipo de lançamento ainda não suporta estorno manual.',
-      event_type: entry.event_type
+    const previousReason = (payload.reason ?? '').toLowerCase();
+    if (payload.deleted_ledger_id || previousReason.includes('exclusão manual do ajuste')) {
+      return res.status(409).json({
+        message: 'Este lançamento já representa uma exclusão e não pode ser excluído novamente.'
+      });
+    }
+
+    const deltaHours = Number(payload.delta_hours ?? entry.delta_hours ?? 0);
+    const consumedDelta = Number(payload.consumed_delta ?? 0);
+    if (!Number.isFinite(deltaHours) || !Number.isFinite(consumedDelta) || (deltaHours === 0 && consumedDelta === 0)) {
+      return res.status(400).json({ message: 'Lançamento inválido para exclusão manual.' });
+    }
+
+    const idempotencyKey = `manual-adjustment-delete:${companyId}:${entry.id}`;
+    const result = appendAndProject({
+      aggregate_type: 'company_hours_account',
+      aggregate_id: companyId,
+      company_id: companyId,
+      event_type: 'hours_manual_adjustment_added',
+      payload: {
+        delta_hours: -deltaHours,
+        consumed_delta: -consumedDelta,
+        module_id: payload.module_id ?? null,
+        reason: `Exclusão manual do ajuste ${entry.id}.`,
+        source_event_id: entry.event_id,
+        deleted_ledger_id: entry.id
+      },
+      idempotency_key: idempotencyKey,
+      actor_type: 'operator'
+    });
+
+    return res.status(201).json({
+      ok: true,
+      inserted: result.inserted,
+      event_id: result.event.id,
+      deleted_ledger_id: entry.id
     });
   });
 

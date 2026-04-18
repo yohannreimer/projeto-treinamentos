@@ -188,6 +188,51 @@ test('POST /companies/:id/hours/adjustments with module_id updates module insigh
   }
 });
 
+test('manual adjustment deletion does not allow infinite delete loops', { concurrency: false }, async () => {
+  const dbPath = assignTestDbPath('hours-manual-adjustment-delete-loop');
+  cleanupDbFiles(dbPath);
+
+  try {
+    const app = createApp({ forceDbRefresh: true, seedDb: false });
+    db.prepare(`
+      insert into company (id, name, status, notes, priority)
+      values ('comp-hours-api-14', 'Cliente Horas API 14', 'Ativo', null, 0)
+    `).run();
+
+    await request(app)
+      .post('/companies/comp-hours-api-14/hours/adjustments')
+      .send({
+        delta_hours: 12,
+        reason: 'Ajuste inicial para exclusão.'
+      })
+      .expect(201);
+
+    const ledgerBefore = await request(app).get('/companies/comp-hours-api-14/hours/ledger');
+    assert.equal(ledgerBefore.status, 200);
+    const originalEntry = (ledgerBefore.body.items as Array<{ id: string; event_type: string }>)
+      .find((item) => item.event_type === 'hours_manual_adjustment_added');
+    assert.ok(originalEntry);
+
+    const deleteRes = await request(app)
+      .post(`/companies/comp-hours-api-14/hours/ledger/${originalEntry?.id}/revert`)
+      .send({});
+    assert.equal(deleteRes.status, 201);
+
+    const ledgerAfterDelete = await request(app).get('/companies/comp-hours-api-14/hours/ledger');
+    assert.equal(ledgerAfterDelete.status, 200);
+    const deletionEntry = (ledgerAfterDelete.body.items as Array<{ id: string; payload_json: string }>)
+      .find((item) => (JSON.parse(item.payload_json) as { deleted_ledger_id?: string }).deleted_ledger_id === originalEntry?.id);
+    assert.ok(deletionEntry);
+
+    const secondDeleteRes = await request(app)
+      .post(`/companies/comp-hours-api-14/hours/ledger/${deletionEntry?.id}/revert`)
+      .send({});
+    assert.equal(secondDeleteRes.status, 409);
+  } finally {
+    cleanupDbFiles(dbPath);
+  }
+});
+
 test('POST /companies/:id/hours/pending/:pendingId/confirm resolves pending adjustment', { concurrency: false }, async () => {
   const dbPath = assignTestDbPath('hours-api-confirm-pending');
   cleanupDbFiles(dbPath);

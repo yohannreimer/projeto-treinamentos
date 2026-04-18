@@ -90,8 +90,33 @@ function extractWorklogHours(payloadJson: string): number | null {
   }
 }
 
-function canRevertLedgerEntry(eventType: string) {
-  return eventType === 'training_encounter_completed' || eventType === 'hours_manual_adjustment_added';
+function parseManualAdjustmentMeta(payloadJson: string) {
+  if (!payloadJson?.trim()) {
+    return {
+      isDeletion: false,
+      deletedLedgerId: null as string | null
+    };
+  }
+  try {
+    const parsed = JSON.parse(payloadJson) as { reason?: string | null; deleted_ledger_id?: string | null };
+    const reason = (parsed.reason ?? '').toLowerCase();
+    const deletedLedgerId = parsed.deleted_ledger_id?.trim() || null;
+    return {
+      isDeletion: Boolean(deletedLedgerId || reason.includes('exclusão manual do ajuste')),
+      deletedLedgerId
+    };
+  } catch {
+    return {
+      isDeletion: false,
+      deletedLedgerId: null as string | null
+    };
+  }
+}
+
+function canDeleteManualAdjustment(payloadJson: string, isDeletedOrigin: boolean) {
+  if (isDeletedOrigin) return false;
+  const meta = parseManualAdjustmentMeta(payloadJson);
+  return !meta.isDeletion;
 }
 
 export function ClientDetailPage() {
@@ -248,28 +273,23 @@ export function ClientDetailPage() {
   );
   const projectedConsumedFromBackend = Number(hoursSummary?.projection?.consumed_hours ?? hoursSummary?.consumed_hours ?? 0);
   const confirmedConsumedFromBackend = Number(hoursSummary?.consumed_hours ?? 0);
-  const projectedConsumedForCards = roundHours(Math.max(projectedConsumedFromBackend, consumedHoursFromModuleInsights));
+  const projectedConsumedForCards = roundHours(Math.max(projectedConsumedFromBackend, confirmedConsumedFromBackend, consumedHoursFromModuleInsights));
   const confirmedConsumedForCards = roundHours(Math.max(confirmedConsumedFromBackend, consumedHoursFromModuleInsights));
+  const projectedAvailableForCards = Math.max(
+    totalAvailableHoursAcrossModules > 0 ? totalAvailableHoursAcrossModules : 0,
+    Number(hoursSummary?.projection?.available_hours ?? 0),
+    Number(hoursSummary?.available_hours ?? 0)
+  );
   const projectedHoursSummary = useMemo(() => ({
-    available_hours: totalAvailableHoursAcrossModules > 0
-      ? totalAvailableHoursAcrossModules
-      : (hoursSummary?.projection?.available_hours ?? hoursSummary?.available_hours ?? 0),
+    available_hours: projectedAvailableForCards,
     consumed_hours: projectedConsumedForCards,
     balance_hours: roundHours(
-      (totalAvailableHoursAcrossModules > 0
-        ? totalAvailableHoursAcrossModules
-        : (hoursSummary?.projection?.available_hours ?? hoursSummary?.available_hours ?? 0))
-      - projectedConsumedForCards
+      projectedAvailableForCards - projectedConsumedForCards
     ),
     remaining_diarias: roundHours(
-      (
-        (totalAvailableHoursAcrossModules > 0
-          ? totalAvailableHoursAcrossModules
-          : (hoursSummary?.projection?.available_hours ?? hoursSummary?.available_hours ?? 0))
-        - projectedConsumedForCards
-      ) / 8
+      (projectedAvailableForCards - projectedConsumedForCards) / 8
     )
-  }), [hoursSummary, projectedConsumedForCards, totalAvailableHoursAcrossModules]);
+  }), [projectedAvailableForCards, projectedConsumedForCards]);
   const confirmedHoursSummary = useMemo(() => {
     const availableHours = projectedHoursSummary.available_hours;
     const consumedHours = confirmedConsumedForCards;
@@ -286,7 +306,29 @@ export function ClientDetailPage() {
     [hoursLedger]
   );
   const operationalLedgerRows = useMemo(
-    () => ledgerRowsLatestFirst.filter((entry) => entry.event_type !== 'deliverable_worklog_logged'),
+    () => {
+      const deletedOriginIds = new Set(
+        ledgerRowsLatestFirst
+          .filter((entry) => entry.event_type === 'hours_manual_adjustment_added')
+          .map((entry) => parseManualAdjustmentMeta(entry.payload_json).deletedLedgerId)
+          .filter((value): value is string => Boolean(value))
+      );
+
+      return ledgerRowsLatestFirst.filter((entry) => {
+        if (entry.event_type === 'deliverable_worklog_logged') return false;
+        if (deletedOriginIds.has(entry.id)) return false;
+        if (entry.event_type === 'hours_manual_adjustment_added' && parseManualAdjustmentMeta(entry.payload_json).isDeletion) {
+          return false;
+        }
+        return true;
+      });
+    },
+    [ledgerRowsLatestFirst]
+  );
+  const deletedManualAdjustments = useMemo(
+    () => ledgerRowsLatestFirst.filter((entry) => (
+      entry.event_type === 'hours_manual_adjustment_added' && parseManualAdjustmentMeta(entry.payload_json).isDeletion
+    )),
     [ledgerRowsLatestFirst]
   );
   const activeTimeline = useMemo(
@@ -546,7 +588,7 @@ export function ClientDetailPage() {
     try {
       await api.revertCompanyHoursLedgerEntry(id, ledgerId);
       await loadCompanyHours(id);
-      setMessage('Lançamento estornado com sucesso.');
+      setMessage('Ajuste manual excluído com sucesso.');
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -1069,13 +1111,14 @@ export function ClientDetailPage() {
                                 <td>{formatHoursValue(entry.balance_after)} h</td>
                                 <td>{extractHoursPayloadReason(entry.payload_json) || '-'}</td>
                                 <td className="actions">
-                                  {canRevertLedgerEntry(entry.event_type) ? (
+                                  {entry.event_type === 'hours_manual_adjustment_added'
+                                    && canDeleteManualAdjustment(entry.payload_json, false) ? (
                                     <button
                                       type="button"
                                       onClick={() => revertHoursLedgerEntry(entry.id)}
                                       disabled={hoursActionLoadingId === `revert:${entry.id}`}
                                     >
-                                      {hoursActionLoadingId === `revert:${entry.id}` ? 'Estornando...' : 'Estornar'}
+                                      {hoursActionLoadingId === `revert:${entry.id}` ? 'Excluindo...' : 'Excluir'}
                                     </button>
                                   ) : (
                                     <span className="muted">-</span>
@@ -1087,6 +1130,20 @@ export function ClientDetailPage() {
                         )}
                       </tbody>
                     </table>
+                  </div>
+                ) : null}
+
+                {showHoursHistory && deletedManualAdjustments.length > 0 ? (
+                  <div className="hours-bank-deleted-log">
+                    <h4>Histórico de ajustes excluídos</h4>
+                    <ul>
+                      {deletedManualAdjustments.map((entry) => (
+                        <li key={`deleted-adjustment-${entry.id}`}>
+                          <strong>{formatDateTimeBr(entry.created_at)}</strong>
+                          <span>{extractHoursPayloadReason(entry.payload_json) || 'Ajuste excluído manualmente.'}</span>
+                        </li>
+                      ))}
+                    </ul>
                   </div>
                 ) : null}
 

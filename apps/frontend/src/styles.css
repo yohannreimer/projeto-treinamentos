@@ -1040,6 +1040,36 @@ button:focus-visible,
   margin-top: 10px;
 }
 
+.hours-bank-deleted-log {
+  margin-top: 10px;
+  border: 1px dashed #d7dee5;
+  border-radius: 12px;
+  background: #f9fafb;
+  padding: 10px 12px;
+}
+
+.hours-bank-deleted-log h4 {
+  margin: 0 0 8px;
+  font-size: 0.9rem;
+  color: #344555;
+}
+
+.hours-bank-deleted-log ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+
+.hours-bank-deleted-log li {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  font-size: 0.84rem;
+  color: #445564;
+}
+
 .hours-bank-table-wrap .table {
   min-width: 780px;
 }

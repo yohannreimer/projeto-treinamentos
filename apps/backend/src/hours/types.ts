@@ -25,6 +25,7 @@ export type HoursAdjustmentPayload = {
   module_id?: string | null;
   reason?: string | null;
   source_event_id?: string | null;
+  deleted_ledger_id?: string | null;
 };
 
 export type TrainingEncounterCompletedPayload = {
