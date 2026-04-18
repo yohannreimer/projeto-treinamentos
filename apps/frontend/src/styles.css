@@ -1024,6 +1024,22 @@ button:focus-visible,
   gap: 10px;
 }
 
+.button-ghost {
+  border: 1px solid #c6d1dc;
+  background: #f6f8fa;
+  color: #314253;
+  box-shadow: none;
+}
+
+.button-ghost:hover {
+  border-color: #b7c4d0;
+  background: #eef3f7;
+}
+
+.hours-bank-history-wrap {
+  margin-top: 10px;
+}
+
 .hours-bank-table-wrap .table {
   min-width: 780px;
 }

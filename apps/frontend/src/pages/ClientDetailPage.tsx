@@ -981,10 +981,14 @@ export function ClientDetailPage() {
 
               <div className="form-subcard hours-bank-panel">
                 <h3>Ajuste manual</h3>
-                <p className="form-hint">Use para crédito/débito pontual no saldo com trilha auditável no extrato.</p>
+                <p className="form-hint">
+                  Use para crédito/débito pontual. Se selecionar um módulo, valor positivo registra consumo retroativo nesse módulo.
+                </p>
                 <div className="form form-spacious">
                   <label>
-                    Δ horas (positivo ou negativo)
+                    {hoursAdjustmentModuleId
+                      ? 'Horas do módulo (positivo = consumo, negativo = estorno)'
+                      : 'Δ horas (positivo ou negativo)'}
                     <input
                       type="number"
                       step="0.5"
@@ -1022,6 +1026,7 @@ export function ClientDetailPage() {
                     </button>
                     <button
                       type="button"
+                      className="button-ghost"
                       onClick={() => setShowHoursHistory((prev) => !prev)}
                     >
                       {showHoursHistory ? 'Ocultar histórico completo' : `Ver histórico completo (${ledgerRowsLatestFirst.length})`}
@@ -1031,60 +1036,8 @@ export function ClientDetailPage() {
               </div>
             </div>
 
-                <div className="table-wrap hours-bank-table-wrap">
-              <table className="table table-hover table-tight">
-                <thead>
-                  <tr>
-                    <th>Data</th>
-                    <th>Evento</th>
-                    <th>Δ saldo cliente</th>
-                    <th>Esforço interno</th>
-                    <th>Saldo após</th>
-                    <th>Motivo</th>
-                    <th>Ações</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {operationalLedgerRows.length === 0 ? (
-                    <tr>
-                      <td colSpan={7}>Sem movimentações no extrato de horas.</td>
-                    </tr>
-                  ) : (
-                    operationalLedgerRows.map((entry) => {
-                      const worklogHours = entry.event_type === 'deliverable_worklog_logged'
-                        ? extractWorklogHours(entry.payload_json)
-                        : null;
-                      return (
-                        <tr key={entry.id}>
-                          <td>{formatDateTimeBr(entry.created_at)}</td>
-                          <td>{hoursEventLabel(entry.event_type)}</td>
-                          <td>{entry.delta_hours > 0 ? '+' : ''}{formatHoursValue(entry.delta_hours)} h</td>
-                          <td>{worklogHours === null ? '-' : `${formatHoursValue(worklogHours)} h`}</td>
-                          <td>{formatHoursValue(entry.balance_after)} h</td>
-                          <td>{extractHoursPayloadReason(entry.payload_json) || '-'}</td>
-                          <td className="actions">
-                            {canRevertLedgerEntry(entry.event_type) ? (
-                              <button
-                                type="button"
-                                onClick={() => revertHoursLedgerEntry(entry.id)}
-                                disabled={hoursActionLoadingId === `revert:${entry.id}`}
-                              >
-                                {hoursActionLoadingId === `revert:${entry.id}` ? 'Estornando...' : 'Estornar'}
-                              </button>
-                            ) : (
-                              <span className="muted">-</span>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-                </div>
-
                 {showHoursHistory ? (
-                  <div className="table-wrap hours-bank-table-wrap">
+                  <div className="table-wrap hours-bank-table-wrap hours-bank-history-wrap">
                     <table className="table table-hover table-tight">
                       <thead>
                         <tr>
@@ -1094,15 +1047,16 @@ export function ClientDetailPage() {
                           <th>Esforço interno</th>
                           <th>Saldo após</th>
                           <th>Motivo</th>
+                          <th>Ações</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {ledgerRowsLatestFirst.length === 0 ? (
+                        {operationalLedgerRows.length === 0 ? (
                           <tr>
-                            <td colSpan={6}>Sem histórico de movimentações.</td>
+                            <td colSpan={7}>Sem histórico de movimentações.</td>
                           </tr>
                         ) : (
-                          ledgerRowsLatestFirst.map((entry) => {
+                          operationalLedgerRows.map((entry) => {
                             const worklogHours = entry.event_type === 'deliverable_worklog_logged'
                               ? extractWorklogHours(entry.payload_json)
                               : null;
@@ -1114,6 +1068,19 @@ export function ClientDetailPage() {
                                 <td>{worklogHours === null ? '-' : `${formatHoursValue(worklogHours)} h`}</td>
                                 <td>{formatHoursValue(entry.balance_after)} h</td>
                                 <td>{extractHoursPayloadReason(entry.payload_json) || '-'}</td>
+                                <td className="actions">
+                                  {canRevertLedgerEntry(entry.event_type) ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => revertHoursLedgerEntry(entry.id)}
+                                      disabled={hoursActionLoadingId === `revert:${entry.id}`}
+                                    >
+                                      {hoursActionLoadingId === `revert:${entry.id}` ? 'Estornando...' : 'Estornar'}
+                                    </button>
+                                  ) : (
+                                    <span className="muted">-</span>
+                                  )}
+                                </td>
                               </tr>
                             );
                           })

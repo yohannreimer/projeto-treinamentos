@@ -5060,14 +5060,29 @@ export function registerCoreRoutes(app: Express) {
       .digest('hex')
       .slice(0, 24)}`;
     const idempotencyKey = payload.idempotency_key?.trim() || generatedIdempotencyKey;
-    const consumedDelta = moduleId ? roundHours(-Number(payload.delta_hours)) : 0;
+    const requestedDelta = Number(payload.delta_hours);
+    const normalizedDelta = Number.isFinite(requestedDelta) ? requestedDelta : 0;
+    let deltaHours = normalizedDelta;
+    let consumedDelta = 0;
+    if (moduleId) {
+      const absoluteHours = roundHours(Math.abs(normalizedDelta));
+      if (normalizedDelta >= 0) {
+        // Ajuste por módulo com valor positivo representa consumo retroativo.
+        deltaHours = -absoluteHours;
+        consumedDelta = absoluteHours;
+      } else {
+        // Valor negativo em ajuste por módulo representa estorno de consumo.
+        deltaHours = absoluteHours;
+        consumedDelta = -absoluteHours;
+      }
+    }
     const result = appendAndProject({
       aggregate_type: 'company_hours_account',
       aggregate_id: companyId,
       company_id: companyId,
       event_type: 'hours_manual_adjustment_added',
       payload: {
-        delta_hours: Number(payload.delta_hours),
+        delta_hours: deltaHours,
         consumed_delta: consumedDelta,
         module_id: moduleId,
         reason: normalizedReason
