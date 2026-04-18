@@ -47,7 +47,8 @@ function InternalApp() {
   return (
     <Layout onLogout={handleLogout} loggedUser={AUTH_USER}>
       <Routes>
-        <Route path="/" element={<DashboardPage />} />
+        <Route path="/" element={<Navigate to="/calendario" replace />} />
+        <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/calendario" element={<CalendarPage />} />
         <Route path="/turmas" element={<CohortsPage />} />
         <Route path="/turmas/:id" element={<CohortDetailPage />} />
@@ -61,7 +62,7 @@ function InternalApp() {
         <Route path="/licencas/programas" element={<LicenseProgramsPage />} />
         <Route path="/documentacao" element={<InternalDocsPage />} />
         <Route path="/admin" element={<AdminPage />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="*" element={<Navigate to="/calendario" replace />} />
       </Routes>
     </Layout>
   );

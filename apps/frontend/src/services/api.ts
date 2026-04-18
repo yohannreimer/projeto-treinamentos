@@ -1,5 +1,6 @@
 import type {
   CompanyHoursLedgerItem,
+  CompanyHoursModuleInsight,
   CompanyHoursPendingItem,
   CompanyHoursSummary
 } from '../types';
@@ -293,6 +294,8 @@ export const api = {
     }),
   companyHoursSummary: (companyId: string) =>
     req<CompanyHoursSummary>(`/companies/${companyId}/hours/summary`),
+  companyHoursModules: (companyId: string) =>
+    req<{ items: CompanyHoursModuleInsight[] }>(`/companies/${companyId}/hours/modules`),
   companyHoursLedger: (companyId: string) =>
     req<{ items: CompanyHoursLedgerItem[] }>(`/companies/${companyId}/hours/ledger`),
   companyHoursPending: (companyId: string) =>
@@ -314,6 +317,11 @@ export const api = {
     req<{ ok: boolean; inserted: boolean; event_id: string }>(`/companies/${companyId}/hours/adjustments`, {
       method: 'POST',
       body: JSON.stringify(payload)
+    }),
+  revertCompanyHoursLedgerEntry: (companyId: string, ledgerId: string) =>
+    req<{ ok: boolean; inserted: boolean; event_id: string }>(`/companies/${companyId}/hours/ledger/${ledgerId}/revert`, {
+      method: 'POST',
+      body: JSON.stringify({})
     }),
   technicians: () => req('/technicians'),
   createTechnician: (payload: unknown) =>

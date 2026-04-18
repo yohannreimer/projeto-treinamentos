@@ -54,6 +54,7 @@ export function LicensesPage() {
   const [attentionSortDirection, setAttentionSortDirection] = useState<'asc' | 'desc'>('asc');
 
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [showLicenseFormSection, setShowLicenseFormSection] = useState(false);
   const [companyId, setCompanyId] = useState('');
   const [userName, setUserName] = useState('');
   const [selectedProgramNames, setSelectedProgramNames] = useState<string[]>([]);
@@ -186,6 +187,7 @@ export function LicensesPage() {
   }
 
   function editLicense(row: LicenseRow) {
+    setShowLicenseFormSection(true);
     setEditingId(row.id);
     setCompanyId(row.company_id);
     setUserName(row.user_name);
@@ -332,12 +334,24 @@ export function LicensesPage() {
       <Section
         title={editingId ? 'Editar licença' : 'Cadastrar licença'}
         action={(
-          <button type="button" onClick={() => navigate('/licencas/programas')}>
-            Abrir Programas de Licença
-          </button>
+          <div className="actions actions-compact">
+            <button
+              type="button"
+              className="section-collapse-btn"
+              onClick={() => setShowLicenseFormSection((prev) => !prev)}
+              aria-expanded={showLicenseFormSection}
+              aria-label={showLicenseFormSection ? 'Minimizar cadastro de licença' : 'Expandir cadastro de licença'}
+            >
+              {showLicenseFormSection ? '−' : '+'}
+            </button>
+            <button type="button" onClick={() => navigate('/licencas/programas')}>
+              Abrir Programas de Licença
+            </button>
+          </div>
         )}
       >
-        <div className="form form-spacious">
+        {showLicenseFormSection ? (
+          <div className="form form-spacious">
           <p className="form-hint">Preencha cliente e usuário. O programa principal será o primeiro item marcado em Programas da licença.</p>
           <div className="two-col">
             <label>
@@ -408,7 +422,8 @@ export function LicensesPage() {
               <button type="button" onClick={resetForm}>Cancelar edição</button>
             ) : null}
           </div>
-        </div>
+          </div>
+        ) : null}
       </Section>
 
       <Section title="Avisos de renovação">

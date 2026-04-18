@@ -476,7 +476,7 @@ export function AdminPage() {
           {selectedModule ? (
             <div className="form form-spacious">
               <p className="form-hint">O valor de diárias aqui vira padrão para novos blocos de turma e pode ser sobrescrito na turma.</p>
-              <div className="three-col">
+              <div className="three-col admin-module-grid">
                 <label>
                   Código
                   <input value={editCode} onChange={(e) => setEditCode(e.target.value.toUpperCase())} />
@@ -501,7 +501,7 @@ export function AdminPage() {
                 <input value={editName} onChange={(e) => setEditName(e.target.value)} />
               </label>
 
-              <div className="three-col">
+              <div className="three-col admin-module-grid">
                 <label>
                   Perfil
                   <input value={editProfile} onChange={(e) => setEditProfile(e.target.value)} />
@@ -515,7 +515,14 @@ export function AdminPage() {
                 </label>
                 <label>
                   Tipo de entrega
-                  <select value={editDeliveryMode} onChange={(e) => setEditDeliveryMode(e.target.value as 'ministrado' | 'entregavel')}>
+                  <select
+                    value={editDeliveryMode}
+                    onChange={(e) => {
+                      const mode = e.target.value as 'ministrado' | 'entregavel';
+                      setEditDeliveryMode(mode);
+                      setEditHoursPolicy(mode === 'entregavel' ? 'nao_consume' : 'consome');
+                    }}
+                  >
                     <option value="ministrado">Treinamento ministrado</option>
                     <option value="entregavel">Entregável interno</option>
                   </select>
@@ -565,7 +572,7 @@ export function AdminPage() {
       <Section title="Criar novo módulo">
         <div className="form form-spacious">
           <p className="form-hint">Novos módulos entram no catálogo e ficam disponíveis em Administração, Turmas e Licenças.</p>
-          <div className="three-col">
+          <div className="three-col admin-module-grid">
             <label>
               Código
               <input value={newCode} onChange={(e) => setNewCode(e.target.value.toUpperCase())} />
@@ -590,7 +597,7 @@ export function AdminPage() {
             <input value={newName} onChange={(e) => setNewName(e.target.value)} />
           </label>
 
-          <div className="three-col">
+          <div className="three-col admin-module-grid">
             <label>
               Perfil
               <input value={newProfile} onChange={(e) => setNewProfile(e.target.value)} />
@@ -604,7 +611,14 @@ export function AdminPage() {
             </label>
             <label>
               Tipo de entrega
-              <select value={newDeliveryMode} onChange={(e) => setNewDeliveryMode(e.target.value as 'ministrado' | 'entregavel')}>
+              <select
+                value={newDeliveryMode}
+                onChange={(e) => {
+                  const mode = e.target.value as 'ministrado' | 'entregavel';
+                  setNewDeliveryMode(mode);
+                  setNewHoursPolicy(mode === 'entregavel' ? 'nao_consume' : 'consome');
+                }}
+              >
                 <option value="ministrado">Treinamento ministrado</option>
                 <option value="entregavel">Entregável interno</option>
               </select>

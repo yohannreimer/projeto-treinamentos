@@ -61,6 +61,8 @@ export function ClientsPage() {
   const [newStatus, setNewStatus] = useState<(typeof statusOptions)[number]>('Em_treinamento');
   const [sortKey, setSortKey] = useState<SortKey>('priority_level');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
+  const [showCreateSection, setShowCreateSection] = useState(false);
+  const [showFiltersSection, setShowFiltersSection] = useState(false);
 
   function load() {
     api.companies().then(setRows).catch(() => setRows([]));
@@ -269,8 +271,23 @@ export function ClientsPage() {
       </div>
 
       <div className="clients-tools-grid">
-        <Section title="Cadastro de cliente" className="clients-create-panel">
-          <div className="form form-spacious">
+        <Section
+          title="Cadastro de cliente"
+          className={`clients-create-panel ${showCreateSection ? '' : 'is-collapsed'}`.trim()}
+          action={(
+            <button
+              type="button"
+              className="section-collapse-btn"
+              onClick={() => setShowCreateSection((prev) => !prev)}
+              aria-expanded={showCreateSection}
+              aria-label={showCreateSection ? 'Minimizar cadastro de cliente' : 'Expandir cadastro de cliente'}
+            >
+              {showCreateSection ? '−' : '+'}
+            </button>
+          )}
+        >
+          {showCreateSection ? (
+            <div className="form form-spacious">
             <p className="form-hint">Preencha os dados principais para o planejamento comercial e operacional.</p>
             <div className="three-col">
               <label>
@@ -350,11 +367,27 @@ export function ClientsPage() {
             <div className="actions">
               <button type="button" onClick={createClient}>Adicionar cliente</button>
             </div>
-          </div>
+            </div>
+          ) : null}
         </Section>
 
-        <Section title="Filtros" className="clients-filter-panel">
-          <div className="form form-spacious">
+        <Section
+          title="Filtros"
+          className={`clients-filter-panel ${showFiltersSection ? '' : 'is-collapsed'}`.trim()}
+          action={(
+            <button
+              type="button"
+              className="section-collapse-btn"
+              onClick={() => setShowFiltersSection((prev) => !prev)}
+              aria-expanded={showFiltersSection}
+              aria-label={showFiltersSection ? 'Minimizar filtros de clientes' : 'Expandir filtros de clientes'}
+            >
+              {showFiltersSection ? '−' : '+'}
+            </button>
+          )}
+        >
+          {showFiltersSection ? (
+            <div className="form form-spacious">
             <p className="form-hint">Filtre rapidamente por status, prioridade, modalidade ou busca textual.</p>
             <label>
               Busca rápida
@@ -417,7 +450,8 @@ export function ClientsPage() {
                 Limpar filtros
               </button>
             </div>
-          </div>
+            </div>
+          ) : null}
         </Section>
       </div>
 

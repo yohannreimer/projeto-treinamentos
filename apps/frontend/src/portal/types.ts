@@ -60,6 +60,10 @@ export type PortalPlanningItem = {
   module_name: string;
   status: string;
   completed_at: string | null;
+  delivery_mode?: 'ministrado' | 'entregavel';
+  planned_diarias?: number;
+  planned_hours?: number;
+  actual_client_consumed_hours?: number;
   total_encounters?: number | null;
   completed_encounters?: number | null;
   remaining_encounters?: number | null;

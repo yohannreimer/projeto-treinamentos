@@ -608,6 +608,7 @@ export function initDb() {
   ensureColumn('module_template', 'client_hours_policy', "client_hours_policy text not null default 'consome'");
   ensureColumn('calendar_activity', 'linked_module_id', 'linked_module_id text');
   ensureColumn('calendar_activity', 'hours_scope', "hours_scope text not null default 'none'");
+  ensureColumn('calendar_activity', 'hours_consumed_snapshot', 'hours_consumed_snapshot real not null default 0');
   ensureColumn('technician', 'hourly_cost', 'hourly_cost real');
   ensureColumn('implementation_kanban_card', 'column_id', 'column_id text');
   ensureColumn('implementation_kanban_card', 'client_name', 'client_name text');

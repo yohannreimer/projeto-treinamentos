@@ -7,6 +7,11 @@ import puppeteer from 'puppeteer-core';
 import { z } from 'zod';
 import { clearAllData, db, nowDateIso, uuid } from './db.js';
 import { appendAndProject, getHoursLedger, getHoursPending, getHoursSummary } from './hours/service.js';
+import {
+  readCompanyHoursModuleInsights,
+  readProjectedCompanyHoursSummary,
+  syncConfirmedHoursFromAllocations
+} from './hours/reconcile.js';
 import { createPortalSession, hashPassword } from './portal/auth.js';
 import { portalRealtimeHub } from './portal/realtime.js';
 import { readPortalRealtimeSnapshot, setPortalTypingState, touchPortalPresence } from './portal/realtimeState.js';
@@ -1167,6 +1172,82 @@ function activitySchedulesTotalMinutes(schedules: ActivityDateSchedule[]): numbe
   return schedules.reduce((total, schedule) => total + activityScheduleMinutes(schedule), 0);
 }
 
+function roundHours(value: number) {
+  return Math.round(value * 100) / 100;
+}
+
+function timeRangeMinutes(startTime: string | null | undefined, endTime: string | null | undefined): number | null {
+  const startMinutes = activityTimeToMinutes(startTime ?? null);
+  const endMinutes = activityTimeToMinutes(endTime ?? null);
+  if (startMinutes === null || endMinutes === null || endMinutes <= startMinutes) return null;
+  return endMinutes - startMinutes;
+}
+
+function executedAllocationHours(args: {
+  cohortId: string;
+  moduleId: string;
+  entryDay: number;
+}): number {
+  const block = db.prepare(`
+    select duration_days
+    from cohort_module_block
+    where cohort_id = ? and module_id = ?
+    limit 1
+  `).get(args.cohortId, args.moduleId) as { duration_days: number } | undefined;
+  const durationDays = Math.max(1, Number(block?.duration_days || 1));
+  const startDay = Math.max(1, Number(args.entryDay || 1));
+
+  const cohort = db.prepare(`
+    select period, start_time, end_time
+    from cohort
+    where id = ?
+    limit 1
+  `).get(args.cohortId) as {
+    period: 'Integral' | 'Meio_periodo' | null;
+    start_time: string | null;
+    end_time: string | null;
+  } | undefined;
+
+  if ((cohort?.period ?? 'Integral') !== 'Meio_periodo') {
+    return roundHours(durationDays * 8);
+  }
+
+  const scheduleRows = db.prepare(`
+    select day_index, start_time, end_time
+    from cohort_schedule_day
+    where cohort_id = ?
+      and day_index between ? and ?
+    order by day_index asc
+  `).all(args.cohortId, startDay, startDay + durationDays - 1) as Array<{
+    day_index: number;
+    start_time: string | null;
+    end_time: string | null;
+  }>;
+  const scheduleByDayIndex = new Map<number, { start_time: string | null; end_time: string | null }>();
+  scheduleRows.forEach((row) => {
+    scheduleByDayIndex.set(Number(row.day_index), {
+      start_time: row.start_time,
+      end_time: row.end_time
+    });
+  });
+
+  let totalMinutes = 0;
+  for (let offset = 0; offset < durationDays; offset += 1) {
+    const dayIndex = startDay + offset;
+    const scheduled = scheduleByDayIndex.get(dayIndex);
+    const dayStartTime = scheduled?.start_time ?? cohort?.start_time ?? null;
+    const dayEndTime = scheduled?.end_time ?? cohort?.end_time ?? null;
+    const slotMinutes = timeRangeMinutes(dayStartTime, dayEndTime);
+    totalMinutes += slotMinutes ?? (4 * 60);
+  }
+
+  return roundHours(totalMinutes / 60);
+}
+
+function allocationStatusCountsInConfirmedHours(status: AllocationStatus): boolean {
+  return status === 'Confirmado' || status === 'Executado';
+}
+
 type ActivityHoursScope = (typeof CALENDAR_ACTIVITY_HOURS_SCOPE_VALUES)[number];
 type ActivityLinkedModule = {
   id: string;
@@ -1276,6 +1357,84 @@ function maybeAppendDeliverableWorklogFromActivity(args: {
     idempotency_key: `deliverable-worklog:${args.activityId}:${snapshotHash}`,
     actor_type: 'operator'
   });
+}
+
+function targetConsumptionHoursForActivity(args: {
+  hoursScope: ActivityHoursScope;
+  dateSchedules: ActivityDateSchedule[];
+}): number {
+  if (args.hoursScope !== 'client_consumption') return 0;
+  const minutes = activitySchedulesTotalMinutes(args.dateSchedules);
+  if (!Number.isFinite(minutes) || minutes <= 0) return 0;
+  return roundHours(minutes / 60);
+}
+
+function syncClientHoursConsumptionFromActivity(args: {
+  activityId: string;
+  companyId: string | null;
+  linkedModuleId: string | null;
+  hoursScope: ActivityHoursScope;
+  dateSchedules: ActivityDateSchedule[];
+  previousHoursConsumedSnapshot: number;
+  actorType?: 'operator' | 'system' | 'portal_client';
+  persistSnapshot?: boolean;
+}): { targetHours: number; deltaHours: number } {
+  const actorType = args.actorType ?? 'operator';
+  const persistSnapshot = args.persistSnapshot ?? true;
+  const previousHours = roundHours(Math.max(0, Number(args.previousHoursConsumedSnapshot || 0)));
+  const targetHours = roundHours(targetConsumptionHoursForActivity({
+    hoursScope: args.hoursScope,
+    dateSchedules: args.dateSchedules
+  }));
+  const deltaHours = roundHours(targetHours - previousHours);
+
+  if (!args.companyId) {
+    if (persistSnapshot) {
+      db.prepare('update calendar_activity set hours_consumed_snapshot = ? where id = ?').run(0, args.activityId);
+    }
+    return { targetHours: 0, deltaHours: 0 };
+  }
+
+  if (Math.abs(deltaHours) >= 0.01) {
+    const movementLabel = `${previousHours}->${targetHours}`;
+    if (deltaHours > 0) {
+      appendAndProject({
+        aggregate_type: 'company_hours_account',
+        aggregate_id: args.activityId,
+        company_id: args.companyId,
+        event_type: 'training_encounter_completed',
+        payload: {
+          hours_consumed: deltaHours,
+          module_id: args.linkedModuleId ?? null,
+          encounter_id: args.activityId,
+          reason: 'Consumo automático via atividade de calendário (escopo cliente).'
+        },
+        idempotency_key: `activity-client-consumption:${args.activityId}:${movementLabel}:debit`,
+        actor_type: actorType
+      });
+    } else {
+      appendAndProject({
+        aggregate_type: 'company_hours_account',
+        aggregate_id: args.activityId,
+        company_id: args.companyId,
+        event_type: 'hours_manual_adjustment_added',
+        payload: {
+          delta_hours: Math.abs(deltaHours),
+          consumed_delta: -Math.abs(deltaHours),
+          module_id: args.linkedModuleId ?? null,
+          reason: 'Estorno automático de consumo após ajuste de atividade de calendário.'
+        },
+        idempotency_key: `activity-client-consumption:${args.activityId}:${movementLabel}:credit`,
+        actor_type: actorType
+      });
+    }
+  }
+
+  if (persistSnapshot) {
+    db.prepare('update calendar_activity set hours_consumed_snapshot = ? where id = ?').run(targetHours, args.activityId);
+  }
+
+  return { targetHours, deltaHours };
 }
 
 function activitySlotsOverlap(left: ActivityDateSchedule, right: ActivityDateSchedule): boolean {
@@ -2305,9 +2464,9 @@ export function registerCoreRoutes(app: Express) {
       db.prepare(`
         insert into calendar_activity (
           id, title, activity_type, start_date, end_date, selected_dates, all_day, start_time, end_time,
-          technician_id, company_id, linked_module_id, hours_scope, status, notes, created_at, updated_at
+          technician_id, company_id, linked_module_id, hours_scope, hours_consumed_snapshot, status, notes, created_at, updated_at
         )
-        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         activityId,
         payload.title.trim(),
@@ -2322,6 +2481,7 @@ export function registerCoreRoutes(app: Express) {
         hoursContext.companyId,
         hoursContext.linkedModuleId,
         hoursContext.hoursScope,
+        0,
         payload.status,
         payload.notes?.trim() || null,
         nowIso,
@@ -2350,6 +2510,19 @@ export function registerCoreRoutes(app: Express) {
     tx();
 
     try {
+      syncClientHoursConsumptionFromActivity({
+        activityId,
+        companyId: hoursContext.companyId,
+        linkedModuleId: hoursContext.linkedModuleId,
+        hoursScope: hoursContext.hoursScope,
+        dateSchedules: normalizedDates.dateSchedules,
+        previousHoursConsumedSnapshot: 0
+      });
+    } catch (error) {
+      console.error('Falha ao registrar consumo de horas da atividade:', errorMessage(error));
+    }
+
+    try {
       maybeAppendDeliverableWorklogFromActivity({
         activityId,
         companyId: hoursContext.companyId,
@@ -2372,7 +2545,7 @@ export function registerCoreRoutes(app: Express) {
     }
   
     const existing = db.prepare(`
-      select id, start_date, end_date, selected_dates, all_day, start_time, end_time, technician_id, company_id, linked_module_id, hours_scope
+      select id, start_date, end_date, selected_dates, all_day, start_time, end_time, technician_id, company_id, linked_module_id, hours_scope, hours_consumed_snapshot
       from calendar_activity
       where id = ?
     `).get(req.params.id) as {
@@ -2387,6 +2560,7 @@ export function registerCoreRoutes(app: Express) {
       company_id: string | null;
       linked_module_id: string | null;
       hours_scope: ActivityHoursScope;
+      hours_consumed_snapshot: number | null;
     } | undefined;
     if (!existing) {
       return res.status(404).json({ message: 'Atividade não encontrada.' });
@@ -2604,6 +2778,19 @@ export function registerCoreRoutes(app: Express) {
     tx();
 
     try {
+      syncClientHoursConsumptionFromActivity({
+        activityId: req.params.id,
+        companyId: hoursContext.companyId,
+        linkedModuleId: hoursContext.linkedModuleId,
+        hoursScope: hoursContext.hoursScope,
+        dateSchedules: normalizedDates.dateSchedules,
+        previousHoursConsumedSnapshot: Number(existing.hours_consumed_snapshot ?? 0)
+      });
+    } catch (error) {
+      console.error('Falha ao reconciliar consumo de horas da atividade:', errorMessage(error));
+    }
+
+    try {
       maybeAppendDeliverableWorklogFromActivity({
         activityId: req.params.id,
         companyId: hoursContext.companyId,
@@ -2620,10 +2807,37 @@ export function registerCoreRoutes(app: Express) {
   });
   
   app.delete('/calendar/activities/:id', (req, res) => {
-    const exists = db.prepare('select id from calendar_activity where id = ?').get(req.params.id) as { id: string } | undefined;
-    if (!exists) {
+    const existing = db.prepare(`
+      select id, company_id, linked_module_id, hours_scope, hours_consumed_snapshot
+      from calendar_activity
+      where id = ?
+      limit 1
+    `).get(req.params.id) as {
+      id: string;
+      company_id: string | null;
+      linked_module_id: string | null;
+      hours_scope: ActivityHoursScope;
+      hours_consumed_snapshot: number | null;
+    } | undefined;
+    if (!existing) {
       return res.status(404).json({ message: 'Atividade não encontrada.' });
     }
+
+    try {
+      syncClientHoursConsumptionFromActivity({
+        activityId: req.params.id,
+        companyId: existing.company_id,
+        linkedModuleId: existing.linked_module_id,
+        hoursScope: 'none',
+        dateSchedules: [],
+        previousHoursConsumedSnapshot: Number(existing.hours_consumed_snapshot ?? 0),
+        persistSnapshot: false
+      });
+    } catch (error) {
+      console.error('Falha ao estornar consumo de horas na exclusão da atividade:', errorMessage(error));
+      return res.status(500).json({ message: 'Não foi possível estornar o consumo de horas da atividade.' });
+    }
+
     db.prepare('delete from calendar_activity where id = ?').run(req.params.id);
     return res.json({ ok: true });
   });
@@ -3663,6 +3877,9 @@ export function registerCoreRoutes(app: Express) {
       id: string;
       company_id: string;
       module_id: string;
+      cohort_id: string;
+      entry_day: number;
+      status: AllocationStatus;
     } | undefined;
   
     if (!allocation) {
@@ -3710,6 +3927,56 @@ export function registerCoreRoutes(app: Express) {
       req.params.id
     );
   
+    const moduleHoursConfig = db.prepare(`
+      select delivery_mode, client_hours_policy
+      from module_template
+      where id = ?
+      limit 1
+    `).get(allocation.module_id) as {
+      delivery_mode: 'ministrado' | 'entregavel';
+      client_hours_policy: 'consome' | 'nao_consume';
+    } | undefined;
+    if (moduleHoursConfig?.delivery_mode === 'ministrado' && moduleHoursConfig.client_hours_policy === 'consome') {
+      const previousCounted = allocationStatusCountsInConfirmedHours(allocation.status);
+      const nextCounted = allocationStatusCountsInConfirmedHours(nextStatus);
+      const consumedHours = executedAllocationHours({
+        cohortId: allocation.cohort_id,
+        moduleId: allocation.module_id,
+        entryDay: allocation.entry_day
+      });
+      if (consumedHours > 0 && !previousCounted && nextCounted) {
+        appendAndProject({
+          aggregate_type: 'company_hours_account',
+          aggregate_id: allocation.id,
+          company_id: allocation.company_id,
+          event_type: 'training_encounter_completed',
+          payload: {
+            hours_consumed: consumedHours,
+            module_id: allocation.module_id,
+            encounter_id: `allocation:${allocation.id}`,
+            reason: 'Consumo automático por alocação confirmada/executada na turma.'
+          },
+          idempotency_key: `allocation-client-consumption:${allocation.id}:from-${allocation.status}:to-${nextStatus}:debit`,
+          actor_type: 'operator'
+        });
+      } else if (consumedHours > 0 && previousCounted && !nextCounted) {
+        appendAndProject({
+          aggregate_type: 'company_hours_account',
+          aggregate_id: allocation.id,
+          company_id: allocation.company_id,
+          event_type: 'hours_manual_adjustment_added',
+          payload: {
+            delta_hours: consumedHours,
+            consumed_delta: -consumedHours,
+            module_id: allocation.module_id,
+            reason: 'Estorno automático por mudança de status da alocação para não confirmada.'
+          },
+          idempotency_key: `allocation-client-consumption:${allocation.id}:from-${allocation.status}:to-${nextStatus}:credit`,
+          actor_type: 'operator'
+        });
+      }
+    }
+
     if (nextStatus === 'Executado') {
       const progressId = uuid('prog');
       db.prepare(`
@@ -3898,6 +4165,35 @@ export function registerCoreRoutes(app: Express) {
         payload_json: string;
         created_at: string;
         updated_at: string;
+      }
+      | undefined;
+  }
+
+  function readHoursLedgerById(companyId: string, ledgerId: string) {
+    return db.prepare(`
+      select
+        id,
+        company_id,
+        event_id,
+        event_type,
+        delta_hours,
+        balance_after,
+        payload_json,
+        created_at
+      from hours_projection_ledger
+      where id = ?
+        and company_id = ?
+      limit 1
+    `).get(ledgerId, companyId) as
+      | {
+        id: string;
+        company_id: string;
+        event_id: string;
+        event_type: string;
+        delta_hours: number;
+        balance_after: number;
+        payload_json: string;
+        created_at: string;
       }
       | undefined;
   }
@@ -4216,6 +4512,29 @@ export function registerCoreRoutes(app: Express) {
       on conflict(company_id, module_id) do update set
         is_enabled = excluded.is_enabled
     `).run(req.params.id, req.params.moduleId, parsed.data.is_enabled ? 1 : 0);
+
+    const portalClient = db.prepare(`
+      select id, hidden_module_ids_json
+      from portal_client
+      where company_id = ?
+      limit 1
+    `).get(req.params.id) as { id: string; hidden_module_ids_json: string | null } | undefined;
+
+    if (portalClient) {
+      const currentHidden = parsePortalModuleIdList(portalClient.hidden_module_ids_json);
+      const nextHidden = parsed.data.is_enabled
+        ? currentHidden.filter((moduleId) => moduleId !== req.params.moduleId)
+        : Array.from(new Set([...currentHidden, req.params.moduleId]));
+      const hasChanged = nextHidden.length !== currentHidden.length
+        || nextHidden.some((value, index) => value !== currentHidden[index]);
+      if (hasChanged) {
+        db.prepare(`
+          update portal_client
+          set hidden_module_ids_json = ?, updated_at = ?
+          where id = ?
+        `).run(JSON.stringify(nextHidden), new Date().toISOString(), portalClient.id);
+      }
+    }
   
     if (parsed.data.is_enabled) {
       db.prepare(`
@@ -4239,6 +4558,8 @@ export function registerCoreRoutes(app: Express) {
   
     const timeline = db.prepare(`
       select mt.id as module_id, mt.code, mt.name, mt.category, mt.duration_days,
+        coalesce(mt.delivery_mode, 'ministrado') as delivery_mode,
+        coalesce(mt.client_hours_policy, 'consome') as client_hours_policy,
         coalesce(cmp.status, 'Nao_iniciado') as status,
         cmp.completed_at,
         cmp.notes as progress_notes,
@@ -4328,20 +4649,55 @@ export function registerCoreRoutes(app: Express) {
       return res.status(404).json({ message: 'Empresa nao encontrada' });
     }
 
-    const projection = getHoursSummary(companyId);
+    try {
+      syncConfirmedHoursFromAllocations(companyId);
+    } catch (error) {
+      console.error('Falha ao sincronizar horas confirmadas por alocações:', errorMessage(error));
+    }
+
+    const confirmed = getHoursSummary(companyId);
+    const projected = readProjectedCompanyHoursSummary(companyId);
 
     return res.json({
-      available_hours: projection.available_hours,
-      consumed_hours: projection.consumed_hours,
-      balance_hours: projection.balance_hours,
-      remaining_diarias: projection.remaining_diarias
+      available_hours: confirmed.available_hours,
+      consumed_hours: confirmed.consumed_hours,
+      balance_hours: confirmed.balance_hours,
+      remaining_diarias: confirmed.remaining_diarias,
+      projection: {
+        available_hours: projected.available_hours,
+        consumed_hours: projected.consumed_hours,
+        balance_hours: projected.balance_hours,
+        remaining_diarias: projected.remaining_diarias
+      }
     });
+  });
+
+  app.get('/companies/:id/hours/modules', (req, res) => {
+    const companyId = req.params.id;
+    if (!ensureCompanyExists(companyId)) {
+      return res.status(404).json({ message: 'Empresa nao encontrada' });
+    }
+
+    try {
+      syncConfirmedHoursFromAllocations(companyId);
+    } catch (error) {
+      console.error('Falha ao sincronizar módulos de horas por alocações:', errorMessage(error));
+    }
+
+    const items = readCompanyHoursModuleInsights(companyId);
+    return res.json({ items });
   });
 
   app.get('/companies/:id/hours/ledger', (req, res) => {
     const companyId = req.params.id;
     if (!ensureCompanyExists(companyId)) {
       return res.status(404).json({ message: 'Empresa nao encontrada' });
+    }
+
+    try {
+      syncConfirmedHoursFromAllocations(companyId);
+    } catch (error) {
+      console.error('Falha ao sincronizar extrato de horas por alocações:', errorMessage(error));
     }
     const items = getHoursLedger(companyId);
     return res.json({ items });
@@ -4352,7 +4708,7 @@ export function registerCoreRoutes(app: Express) {
     if (!ensureCompanyExists(companyId)) {
       return res.status(404).json({ message: 'Empresa nao encontrada' });
     }
-    const items = getHoursPending(companyId);
+    const items = getHoursPending(companyId).filter((item) => item.status === 'Pendente');
     return res.json({ items });
   });
 
@@ -4466,6 +4822,84 @@ export function registerCoreRoutes(app: Express) {
     });
 
     return res.status(201).json({ ok: true, inserted: result.inserted, event_id: result.event.id });
+  });
+
+  app.post('/companies/:id/hours/ledger/:ledgerId/revert', (req, res) => {
+    const companyId = req.params.id;
+    if (!ensureCompanyExists(companyId)) {
+      return res.status(404).json({ message: 'Empresa nao encontrada' });
+    }
+
+    const entry = readHoursLedgerById(companyId, req.params.ledgerId);
+    if (!entry) {
+      return res.status(404).json({ message: 'Lançamento do extrato não encontrado.' });
+    }
+
+    const idempotencyKey = `ledger-revert:${companyId}:${entry.id}`;
+    if (entry.event_type === 'training_encounter_completed') {
+      let payload: { hours_consumed?: number; module_id?: string | null; reason?: string | null } = {};
+      try {
+        payload = JSON.parse(entry.payload_json) as { hours_consumed?: number; module_id?: string | null; reason?: string | null };
+      } catch {
+        payload = {};
+      }
+      const consumedHours = Math.abs(Number(payload.hours_consumed ?? 0));
+      if (!Number.isFinite(consumedHours) || consumedHours <= 0) {
+        return res.status(400).json({ message: 'Lançamento inválido para estorno manual.' });
+      }
+
+      const result = appendAndProject({
+        aggregate_type: 'company_hours_account',
+        aggregate_id: companyId,
+        company_id: companyId,
+        event_type: 'hours_manual_adjustment_added',
+        payload: {
+          delta_hours: consumedHours,
+          consumed_delta: -consumedHours,
+          module_id: payload.module_id ?? null,
+          reason: `Estorno manual do lançamento ${entry.id}.`
+        },
+        idempotency_key: idempotencyKey,
+        actor_type: 'operator'
+      });
+      return res.status(201).json({ ok: true, inserted: result.inserted, event_id: result.event.id });
+    }
+
+    if (entry.event_type === 'hours_manual_adjustment_added') {
+      let payload: { delta_hours?: number; consumed_delta?: number; module_id?: string | null } = {};
+      try {
+        payload = JSON.parse(entry.payload_json) as { delta_hours?: number; consumed_delta?: number; module_id?: string | null };
+      } catch {
+        payload = {};
+      }
+
+      const deltaHours = Number(payload.delta_hours ?? entry.delta_hours ?? 0);
+      const consumedDelta = Number(payload.consumed_delta ?? 0);
+      if (!Number.isFinite(deltaHours) || !Number.isFinite(consumedDelta)) {
+        return res.status(400).json({ message: 'Lançamento inválido para estorno manual.' });
+      }
+
+      const result = appendAndProject({
+        aggregate_type: 'company_hours_account',
+        aggregate_id: companyId,
+        company_id: companyId,
+        event_type: 'hours_manual_adjustment_added',
+        payload: {
+          delta_hours: -deltaHours,
+          consumed_delta: -consumedDelta,
+          module_id: payload.module_id ?? null,
+          reason: `Estorno manual do lançamento ${entry.id}.`
+        },
+        idempotency_key: idempotencyKey,
+        actor_type: 'operator'
+      });
+      return res.status(201).json({ ok: true, inserted: result.inserted, event_id: result.event.id });
+    }
+
+    return res.status(400).json({
+      message: 'Este tipo de lançamento ainda não suporta estorno manual.',
+      event_type: entry.event_type
+    });
   });
 
   app.get('/companies/:id/portal-access', (req, res) => {

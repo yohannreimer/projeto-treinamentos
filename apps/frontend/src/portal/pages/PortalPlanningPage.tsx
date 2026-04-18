@@ -18,6 +18,17 @@ function planningStatusLabel(status: string) {
   return 'Não iniciado';
 }
 
+function deliveryModeLabel(mode: string | undefined) {
+  if (mode === 'entregavel') return 'Entregável';
+  return 'Treinamento';
+}
+
+function deliverableProgressLabel(status: string) {
+  if (status === 'Concluido') return 'Entregue';
+  if (status === 'Em_execucao' || status === 'Em_andamento') return 'Em execução';
+  return 'Pendente';
+}
+
 function formatDateBr(dateIso: string | null) {
   if (!dateIso) return '-';
   const [year, month, day] = dateIso.split('-').map(Number);
@@ -159,7 +170,6 @@ export function PortalPlanningPage({ api, isInternal }: PortalPlanningPageProps)
         <div className="portal-hours-summary-head">
           <span className="portal-support-kicker">Banco de horas</span>
           <strong>{formatHours(summary.balance_hours)} h de saldo disponível</strong>
-          <p>Leitura automática do contrato atual, execução confirmada e saldo restante em diárias.</p>
         </div>
         <div className="portal-hours-summary-grid">
           <article className="portal-hours-summary-item">
@@ -214,6 +224,8 @@ export function PortalPlanningPage({ api, isInternal }: PortalPlanningPageProps)
             <thead>
               <tr>
                 <th>Nome</th>
+                <th>Tipo</th>
+                <th>Execução</th>
                 <th>Status</th>
                 <th>Concluído em</th>
                 {isInternal ? <th>Ajustes internos</th> : null}
@@ -221,10 +233,16 @@ export function PortalPlanningPage({ api, isInternal }: PortalPlanningPageProps)
             </thead>
             <tbody>
               {items.map((item) => (
-                <tr key={`${item.module_code}-${item.module_name}`}>
+                <tr
+                  key={`${item.module_code}-${item.module_name}`}
+                  className={(item.delivery_mode ?? 'ministrado') === 'entregavel' ? 'portal-row-deliverable' : 'portal-row-training'}
+                >
                   <td>
-                    <strong>{item.module_name}</strong>
-                    {item.total_encounters ? (
+                    <div className="portal-planning-name">
+                      <strong>{item.module_name}</strong>
+                      <span className="portal-planning-code">{item.module_code}</span>
+                    </div>
+                    {(item.delivery_mode ?? 'ministrado') === 'ministrado' && item.total_encounters ? (
                       <p className="portal-table-subline">
                         {item.completed_encounters ?? 0}/{item.total_encounters} encontros
                         {' · '}
@@ -232,6 +250,37 @@ export function PortalPlanningPage({ api, isInternal }: PortalPlanningPageProps)
                         {item.next_dates && item.next_dates.length > 0 ? ` · próximas: ${formatDateListBr(item.next_dates)}` : ''}
                       </p>
                     ) : null}
+                    {item.delivery_mode === 'entregavel' ? (
+                      <p className="portal-table-subline">
+                        Entrega acompanhada pela equipe Holand com atualização contínua de status.
+                      </p>
+                    ) : null}
+                  </td>
+                  <td>
+                    <span className={`portal-table-mode-chip ${(item.delivery_mode ?? 'ministrado') === 'entregavel' ? 'is-deliverable' : 'is-training'}`}>
+                      {deliveryModeLabel(item.delivery_mode)}
+                    </span>
+                  </td>
+                  <td>
+                    {item.delivery_mode === 'entregavel' ? (
+                      <div className="portal-table-exec">
+                        <strong>{deliverableProgressLabel(item.status)}</strong>
+                        <span>Atualizado pela equipe Holand</span>
+                      </div>
+                    ) : (
+                      (() => {
+                        const plannedHours = Math.max(0, Number(item.planned_hours ?? 0));
+                        const actualHours = Math.max(0, Number(item.actual_client_consumed_hours ?? 0));
+                        const remainingHours = Math.max(0, plannedHours - actualHours);
+                        const plannedDiarias = Math.max(0, Number(item.planned_diarias ?? (plannedHours / 8)));
+                        return (
+                          <div className="portal-table-exec">
+                            <strong>{formatHours(plannedDiarias)} diária(s) planejadas · {formatHours(plannedHours)} h</strong>
+                            <span>{formatHours(actualHours)} h realizadas · saldo {formatHours(remainingHours)} h</span>
+                          </div>
+                        );
+                      })()
+                    )}
                   </td>
                   <td>
                     <span className={`portal-status-chip ${planningStatusTone(item.status)}`}>

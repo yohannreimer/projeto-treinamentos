@@ -41,6 +41,7 @@ export function TechniciansPage() {
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [calendarSortKey, setCalendarSortKey] = useState<TechCalendarSortKey>('start_date');
   const [calendarSortDirection, setCalendarSortDirection] = useState<'asc' | 'desc'>('asc');
+  const [showAddTechnicianSection, setShowAddTechnicianSection] = useState(false);
 
   async function loadBase() {
     const [technicianRows, moduleRows] = await Promise.all([api.technicians(), api.modules()]);
@@ -256,8 +257,22 @@ export function TechniciansPage() {
       {error ? <p className="error">{error}</p> : null}
       {message ? <p className="info">{message}</p> : null}
 
-      <Section title="Adicionar técnico">
-        <div className="form form-spacious">
+      <Section
+        title="Adicionar técnico"
+        action={(
+          <button
+            type="button"
+            className="section-collapse-btn"
+            onClick={() => setShowAddTechnicianSection((prev) => !prev)}
+            aria-expanded={showAddTechnicianSection}
+            aria-label={showAddTechnicianSection ? 'Minimizar adicionar técnico' : 'Expandir adicionar técnico'}
+          >
+            {showAddTechnicianSection ? '−' : '+'}
+          </button>
+        )}
+      >
+        {showAddTechnicianSection ? (
+          <div className="form form-spacious">
           <p className="form-hint">Cadastre o técnico e depois marque as capacitações no painel ao lado.</p>
           <label>
             Nome
@@ -279,7 +294,8 @@ export function TechniciansPage() {
             />
           </label>
           <button type="button" onClick={createTechnician}>Adicionar técnico</button>
-        </div>
+          </div>
+        ) : null}
       </Section>
 
       <div className="two-col">

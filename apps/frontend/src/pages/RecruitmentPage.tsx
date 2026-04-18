@@ -34,6 +34,7 @@ export function RecruitmentPage() {
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [showCandidateFormSection, setShowCandidateFormSection] = useState(false);
 
   const [name, setName] = useState('');
   const [processStatus, setProcessStatus] = useState<(typeof statusOptions)[number]>('Em_processo');
@@ -114,6 +115,7 @@ export function RecruitmentPage() {
   }
 
   function editCandidate(row: Candidate) {
+    setShowCandidateFormSection(true);
     setEditingId(row.id);
     setName(row.name);
     setProcessStatus(row.process_status);
@@ -197,8 +199,22 @@ export function RecruitmentPage() {
         <article className="mini-stat"><span>Stand by</span><strong>{stats.standby}</strong></article>
       </div>
 
-      <Section title={editingId ? 'Editar candidato' : 'Cadastrar candidato'}>
-        <div className="form form-spacious">
+      <Section
+        title={editingId ? 'Editar candidato' : 'Cadastrar candidato'}
+        action={(
+          <button
+            type="button"
+            className="section-collapse-btn"
+            onClick={() => setShowCandidateFormSection((prev) => !prev)}
+            aria-expanded={showCandidateFormSection}
+            aria-label={showCandidateFormSection ? 'Minimizar cadastro de candidato' : 'Expandir cadastro de candidato'}
+          >
+            {showCandidateFormSection ? '−' : '+'}
+          </button>
+        )}
+      >
+        {showCandidateFormSection ? (
+          <div className="form form-spacious">
           <div className="three-col">
             <label>
               Nome
@@ -254,7 +270,8 @@ export function RecruitmentPage() {
             <button type="button" onClick={saveCandidate}>{editingId ? 'Salvar alterações' : 'Cadastrar candidato'}</button>
             {editingId ? <button type="button" onClick={resetForm}>Cancelar edição</button> : null}
           </div>
-        </div>
+          </div>
+        ) : null}
       </Section>
 
       <Section title="Filtros">

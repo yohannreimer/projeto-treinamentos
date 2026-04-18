@@ -21,6 +21,8 @@ export type ModuleScopeDefinedPayload = {
 
 export type HoursAdjustmentPayload = {
   delta_hours: number;
+  consumed_delta?: number;
+  module_id?: string | null;
   reason?: string | null;
   source_event_id?: string | null;
 };

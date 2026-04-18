@@ -174,6 +174,25 @@ function applyDelta(balance: HoursBalanceRow, deltaHours: number, occurredAt: st
   };
 }
 
+function applyDeltaWithConsumedDelta(
+  balance: HoursBalanceRow,
+  deltaHours: number,
+  consumedDelta: number,
+  occurredAt: string
+): HoursBalanceRow {
+  const nextConsumed = roundHours(Math.max(0, balance.consumed_hours + consumedDelta));
+  const nextBalance = roundHours(balance.balance_hours + deltaHours);
+  const nextAvailable = roundHours(Math.max(0, nextBalance + nextConsumed));
+  return {
+    ...balance,
+    available_hours: nextAvailable,
+    consumed_hours: nextConsumed,
+    balance_hours: nextBalance,
+    remaining_diarias: roundHours(nextBalance / 8),
+    updated_at: occurredAt
+  };
+}
+
 export function projectHoursEvent(event: HoursEventRow) {
   const tx = db.transaction(() => {
     // Projection-level dedupe protects replay/rebuild flows from double-applying
@@ -215,7 +234,10 @@ export function projectHoursEvent(event: HoursEventRow) {
 
     if (event.event_type === 'hours_adjustment_confirmed' || event.event_type === 'hours_manual_adjustment_added') {
       const payload = parsePayload<HoursAdjustmentPayload>(event);
-      const nextBalance = applyDelta(balance, payload.delta_hours, event.occurred_at);
+      const consumedDelta = Number(payload.consumed_delta ?? 0);
+      const nextBalance = Number.isFinite(consumedDelta) && Math.abs(consumedDelta) >= 0.0001
+        ? applyDeltaWithConsumedDelta(balance, payload.delta_hours, consumedDelta, event.occurred_at)
+        : applyDelta(balance, payload.delta_hours, event.occurred_at);
       writeBalance(nextBalance);
       if (event.event_type === 'hours_adjustment_confirmed') {
         markPendingStatus(payload.source_event_id, 'Confirmado', event.occurred_at);

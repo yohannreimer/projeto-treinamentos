@@ -4,7 +4,12 @@ import { api } from '../services/api';
 import { Section } from '../components/Section';
 import { StatusChip } from '../components/StatusChip';
 import { statusLabel } from '../utils/labels';
-import type { CompanyHoursLedgerItem, CompanyHoursPendingItem, CompanyHoursSummary } from '../types';
+import type {
+  CompanyHoursLedgerItem,
+  CompanyHoursModuleInsight,
+  CompanyHoursPendingItem,
+  CompanyHoursSummary
+} from '../types';
 
 type ModuleEdit = {
   status: 'Nao_iniciado' | 'Planejado' | 'Em_execucao' | 'Concluido';
@@ -38,6 +43,10 @@ function formatHoursValue(value: number | null | undefined) {
   });
 }
 
+function roundHours(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
 function hoursEventLabel(eventType: string) {
   if (eventType === 'hours_adjustment_suggested') return 'Sugestão automática';
   if (eventType === 'hours_adjustment_confirmed') return 'Sugestão confirmada';
@@ -49,6 +58,16 @@ function hoursEventLabel(eventType: string) {
   return eventType;
 }
 
+function moduleDeliveryLabel(value: string | null | undefined) {
+  if (value === 'entregavel') return 'Entregável interno';
+  return 'Treinamento ministrado';
+}
+
+function modulePolicyLabel(value: string | null | undefined) {
+  if (value === 'nao_consume') return 'Não consome banco do cliente';
+  return 'Consome banco de horas do cliente';
+}
+
 function extractHoursPayloadReason(payloadJson: string) {
   if (!payloadJson?.trim()) return '';
   try {
@@ -57,6 +76,22 @@ function extractHoursPayloadReason(payloadJson: string) {
   } catch {
     return '';
   }
+}
+
+function extractWorklogHours(payloadJson: string): number | null {
+  if (!payloadJson?.trim()) return null;
+  try {
+    const parsed = JSON.parse(payloadJson) as { minutes_logged?: number };
+    const minutesLogged = Number(parsed.minutes_logged ?? 0);
+    if (!Number.isFinite(minutesLogged) || minutesLogged <= 0) return null;
+    return roundHours(minutesLogged / 60);
+  } catch {
+    return null;
+  }
+}
+
+function canRevertLedgerEntry(eventType: string) {
+  return eventType === 'training_encounter_completed' || eventType === 'hours_manual_adjustment_added';
 }
 
 export function ClientDetailPage() {
@@ -87,6 +122,7 @@ export function ClientDetailPage() {
   const [hoursSummary, setHoursSummary] = useState<CompanyHoursSummary | null>(null);
   const [hoursPending, setHoursPending] = useState<CompanyHoursPendingItem[]>([]);
   const [hoursLedger, setHoursLedger] = useState<CompanyHoursLedgerItem[]>([]);
+  const [hoursModuleInsights, setHoursModuleInsights] = useState<CompanyHoursModuleInsight[]>([]);
   const [hoursActionLoadingId, setHoursActionLoadingId] = useState<string | null>(null);
   const [hoursAdjustmentDelta, setHoursAdjustmentDelta] = useState('');
   const [hoursAdjustmentReason, setHoursAdjustmentReason] = useState('');
@@ -99,14 +135,24 @@ export function ClientDetailPage() {
   const [historySortDirection, setHistorySortDirection] = useState<'asc' | 'desc'>('desc');
   const [journeyFilter, setJourneyFilter] = useState<JourneyFilter>('all');
   const [showDisabledModules, setShowDisabledModules] = useState(false);
+  const [showClientDataSection, setShowClientDataSection] = useState(false);
+  const [showPortalAccessSection, setShowPortalAccessSection] = useState(false);
+  const [showHoursBankSection, setShowHoursBankSection] = useState(false);
+  const [showJourneySection, setShowJourneySection] = useState(true);
+  const [showOptionalsSection, setShowOptionalsSection] = useState(true);
+  const [showHistorySection, setShowHistorySection] = useState(true);
+  const [moduleToActivate, setModuleToActivate] = useState('');
+  const [activatingModule, setActivatingModule] = useState(false);
 
   async function loadCompanyHours(companyId: string) {
-    const [summary, ledgerResponse, pendingResponse] = await Promise.all([
+    const [summary, moduleResponse, ledgerResponse, pendingResponse] = await Promise.all([
       api.companyHoursSummary(companyId),
+      api.companyHoursModules(companyId),
       api.companyHoursLedger(companyId),
       api.companyHoursPending(companyId)
     ]);
     setHoursSummary(summary);
+    setHoursModuleInsights(moduleResponse.items ?? []);
     setHoursLedger(ledgerResponse.items ?? []);
     setHoursPending(pendingResponse.items ?? []);
   }
@@ -117,10 +163,11 @@ export function ClientDetailPage() {
       api.companyById(id),
       api.portalAccessByCompany(id),
       api.companyHoursSummary(id),
+      api.companyHoursModules(id),
       api.companyHoursLedger(id),
       api.companyHoursPending(id)
     ])
-      .then(([response, portalAccess, summaryResponse, ledgerResponse, pendingResponse]) => {
+      .then(([response, portalAccess, summaryResponse, moduleResponse, ledgerResponse, pendingResponse]) => {
         setData(response);
         setPortalSlug(portalAccess.slug ?? '');
         setPortalUsername(portalAccess.username ?? '');
@@ -133,6 +180,7 @@ export function ClientDetailPage() {
           return acc;
         }, {} as Record<string, string>));
         setHoursSummary(summaryResponse ?? null);
+        setHoursModuleInsights(moduleResponse.items ?? []);
         setHoursLedger(ledgerResponse.items ?? []);
         setHoursPending(pendingResponse.items ?? []);
         setPortalPassword('');
@@ -141,6 +189,7 @@ export function ClientDetailPage() {
       .catch((err: Error) => {
         setData(null);
         setHoursSummary(null);
+        setHoursModuleInsights([]);
         setHoursLedger([]);
         setHoursPending([]);
         setError(err.message);
@@ -154,6 +203,12 @@ export function ClientDetailPage() {
   useEffect(() => {
     setJourneyFilter('all');
     setShowDisabledModules(false);
+    setShowClientDataSection(false);
+    setShowPortalAccessSection(false);
+    setShowHoursBankSection(false);
+    setShowJourneySection(true);
+    setShowOptionalsSection(true);
+    setShowHistorySection(true);
   }, [id]);
 
   useEffect(() => {
@@ -180,12 +235,41 @@ export function ClientDetailPage() {
   }, [data]);
 
   const timeline = useMemo(() => data?.timeline ?? [], [data]);
-  const resolvedHoursSummary = useMemo(() => ({
-    available_hours: hoursSummary?.available_hours ?? 0,
-    consumed_hours: hoursSummary?.consumed_hours ?? 0,
-    balance_hours: hoursSummary?.balance_hours ?? 0,
-    remaining_diarias: hoursSummary?.remaining_diarias ?? 0
-  }), [hoursSummary]);
+  const totalAvailableHoursAcrossModules = useMemo(
+    () => roundHours(hoursModuleInsights.reduce((total, item) => total + Number(item.planned_hours ?? 0), 0)),
+    [hoursModuleInsights]
+  );
+  const projectedHoursSummary = useMemo(() => ({
+    available_hours: totalAvailableHoursAcrossModules > 0
+      ? totalAvailableHoursAcrossModules
+      : (hoursSummary?.projection?.available_hours ?? hoursSummary?.available_hours ?? 0),
+    consumed_hours: hoursSummary?.projection?.consumed_hours ?? hoursSummary?.consumed_hours ?? 0,
+    balance_hours: roundHours(
+      (totalAvailableHoursAcrossModules > 0
+        ? totalAvailableHoursAcrossModules
+        : (hoursSummary?.projection?.available_hours ?? hoursSummary?.available_hours ?? 0))
+      - (hoursSummary?.projection?.consumed_hours ?? hoursSummary?.consumed_hours ?? 0)
+    ),
+    remaining_diarias: roundHours(
+      (
+        (totalAvailableHoursAcrossModules > 0
+          ? totalAvailableHoursAcrossModules
+          : (hoursSummary?.projection?.available_hours ?? hoursSummary?.available_hours ?? 0))
+        - (hoursSummary?.projection?.consumed_hours ?? hoursSummary?.consumed_hours ?? 0)
+      ) / 8
+    )
+  }), [hoursSummary, totalAvailableHoursAcrossModules]);
+  const confirmedHoursSummary = useMemo(() => {
+    const availableHours = projectedHoursSummary.available_hours;
+    const consumedHours = hoursSummary?.consumed_hours ?? 0;
+    const balanceHours = roundHours(availableHours - consumedHours);
+    return {
+      available_hours: availableHours,
+      consumed_hours: consumedHours,
+      balance_hours: balanceHours,
+      remaining_diarias: roundHours(balanceHours / 8)
+    };
+  }, [hoursSummary, projectedHoursSummary.available_hours]);
   const ledgerRowsLatestFirst = useMemo(
     () => [...hoursLedger].reverse(),
     [hoursLedger]
@@ -223,12 +307,26 @@ export function ClientDetailPage() {
     if (journeyFilter === 'all') return activeTimeline;
     return activeTimeline.filter((item: any) => item.status === journeyFilter);
   }, [activeTimeline, journeyFilter]);
+  const moduleHoursInsights = useMemo(
+    () => [...hoursModuleInsights].sort((left, right) => left.code.localeCompare(right.code)),
+    [hoursModuleInsights]
+  );
 
   useEffect(() => {
     if (disabledCount === 0 && showDisabledModules) {
       setShowDisabledModules(false);
     }
   }, [disabledCount, showDisabledModules]);
+
+  useEffect(() => {
+    if (disabledTimeline.length === 0) {
+      setModuleToActivate('');
+      return;
+    }
+    if (!disabledTimeline.some((item: any) => item.module_id === moduleToActivate)) {
+      setModuleToActivate(disabledTimeline[0].module_id);
+    }
+  }, [disabledTimeline, moduleToActivate]);
 
   const sortedHistory = useMemo(() => {
     const rows = [...(data?.history ?? [])];
@@ -408,6 +506,22 @@ export function ClientDetailPage() {
     }
   }
 
+  async function revertHoursLedgerEntry(ledgerId: string) {
+    if (!id) return;
+    setHoursActionLoadingId(`revert:${ledgerId}`);
+    setError('');
+    setMessage('');
+    try {
+      await api.revertCompanyHoursLedgerEntry(id, ledgerId);
+      await loadCompanyHours(id);
+      setMessage('Lançamento estornado com sucesso.');
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setHoursActionLoadingId(null);
+    }
+  }
+
   function updateModuleEdit(moduleId: string, patch: Partial<ModuleEdit>) {
     setModuleEdits((prev) => ({
       ...prev,
@@ -489,6 +603,22 @@ export function ClientDetailPage() {
     }
   }
 
+  async function activateModuleFromPicker() {
+    if (!id || !moduleToActivate) return;
+    setActivatingModule(true);
+    setError('');
+    setMessage('');
+    try {
+      await api.updateCompanyModuleActivation(id, moduleToActivate, { is_enabled: true });
+      setMessage('Módulo adicionado à jornada do cliente.');
+      await load();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setActivatingModule(false);
+    }
+  }
+
   if (!data && !error) return <p>Carregando cliente...</p>;
 
   return (
@@ -503,8 +633,22 @@ export function ClientDetailPage() {
 
       {!data ? null : (
         <>
-          <Section title="Dados do cliente">
-            <div className="form form-spacious">
+          <Section
+            title="Dados do cliente"
+            action={(
+              <button
+                type="button"
+                className="section-collapse-btn"
+                onClick={() => setShowClientDataSection((prev) => !prev)}
+                aria-expanded={showClientDataSection}
+                aria-label={showClientDataSection ? 'Minimizar dados do cliente' : 'Expandir dados do cliente'}
+              >
+                {showClientDataSection ? '−' : '+'}
+              </button>
+            )}
+          >
+            {showClientDataSection ? (
+              <div className="form form-spacious">
               <p className="form-hint">Perfil comercial e operacional do cliente para planejamento de agenda e progresso da jornada.</p>
               <div className="three-col">
                 <label>
@@ -572,11 +716,26 @@ export function ClientDetailPage() {
                   {savingCompany ? 'Salvando...' : 'Salvar dados do cliente'}
                 </button>
               </div>
-            </div>
+              </div>
+            ) : null}
           </Section>
 
-          <Section title="Acesso ao portal do cliente">
-            <div className="form form-spacious">
+          <Section
+            title="Acesso ao portal do cliente"
+            action={(
+              <button
+                type="button"
+                className="section-collapse-btn"
+                onClick={() => setShowPortalAccessSection((prev) => !prev)}
+                aria-expanded={showPortalAccessSection}
+                aria-label={showPortalAccessSection ? 'Minimizar acesso ao portal do cliente' : 'Expandir acesso ao portal do cliente'}
+              >
+                {showPortalAccessSection ? '−' : '+'}
+              </button>
+            )}
+          >
+            {showPortalAccessSection ? (
+              <div className="form form-spacious">
               <p className="form-hint">
                 Defina URL, usuário e status do acesso externo para o cliente acompanhar planejamento, agenda e suporte.
                 As configurações abaixo são mão única: apenas seu time altera, o cliente só visualiza.
@@ -669,30 +828,75 @@ export function ClientDetailPage() {
                   {savingPortalAccess ? 'Salvando acesso...' : 'Salvar acesso do portal'}
                 </button>
               </div>
-            </div>
+              </div>
+            ) : null}
           </Section>
 
-          <Section title="Banco de horas (interno)">
+          <Section
+            title="Banco de horas (interno)"
+            action={(
+              <button
+                type="button"
+                className="section-collapse-btn"
+                onClick={() => setShowHoursBankSection((prev) => !prev)}
+                aria-expanded={showHoursBankSection}
+                aria-label={showHoursBankSection ? 'Minimizar banco de horas interno' : 'Expandir banco de horas interno'}
+              >
+                {showHoursBankSection ? '−' : '+'}
+              </button>
+            )}
+          >
+            {showHoursBankSection ? (
+              <>
+                <div className="hours-bank-headline">
+              <div>
+                <strong>Visão operacional projetada</strong>
+                <p>
+                  Planejado x realizado por módulo, com saldo operacional e trilha auditável no extrato.
+                  {hoursSummary?.projection ? ' O ledger confirmado aparece logo abaixo para conciliação/estorno.' : ''}
+                </p>
+              </div>
+                </div>
+
             <div className="hours-bank-summary-grid">
               <article className="mini-stat">
-                <span>Disponível</span>
-                <strong>{formatHoursValue(resolvedHoursSummary.available_hours)} h</strong>
+                <span>Disponível (projetado)</span>
+                <strong>{formatHoursValue(projectedHoursSummary.available_hours)} h</strong>
               </article>
               <article className="mini-stat">
-                <span>Consumido</span>
-                <strong>{formatHoursValue(resolvedHoursSummary.consumed_hours)} h</strong>
+                <span>Consumido (projetado)</span>
+                <strong>{formatHoursValue(projectedHoursSummary.consumed_hours)} h</strong>
+              </article>
+              <article className="mini-stat mini-stat-accent">
+                <span>Saldo (projetado)</span>
+                <strong>{formatHoursValue(projectedHoursSummary.balance_hours)} h</strong>
               </article>
               <article className="mini-stat">
-                <span>Saldo</span>
-                <strong>{formatHoursValue(resolvedHoursSummary.balance_hours)} h</strong>
-              </article>
-              <article className="mini-stat">
-                <span>Diárias restantes</span>
-                <strong>{formatHoursValue(resolvedHoursSummary.remaining_diarias)}</strong>
+                <span>Diárias restantes (proj.)</span>
+                <strong>{formatHoursValue(projectedHoursSummary.remaining_diarias)}</strong>
               </article>
             </div>
 
-            <div className="two-col">
+            <div className="hours-bank-summary-grid hours-bank-summary-grid-secondary">
+              <article className="mini-stat mini-stat-muted">
+                <span>Disponível (confirmado)</span>
+                <strong>{formatHoursValue(confirmedHoursSummary.available_hours)} h</strong>
+              </article>
+              <article className="mini-stat mini-stat-muted">
+                <span>Consumido (confirmado)</span>
+                <strong>{formatHoursValue(confirmedHoursSummary.consumed_hours)} h</strong>
+              </article>
+              <article className="mini-stat mini-stat-muted">
+                <span>Saldo (confirmado)</span>
+                <strong>{formatHoursValue(confirmedHoursSummary.balance_hours)} h</strong>
+              </article>
+              <article className="mini-stat mini-stat-muted">
+                <span>Diárias restantes (conf.)</span>
+                <strong>{formatHoursValue(confirmedHoursSummary.remaining_diarias)}</strong>
+              </article>
+            </div>
+
+            <div className="two-col hours-bank-grid">
               <div className="form-subcard hours-bank-panel">
                 <h3>Pendências de conciliação</h3>
                 <p className="form-hint">Sugestões automáticas aguardando decisão manual para refletir no saldo.</p>
@@ -746,68 +950,151 @@ export function ClientDetailPage() {
               <div className="form-subcard hours-bank-panel">
                 <h3>Ajuste manual</h3>
                 <p className="form-hint">Use para crédito/débito pontual no saldo com trilha auditável no extrato.</p>
-                <label>
-                  Δ horas (positivo ou negativo)
-                  <input
-                    type="number"
-                    step="0.5"
-                    value={hoursAdjustmentDelta}
-                    onChange={(event) => setHoursAdjustmentDelta(event.target.value)}
-                    placeholder="Ex: 8 ou -4"
-                  />
-                </label>
-                <label>
-                  Motivo do ajuste
-                  <textarea
-                    rows={3}
-                    value={hoursAdjustmentReason}
-                    onChange={(event) => setHoursAdjustmentReason(event.target.value)}
-                    placeholder="Explique o contexto operacional/comercial do ajuste."
-                  />
-                </label>
-                <div className="actions actions-compact">
-                  <button type="button" onClick={createManualHoursAdjustment} disabled={savingHoursAdjustment}>
-                    {savingHoursAdjustment ? 'Registrando...' : 'Registrar ajuste manual'}
-                  </button>
+                <div className="form form-spacious">
+                  <label>
+                    Δ horas (positivo ou negativo)
+                    <input
+                      type="number"
+                      step="0.5"
+                      value={hoursAdjustmentDelta}
+                      onChange={(event) => setHoursAdjustmentDelta(event.target.value)}
+                      placeholder="Ex: 8 ou -4"
+                    />
+                  </label>
+                  <label>
+                    Motivo do ajuste
+                    <textarea
+                      rows={3}
+                      value={hoursAdjustmentReason}
+                      onChange={(event) => setHoursAdjustmentReason(event.target.value)}
+                      placeholder="Explique o contexto operacional/comercial do ajuste."
+                    />
+                  </label>
+                  <div className="actions actions-compact">
+                    <button type="button" onClick={createManualHoursAdjustment} disabled={savingHoursAdjustment}>
+                      {savingHoursAdjustment ? 'Registrando...' : 'Registrar ajuste manual'}
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
 
-            <div className="table-wrap hours-bank-table-wrap">
+                <div className="table-wrap hours-bank-table-wrap">
               <table className="table table-hover table-tight">
                 <thead>
                   <tr>
                     <th>Data</th>
                     <th>Evento</th>
-                    <th>Δ horas</th>
+                    <th>Δ saldo cliente</th>
+                    <th>Esforço interno</th>
                     <th>Saldo após</th>
                     <th>Motivo</th>
+                    <th>Ações</th>
                   </tr>
                 </thead>
                 <tbody>
                   {ledgerRowsLatestFirst.length === 0 ? (
                     <tr>
-                      <td colSpan={5}>Sem movimentações no extrato de horas.</td>
+                      <td colSpan={7}>Sem movimentações no extrato de horas.</td>
                     </tr>
                   ) : (
-                    ledgerRowsLatestFirst.map((entry) => (
-                      <tr key={entry.id}>
-                        <td>{formatDateTimeBr(entry.created_at)}</td>
-                        <td>{hoursEventLabel(entry.event_type)}</td>
-                        <td>{entry.delta_hours > 0 ? '+' : ''}{formatHoursValue(entry.delta_hours)} h</td>
-                        <td>{formatHoursValue(entry.balance_after)} h</td>
-                        <td>{extractHoursPayloadReason(entry.payload_json) || '-'}</td>
+                    ledgerRowsLatestFirst.map((entry) => {
+                      const worklogHours = entry.event_type === 'deliverable_worklog_logged'
+                        ? extractWorklogHours(entry.payload_json)
+                        : null;
+                      return (
+                        <tr key={entry.id}>
+                          <td>{formatDateTimeBr(entry.created_at)}</td>
+                          <td>{hoursEventLabel(entry.event_type)}</td>
+                          <td>{entry.delta_hours > 0 ? '+' : ''}{formatHoursValue(entry.delta_hours)} h</td>
+                          <td>{worklogHours === null ? '-' : `${formatHoursValue(worklogHours)} h`}</td>
+                          <td>{formatHoursValue(entry.balance_after)} h</td>
+                          <td>{extractHoursPayloadReason(entry.payload_json) || '-'}</td>
+                          <td className="actions">
+                            {canRevertLedgerEntry(entry.event_type) ? (
+                              <button
+                                type="button"
+                                onClick={() => revertHoursLedgerEntry(entry.id)}
+                                disabled={hoursActionLoadingId === `revert:${entry.id}`}
+                              >
+                                {hoursActionLoadingId === `revert:${entry.id}` ? 'Estornando...' : 'Estornar'}
+                              </button>
+                            ) : (
+                              <span className="muted">-</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+                </div>
+
+                <div className="table-wrap hours-bank-table-wrap">
+              <table className="table table-hover table-tight">
+                <thead>
+                  <tr>
+                    <th>Módulo</th>
+                    <th>Tipo de entrega</th>
+                    <th>Planejado</th>
+                    <th>Consumo cliente (proj.)</th>
+                    <th>Consumo cliente (real)</th>
+                    <th>Saldo (proj. - real)</th>
+                    <th>Variação (real - proj.)</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {moduleHoursInsights.length === 0 ? (
+                    <tr>
+                      <td colSpan={8}>Sem módulos ativos para apuração interna de horas.</td>
+                    </tr>
+                  ) : (
+                    moduleHoursInsights.map((insight) => (
+                      <tr key={`module-hours-${insight.module_id}`}>
+                        <td>
+                          <strong>{insight.code}</strong>
+                          <p className="muted">{insight.name}</p>
+                        </td>
+                        <td>{moduleDeliveryLabel(insight.delivery_mode)}</td>
+                        <td>{formatHoursValue(insight.planned_diarias)} diária(s) · {formatHoursValue(insight.planned_hours)} h</td>
+                        <td>{formatHoursValue(insight.projected_client_consumed_hours)} h</td>
+                        <td>{formatHoursValue(insight.actual_client_consumed_hours)} h</td>
+                        <td>{formatHoursValue(insight.projected_client_remaining_hours)} h</td>
+                        <td>
+                          {insight.internal_variance_hours === null
+                            ? '-'
+                            : `${insight.internal_variance_hours > 0 ? '+' : ''}${formatHoursValue(insight.internal_variance_hours)} h`}
+                        </td>
+                        <td><StatusChip value={insight.status} /></td>
                       </tr>
                     ))
                   )}
                 </tbody>
               </table>
-            </div>
+                </div>
+              </>
+            ) : null}
           </Section>
 
-          <div className="two-col">
-            <Section title="Jornada de módulos">
-              <div className="journey-kpi-strip" role="group" aria-label="Filtro da jornada de módulos">
+          <Section
+            title="Jornada de módulos"
+            action={(
+              <button
+                type="button"
+                className="section-collapse-btn"
+                onClick={() => setShowJourneySection((prev) => !prev)}
+                aria-expanded={showJourneySection}
+                aria-label={showJourneySection ? 'Minimizar jornada de módulos' : 'Expandir jornada de módulos'}
+              >
+                {showJourneySection ? '−' : '+'}
+              </button>
+            )}
+          >
+            {showJourneySection ? (
+              <>
+                <div className="journey-kpi-strip" role="group" aria-label="Filtro da jornada de módulos">
                 <button
                   type="button"
                   className={`journey-kpi-btn ${journeyFilter === 'Concluido' ? 'is-active' : ''}`}
@@ -848,25 +1135,52 @@ export function ClientDetailPage() {
                 >
                   Todos {activeTimeline.length}
                 </button>
-              </div>
-              <div className="journey-kpi-meta-row">
-                <p className="journey-kpi-meta">
-                  Exibindo {filteredTimeline.length} de {activeTimeline.length} módulos ativos.
-                  {disabledCount > 0 ? ` Desativados: ${disabledCount}.` : ''}
-                </p>
-                {disabledCount > 0 ? (
-                  <button
-                    type="button"
-                    className="journey-kpi-toggle"
-                    aria-expanded={showDisabledModules}
-                    aria-controls={disabledModulesPanelId}
-                    onClick={() => setShowDisabledModules((prev) => !prev)}
-                  >
-                    {showDisabledModules ? 'Ocultar desativados' : 'Gerenciar desativados'}
-                  </button>
-                ) : null}
-              </div>
-              <ul className="timeline">
+                </div>
+                <div className="journey-kpi-meta-row">
+                  <p className="journey-kpi-meta">
+                    Exibindo {filteredTimeline.length} de {activeTimeline.length} módulos ativos.
+                    {disabledCount > 0 ? ` Desativados: ${disabledCount}.` : ''}
+                  </p>
+                  <div className="journey-kpi-tools">
+                    {disabledCount > 0 ? (
+                      <div className="journey-module-add-cluster">
+                        <label className="journey-module-add-control">
+                          <span>Módulo desativado</span>
+                          <select
+                            value={moduleToActivate}
+                            onChange={(event) => setModuleToActivate(event.target.value)}
+                          >
+                            {disabledTimeline.map((moduleItem: any) => (
+                              <option key={`activate-${moduleItem.module_id}`} value={moduleItem.module_id}>
+                                {moduleItem.code} - {moduleItem.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <button
+                          type="button"
+                          className="journey-kpi-toggle journey-kpi-toggle-add"
+                          onClick={activateModuleFromPicker}
+                          disabled={!moduleToActivate || activatingModule}
+                        >
+                          {activatingModule ? 'Adicionando...' : 'Adicionar'}
+                        </button>
+                        <button
+                          type="button"
+                          className="journey-kpi-toggle journey-kpi-toggle-muted"
+                          aria-expanded={showDisabledModules}
+                          aria-controls={disabledModulesPanelId}
+                          onClick={() => setShowDisabledModules((prev) => !prev)}
+                        >
+                          {showDisabledModules ? 'Ocultar desativados' : 'Ver desativados'}
+                        </button>
+                      </div>
+                    ) : (
+                      <span className="journey-kpi-empty-add">Sem módulos desativados para adicionar.</span>
+                    )}
+                  </div>
+                </div>
+                <ul className="timeline">
                 {filteredTimeline.length === 0 ? (
                   <li className="timeline-item">
                     <div className="timeline-copy">
@@ -895,144 +1209,224 @@ export function ClientDetailPage() {
                       custom_duration_days: ''
                     };
                     return (
-                      <li key={moduleItem.module_id} className="timeline-item">
-                        <div className="timeline-copy">
-                          <strong>{moduleItem.code} - {moduleItem.name}</strong>
-                          <p>{moduleItem.category} | padrão: {moduleItem.duration_days} diárias</p>
-                          <p>Planejado para este cliente: {moduleItem.effective_duration_days} diárias</p>
-                          <p>Concluído em: {moduleItem.completed_at ?? '-'}</p>
-                          <p>
-                            Turma vinculada: {moduleItem.last_cohort_code
-                              ? `${moduleItem.last_cohort_code} - ${moduleItem.last_cohort_name ?? ''} (${statusLabel(moduleItem.last_cohort_status ?? 'Planejada')})`
-                              : '-'}
-                          </p>
-                          <p>Módulo para este cliente: {moduleItem.is_enabled ? 'Ativo' : 'Desativado'}</p>
+                      <li key={moduleItem.module_id} className="timeline-item journey-module-card">
+                        <div className="journey-module-head">
+                          <div className="journey-module-title">
+                            <strong>{moduleItem.code} - {moduleItem.name}</strong>
+                            <p>{moduleItem.category} · padrão {moduleItem.duration_days} diárias</p>
+                          </div>
+                          <div className="journey-module-badges">
+                            {moduleItem.is_enabled ? <StatusChip value={moduleItem.status} /> : <span className="chip">Desativado</span>}
+                            <span
+                              className={`chip journey-module-chip journey-module-chip-mode ${moduleItem.delivery_mode === 'entregavel' ? 'is-deliverable' : 'is-training'}`}
+                            >
+                              {moduleDeliveryLabel(moduleItem.delivery_mode)}
+                            </span>
+                            <span className="chip journey-module-chip journey-module-chip-policy">{modulePolicyLabel(moduleItem.client_hours_policy)}</span>
+                          </div>
                         </div>
-                        <div className="actions timeline-actions">
-                          {moduleItem.is_enabled ? <StatusChip value={moduleItem.status} /> : <span className="chip">Desativado</span>}
-                          <select
-                            value={edit.status}
-                            onChange={(event) => updateModuleEdit(moduleItem.module_id, {
-                              status: event.target.value as ModuleEdit['status']
-                            })}
-                            disabled={!moduleItem.is_enabled}
-                          >
-                            {progressStatusOptions.map((option) => (
-                              <option key={option} value={option}>{statusLabel(option)}</option>
-                            ))}
-                          </select>
-                          <input
-                            type="number"
-                            min={1}
-                            placeholder="Diárias custom"
-                            value={edit.custom_duration_days}
-                            onChange={(event) => updateModuleEdit(moduleItem.module_id, { custom_duration_days: event.target.value })}
-                            disabled={!moduleItem.is_enabled}
-                            className="timeline-days-input"
-                          />
-                          <input
-                            placeholder="Observação do módulo"
-                            value={edit.notes}
-                            onChange={(event) => updateModuleEdit(moduleItem.module_id, { notes: event.target.value })}
-                            disabled={!moduleItem.is_enabled}
-                            className="timeline-notes-input"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => saveModuleProgress(moduleItem.module_id)}
-                            disabled={!moduleItem.is_enabled || savingModuleId === moduleItem.module_id}
-                          >
-                            Salvar módulo
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => markDone(moduleItem.module_id)}
-                            disabled={!moduleItem.is_enabled || savingModuleId === moduleItem.module_id}
-                          >
-                            Concluir (Admin)
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => undoDone(moduleItem.module_id)}
-                            disabled={!moduleItem.is_enabled || moduleItem.status !== 'Concluido' || savingModuleId === moduleItem.module_id}
-                          >
-                            Desfazer conclusão
-                          </button>
-                          <button type="button" onClick={() => toggleModule(moduleItem.module_id, Boolean(moduleItem.is_enabled))}>
-                            {moduleItem.is_enabled ? 'Desativar módulo' : 'Ativar módulo'}
-                          </button>
+                        <div className="journey-module-body">
+                          <div className="journey-module-facts-wrap">
+                            <h4 className="journey-module-block-title">Resumo do módulo</h4>
+                            <div className="journey-module-facts">
+                            <div>
+                              <span>Planejado para este cliente</span>
+                              <strong>{moduleItem.effective_duration_days} diárias</strong>
+                            </div>
+                            <div>
+                              <span>Concluído em</span>
+                              <strong>{moduleItem.completed_at ?? '-'}</strong>
+                            </div>
+                            <div>
+                              <span>Turma vinculada</span>
+                              <strong>
+                                {moduleItem.last_cohort_code
+                                  ? `${moduleItem.last_cohort_code} - ${moduleItem.last_cohort_name ?? ''} (${statusLabel(moduleItem.last_cohort_status ?? 'Planejada')})`
+                                  : '-'}
+                              </strong>
+                            </div>
+                            <div>
+                              <span>Módulo neste cliente</span>
+                              <strong>{moduleItem.is_enabled ? 'Ativo' : 'Desativado'}</strong>
+                            </div>
+                          </div>
+                          </div>
+
+                          <div className="journey-module-editor-wrap">
+                            <h4 className="journey-module-block-title">Ações do módulo</h4>
+                            <div className="journey-module-editor">
+                            <div className="journey-module-editor-grid">
+                              <label>
+                                Status do módulo
+                                <select
+                                  value={edit.status}
+                                  onChange={(event) => updateModuleEdit(moduleItem.module_id, {
+                                    status: event.target.value as ModuleEdit['status']
+                                  })}
+                                  disabled={!moduleItem.is_enabled}
+                                >
+                                  {progressStatusOptions.map((option) => (
+                                    <option key={option} value={option}>{statusLabel(option)}</option>
+                                  ))}
+                                </select>
+                              </label>
+                              <label>
+                                Diárias customizadas
+                                <input
+                                  type="number"
+                                  min={1}
+                                  placeholder="Ex: 3"
+                                  value={edit.custom_duration_days}
+                                  onChange={(event) => updateModuleEdit(moduleItem.module_id, { custom_duration_days: event.target.value })}
+                                  disabled={!moduleItem.is_enabled}
+                                  className="timeline-days-input"
+                                />
+                              </label>
+                              <label className="journey-module-notes">
+                                Observação do módulo
+                                <textarea
+                                  rows={2}
+                                  placeholder="Contexto interno deste módulo para o cliente."
+                                  value={edit.notes}
+                                  onChange={(event) => updateModuleEdit(moduleItem.module_id, { notes: event.target.value })}
+                                  disabled={!moduleItem.is_enabled}
+                                  className="timeline-notes-input"
+                                />
+                              </label>
+                            </div>
+                            <div className="actions timeline-actions journey-module-actions journey-module-actions-primary">
+                              <button
+                                type="button"
+                                onClick={() => saveModuleProgress(moduleItem.module_id)}
+                                disabled={!moduleItem.is_enabled || savingModuleId === moduleItem.module_id}
+                              >
+                                Salvar módulo
+                              </button>
+                            </div>
+                            <div className="actions timeline-actions journey-module-actions journey-module-actions-secondary">
+                              <button
+                                type="button"
+                                onClick={() => markDone(moduleItem.module_id)}
+                                disabled={!moduleItem.is_enabled || savingModuleId === moduleItem.module_id}
+                              >
+                                Concluir (Admin)
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => undoDone(moduleItem.module_id)}
+                                disabled={!moduleItem.is_enabled || moduleItem.status !== 'Concluido' || savingModuleId === moduleItem.module_id}
+                              >
+                                Desfazer conclusão
+                              </button>
+                              <button type="button" onClick={() => toggleModule(moduleItem.module_id, Boolean(moduleItem.is_enabled))}>
+                                {moduleItem.is_enabled ? 'Desativar módulo' : 'Ativar módulo'}
+                              </button>
+                            </div>
+                          </div>
+                          </div>
                         </div>
                       </li>
                     );
                   })
                 )}
-              </ul>
-              {disabledCount > 0 && showDisabledModules ? (
-                <div className="journey-disabled-block" id={disabledModulesPanelId}>
-                  <div className="journey-disabled-list">
-                    {disabledTimeline.map((moduleItem: any) => (
-                      <div key={moduleItem.module_id} className="journey-disabled-item">
-                        <div className="timeline-copy">
-                          <strong>{moduleItem.code} - {moduleItem.name}</strong>
-                          <p>{moduleItem.category} | padrão: {moduleItem.duration_days} diárias</p>
+                </ul>
+                {disabledCount > 0 && showDisabledModules ? (
+                  <div className="journey-disabled-block" id={disabledModulesPanelId}>
+                    <div className="journey-disabled-list">
+                      {disabledTimeline.map((moduleItem: any) => (
+                        <div key={moduleItem.module_id} className="journey-disabled-item">
+                          <div className="timeline-copy">
+                            <strong>{moduleItem.code} - {moduleItem.name}</strong>
+                            <p>{moduleItem.category} | padrão: {moduleItem.duration_days} diárias</p>
+                          </div>
+                          <div className="actions timeline-actions">
+                            <button type="button" onClick={() => toggleModule(moduleItem.module_id, Boolean(moduleItem.is_enabled))}>
+                              Ativar módulo
+                            </button>
+                          </div>
                         </div>
-                        <div className="actions timeline-actions">
-                          <button type="button" onClick={() => toggleModule(moduleItem.module_id, Boolean(moduleItem.is_enabled))}>
-                            Ativar módulo
-                          </button>
-                        </div>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
                   </div>
-                </div>
-              ) : null}
-            </Section>
+                ) : null}
+              </>
+            ) : null}
+          </Section>
 
-            <Section title="Opcionais">
+          <Section
+            title="Opcionais"
+            action={(
+              <button
+                type="button"
+                className="section-collapse-btn"
+                onClick={() => setShowOptionalsSection((prev) => !prev)}
+                aria-expanded={showOptionalsSection}
+                aria-label={showOptionalsSection ? 'Minimizar opcionais' : 'Expandir opcionais'}
+              >
+                {showOptionalsSection ? '−' : '+'}
+              </button>
+            )}
+          >
+            {showOptionalsSection ? (
               <div className="table-wrap">
-              <table className="table table-hover table-tight">
-                <thead><tr><th>Código</th><th>Nome</th><th>Status</th></tr></thead>
-                <tbody>
-                  {data.optionals.map((optionalItem: any) => (
-                    <tr key={optionalItem.id}>
-                      <td>{optionalItem.code}</td>
-                      <td>{optionalItem.name}</td>
-                      <td><StatusChip value={optionalItem.status} /></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                <table className="table table-hover table-tight">
+                  <thead><tr><th>Código</th><th>Nome</th><th>Status</th></tr></thead>
+                  <tbody>
+                    {data.optionals.map((optionalItem: any) => (
+                      <tr key={optionalItem.id}>
+                        <td>{optionalItem.code}</td>
+                        <td>{optionalItem.name}</td>
+                        <td><StatusChip value={optionalItem.status} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-            </Section>
-          </div>
+            ) : null}
+          </Section>
 
-          <Section title="Histórico de turmas">
-            <div className="table-wrap">
-            <table className="table table-hover table-tight">
-              <thead><tr>
-                <th><button type="button" className="table-sort-btn" onClick={() => toggleHistorySort('cohort_code')}>Turma{historySortIndicator('cohort_code')}</button></th>
-                <th><button type="button" className="table-sort-btn" onClick={() => toggleHistorySort('start_date')}>Data{historySortIndicator('start_date')}</button></th>
-                <th><button type="button" className="table-sort-btn" onClick={() => toggleHistorySort('module_code')}>Módulo{historySortIndicator('module_code')}</button></th>
-                <th><button type="button" className="table-sort-btn" onClick={() => toggleHistorySort('entry_day')}>Dia de entrada{historySortIndicator('entry_day')}</button></th>
-                <th><button type="button" className="table-sort-btn" onClick={() => toggleHistorySort('status')}>Status alocação{historySortIndicator('status')}</button></th>
-                <th><button type="button" className="table-sort-btn" onClick={() => toggleHistorySort('cohort_status')}>Status turma{historySortIndicator('cohort_status')}</button></th>
-                <th><button type="button" className="table-sort-btn" onClick={() => toggleHistorySort('executed_at')}>Executado em{historySortIndicator('executed_at')}</button></th>
-              </tr></thead>
-              <tbody>
-                {sortedHistory.map((historyItem: any) => (
-                  <tr key={historyItem.allocation_id}>
-                    <td>{historyItem.cohort_code} - {historyItem.cohort_name}</td>
-                    <td>{historyItem.start_date}</td>
-                    <td>{historyItem.module_code} - {historyItem.module_name}</td>
-                    <td>{historyItem.entry_day}</td>
-                    <td><StatusChip value={historyItem.status} /></td>
-                    <td><StatusChip value={historyItem.cohort_status} /></td>
-                    <td>{historyItem.executed_at ?? '-'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            </div>
+          <Section
+            title="Histórico de turmas"
+            action={(
+              <button
+                type="button"
+                className="section-collapse-btn"
+                onClick={() => setShowHistorySection((prev) => !prev)}
+                aria-expanded={showHistorySection}
+                aria-label={showHistorySection ? 'Minimizar histórico de turmas' : 'Expandir histórico de turmas'}
+              >
+                {showHistorySection ? '−' : '+'}
+              </button>
+            )}
+          >
+            {showHistorySection ? (
+              <div className="table-wrap">
+                <table className="table table-hover table-tight">
+                  <thead><tr>
+                    <th><button type="button" className="table-sort-btn" onClick={() => toggleHistorySort('cohort_code')}>Turma{historySortIndicator('cohort_code')}</button></th>
+                    <th><button type="button" className="table-sort-btn" onClick={() => toggleHistorySort('start_date')}>Data{historySortIndicator('start_date')}</button></th>
+                    <th><button type="button" className="table-sort-btn" onClick={() => toggleHistorySort('module_code')}>Módulo{historySortIndicator('module_code')}</button></th>
+                    <th><button type="button" className="table-sort-btn" onClick={() => toggleHistorySort('entry_day')}>Dia de entrada{historySortIndicator('entry_day')}</button></th>
+                    <th><button type="button" className="table-sort-btn" onClick={() => toggleHistorySort('status')}>Status alocação{historySortIndicator('status')}</button></th>
+                    <th><button type="button" className="table-sort-btn" onClick={() => toggleHistorySort('cohort_status')}>Status turma{historySortIndicator('cohort_status')}</button></th>
+                    <th><button type="button" className="table-sort-btn" onClick={() => toggleHistorySort('executed_at')}>Executado em{historySortIndicator('executed_at')}</button></th>
+                  </tr></thead>
+                  <tbody>
+                    {sortedHistory.map((historyItem: any) => (
+                      <tr key={historyItem.allocation_id}>
+                        <td>{historyItem.cohort_code} - {historyItem.cohort_name}</td>
+                        <td>{historyItem.start_date}</td>
+                        <td>{historyItem.module_code} - {historyItem.module_name}</td>
+                        <td>{historyItem.entry_day}</td>
+                        <td><StatusChip value={historyItem.status} /></td>
+                        <td><StatusChip value={historyItem.cohort_status} /></td>
+                        <td>{historyItem.executed_at ?? '-'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
           </Section>
         </>
       )}

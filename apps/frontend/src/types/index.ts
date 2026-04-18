@@ -80,6 +80,22 @@ export type CompanyHoursPendingItem = {
   updated_at: string;
 };
 
+export type CompanyHoursModuleInsight = {
+  module_id: string;
+  code: string;
+  name: string;
+  status: string;
+  delivery_mode: 'ministrado' | 'entregavel';
+  client_hours_policy: 'consome' | 'nao_consume';
+  planned_diarias: number;
+  planned_hours: number;
+  projected_client_consumed_hours: number;
+  projected_client_remaining_hours: number;
+  actual_client_consumed_hours: number;
+  internal_effort_hours: number;
+  internal_variance_hours: number | null;
+};
+
 export type LicenseRow = {
   id: string;
   company_id: string;

@@ -81,6 +81,7 @@ const deliveryModeOptions = ['Online', 'Presencial', 'Hibrida'] as const;
 const activityTypeOptions: Array<CalendarActivity['activity_type']> = ['Visita_cliente', 'Pre_vendas', 'Pos_vendas', 'Suporte', 'Implementacao', 'Reuniao', 'Outro'];
 const activityStatusOptions: Array<CalendarActivity['status']> = ['Planejada', 'Em_andamento', 'Concluida', 'Cancelada'];
 const weekDays = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'];
+const CALENDAR_CONTROLS_COLLAPSED_STORAGE_KEY = 'orquestrador_calendar_controls_collapsed_v1';
 
 const fixedBrazilHolidays = [
   { monthDay: '01-01', name: 'Confraternização Universal' },
@@ -364,6 +365,10 @@ export function CalendarPage() {
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
   const [selectedDate, setSelectedDate] = useState(toDateIso(new Date()));
   const [isDayPanelOpen, setIsDayPanelOpen] = useState(false);
+  const [isControlsCollapsed, setIsControlsCollapsed] = useState<boolean>(() => {
+    const saved = window.localStorage.getItem(CALENDAR_CONTROLS_COLLAPSED_STORAGE_KEY);
+    return saved !== '0';
+  });
 
   const [statusFilter, setStatusFilter] = useState('');
   const [technicianFilter, setTechnicianFilter] = useState('');
@@ -466,6 +471,10 @@ export function CalendarPage() {
     if (!selectedId) return;
     api.cohortById(selectedId).then(setDetail).catch(() => setDetail(null));
   }, [selectedId]);
+
+  useEffect(() => {
+    window.localStorage.setItem(CALENDAR_CONTROLS_COLLAPSED_STORAGE_KEY, isControlsCollapsed ? '1' : '0');
+  }, [isControlsCollapsed]);
 
   useEffect(() => {
     if (!isDayPanelOpen) return;
@@ -589,6 +598,15 @@ export function CalendarPage() {
       busyBusinessDays
     };
   }, [cohortEventsByDate, activitiesByDate, month, monthCells]);
+
+  const hasActiveFilters = Boolean(statusFilter || technicianFilter);
+  const controlsFilterSummary = useMemo(() => {
+    if (!hasActiveFilters) return 'Sem filtros ativos';
+    const labels: string[] = [];
+    if (technicianFilter) labels.push(`Técnico: ${technicianFilter}`);
+    if (statusFilter) labels.push(`Status: ${statusLabel(statusFilter)}`);
+    return labels.join(' · ');
+  }, [hasActiveFilters, technicianFilter, statusFilter]);
 
   const selectedDayEvents = useMemo(() => {
     const direction = daySortDirection === 'asc' ? 1 : -1;
@@ -1109,14 +1127,29 @@ export function CalendarPage() {
       </header>
       {message ? <p className="info">{message}</p> : null}
 
-      <Section title="Controles do calendário" className="calendar-controls-panel">
-        <div className="calendar-toolbar">
+      <Section
+        title="Controles do calendário"
+        className="calendar-controls-panel"
+        action={(
+          <button
+            type="button"
+            className="section-collapse-btn"
+            onClick={() => setIsControlsCollapsed((prev) => !prev)}
+            aria-expanded={!isControlsCollapsed}
+            aria-label={isControlsCollapsed ? 'Expandir controles do calendário' : 'Minimizar controles do calendário'}
+          >
+            {isControlsCollapsed ? '+' : '−'}
+          </button>
+        )}
+      >
+        <div className={`calendar-toolbar ${isControlsCollapsed ? 'is-collapsed' : ''}`}>
           <div className="calendar-toolbar-main">
             <h3 className="month-title">{monthLabel(month)}</h3>
-            <div className="actions actions-compact">
-              <button type="button" onClick={() => setMonth(prevMonth(month))}>Mês anterior</button>
+            <div className="actions actions-compact calendar-month-nav">
+              <button type="button" className="calendar-nav-btn" onClick={() => setMonth(prevMonth(month))}>Mês anterior</button>
               <button
                 type="button"
+                className="calendar-nav-btn calendar-nav-btn-today"
                 onClick={() => {
                   const currentMonth = new Date().toISOString().slice(0, 7);
                   const today = toDateIso(new Date());
@@ -1127,69 +1160,81 @@ export function CalendarPage() {
               >
                 Hoje
               </button>
-              <button type="button" onClick={() => setMonth(nextMonth(month))}>Próximo mês</button>
-              <button type="button" onClick={() => setIsDayPanelOpen(true)}>
-                Abrir painel do dia {selectedDate}
-              </button>
+              <button type="button" className="calendar-nav-btn" onClick={() => setMonth(nextMonth(month))}>Próximo mês</button>
             </div>
           </div>
-          <div className="calendar-toolbar-filters">
-            <label className="calendar-filter-field">
-              Ir para mês
-              <input type="month" value={month} onChange={(event) => setMonth(event.target.value)} />
-            </label>
-            <label className="calendar-filter-field">
-              Técnico
-              <select value={technicianFilter} onChange={(event) => setTechnicianFilter(event.target.value)}>
-                <option value="">Todos</option>
-                {technicianOptions.map((item) => <option key={item} value={item}>{item}</option>)}
-              </select>
-            </label>
-            <label className="calendar-filter-field">
-              Status
-              <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
-                <option value="">Todos</option>
-                {statusOptions.map((item) => <option key={item} value={item}>{statusLabel(item)}</option>)}
-              </select>
-            </label>
-          </div>
-
-          <div className="calendar-metrics-grid">
-            <article className="calendar-metric-card">
-              <span>Turmas ativas no mês</span>
-              <strong>{monthMetrics.activeCohorts}</strong>
-            </article>
-            <article className="calendar-metric-card">
-              <span>Atividades extras no mês</span>
-              <strong>{monthMetrics.activeActivities}</strong>
-            </article>
-            <article className="calendar-metric-card">
-              <span>Ocupações no calendário</span>
-              <strong>{monthMetrics.totalOccurrences}</strong>
-            </article>
-            <article className="calendar-metric-card">
-              <span>Dias úteis ocupados</span>
-              <strong>{monthMetrics.busyBusinessDays}/{monthMetrics.monthBusinessDays}</strong>
-            </article>
-            <article className="calendar-metric-card">
-              <span>Técnicos em agenda</span>
-              <strong>{monthMetrics.activeTechnicians}</strong>
-            </article>
-          </div>
-        </div>
-
-        <div className="calendar-holidays-bar">
-          <strong>Feriados do mês</strong>
-          {holidaysInMonth.length === 0 ? <span>Nenhum feriado nacional no período.</span> : (
-            <div className="calendar-holidays-list">
-              {holidaysInMonth.map((holiday) => (
-                <span key={`${holiday.date}-${holiday.holidayName}`} className="calendar-holiday-pill">
-                  {holiday.date.slice(-2)}/{holiday.date.slice(5, 7)} · {holiday.holidayName}
-                </span>
-              ))}
+          {isControlsCollapsed ? (
+            <div className="calendar-controls-compact" aria-live="polite">
+              <span className="calendar-controls-chip">Selecionado: {shortDateLabel(selectedDate)}</span>
+              <span className="calendar-controls-chip">Turmas: {monthMetrics.activeCohorts}</span>
+              <span className="calendar-controls-chip">Atividades: {monthMetrics.activeActivities}</span>
+              <span className="calendar-controls-chip">Ocupação: {monthMetrics.busyBusinessDays}/{monthMetrics.monthBusinessDays} dias úteis</span>
+              <span className={`calendar-controls-chip ${hasActiveFilters ? 'is-attention' : ''}`}>{controlsFilterSummary}</span>
             </div>
+          ) : null}
+          {isControlsCollapsed ? null : (
+            <>
+              <div className="calendar-toolbar-filters">
+                <label className="calendar-filter-field">
+                  Ir para mês
+                  <input type="month" value={month} onChange={(event) => setMonth(event.target.value)} />
+                </label>
+                <label className="calendar-filter-field">
+                  Técnico
+                  <select value={technicianFilter} onChange={(event) => setTechnicianFilter(event.target.value)}>
+                    <option value="">Todos</option>
+                    {technicianOptions.map((item) => <option key={item} value={item}>{item}</option>)}
+                  </select>
+                </label>
+                <label className="calendar-filter-field">
+                  Status
+                  <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+                    <option value="">Todos</option>
+                    {statusOptions.map((item) => <option key={item} value={item}>{statusLabel(item)}</option>)}
+                  </select>
+                </label>
+              </div>
+
+              <div className="calendar-metrics-grid">
+                <article className="calendar-metric-card">
+                  <span>Turmas ativas no mês</span>
+                  <strong>{monthMetrics.activeCohorts}</strong>
+                </article>
+                <article className="calendar-metric-card">
+                  <span>Atividades extras no mês</span>
+                  <strong>{monthMetrics.activeActivities}</strong>
+                </article>
+                <article className="calendar-metric-card">
+                  <span>Ocupações no calendário</span>
+                  <strong>{monthMetrics.totalOccurrences}</strong>
+                </article>
+                <article className="calendar-metric-card">
+                  <span>Dias úteis ocupados</span>
+                  <strong>{monthMetrics.busyBusinessDays}/{monthMetrics.monthBusinessDays}</strong>
+                </article>
+                <article className="calendar-metric-card">
+                  <span>Técnicos em agenda</span>
+                  <strong>{monthMetrics.activeTechnicians}</strong>
+                </article>
+              </div>
+            </>
           )}
         </div>
+
+        {isControlsCollapsed ? null : (
+          <div className="calendar-holidays-bar">
+            <strong>Feriados do mês</strong>
+            {holidaysInMonth.length === 0 ? <span>Nenhum feriado nacional no período.</span> : (
+              <div className="calendar-holidays-list">
+                {holidaysInMonth.map((holiday) => (
+                  <span key={`${holiday.date}-${holiday.holidayName}`} className="calendar-holiday-pill">
+                    {holiday.date.slice(-2)}/{holiday.date.slice(5, 7)} · {holiday.holidayName}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </Section>
 
       <Section title="Visão mensal" className="calendar-month-panel">
@@ -1445,19 +1490,20 @@ export function CalendarPage() {
                 </div>
               </section>
 
-              <section className="calendar-overlay-col">
+              <section className="calendar-overlay-col calendar-overlay-col-actions">
                 <h3>Ações do dia</h3>
-                <div className="form form-spacious">
+                <div className="form form-spacious calendar-day-actions-shell">
                   <p className="form-hint">
                     Turmas são criadas e editadas na aba <strong>Turmas</strong>. Aqui no calendário você foca em visualizar agenda
                     e registrar atividades extras.
                   </p>
-                  <div className="actions actions-compact">
-                    <button type="button" onClick={() => navigate('/turmas')}>
+                  <div className="actions actions-compact calendar-day-actions-row">
+                    <button type="button" className="calendar-day-action-link" onClick={() => navigate('/turmas')}>
                       Ir para Turmas
                     </button>
                     <button
                       type="button"
+                      className="calendar-day-action-toggle"
                       onClick={() => {
                         if (isActivityFormOpen) {
                           setIsActivityFormOpen(false);
@@ -1474,8 +1520,11 @@ export function CalendarPage() {
                 </div>
 
                 {isActivityFormOpen ? (
-                  <>
-                    <h3>{editingActivityId ? 'Editar atividade extra' : 'Registrar atividade extra'}</h3>
+                  <div className="calendar-activity-form-shell">
+                    <div className="calendar-activity-form-header">
+                      <h3>{editingActivityId ? 'Editar atividade extra' : 'Registrar atividade extra'}</h3>
+                      <p className="form-hint">Preencha os blocos abaixo para registrar a atividade com clareza operacional.</p>
+                    </div>
                     <div className="form form-spacious calendar-activity-form">
                       <p className="calendar-form-intro">
                         Configure os dados base e depois distribua os horários por data para bloquear corretamente a agenda dos técnicos.
@@ -1578,7 +1627,7 @@ export function CalendarPage() {
 
                       <div className="calendar-form-section">
                         <p className="calendar-form-step">3. Horários</p>
-                        <div className="form-subcard">
+                        <div className="form-subcard activity-schedule-default-card">
                           <small className="muted">Horário padrão para aplicar rapidamente</small>
                           <label className="checkbox-row">
                             <input
@@ -1598,11 +1647,11 @@ export function CalendarPage() {
                               </label>
                             </div>
                           ) : null}
-                          <div className="actions actions-compact">
+                          <div className="actions actions-compact activity-schedule-replicate-actions">
                             <button type="button" onClick={replicateScheduleToAllDates}>Replicar horário padrão para todas as datas</button>
                           </div>
                         </div>
-                        <div className="form-subcard">
+                        <div className="form-subcard activity-schedule-per-date-card">
                           <small className="muted">Ajuste fino por data (individual)</small>
                           {normalizeDateList(activityDates).length === 0 ? <p className="muted">Adicione datas para configurar horários.</p> : (
                             <div className="activity-date-schedule-list">
@@ -1657,7 +1706,7 @@ export function CalendarPage() {
                           )}
                         </div>
                       </div>
-                      <fieldset className="form-subcard">
+                      <fieldset className="form-subcard calendar-technician-fieldset">
                         <legend>Técnicos (opcional, pode marcar mais de um)</legend>
                         <div className="technicians-skills-grid">
                           {technicians.map((tech) => (
@@ -1673,9 +1722,9 @@ export function CalendarPage() {
                         </div>
                       </fieldset>
                       <label>Observações
-                        <textarea rows={3} value={activityNotes} onChange={(event) => setActivityNotes(event.target.value)} />
+                        <textarea rows={4} value={activityNotes} onChange={(event) => setActivityNotes(event.target.value)} />
                       </label>
-                      <div className="actions actions-compact">
+                      <div className="actions actions-compact calendar-activity-form-footer">
                         <button type="button" onClick={saveActivityOnSelectedDay}>
                           {editingActivityId ? 'Salvar alterações' : 'Salvar atividade'}
                         </button>
@@ -1692,7 +1741,7 @@ export function CalendarPage() {
                         ) : null}
                       </div>
                     </div>
-                  </>
+                  </div>
                 ) : null}
               </section>
             </div>

@@ -4,7 +4,6 @@ import type { PropsWithChildren } from 'react';
 import holandHorizontalLogo from '../assets/holand-horizontal.svg';
 
 const items = [
-  { to: '/', label: 'Dashboard' },
   { to: '/calendario', label: 'Calendário' },
   { to: '/turmas', label: 'Turmas' },
   { to: '/clientes', label: 'Clientes' },
@@ -98,7 +97,7 @@ export function Layout({ children, loggedUser, onLogout }: LayoutProps) {
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <Link to="/" className="logo">
+        <Link to="/calendario" className="logo">
           <img className="logo-brand-image" src={holandHorizontalLogo} alt="Holand" />
           <small>Orquestrador de Jornadas</small>
         </Link>

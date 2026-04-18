@@ -1,7 +1,7 @@
 import express, { type Express } from 'express';
 import { z } from 'zod';
 import { db, uuid } from '../db.js';
-import { reconcileCompanyHours } from '../hours/reconcile.js';
+import { readCompanyHoursModuleInsights, reconcileCompanyHours } from '../hours/reconcile.js';
 import {
   createPortalSession,
   findPortalUserBySlugAndUsername,
@@ -646,9 +646,11 @@ function buildPortalJourneyReadModel(companyId: string) {
     from cohort_allocation a
     join cohort c on c.id = a.cohort_id
     join module_template mt on mt.id = a.module_id
+    left join company_module_activation cma on cma.company_id = a.company_id and cma.module_id = a.module_id
     left join cohort_module_block cmb on cmb.cohort_id = a.cohort_id and cmb.module_id = a.module_id
     where a.company_id = ?
       and a.status <> 'Cancelado'
+      and coalesce(cma.is_enabled, 1) = 1
       and c.status in ('Planejada', 'Aguardando_quorum', 'Confirmada', 'Concluida')
     order by date(c.start_date) asc, a.entry_day asc
   `).all(companyId) as Array<{
@@ -817,23 +819,90 @@ function derivePlanningStatus(
   return baseStatus;
 }
 
+function planningStatusRank(status: string) {
+  if (status === 'Concluido') return 4;
+  if (status === 'Em_execucao' || status === 'Em_andamento') return 3;
+  if (status === 'Planejado') return 2;
+  return 1;
+}
+
+function mergePlanningStatus(baseStatus: string, derivedStatus?: 'Planejado' | 'Em_execucao') {
+  if (!derivedStatus) return baseStatus;
+  if (baseStatus === 'Concluido') return baseStatus;
+  return planningStatusRank(derivedStatus) > planningStatusRank(baseStatus)
+    ? derivedStatus
+    : baseStatus;
+}
+
+function readDeliverableActivityStatusByModule(companyId: string): Map<string, 'Planejado' | 'Em_execucao'> {
+  const todayIso = currentLocalSnapshot().dateIso;
+  const rows = db.prepare(`
+    select
+      ca.linked_module_id as module_id,
+      coalesce(cad.day_date, ca.start_date) as activity_date
+    from calendar_activity ca
+    left join calendar_activity_day cad on cad.activity_id = ca.id
+    join module_template mt on mt.id = ca.linked_module_id
+    where ca.company_id = ?
+      and ca.linked_module_id is not null
+      and coalesce(mt.delivery_mode, 'ministrado') = 'entregavel'
+      and coalesce(ca.status, 'Planejada') <> 'Cancelada'
+    order by activity_date asc
+  `).all(companyId) as Array<{
+    module_id: string | null;
+    activity_date: string;
+  }>;
+
+  const stateByModule = new Map<string, { hasStarted: boolean; hasFuture: boolean }>();
+  rows.forEach((row) => {
+    const moduleId = row.module_id?.trim();
+    if (!moduleId) return;
+    const current = stateByModule.get(moduleId) ?? { hasStarted: false, hasFuture: false };
+    if (row.activity_date <= todayIso) current.hasStarted = true;
+    if (row.activity_date > todayIso) current.hasFuture = true;
+    stateByModule.set(moduleId, current);
+  });
+
+  const statusByModule = new Map<string, 'Planejado' | 'Em_execucao'>();
+  stateByModule.forEach((state, moduleId) => {
+    if (state.hasStarted) {
+      statusByModule.set(moduleId, 'Em_execucao');
+      return;
+    }
+    if (state.hasFuture) {
+      statusByModule.set(moduleId, 'Planejado');
+    }
+  });
+
+  return statusByModule;
+}
+
 function buildPortalPlanningItems(companyId: string, journeyModuleById: Map<string, JourneyModuleSummary>) {
+  const moduleInsights = readCompanyHoursModuleInsights(companyId);
+  const moduleInsightById = new Map(moduleInsights.map((insight) => [insight.module_id, insight]));
+  const deliverableActivityStatusByModule = readDeliverableActivityStatusByModule(companyId);
   const progressRows = db.prepare(`
     select
       cmp.company_id,
       cmp.module_id,
       mt.code as module_code,
       mt.name as module_name,
+      coalesce(mt.delivery_mode, 'ministrado') as delivery_mode,
+      coalesce(cmp.custom_duration_days, mt.duration_days, 0) as duration_days,
       cmp.status,
       cmp.completed_at
     from company_module_progress cmp
     join module_template mt on mt.id = cmp.module_id
+    left join company_module_activation cma on cma.company_id = cmp.company_id and cma.module_id = cmp.module_id
     where cmp.company_id = ?
+      and coalesce(cma.is_enabled, 1) = 1
   `).all(companyId) as Array<{
     company_id: string;
     module_id: string;
     module_code: string;
     module_name: string;
+    delivery_mode: 'ministrado' | 'entregavel';
+    duration_days: number;
     status: string;
     completed_at: string | null;
   }>;
@@ -842,10 +911,15 @@ function buildPortalPlanningItems(companyId: string, journeyModuleById: Map<stri
   const items = progressRows.map((row) => {
     seenModuleIds.add(row.module_id);
     const journey = journeyModuleById.get(row.module_id);
-    const status = derivePlanningStatus(row.status, journey?.status);
+    const insight = moduleInsightById.get(row.module_id);
+    const baseStatus = derivePlanningStatus(row.status, journey?.status);
+    const status = (insight?.delivery_mode ?? row.delivery_mode) === 'entregavel'
+      ? mergePlanningStatus(baseStatus, deliverableActivityStatusByModule.get(row.module_id))
+      : baseStatus;
     const completedAt = status === 'Concluido'
       ? (journey?.completed_at ?? row.completed_at)
       : null;
+    const fallbackPlannedHours = Math.max(0, Number(row.duration_days || 0)) * 8;
     return {
       company_id: row.company_id,
       module_id: row.module_id,
@@ -857,12 +931,18 @@ function buildPortalPlanningItems(companyId: string, journeyModuleById: Map<stri
       completed_encounters: journey?.completed_encounters ?? null,
       remaining_encounters: journey?.remaining_encounters ?? null,
       next_dates: journey?.next_dates ?? [],
-      current_cohort: journey?.current_cohort ?? null
+      current_cohort: journey?.current_cohort ?? null,
+      delivery_mode: insight?.delivery_mode ?? row.delivery_mode ?? 'ministrado',
+      planned_diarias: insight?.planned_diarias ?? (fallbackPlannedHours / 8),
+      planned_hours: insight?.planned_hours ?? fallbackPlannedHours,
+      actual_client_consumed_hours: insight?.actual_client_consumed_hours ?? 0
     };
   });
 
   journeyModuleById.forEach((journey, moduleId) => {
     if (seenModuleIds.has(moduleId)) return;
+    const insight = moduleInsightById.get(moduleId);
+    const fallbackPlannedHours = insight?.planned_hours ?? 0;
     items.push({
       company_id: companyId,
       module_id: moduleId,
@@ -874,7 +954,11 @@ function buildPortalPlanningItems(companyId: string, journeyModuleById: Map<stri
       completed_encounters: journey.completed_encounters,
       remaining_encounters: journey.remaining_encounters,
       next_dates: journey.next_dates,
-      current_cohort: journey.current_cohort
+      current_cohort: journey.current_cohort,
+      delivery_mode: insight?.delivery_mode ?? 'ministrado',
+      planned_diarias: insight?.planned_diarias ?? (fallbackPlannedHours / 8),
+      planned_hours: fallbackPlannedHours,
+      actual_client_consumed_hours: insight?.actual_client_consumed_hours ?? 0
     });
   });
 
