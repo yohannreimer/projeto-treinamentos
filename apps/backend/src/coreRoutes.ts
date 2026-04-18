@@ -336,6 +336,7 @@ const hoursManualAdjustmentSchema = z.object({
   delta_hours: z.number().finite().refine((value) => value !== 0, {
     message: 'delta_hours deve ser diferente de zero.'
   }),
+  module_id: z.string().trim().min(1).max(120).optional().nullable(),
   reason: z.string().trim().min(5).max(500),
   idempotency_key: z.string().trim().min(10).max(200).optional()
 });
@@ -5041,12 +5042,25 @@ export function registerCoreRoutes(app: Express) {
     }
 
     const payload = parsed.data;
+    const moduleId = payload.module_id?.trim() || null;
     const normalizedReason = payload.reason.trim();
+    if (moduleId) {
+      const moduleExists = db.prepare(`
+        select id
+        from module_template
+        where id = ?
+        limit 1
+      `).get(moduleId) as { id: string } | undefined;
+      if (!moduleExists) {
+        return res.status(400).json({ message: 'Módulo informado para ajuste manual não existe.' });
+      }
+    }
     const generatedIdempotencyKey = `manual-adjustment:${companyId}:${createHash('sha1')
-      .update(`${companyId}|${Number(payload.delta_hours).toFixed(2)}|${normalizedReason.toLowerCase()}`)
+      .update(`${companyId}|${Number(payload.delta_hours).toFixed(2)}|${moduleId ?? 'none'}|${normalizedReason.toLowerCase()}`)
       .digest('hex')
       .slice(0, 24)}`;
     const idempotencyKey = payload.idempotency_key?.trim() || generatedIdempotencyKey;
+    const consumedDelta = moduleId ? roundHours(-Number(payload.delta_hours)) : 0;
     const result = appendAndProject({
       aggregate_type: 'company_hours_account',
       aggregate_id: companyId,
@@ -5054,6 +5068,8 @@ export function registerCoreRoutes(app: Express) {
       event_type: 'hours_manual_adjustment_added',
       payload: {
         delta_hours: Number(payload.delta_hours),
+        consumed_delta: consumedDelta,
+        module_id: moduleId,
         reason: normalizedReason
       },
       idempotency_key: idempotencyKey,

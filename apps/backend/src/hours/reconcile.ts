@@ -619,7 +619,9 @@ export function readCompanyHoursModuleInsights(companyId: string): CompanyHoursM
     const internalEffortHours = roundHours(internalEffortByModule.get(row.module_id) ?? 0);
     const projectedClientConsumed = plannedHours;
     const actualFromTraining = Math.max(0, roundHours(actualClientConsumptionByModule.get(row.module_id) ?? 0));
-    const actualClientConsumed = row.delivery_mode === 'entregavel' ? internalEffortHours : actualFromTraining;
+    const actualClientConsumed = row.delivery_mode === 'entregavel'
+      ? roundHours(internalEffortHours + actualFromTraining)
+      : actualFromTraining;
     const remainingHours = roundHours(projectedClientConsumed - actualClientConsumed);
     const varianceHours = roundHours(actualClientConsumed - projectedClientConsumed);
 

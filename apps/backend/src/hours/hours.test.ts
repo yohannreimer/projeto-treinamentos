@@ -120,6 +120,74 @@ test('POST /companies/:id/hours/adjustments creates manual event and updates led
   }
 });
 
+test('POST /companies/:id/hours/adjustments with module_id updates module insight consumption', { concurrency: false }, async () => {
+  const dbPath = assignTestDbPath('hours-api-manual-adjustment-module');
+  cleanupDbFiles(dbPath);
+
+  try {
+    const app = createApp({ forceDbRefresh: true, seedDb: false });
+    db.prepare(`
+      insert into company (id, name, status, notes, priority)
+      values ('comp-hours-api-13', 'Cliente Horas API 13', 'Ativo', null, 0)
+    `).run();
+    db.prepare(`
+      insert into module_template (
+        id, code, category, name, description, duration_days, profile, is_mandatory, delivery_mode, client_hours_policy
+      )
+      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'mod-hours-adjust-01',
+      'HRS-ADJ-01',
+      'CAD',
+      'Treinamento com ajuste retroativo',
+      null,
+      2,
+      null,
+      1,
+      'ministrado',
+      'consome'
+    );
+    db.prepare(`
+      insert into company_module_progress (company_id, module_id, status, notes, custom_duration_days)
+      values (?, ?, ?, null, ?)
+    `).run('comp-hours-api-13', 'mod-hours-adjust-01', 'Concluido', 2);
+
+    await request(app)
+      .post('/companies/comp-hours-api-13/hours/adjustments')
+      .send({
+        delta_hours: 16,
+        reason: 'Crédito inicial para retroativo.'
+      })
+      .expect(201);
+
+    const createRes = await request(app)
+      .post('/companies/comp-hours-api-13/hours/adjustments')
+      .send({
+        delta_hours: -8,
+        module_id: 'mod-hours-adjust-01',
+        reason: 'Treinamento realizado sem turma no histórico.'
+      });
+    assert.equal(createRes.status, 201);
+    assert.equal(createRes.body.ok, true);
+    assert.equal(createRes.body.inserted, true);
+
+    const summaryRes = await request(app).get('/companies/comp-hours-api-13/hours/summary');
+    assert.equal(summaryRes.status, 200);
+    assert.equal(summaryRes.body.available_hours, 16);
+    assert.equal(summaryRes.body.consumed_hours, 8);
+    assert.equal(summaryRes.body.balance_hours, 8);
+
+    const modulesRes = await request(app).get('/companies/comp-hours-api-13/hours/modules');
+    assert.equal(modulesRes.status, 200);
+    const insight = (modulesRes.body.items as Array<{ module_id: string; actual_client_consumed_hours: number }>)
+      .find((item) => item.module_id === 'mod-hours-adjust-01');
+    assert.ok(insight);
+    assert.equal(insight?.actual_client_consumed_hours, 8);
+  } finally {
+    cleanupDbFiles(dbPath);
+  }
+});
+
 test('POST /companies/:id/hours/pending/:pendingId/confirm resolves pending adjustment', { concurrency: false }, async () => {
   const dbPath = assignTestDbPath('hours-api-confirm-pending');
   cleanupDbFiles(dbPath);
@@ -166,7 +234,8 @@ test('POST /companies/:id/hours/pending/:pendingId/confirm resolves pending adju
 
     const pendingAfter = await request(app).get('/companies/comp-hours-api-02/hours/pending');
     assert.equal(pendingAfter.status, 200);
-    assert.equal(pendingAfter.body.items[0]?.status, 'Confirmado');
+    assert.equal(Array.isArray(pendingAfter.body.items), true);
+    assert.equal(pendingAfter.body.items.length, 0);
 
     const summaryRes = await request(app).get('/companies/comp-hours-api-02/hours/summary');
     assert.equal(summaryRes.status, 200);

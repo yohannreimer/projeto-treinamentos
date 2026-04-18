@@ -125,8 +125,10 @@ export function ClientDetailPage() {
   const [hoursModuleInsights, setHoursModuleInsights] = useState<CompanyHoursModuleInsight[]>([]);
   const [hoursActionLoadingId, setHoursActionLoadingId] = useState<string | null>(null);
   const [hoursAdjustmentDelta, setHoursAdjustmentDelta] = useState('');
+  const [hoursAdjustmentModuleId, setHoursAdjustmentModuleId] = useState('');
   const [hoursAdjustmentReason, setHoursAdjustmentReason] = useState('');
   const [savingHoursAdjustment, setSavingHoursAdjustment] = useState(false);
+  const [showHoursHistory, setShowHoursHistory] = useState(false);
 
   const [moduleEdits, setModuleEdits] = useState<Record<string, ModuleEdit>>({});
   const [savingCompany, setSavingCompany] = useState(false);
@@ -209,6 +211,7 @@ export function ClientDetailPage() {
     setShowJourneySection(true);
     setShowOptionalsSection(true);
     setShowHistorySection(true);
+    setShowHoursHistory(false);
   }, [id]);
 
   useEffect(() => {
@@ -239,29 +242,37 @@ export function ClientDetailPage() {
     () => roundHours(hoursModuleInsights.reduce((total, item) => total + Number(item.planned_hours ?? 0), 0)),
     [hoursModuleInsights]
   );
+  const consumedHoursFromModuleInsights = useMemo(
+    () => roundHours(hoursModuleInsights.reduce((total, item) => total + Number(item.actual_client_consumed_hours ?? 0), 0)),
+    [hoursModuleInsights]
+  );
+  const projectedConsumedFromBackend = Number(hoursSummary?.projection?.consumed_hours ?? hoursSummary?.consumed_hours ?? 0);
+  const confirmedConsumedFromBackend = Number(hoursSummary?.consumed_hours ?? 0);
+  const projectedConsumedForCards = roundHours(Math.max(projectedConsumedFromBackend, consumedHoursFromModuleInsights));
+  const confirmedConsumedForCards = roundHours(Math.max(confirmedConsumedFromBackend, consumedHoursFromModuleInsights));
   const projectedHoursSummary = useMemo(() => ({
     available_hours: totalAvailableHoursAcrossModules > 0
       ? totalAvailableHoursAcrossModules
       : (hoursSummary?.projection?.available_hours ?? hoursSummary?.available_hours ?? 0),
-    consumed_hours: hoursSummary?.projection?.consumed_hours ?? hoursSummary?.consumed_hours ?? 0,
+    consumed_hours: projectedConsumedForCards,
     balance_hours: roundHours(
       (totalAvailableHoursAcrossModules > 0
         ? totalAvailableHoursAcrossModules
         : (hoursSummary?.projection?.available_hours ?? hoursSummary?.available_hours ?? 0))
-      - (hoursSummary?.projection?.consumed_hours ?? hoursSummary?.consumed_hours ?? 0)
+      - projectedConsumedForCards
     ),
     remaining_diarias: roundHours(
       (
         (totalAvailableHoursAcrossModules > 0
           ? totalAvailableHoursAcrossModules
           : (hoursSummary?.projection?.available_hours ?? hoursSummary?.available_hours ?? 0))
-        - (hoursSummary?.projection?.consumed_hours ?? hoursSummary?.consumed_hours ?? 0)
+        - projectedConsumedForCards
       ) / 8
     )
-  }), [hoursSummary, totalAvailableHoursAcrossModules]);
+  }), [hoursSummary, projectedConsumedForCards, totalAvailableHoursAcrossModules]);
   const confirmedHoursSummary = useMemo(() => {
     const availableHours = projectedHoursSummary.available_hours;
-    const consumedHours = hoursSummary?.consumed_hours ?? 0;
+    const consumedHours = confirmedConsumedForCards;
     const balanceHours = roundHours(availableHours - consumedHours);
     return {
       available_hours: availableHours,
@@ -269,10 +280,14 @@ export function ClientDetailPage() {
       balance_hours: balanceHours,
       remaining_diarias: roundHours(balanceHours / 8)
     };
-  }, [hoursSummary, projectedHoursSummary.available_hours]);
+  }, [confirmedConsumedForCards, projectedHoursSummary.available_hours]);
   const ledgerRowsLatestFirst = useMemo(
     () => [...hoursLedger].reverse(),
     [hoursLedger]
+  );
+  const operationalLedgerRows = useMemo(
+    () => ledgerRowsLatestFirst.filter((entry) => entry.event_type !== 'deliverable_worklog_logged'),
+    [ledgerRowsLatestFirst]
   );
   const activeTimeline = useMemo(
     () => timeline.filter((item: any) => Boolean(item.is_enabled)),
@@ -311,6 +326,13 @@ export function ClientDetailPage() {
     () => [...hoursModuleInsights].sort((left, right) => left.code.localeCompare(right.code)),
     [hoursModuleInsights]
   );
+  const hoursAdjustmentModuleOptions = useMemo(
+    () => moduleHoursInsights.map((item) => ({
+      id: item.module_id,
+      label: `${item.code} - ${item.name}`
+    })),
+    [moduleHoursInsights]
+  );
 
   useEffect(() => {
     if (disabledCount === 0 && showDisabledModules) {
@@ -327,6 +349,14 @@ export function ClientDetailPage() {
       setModuleToActivate(disabledTimeline[0].module_id);
     }
   }, [disabledTimeline, moduleToActivate]);
+
+  useEffect(() => {
+    if (!hoursAdjustmentModuleId) return;
+    const stillExists = hoursAdjustmentModuleOptions.some((option) => option.id === hoursAdjustmentModuleId);
+    if (!stillExists) {
+      setHoursAdjustmentModuleId('');
+    }
+  }, [hoursAdjustmentModuleId, hoursAdjustmentModuleOptions]);
 
   const sortedHistory = useMemo(() => {
     const rows = [...(data?.history ?? [])];
@@ -493,9 +523,11 @@ export function ClientDetailPage() {
     try {
       await api.createCompanyHoursAdjustment(id, {
         delta_hours: delta,
+        module_id: hoursAdjustmentModuleId || undefined,
         reason
       });
       setHoursAdjustmentDelta('');
+      setHoursAdjustmentModuleId('');
       setHoursAdjustmentReason('');
       await loadCompanyHours(id);
       setMessage('Ajuste manual registrado no banco de horas.');
@@ -962,6 +994,20 @@ export function ClientDetailPage() {
                     />
                   </label>
                   <label>
+                    Módulo (opcional)
+                    <select
+                      value={hoursAdjustmentModuleId}
+                      onChange={(event) => setHoursAdjustmentModuleId(event.target.value)}
+                    >
+                      <option value="">Sem vínculo de módulo</option>
+                      {hoursAdjustmentModuleOptions.map((option) => (
+                        <option key={`hours-adjust-module-${option.id}`} value={option.id}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
                     Motivo do ajuste
                     <textarea
                       rows={3}
@@ -973,6 +1019,12 @@ export function ClientDetailPage() {
                   <div className="actions actions-compact">
                     <button type="button" onClick={createManualHoursAdjustment} disabled={savingHoursAdjustment}>
                       {savingHoursAdjustment ? 'Registrando...' : 'Registrar ajuste manual'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowHoursHistory((prev) => !prev)}
+                    >
+                      {showHoursHistory ? 'Ocultar histórico completo' : `Ver histórico completo (${ledgerRowsLatestFirst.length})`}
                     </button>
                   </div>
                 </div>
@@ -993,12 +1045,12 @@ export function ClientDetailPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {ledgerRowsLatestFirst.length === 0 ? (
+                  {operationalLedgerRows.length === 0 ? (
                     <tr>
                       <td colSpan={7}>Sem movimentações no extrato de horas.</td>
                     </tr>
                   ) : (
-                    ledgerRowsLatestFirst.map((entry) => {
+                    operationalLedgerRows.map((entry) => {
                       const worklogHours = entry.event_type === 'deliverable_worklog_logged'
                         ? extractWorklogHours(entry.payload_json)
                         : null;
@@ -1030,6 +1082,46 @@ export function ClientDetailPage() {
                 </tbody>
               </table>
                 </div>
+
+                {showHoursHistory ? (
+                  <div className="table-wrap hours-bank-table-wrap">
+                    <table className="table table-hover table-tight">
+                      <thead>
+                        <tr>
+                          <th>Data</th>
+                          <th>Evento</th>
+                          <th>Δ saldo cliente</th>
+                          <th>Esforço interno</th>
+                          <th>Saldo após</th>
+                          <th>Motivo</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {ledgerRowsLatestFirst.length === 0 ? (
+                          <tr>
+                            <td colSpan={6}>Sem histórico de movimentações.</td>
+                          </tr>
+                        ) : (
+                          ledgerRowsLatestFirst.map((entry) => {
+                            const worklogHours = entry.event_type === 'deliverable_worklog_logged'
+                              ? extractWorklogHours(entry.payload_json)
+                              : null;
+                            return (
+                              <tr key={`history-${entry.id}`}>
+                                <td>{formatDateTimeBr(entry.created_at)}</td>
+                                <td>{hoursEventLabel(entry.event_type)}</td>
+                                <td>{entry.delta_hours > 0 ? '+' : ''}{formatHoursValue(entry.delta_hours)} h</td>
+                                <td>{worklogHours === null ? '-' : `${formatHoursValue(worklogHours)} h`}</td>
+                                <td>{formatHoursValue(entry.balance_after)} h</td>
+                                <td>{extractHoursPayloadReason(entry.payload_json) || '-'}</td>
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : null}
 
                 <div className="table-wrap hours-bank-table-wrap">
               <table className="table table-hover table-tight">

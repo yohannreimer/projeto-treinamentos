@@ -319,7 +319,7 @@ export const api = {
     }),
   createCompanyHoursAdjustment: (
     companyId: string,
-    payload: { delta_hours: number; reason: string; idempotency_key?: string }
+    payload: { delta_hours: number; module_id?: string; reason: string; idempotency_key?: string }
   ) =>
     req<{ ok: boolean; inserted: boolean; event_id: string }>(`/companies/${companyId}/hours/adjustments`, {
       method: 'POST',
