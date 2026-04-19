@@ -50,6 +50,18 @@ function assertCompositeForeignKey(
   );
 }
 
+function seedFinanceCompanies() {
+  db.prepare(`
+    insert into company (id, name)
+    values (?, ?), (?, ?)
+  `).run(
+    'company-a',
+    'Company A',
+    'company-b',
+    'Company B'
+  );
+}
+
 test('initDb cria schema financeiro v1', () => {
   const dbPath = assignTestDbPath('finance-schema-v1');
   cleanupDbFiles(dbPath);
@@ -89,6 +101,26 @@ test('initDb cria schema financeiro v1', () => {
       { from: 'company_id', to: 'company_id' },
       { from: 'financial_category_id', to: 'id' }
     ]);
+    assertCompositeForeignKey('financial_payable', 'financial_transaction', [
+      { from: 'company_id', to: 'company_id' },
+      { from: 'financial_transaction_id', to: 'id' }
+    ]);
+    assertCompositeForeignKey('financial_receivable', 'financial_transaction', [
+      { from: 'company_id', to: 'company_id' },
+      { from: 'financial_transaction_id', to: 'id' }
+    ]);
+    assertCompositeForeignKey('financial_bank_statement_entry', 'financial_account', [
+      { from: 'company_id', to: 'company_id' },
+      { from: 'financial_account_id', to: 'id' }
+    ]);
+    assertCompositeForeignKey('financial_reconciliation_match', 'financial_bank_statement_entry', [
+      { from: 'company_id', to: 'company_id' },
+      { from: 'financial_bank_statement_entry_id', to: 'id' }
+    ]);
+    assertCompositeForeignKey('financial_debt', 'financial_transaction', [
+      { from: 'company_id', to: 'company_id' },
+      { from: 'financial_transaction_id', to: 'id' }
+    ]);
     assertCompositeForeignKey('billing_subscription', 'billing_plan', [
       { from: 'company_id', to: 'company_id' },
       { from: 'billing_plan_id', to: 'id' }
@@ -97,6 +129,59 @@ test('initDb cria schema financeiro v1', () => {
       { from: 'company_id', to: 'company_id' },
       { from: 'billing_subscription_id', to: 'id' }
     ]);
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('initDb bloqueia referencias financeiras entre empresas diferentes', () => {
+  const dbPath = assignTestDbPath('finance-schema-tenant-isolation');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+
+  try {
+    initDb();
+    seedFinanceCompanies();
+
+    db.prepare(`
+      insert into financial_account (
+        id, company_id, name, kind, currency, is_active, created_at, updated_at
+      ) values (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'financial-account-b',
+      'company-b',
+      'Banco B',
+      'bank',
+      'BRL',
+      1,
+      '2026-04-19T12:00:00.000Z',
+      '2026-04-19T12:00:00.000Z'
+    );
+
+    assert.throws(
+      () => {
+        db.prepare(`
+          insert into financial_transaction (
+            id, company_id, financial_account_id, financial_category_id, kind, status, amount_cents,
+            source, created_at, updated_at
+          ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          'financial-transaction-a',
+          'company-a',
+          'financial-account-b',
+          null,
+          'expense',
+          'open',
+          15000,
+          'manual',
+          '2026-04-19T12:00:00.000Z',
+          '2026-04-19T12:00:00.000Z'
+        );
+      },
+      (error) => error instanceof Error && 'code' in error && String((error as { code?: string }).code).startsWith('SQLITE_CONSTRAINT'),
+      'expected a SQLITE_CONSTRAINT when company A references company B financial_account'
+    );
   } finally {
     db.close();
     cleanupDbFiles(dbPath);
