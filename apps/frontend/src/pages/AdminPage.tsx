@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { api } from '../services/api';
 import { Section } from '../components/Section';
 import { askDestructiveConfirmation, DESTRUCTIVE_CONFIRMATION_PHRASE } from '../utils/destructive';
+import { INTERNAL_PERMISSION_KEYS, type InternalPermission, type InternalRole } from '../auth/session';
 
 type ModuleCatalog = {
   id: string;
@@ -17,6 +18,40 @@ type ModuleCatalog = {
   prerequisites: Array<{ id: string; code: string; name: string }>;
 };
 type AdminModuleSortKey = 'code' | 'name' | 'category' | 'duration_days' | 'is_mandatory';
+type InternalUserRow = {
+  id: string;
+  username: string;
+  display_name: string | null;
+  role: InternalRole;
+  permissions: InternalPermission[];
+  is_active: boolean;
+  last_login_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+type InternalAuditRow = {
+  id: string;
+  internal_user_id: string | null;
+  username: string;
+  action: string;
+  resource_type: string;
+  resource_id: string | null;
+  payload_json: string;
+  created_at: string;
+  summary_text: string;
+  detail_text: string;
+  method: string | null;
+  path: string | null;
+  status: number | null;
+  duration_ms: number | null;
+};
+
+const ROLE_PRESETS: Record<InternalRole, InternalPermission[]> = {
+  supremo: [...INTERNAL_PERMISSION_KEYS],
+  intermediario: INTERNAL_PERMISSION_KEYS.filter((item) => item !== 'admin'),
+  junior: ['calendar', 'cohorts', 'implementation', 'support', 'licenses', 'docs'],
+  custom: []
+};
 
 const CURRENT_CLIENTS = [
   'Krah do Brasil',
@@ -42,6 +77,35 @@ const CURRENT_MODULES = [
   { code: '020302050', name: "Acompanhamento TopSolid'Cam (interno)", category: 'Consultoria', duration_days: 2, is_mandatory: 0 },
   { code: '960001010', name: 'Instalação / Configuração', category: 'Instalação', duration_days: 1, is_mandatory: 1 }
 ];
+
+function roleLabel(role: InternalRole): string {
+  if (role === 'supremo') return 'Supremo';
+  if (role === 'intermediario') return 'Intermediário';
+  if (role === 'junior') return 'Júnior';
+  return 'Custom';
+}
+
+function formatDateTime(dateIso: string | null): string {
+  if (!dateIso) return '-';
+  const value = new Date(dateIso);
+  if (Number.isNaN(value.getTime())) return dateIso;
+  return value.toLocaleString('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+}
+
+function csvEscape(value: unknown): string {
+  const text = String(value ?? '');
+  if (/[;"\n\r]/.test(text)) {
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+  return text;
+}
+
 export function AdminPage() {
   const [data, setData] = useState<any>(null);
   const [moduleQuery, setModuleQuery] = useState('');
@@ -80,18 +144,43 @@ export function AdminPage() {
   const [portalOperatorPassword, setPortalOperatorPassword] = useState('');
   const [portalOperatorConfigured, setPortalOperatorConfigured] = useState(false);
   const [savingPortalOperatorAccess, setSavingPortalOperatorAccess] = useState(false);
+  const [internalUsers, setInternalUsers] = useState<InternalUserRow[]>([]);
+  const [auditRows, setAuditRows] = useState<InternalAuditRow[]>([]);
+  const [selectedInternalUserId, setSelectedInternalUserId] = useState('');
+  const [newInternalUsername, setNewInternalUsername] = useState('');
+  const [newInternalDisplayName, setNewInternalDisplayName] = useState('');
+  const [newInternalPassword, setNewInternalPassword] = useState('');
+  const [newInternalRole, setNewInternalRole] = useState<InternalRole>('junior');
+  const [newInternalPermissions, setNewInternalPermissions] = useState<InternalPermission[]>(ROLE_PRESETS.junior);
+  const [creatingInternalUser, setCreatingInternalUser] = useState(false);
+  const [editInternalDisplayName, setEditInternalDisplayName] = useState('');
+  const [editInternalPassword, setEditInternalPassword] = useState('');
+  const [editInternalRole, setEditInternalRole] = useState<InternalRole>('junior');
+  const [editInternalPermissions, setEditInternalPermissions] = useState<InternalPermission[]>([]);
+  const [editInternalActive, setEditInternalActive] = useState(true);
+  const [savingInternalUser, setSavingInternalUser] = useState(false);
 
   function loadCatalog() {
     Promise.all([
       api.catalog(),
-      api.portalOperatorAccess()
-    ]).then(([response, operatorAccess]) => {
+      api.portalOperatorAccess(),
+      api.adminInternalUsers(),
+      api.adminInternalAuditLogs({ limit: 120 })
+    ]).then(([response, operatorAccess, usersResponse, auditResponse]) => {
       setData(response);
       setPortalOperatorUsername(operatorAccess.username ?? '');
       setPortalOperatorConfigured(Boolean(operatorAccess.is_configured));
+      const users = usersResponse.items ?? [];
+      setInternalUsers(users);
+      setAuditRows(auditResponse.items ?? []);
       const modules = (response.modules ?? []) as ModuleCatalog[];
       if (modules.length > 0) {
         setSelectedModuleId((prev) => modules.some((module) => module.id === prev) ? prev : modules[0].id);
+      }
+      if (users.length > 0) {
+        setSelectedInternalUserId((prev) => users.some((item) => item.id === prev) ? prev : users[0].id);
+      } else {
+        setSelectedInternalUserId('');
       }
     }).catch(() => setData(null));
   }
@@ -104,6 +193,10 @@ export function AdminPage() {
   const selectedModule = useMemo(
     () => modules.find((module) => module.id === selectedModuleId) ?? null,
     [modules, selectedModuleId]
+  );
+  const selectedInternalUser = useMemo(
+    () => internalUsers.find((user) => user.id === selectedInternalUserId) ?? null,
+    [internalUsers, selectedInternalUserId]
   );
 
   const filteredModules = useMemo(() => {
@@ -140,6 +233,58 @@ export function AdminPage() {
     return sortDirection === 'asc' ? ' ↑' : ' ↓';
   }
 
+  function exportInternalAuditCsv() {
+    if (auditRows.length === 0) {
+      setMessage('Sem auditoria para exportar.');
+      return;
+    }
+
+    const header = [
+      'Data',
+      'Usuario',
+      'Resumo',
+      'Detalhe',
+      'Metodo',
+      'Rota',
+      'Status HTTP',
+      'Duracao ms',
+      'Recurso',
+      'Recurso ID',
+      'Acao tecnica',
+      'Payload tecnico'
+    ];
+
+    const lines = [
+      header.map(csvEscape).join(';'),
+      ...auditRows.map((row) => ([
+        formatDateTime(row.created_at),
+        row.username,
+        row.summary_text,
+        row.detail_text,
+        row.method ?? '',
+        row.path ?? '',
+        row.status ?? '',
+        row.duration_ms ?? '',
+        row.resource_type,
+        row.resource_id ?? '',
+        row.action,
+        row.payload_json
+      ].map(csvEscape).join(';')))
+    ];
+
+    const today = new Date().toISOString().slice(0, 10);
+    const blob = new Blob([`\uFEFF${lines.join('\n')}`], { type: 'text/csv;charset=utf-8;' });
+    const url = window.URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `auditoria-interna-${today}.csv`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.URL.revokeObjectURL(url);
+    setMessage('CSV da auditoria exportado com sucesso.');
+  }
+
   const stats = useMemo(() => {
     const total = modules.length;
     const mandatory = modules.filter((module) => module.is_mandatory).length;
@@ -160,6 +305,15 @@ export function AdminPage() {
     setEditHoursPolicy(selectedModule.client_hours_policy ?? 'consome');
     setPrereqIds((selectedModule.prerequisites ?? []).map((item) => item.id));
   }, [selectedModuleId, selectedModule]);
+
+  useEffect(() => {
+    if (!selectedInternalUser) return;
+    setEditInternalDisplayName(selectedInternalUser.display_name ?? '');
+    setEditInternalPassword('');
+    setEditInternalRole(selectedInternalUser.role);
+    setEditInternalPermissions(selectedInternalUser.permissions ?? []);
+    setEditInternalActive(Boolean(selectedInternalUser.is_active));
+  }, [selectedInternalUser]);
 
   async function handleImport() {
     setLoadingImport(true);
@@ -320,6 +474,99 @@ export function AdminPage() {
     }
   }
 
+  function applyRolePresetToNew(role: InternalRole) {
+    setNewInternalRole(role);
+    if (role === 'custom') {
+      setNewInternalPermissions([]);
+      return;
+    }
+    setNewInternalPermissions(ROLE_PRESETS[role]);
+  }
+
+  function applyRolePresetToEdit(role: InternalRole) {
+    setEditInternalRole(role);
+    if (role === 'custom') {
+      setEditInternalPermissions([]);
+      return;
+    }
+    setEditInternalPermissions(ROLE_PRESETS[role]);
+  }
+
+  function toggleNewPermission(permission: InternalPermission) {
+    setNewInternalPermissions((prev) => (
+      prev.includes(permission)
+        ? prev.filter((item) => item !== permission)
+        : [...prev, permission]
+    ));
+  }
+
+  function toggleEditPermission(permission: InternalPermission) {
+    setEditInternalPermissions((prev) => (
+      prev.includes(permission)
+        ? prev.filter((item) => item !== permission)
+        : [...prev, permission]
+    ));
+  }
+
+  async function createInternalUserAction() {
+    if (!newInternalUsername.trim()) {
+      setMessage('Informe o login do usuário interno.');
+      return;
+    }
+    if (!newInternalPassword.trim()) {
+      setMessage('Informe a senha inicial do usuário interno.');
+      return;
+    }
+    const permissions = newInternalRole === 'custom' ? newInternalPermissions : ROLE_PRESETS[newInternalRole];
+
+    setCreatingInternalUser(true);
+    setMessage('');
+    try {
+      await api.createAdminInternalUser({
+        username: newInternalUsername.trim(),
+        display_name: newInternalDisplayName.trim() || null,
+        password: newInternalPassword,
+        role: newInternalRole,
+        permissions,
+        is_active: true
+      });
+      setNewInternalUsername('');
+      setNewInternalDisplayName('');
+      setNewInternalPassword('');
+      applyRolePresetToNew('junior');
+      setMessage('Usuário interno criado com sucesso.');
+      loadCatalog();
+    } catch (error) {
+      setMessage((error as Error).message);
+    } finally {
+      setCreatingInternalUser(false);
+    }
+  }
+
+  async function saveInternalUserAction() {
+    if (!selectedInternalUser) return;
+    const permissions = editInternalRole === 'custom' ? editInternalPermissions : ROLE_PRESETS[editInternalRole];
+
+    setSavingInternalUser(true);
+    setMessage('');
+    try {
+      await api.updateAdminInternalUser(selectedInternalUser.id, {
+        display_name: editInternalDisplayName.trim() || null,
+        password: editInternalPassword.trim() || undefined,
+        role: editInternalRole,
+        permissions,
+        is_active: editInternalActive
+      });
+      setEditInternalPassword('');
+      setMessage('Usuário interno atualizado.');
+      loadCatalog();
+    } catch (error) {
+      setMessage((error as Error).message);
+    } finally {
+      setSavingInternalUser(false);
+    }
+  }
+
   async function deleteSelectedModule() {
     if (!selectedModule) return;
     const confirmationPhrase = askDestructiveConfirmation(`Excluir módulo ${selectedModule.code} - ${selectedModule.name}`);
@@ -429,6 +676,190 @@ export function AdminPage() {
           <button type="button" onClick={savePortalOperatorAccess} disabled={savingPortalOperatorAccess}>
             {savingPortalOperatorAccess ? 'Salvando...' : 'Salvar acesso global do portal'}
           </button>
+        </div>
+      </Section>
+
+      <Section title="Usuários internos e permissões">
+        <p className="form-hint">
+          Perfis recomendados: <strong>Supremo</strong> (tudo), <strong>Intermediário</strong> (tudo menos Administração) e <strong>Júnior</strong> (Calendário, Turmas, Implementação, Suporte, Licenças e Documentação).
+        </p>
+        <div className="two-col admin-security-grid">
+          <div className="form-subcard">
+            <strong>Criar usuário interno</strong>
+            <div className="form form-spacious">
+              <div className="three-col admin-module-grid">
+                <label>
+                  Login
+                  <input
+                    value={newInternalUsername}
+                    onChange={(event) => setNewInternalUsername(event.target.value)}
+                    placeholder="ex: tecnico.junior"
+                  />
+                </label>
+                <label>
+                  Nome de exibição
+                  <input
+                    value={newInternalDisplayName}
+                    onChange={(event) => setNewInternalDisplayName(event.target.value)}
+                    placeholder="ex: João Técnico"
+                  />
+                </label>
+                <label>
+                  Perfil
+                  <select value={newInternalRole} onChange={(event) => applyRolePresetToNew(event.target.value as InternalRole)}>
+                    <option value="supremo">Supremo</option>
+                    <option value="intermediario">Intermediário</option>
+                    <option value="junior">Júnior</option>
+                    <option value="custom">Custom</option>
+                  </select>
+                </label>
+              </div>
+              <label>
+                Senha inicial
+                <input
+                  type="password"
+                  value={newInternalPassword}
+                  onChange={(event) => setNewInternalPassword(event.target.value)}
+                  placeholder="mínimo 8 caracteres"
+                />
+              </label>
+              {newInternalRole === 'custom' ? (
+                <div className="check-grid admin-permission-grid">
+                  {INTERNAL_PERMISSION_KEYS.map((permission) => (
+                    <label key={permission}>
+                      <input
+                        type="checkbox"
+                        checked={newInternalPermissions.includes(permission)}
+                        onChange={() => toggleNewPermission(permission)}
+                      />
+                      {permission}
+                    </label>
+                  ))}
+                </div>
+              ) : (
+                <p className="form-hint">Permissões automáticas do perfil selecionado serão aplicadas.</p>
+              )}
+              <div className="actions actions-compact">
+                <button type="button" onClick={createInternalUserAction} disabled={creatingInternalUser}>
+                  {creatingInternalUser ? 'Criando...' : 'Criar usuário'}
+                </button>
+              </div>
+            </div>
+          </div>
+          <div className="form-subcard">
+            <strong>Editar usuário interno</strong>
+            <div className="form form-spacious">
+              <label>
+                Usuário
+                <select
+                  value={selectedInternalUserId}
+                  onChange={(event) => setSelectedInternalUserId(event.target.value)}
+                >
+                  {internalUsers.map((user) => (
+                    <option key={user.id} value={user.id}>
+                      {user.username} ({roleLabel(user.role)})
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {selectedInternalUser ? (
+                <>
+                  <div className="three-col admin-module-grid">
+                    <label>
+                      Nome de exibição
+                      <input
+                        value={editInternalDisplayName}
+                        onChange={(event) => setEditInternalDisplayName(event.target.value)}
+                      />
+                    </label>
+                    <label>
+                      Perfil
+                      <select value={editInternalRole} onChange={(event) => applyRolePresetToEdit(event.target.value as InternalRole)}>
+                        <option value="supremo">Supremo</option>
+                        <option value="intermediario">Intermediário</option>
+                        <option value="junior">Júnior</option>
+                        <option value="custom">Custom</option>
+                      </select>
+                    </label>
+                    <label>
+                      Status
+                      <select value={editInternalActive ? 'active' : 'inactive'} onChange={(event) => setEditInternalActive(event.target.value === 'active')}>
+                        <option value="active">Ativo</option>
+                        <option value="inactive">Inativo</option>
+                      </select>
+                    </label>
+                  </div>
+                  <label>
+                    Nova senha (opcional)
+                    <input
+                      type="password"
+                      value={editInternalPassword}
+                      onChange={(event) => setEditInternalPassword(event.target.value)}
+                      placeholder="Preencha apenas para trocar"
+                    />
+                  </label>
+                  {editInternalRole === 'custom' ? (
+                    <div className="check-grid admin-permission-grid">
+                      {INTERNAL_PERMISSION_KEYS.map((permission) => (
+                        <label key={permission}>
+                          <input
+                            type="checkbox"
+                            checked={editInternalPermissions.includes(permission)}
+                            onChange={() => toggleEditPermission(permission)}
+                          />
+                          {permission}
+                        </label>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="form-hint">Permissões serão recalculadas pelo perfil selecionado.</p>
+                  )}
+                  <div className="actions actions-compact">
+                    <button type="button" onClick={saveInternalUserAction} disabled={savingInternalUser}>
+                      {savingInternalUser ? 'Salvando...' : 'Salvar usuário'}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <p className="form-hint">Nenhum usuário interno cadastrado.</p>
+              )}
+            </div>
+          </div>
+        </div>
+      </Section>
+
+      <Section title="Auditoria interna">
+        <div className="admin-audit-toolbar">
+          <p className="form-hint">Retenção automática: últimos 30 dias. Linguagem natural para leitura rápida e exportação em CSV.</p>
+          <button type="button" className="secondary" onClick={exportInternalAuditCsv}>
+            Exportar CSV
+          </button>
+        </div>
+        <div className="table-wrap">
+          <table className="table table-tight table-hover">
+            <thead>
+              <tr>
+                <th>Data</th>
+                <th>Usuário</th>
+                <th>Resumo</th>
+                <th>Detalhe</th>
+              </tr>
+            </thead>
+            <tbody>
+              {auditRows.length === 0 ? (
+                <tr>
+                  <td colSpan={4}>Sem ações registradas.</td>
+                </tr>
+              ) : auditRows.map((row) => (
+                <tr key={row.id}>
+                  <td>{formatDateTime(row.created_at)}</td>
+                  <td>{row.username}</td>
+                  <td className="cell-wrap">{row.summary_text}</td>
+                  <td className="cell-wrap">{row.detail_text}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </Section>
 

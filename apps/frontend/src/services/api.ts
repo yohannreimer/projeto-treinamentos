@@ -4,6 +4,7 @@ import type {
   CompanyHoursPendingItem,
   CompanyHoursSummary
 } from '../types';
+import { internalSessionStore, type InternalPermission, type InternalRole, type InternalSessionUser } from '../auth/session';
 
 const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
 const BASE_URL = env?.VITE_API_BASE_URL ?? `http://${window.location.hostname}:4000`;
@@ -44,15 +45,23 @@ function withConfirmation(path: string, confirmationPhrase?: string): string {
 }
 
 async function req<T = any>(path: string, init?: RequestInit): Promise<T> {
+  const currentSession = internalSessionStore.read();
+  const authToken = currentSession?.token ?? null;
+  const headers = new Headers(init?.headers ?? {});
+  if (!headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  if (authToken && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${authToken}`);
+  }
+
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), 10000);
 
   let response: Response;
   try {
     response = await fetch(`${BASE_URL}${path}`, {
-      headers: {
-        'Content-Type': 'application/json'
-      },
+      headers,
       signal: controller.signal,
       ...init
     });
@@ -66,6 +75,10 @@ async function req<T = any>(path: string, init?: RequestInit): Promise<T> {
   }
 
   if (!response.ok) {
+    if (response.status === 401 && authToken) {
+      internalSessionStore.clear();
+      throw new Error('Sessão expirada. Faça login novamente.');
+    }
     const body = await response.text();
     const oversizedMessage = 'Arquivo muito grande. Use anexos de até 20 MB.';
     if (response.status === 413) {
@@ -86,6 +99,18 @@ async function req<T = any>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  internalLogin: (payload: { username: string; password: string }) =>
+    req<{ token: string; expires_at: string; user: InternalSessionUser }>('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  internalMe: () =>
+    req<{ user: InternalSessionUser }>('/auth/me'),
+  internalLogout: () =>
+    req<{ ok: boolean }>('/auth/logout', {
+      method: 'POST',
+      body: JSON.stringify({})
+    }),
   dashboard: () => req('/dashboard'),
   calendar: () => req('/calendar/cohorts'),
   calendarActivities: () => req('/calendar/activities'),
@@ -518,6 +543,68 @@ export const api = {
       method: 'DELETE'
     }),
   modules: () => req('/modules'),
+  adminInternalUsers: () =>
+    req<{ items: Array<{
+      id: string;
+      username: string;
+      display_name: string | null;
+      role: InternalRole;
+      permissions: InternalPermission[];
+      is_active: boolean;
+      last_login_at: string | null;
+      created_at: string;
+      updated_at: string;
+    }> }>('/admin/internal-users'),
+  createAdminInternalUser: (payload: {
+    username: string;
+    display_name?: string | null;
+    password: string;
+    role: InternalRole;
+    permissions?: InternalPermission[];
+    is_active?: boolean;
+  }) =>
+    req('/admin/internal-users', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  updateAdminInternalUser: (
+    id: string,
+    payload: {
+      username?: string;
+      display_name?: string | null;
+      password?: string;
+      role?: InternalRole;
+      permissions?: InternalPermission[];
+      is_active?: boolean;
+    }
+  ) =>
+    req(`/admin/internal-users/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload)
+    }),
+  adminInternalAuditLogs: (params?: { limit?: number }) => {
+    const query = new URLSearchParams();
+    if (typeof params?.limit === 'number') {
+      query.set('limit', String(params.limit));
+    }
+    const suffix = query.toString() ? `?${query.toString()}` : '';
+    return req<{ items: Array<{
+      id: string;
+      internal_user_id: string | null;
+      username: string;
+      action: string;
+      resource_type: string;
+      resource_id: string | null;
+      payload_json: string;
+      created_at: string;
+      summary_text: string;
+      detail_text: string;
+      method: string | null;
+      path: string | null;
+      status: number | null;
+      duration_ms: number | null;
+    }> }>(`/admin/internal-audit-logs${suffix}`);
+  },
   catalog: () => req('/admin/catalog'),
   portalOperatorAccess: () =>
     req<{ username: string | null; is_configured: boolean }>('/admin/portal-operator-access'),

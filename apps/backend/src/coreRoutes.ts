@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
-import express, { type Express } from 'express';
+import express, { type Express, type Request } from 'express';
 import puppeteer from 'puppeteer-core';
 import { z } from 'zod';
 import { clearAllData, db, nowDateIso, uuid } from './db.js';
@@ -17,6 +17,24 @@ import { portalRealtimeHub } from './portal/realtime.js';
 import { readPortalRealtimeSnapshot, setPortalTypingState, touchPortalPresence } from './portal/realtimeState.js';
 import { importWorkbook } from './workbookImport.js';
 import type { AllocationStatus, ModuleProgressStatus } from './types.js';
+import {
+  INTERNAL_PERMISSION_KEYS,
+  INTERNAL_ROLE_VALUES,
+  attachInternalAuthIfPresent,
+  createInternalAuditLog,
+  createInternalSessionForCredentials,
+  createInternalUser,
+  extractInternalBearerToken,
+  hasAnyInternalPermission,
+  listInternalAuditLogs,
+  listInternalUsers,
+  logoutInternalSessionByToken,
+  readInternalAuthContext,
+  requireInternalAuth,
+  type InternalPermissionKey,
+  type InternalRole,
+  updateInternalUser
+} from './internalAuth.js';
 
 const INSTALLATION_CODES = ['960001010', 'MOD-01'] as const;
 const DEFAULT_WORKBOOK_PATH = '/Users/yohannreimer/Downloads/Planejamento_Jornada_Treinamentos_v3.xlsx';
@@ -68,6 +86,18 @@ const PDF_BROWSER_PATH_CANDIDATES = [
   '/usr/bin/google-chrome',
   '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
+const INTERNAL_AUDIT_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+const INTERNAL_AUDIT_IGNORED_PATH_PATTERNS = [
+  /^\/cohorts\/check-technician-conflict$/,
+  /^\/implementation\/kanban\/cards\/[^/]+\/conversation\/realtime-session$/,
+  /^\/implementation\/kanban\/cards\/[^/]+\/conversation\/realtime-heartbeat$/,
+  /^\/implementation\/kanban\/cards\/[^/]+\/conversation\/read$/,
+  /^\/implementation\/kanban\/cards\/[^/]+\/conversation\/messages$/
+];
+
+type RegisterCoreRoutesOptions = {
+  enforceInternalAuth?: boolean;
+};
 
 const kanbanCardImageSchema = z
   .string()
@@ -306,6 +336,32 @@ const internalDocumentCreateSchema = z.object({
   file_name: z.string().min(1).max(200),
   mime_type: z.string().min(3).max(120),
   file_data_base64: internalDocumentDataUrlSchema
+});
+
+const internalRoleSchema = z.enum(INTERNAL_ROLE_VALUES);
+const internalPermissionSchema = z.enum(INTERNAL_PERMISSION_KEYS);
+
+const internalAuthLoginSchema = z.object({
+  username: z.string().trim().min(1).max(120),
+  password: z.string().trim().min(1).max(200)
+});
+
+const internalUserCreateSchema = z.object({
+  username: z.string().trim().min(3).max(120),
+  display_name: z.string().trim().min(2).max(160).nullable().optional(),
+  password: z.string().trim().min(8).max(200),
+  role: internalRoleSchema.default('intermediario'),
+  permissions: z.array(internalPermissionSchema).optional(),
+  is_active: z.boolean().optional().default(true)
+});
+
+const internalUserUpdateSchema = z.object({
+  username: z.string().trim().min(3).max(120).optional(),
+  display_name: z.string().trim().min(2).max(160).nullable().optional(),
+  password: z.string().trim().min(8).max(200).optional(),
+  role: internalRoleSchema.optional(),
+  permissions: z.array(internalPermissionSchema).optional(),
+  is_active: z.boolean().optional()
 });
 
 const kanbanBoardReorderSchema = z.object({
@@ -2385,7 +2441,118 @@ async function createInternalRealtimeSessionForCompany(companyId: string) {
   };
 }
 
-export function registerCoreRoutes(app: Express) {
+function resolveRequiredPermissionsForRequest(req: Request): InternalPermissionKey[] | null {
+  const pathname = req.path;
+  const method = req.method.toUpperCase();
+
+  if (pathname === '/health' || pathname.startsWith('/auth/')) {
+    return null;
+  }
+  if (pathname === '/dashboard') {
+    return ['dashboard'];
+  }
+  if (pathname.startsWith('/calendar')) {
+    return ['calendar'];
+  }
+  if (pathname.startsWith('/cohorts') || pathname.startsWith('/allocations')) {
+    return ['cohorts'];
+  }
+  if (pathname === '/companies' && method === 'GET') {
+    // Junior não vê a página de Clientes, mas precisa selecionar cliente em agenda/turmas/licenças.
+    return ['clients', 'calendar', 'cohorts', 'licenses', 'implementation', 'support'];
+  }
+  if (pathname.startsWith('/companies')) {
+    return ['clients'];
+  }
+  if (pathname === '/technicians' && method === 'GET') {
+    // Junior não vê a página de Técnicos, mas precisa selecionar técnico em agenda/turmas.
+    return ['technicians', 'calendar', 'cohorts', 'implementation', 'support'];
+  }
+  if (pathname.startsWith('/technicians')) {
+    return ['technicians'];
+  }
+  if (pathname.startsWith('/implementation')) {
+    return ['implementation', 'support'];
+  }
+  if (pathname.startsWith('/recruitment')) {
+    return ['recruitment'];
+  }
+  if (pathname.startsWith('/licenses')) {
+    return ['licenses'];
+  }
+  if (pathname.startsWith('/license-programs')) {
+    return ['licenses', 'license_programs'];
+  }
+  if (pathname.startsWith('/internal-documents')) {
+    return ['docs'];
+  }
+  if (pathname.startsWith('/admin')) {
+    return ['admin'];
+  }
+
+  return null;
+}
+
+function isPublicOrPortalPath(pathname: string): boolean {
+  if (pathname === '/health') return true;
+  if (pathname.startsWith('/auth/')) return true;
+  if (pathname === '/portal/api' || pathname.startsWith('/portal/api/')) return true;
+  return false;
+}
+
+function sanitizeAuditData(input: unknown, depth = 0): unknown {
+  if (depth > 4) return '[depth-limited]';
+  if (input === null || typeof input === 'undefined') return input;
+  if (typeof input === 'string') {
+    return input.length > 800 ? `${input.slice(0, 800)}…` : input;
+  }
+  if (typeof input === 'number' || typeof input === 'boolean') return input;
+  if (Array.isArray(input)) {
+    return input.slice(0, 20).map((item) => sanitizeAuditData(item, depth + 1));
+  }
+  if (typeof input === 'object') {
+    const source = input as Record<string, unknown>;
+    const output: Record<string, unknown> = {};
+    Object.entries(source).forEach(([key, value]) => {
+      if (/password|token|secret|authorization|file_data_base64|attachment_file_data_base64/i.test(key)) {
+        output[key] = '[redacted]';
+        return;
+      }
+      output[key] = sanitizeAuditData(value, depth + 1);
+    });
+    return output;
+  }
+  return String(input);
+}
+
+function shouldCaptureInternalAudit(req: Request): boolean {
+  const method = req.method.toUpperCase();
+  if (!INTERNAL_AUDIT_METHODS.has(method)) return false;
+  if (req.path.startsWith('/auth/')) return false;
+  return !INTERNAL_AUDIT_IGNORED_PATH_PATTERNS.some((pattern) => pattern.test(req.path));
+}
+
+function inferAuditResourceType(pathname: string): string {
+  const parts = pathname.split('/').filter(Boolean);
+  if (parts.length === 0) return 'root';
+  if (parts[0] === 'companies' && parts[2] === 'hours') return 'company_hours';
+  if (parts[0] === 'implementation' && parts[1] === 'kanban') return 'implementation_kanban';
+  return parts[0];
+}
+
+function inferAuditResourceId(pathname: string): string | null {
+  const parts = pathname.split('/').filter(Boolean);
+  if (parts.length < 2) return null;
+  const candidate = parts[1];
+  if (!candidate) return null;
+  if (['catalog', 'auth', 'portal-operator-access', 'modules', 'bootstrap-current-data', 'bootstrap-real-scenario', 'import-workbook'].includes(candidate)) {
+    return null;
+  }
+  return candidate;
+}
+
+export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOptions = {}) {
+  const { enforceInternalAuth = false } = options;
   try {
     syncCalendarActivityStatuses();
     syncCohortLifecycleStatuses();
@@ -2407,6 +2574,121 @@ export function registerCoreRoutes(app: Express) {
 
   app.get('/health', (_req, res) => {
     res.json({ ok: true });
+  });
+
+  app.use(attachInternalAuthIfPresent);
+
+  app.post('/auth/login', (req, res) => {
+    const parsed = internalAuthLoginSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+
+    const session = createInternalSessionForCredentials(
+      parsed.data.username.trim(),
+      parsed.data.password
+    );
+
+    if (!session) {
+      return res.status(401).json({ message: 'Usuário ou senha inválidos.' });
+    }
+
+    return res.json({
+      token: session.token,
+      expires_at: session.expires_at,
+      user: {
+        id: session.user.internal_user_id,
+        username: session.user.username,
+        display_name: session.user.display_name,
+        role: session.user.role,
+        permissions: session.user.permissions
+      }
+    });
+  });
+
+  app.get('/auth/me', requireInternalAuth, (_req, res) => {
+    const context = readInternalAuthContext(res);
+    if (!context) {
+      return res.status(401).json({ message: 'Sessão inválida.' });
+    }
+    return res.json({
+      user: {
+        id: context.internal_user_id,
+        username: context.username,
+        display_name: context.display_name,
+        role: context.role,
+        permissions: context.permissions
+      }
+    });
+  });
+
+  app.post('/auth/logout', requireInternalAuth, (req, res) => {
+    const token = extractInternalBearerToken(req);
+    if (token) {
+      logoutInternalSessionByToken(token);
+    }
+    return res.json({ ok: true });
+  });
+
+  app.use((req, res, next) => {
+    if (isPublicOrPortalPath(req.path)) {
+      return next();
+    }
+
+    const context = readInternalAuthContext(res);
+    if (!context) {
+      if (enforceInternalAuth) {
+        return res.status(401).json({ message: 'Token de autenticação obrigatório.' });
+      }
+      return next();
+    }
+
+    const requiredPermissions = resolveRequiredPermissionsForRequest(req);
+    if (requiredPermissions && requiredPermissions.length > 0 && !hasAnyInternalPermission(context, requiredPermissions)) {
+      return res.status(403).json({
+        message: 'Acesso negado para esta área.',
+        required_permissions: requiredPermissions
+      });
+    }
+
+    return next();
+  });
+
+  app.use((req, res, next) => {
+    if (!shouldCaptureInternalAudit(req)) {
+      return next();
+    }
+
+    const context = readInternalAuthContext(res);
+    if (!context) {
+      return next();
+    }
+
+    const startedAt = Date.now();
+    res.on('finish', () => {
+      if (res.statusCode >= 500) return;
+
+      try {
+        createInternalAuditLog({
+          internal_user_id: context.internal_user_id,
+          username: context.username,
+          action: `${req.method.toUpperCase()} ${req.path}`,
+          resource_type: inferAuditResourceType(req.path),
+          resource_id: inferAuditResourceId(req.path),
+          data: {
+            method: req.method.toUpperCase(),
+            path: req.path,
+            status: res.statusCode,
+            duration_ms: Date.now() - startedAt,
+            body: sanitizeAuditData(req.body)
+          }
+        });
+      } catch (error) {
+        console.error('Falha ao registrar auditoria interna:', errorMessage(error));
+      }
+    });
+
+    return next();
   });
   
   app.get('/modules', (_req, res) => {
@@ -7372,6 +7654,64 @@ export function registerCoreRoutes(app: Express) {
   
     db.prepare('delete from recruitment_candidate where id = ?').run(req.params.id);
     return res.json({ ok: true });
+  });
+
+  app.get('/admin/internal-users', requireInternalAuth, (_req, res) => {
+    return res.json({ items: listInternalUsers() });
+  });
+
+  app.post('/admin/internal-users', requireInternalAuth, (req, res) => {
+    const parsed = internalUserCreateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+
+    try {
+      const created = createInternalUser({
+        username: parsed.data.username,
+        display_name: parsed.data.display_name ?? null,
+        password: parsed.data.password,
+        role: parsed.data.role as InternalRole,
+        permissions: parsed.data.permissions,
+        is_active: parsed.data.is_active
+      });
+      return res.status(201).json(created);
+    } catch (error) {
+      return res.status(400).json({
+        message: 'Não foi possível criar usuário interno.',
+        detail: errorMessage(error)
+      });
+    }
+  });
+
+  app.patch('/admin/internal-users/:id', requireInternalAuth, (req, res) => {
+    const parsed = internalUserUpdateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+
+    try {
+      const updated = updateInternalUser(req.params.id, {
+        username: parsed.data.username,
+        display_name: parsed.data.display_name,
+        password: parsed.data.password,
+        role: parsed.data.role as InternalRole | undefined,
+        permissions: parsed.data.permissions,
+        is_active: parsed.data.is_active
+      });
+      return res.json(updated);
+    } catch (error) {
+      const message = errorMessage(error);
+      if (/não encontrado/i.test(message) || /nao encontrado/i.test(message)) {
+        return res.status(404).json({ message });
+      }
+      return res.status(400).json({ message });
+    }
+  });
+
+  app.get('/admin/internal-audit-logs', requireInternalAuth, (req, res) => {
+    const limit = Number(req.query.limit);
+    return res.json({ items: listInternalAuditLogs(limit) });
   });
   
   app.get('/admin/catalog', (_req, res) => {

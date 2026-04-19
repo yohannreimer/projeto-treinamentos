@@ -2,22 +2,26 @@ import { useState, type FormEvent } from 'react';
 import holandHorizontal from '../assets/holand-horizontal.svg';
 
 type LoginPageProps = {
-  onLogin: (username: string, password: string) => boolean;
+  onLogin: (username: string, password: string) => Promise<{ ok: boolean; message?: string }>;
 };
 
 export function LoginPage({ onLogin }: LoginPageProps) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  function submit(event: FormEvent<HTMLFormElement>) {
+  async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const ok = onLogin(username.trim(), password);
-    if (!ok) {
-      setError('Usuário ou senha inválidos.');
+    setLoading(true);
+    const result = await onLogin(username.trim(), password);
+    if (!result.ok) {
+      setError(result.message || 'Usuário ou senha inválidos.');
+      setLoading(false);
       return;
     }
     setError('');
+    setLoading(false);
   }
 
   return (
@@ -51,7 +55,9 @@ export function LoginPage({ onLogin }: LoginPageProps) {
 
           {error ? <p className="error">{error}</p> : null}
 
-          <button type="submit">Entrar</button>
+          <button type="submit" disabled={loading}>
+            {loading ? 'Entrando...' : 'Entrar'}
+          </button>
         </form>
         <small className="login-footnote">Ambiente interno premium para gestão de treinamentos.</small>
       </div>

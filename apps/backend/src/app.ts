@@ -8,10 +8,16 @@ export type CreateAppOptions = {
   forceDbRefresh?: boolean;
   initDb?: boolean;
   seedDb?: boolean;
+  enforceInternalAuth?: boolean;
 };
 
 export function createApp(options: CreateAppOptions = {}) {
-  const { forceDbRefresh = false, initDb: shouldInitDb = true, seedDb: shouldSeedDb = true } = options;
+  const {
+    forceDbRefresh = false,
+    initDb: shouldInitDb = true,
+    seedDb: shouldSeedDb = true,
+    enforceInternalAuth = false
+  } = options;
 
   if (forceDbRefresh) {
     resetDbConnection();
@@ -28,7 +34,7 @@ export function createApp(options: CreateAppOptions = {}) {
   app.set('trust proxy', process.env.TRUST_PROXY?.trim() || 'loopback, linklocal, uniquelocal');
   app.use(cors());
   app.use(express.json({ limit: '35mb' }));
-  registerCoreRoutes(app);
+  registerCoreRoutes(app, { enforceInternalAuth });
   registerPortalRoutes(app);
   app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
     const message = error instanceof Error ? error.message : String(error);

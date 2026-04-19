@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { randomBytes, scryptSync } from 'node:crypto';
 
 type SqliteDatabase = InstanceType<typeof Database>;
 
@@ -90,6 +91,12 @@ function iterateIsoDateRange(startDate: string, endDate: string): string[] {
     cursor.setDate(cursor.getDate() + 1);
   }
   return results;
+}
+
+function hashInternalPasswordSeed(password: string): string {
+  const saltHex = randomBytes(16).toString('hex');
+  const digest = scryptSync(password, saltHex, 64);
+  return `scrypt:${saltHex}:${digest.toString('hex')}`;
 }
 
 export function initDb() {
@@ -273,6 +280,41 @@ export function initDb() {
       key text primary key,
       value text not null,
       updated_at text not null
+    );
+
+    create table if not exists internal_user (
+      id text primary key,
+      username text not null unique,
+      display_name text,
+      password_hash text not null,
+      role text not null default 'supremo',
+      permissions_json text not null default '[]',
+      is_active integer not null default 1,
+      last_login_at text,
+      created_at text not null,
+      updated_at text not null
+    );
+
+    create table if not exists internal_session (
+      id text primary key,
+      internal_user_id text not null,
+      token_hash text not null unique,
+      expires_at text not null,
+      created_at text not null,
+      last_seen_at text not null,
+      foreign key(internal_user_id) references internal_user(id) on delete cascade
+    );
+
+    create table if not exists internal_audit_log (
+      id text primary key,
+      internal_user_id text,
+      username text not null,
+      action text not null,
+      resource_type text not null,
+      resource_id text,
+      payload_json text not null default '{}',
+      created_at text not null,
+      foreign key(internal_user_id) references internal_user(id) on delete set null
     );
 
     create table if not exists technician (
@@ -634,6 +676,11 @@ export function initDb() {
   ensureColumn('portal_client', 'hidden_module_ids_json', "hidden_module_ids_json text not null default '[]'");
   ensureColumn('portal_client', 'module_date_overrides_json', "module_date_overrides_json text not null default '{}'");
   ensureColumn('portal_client', 'module_status_overrides_json', "module_status_overrides_json text not null default '{}'");
+  ensureColumn('internal_user', 'display_name', 'display_name text');
+  ensureColumn('internal_user', 'role', "role text not null default 'supremo'");
+  ensureColumn('internal_user', 'permissions_json', "permissions_json text not null default '[]'");
+  ensureColumn('internal_user', 'is_active', 'is_active integer not null default 1');
+  ensureColumn('internal_user', 'last_login_at', 'last_login_at text');
 
   db.exec(`
     drop index if exists idx_portal_user_username;
@@ -648,7 +695,42 @@ export function initDb() {
       on portal_ticket_webhook_queue(company_id, recipient_side, sent_at, suppressed_at, available_at, created_at);
     create index if not exists idx_portal_agenda_item_client_date on portal_agenda_item(portal_client_id, start_date, end_date);
     create unique index if not exists idx_hours_event_store_idempotency_key on hours_event_store(idempotency_key);
+    create index if not exists idx_internal_session_user on internal_session(internal_user_id);
+    create index if not exists idx_internal_session_expires on internal_session(expires_at);
+    create index if not exists idx_internal_audit_created on internal_audit_log(created_at desc);
   `);
+
+  const internalUserCount = db.prepare('select count(*) as count from internal_user').get() as { count: number };
+  if (internalUserCount.count === 0) {
+    const nowIso = new Date().toISOString();
+    db.prepare(`
+      insert into internal_user (
+        id, username, display_name, password_hash, role, permissions_json, is_active, last_login_at, created_at, updated_at
+      ) values (?, ?, ?, ?, ?, ?, 1, null, ?, ?)
+    `).run(
+      'iuser-supremo-default',
+      'holand',
+      'Equipe Holand',
+      hashInternalPasswordSeed('Holand2026!@#'),
+      'supremo',
+      JSON.stringify([
+        'dashboard',
+        'calendar',
+        'cohorts',
+        'clients',
+        'technicians',
+        'implementation',
+        'support',
+        'recruitment',
+        'licenses',
+        'license_programs',
+        'docs',
+        'admin'
+      ]),
+      nowIso,
+      nowIso
+    );
+  }
 
   db.exec(`
     create trigger if not exists portal_session_tenant_consistency_insert

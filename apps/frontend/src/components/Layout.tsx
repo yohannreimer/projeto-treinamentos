@@ -2,23 +2,12 @@ import { Link, NavLink, useLocation } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import type { PropsWithChildren } from 'react';
 import holandHorizontalLogo from '../assets/holand-horizontal.svg';
-
-const items = [
-  { to: '/calendario', label: 'Calendário' },
-  { to: '/turmas', label: 'Turmas' },
-  { to: '/clientes', label: 'Clientes' },
-  { to: '/tecnicos', label: 'Técnicos' },
-  { to: '/implementacao', label: 'Implementação' },
-  { to: '/suporte', label: 'Suporte' },
-  { to: '/processos-seletivos', label: 'Processos Seletivos' },
-  { to: '/licencas', label: 'Licenças' },
-  { to: '/licencas/programas', label: 'Programas Licença' },
-  { to: '/documentacao', label: 'Documentação' },
-  { to: '/admin', label: 'Administração' }
-];
+import type { AppNavItem } from '../auth/navigation';
 
 type LayoutProps = PropsWithChildren<{
   loggedUser?: string;
+  userRoleLabel?: string;
+  navItems: AppNavItem[];
   onLogout?: () => void;
 }>;
 
@@ -70,7 +59,7 @@ function topbarContext(pathname: string) {
   };
 }
 
-export function Layout({ children, loggedUser, onLogout }: LayoutProps) {
+export function Layout({ children, loggedUser, userRoleLabel, navItems, onLogout }: LayoutProps) {
   const location = useLocation();
   const context = topbarContext(location.pathname);
   const [viewMode, setViewMode] = useState<(typeof viewModes)[number]>(() => {
@@ -102,7 +91,7 @@ export function Layout({ children, loggedUser, onLogout }: LayoutProps) {
           <small>Orquestrador de Jornadas</small>
         </Link>
         <nav>
-          {items.map((item) => (
+          {navItems.map((item) => (
             <NavLink key={item.to} to={item.to} className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
               {item.label}
             </NavLink>
@@ -111,6 +100,7 @@ export function Layout({ children, loggedUser, onLogout }: LayoutProps) {
         {onLogout ? (
           <div className="sidebar-auth">
             <small>Usuário: {loggedUser ?? 'logado'}</small>
+            {userRoleLabel ? <small>Perfil: {userRoleLabel}</small> : null}
             <button type="button" onClick={onLogout}>Sair</button>
           </div>
         ) : null}

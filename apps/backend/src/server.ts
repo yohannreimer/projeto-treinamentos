@@ -3,7 +3,7 @@ import { createApp } from './app.js';
 import { portalRealtimeHub } from './portal/realtime.js';
 
 const PORT = Number(process.env.PORT ?? 4000);
-const app = createApp();
+const app = createApp({ enforceInternalAuth: true });
 const server = http.createServer(app);
 portalRealtimeHub.attach(server);
 
