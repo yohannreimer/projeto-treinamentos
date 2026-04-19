@@ -5062,14 +5062,11 @@ export function registerCoreRoutes(app: Express) {
     const idempotencyKey = payload.idempotency_key?.trim() || generatedIdempotencyKey;
     const requestedDelta = Number(payload.delta_hours);
     const normalizedDelta = Number.isFinite(requestedDelta) ? requestedDelta : 0;
-    let deltaHours = normalizedDelta;
-    let consumedDelta = 0;
-    if (moduleId) {
-      // Em ajuste por módulo, o sinal segue semântica financeira padrão:
-      // negativo = consumo (débito), positivo = estorno/crédito.
-      deltaHours = roundHours(normalizedDelta);
-      consumedDelta = roundHours(-normalizedDelta);
-    }
+    // Ajuste manual sempre atua sobre consumo:
+    // +delta = aumenta consumo | -delta = reduz consumo.
+    // O disponível contratado não deve ser alterado por ajuste manual.
+    const consumedDelta = roundHours(normalizedDelta);
+    const deltaHours = roundHours(-normalizedDelta);
     const result = appendAndProject({
       aggregate_type: 'company_hours_account',
       aggregate_id: companyId,

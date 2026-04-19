@@ -92,7 +92,7 @@ test('POST /companies/:id/hours/adjustments creates manual event and updates led
       .post('/companies/comp-hours-api-01/hours/adjustments')
       .send({
         delta_hours: 3.5,
-        reason: 'Credito manual para ajuste comercial'
+        reason: 'Consumo manual para ajuste comercial'
       });
 
     assert.equal(createRes.status, 201);
@@ -103,7 +103,7 @@ test('POST /companies/:id/hours/adjustments creates manual event and updates led
       .post('/companies/comp-hours-api-01/hours/adjustments')
       .send({
         delta_hours: 3.5,
-        reason: 'Credito manual para ajuste comercial'
+        reason: 'Consumo manual para ajuste comercial'
       });
     assert.equal(duplicateRes.status, 201);
     assert.equal(duplicateRes.body.ok, true);
@@ -114,7 +114,7 @@ test('POST /companies/:id/hours/adjustments creates manual event and updates led
     assert.equal(Array.isArray(ledgerRes.body.items), true);
     assert.equal(ledgerRes.body.items.length, 1);
     assert.equal(ledgerRes.body.items[0]?.event_type, 'hours_manual_adjustment_added');
-    assert.equal(ledgerRes.body.items[0]?.delta_hours, 3.5);
+    assert.equal(ledgerRes.body.items[0]?.delta_hours, -3.5);
   } finally {
     cleanupDbFiles(dbPath);
   }
@@ -155,15 +155,15 @@ test('POST /companies/:id/hours/adjustments with module_id updates module insigh
     await request(app)
       .post('/companies/comp-hours-api-13/hours/adjustments')
       .send({
-        delta_hours: 16,
-        reason: 'Crédito inicial para retroativo.'
+        delta_hours: -16,
+        reason: 'Base de consumo inicial.'
       })
       .expect(201);
 
     const createRes = await request(app)
       .post('/companies/comp-hours-api-13/hours/adjustments')
       .send({
-        delta_hours: -8,
+        delta_hours: 8,
         module_id: 'mod-hours-adjust-01',
         reason: 'Treinamento realizado sem turma no histórico.'
       });
@@ -568,7 +568,7 @@ test('calendar client_consumption keeps hours snapshot in sync on create, patch 
     await request(app)
       .post('/companies/comp-hours-api-06/hours/adjustments')
       .send({
-        delta_hours: 16,
+        delta_hours: -16,
         reason: 'Crédito inicial para testes de consumo.'
       })
       .expect(201);
@@ -702,7 +702,7 @@ test('allocation status Confirmado/Executado debits once and estorna when leaves
     await request(app)
       .post('/companies/comp-hours-api-10/hours/adjustments')
       .send({
-        delta_hours: 24,
+        delta_hours: -24,
         reason: 'Crédito inicial para teste da alocação executada.'
       })
       .expect(201);
@@ -822,7 +822,7 @@ test('hours summary backfills confirmed allocations into ledger even without sta
     await request(app)
       .post('/companies/comp-hours-api-11/hours/adjustments')
       .send({
-        delta_hours: 16,
+        delta_hours: -16,
         reason: 'Crédito inicial para backfill de confirmado.'
       })
       .expect(201);
@@ -906,7 +906,7 @@ test('hours summary estorna consumo confirmado quando turma/alocação é exclu�
     await request(app)
       .post('/companies/comp-hours-api-12/hours/adjustments')
       .send({
-        delta_hours: 16,
+        delta_hours: -16,
         reason: 'Crédito inicial para teste de exclusão de turma.'
       })
       .expect(201);

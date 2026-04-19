@@ -314,11 +314,12 @@ export function ClientDetailPage() {
   const confirmedConsumedFromBackend = Number(hoursSummary?.consumed_hours ?? 0);
   const projectedConsumedForCards = roundHours(Math.max(projectedConsumedFromBackend, confirmedConsumedFromBackend, consumedHoursFromModuleInsights));
   const confirmedConsumedForCards = roundHours(Math.max(confirmedConsumedFromBackend, consumedHoursFromModuleInsights));
-  const projectedAvailableForCards = Math.max(
-    totalAvailableHoursAcrossModules > 0 ? totalAvailableHoursAcrossModules : 0,
-    Number(hoursSummary?.projection?.available_hours ?? 0),
-    Number(hoursSummary?.available_hours ?? 0)
-  );
+  const projectedAvailableForCards = totalAvailableHoursAcrossModules > 0
+    ? totalAvailableHoursAcrossModules
+    : Math.max(
+      Number(hoursSummary?.projection?.available_hours ?? 0),
+      Number(hoursSummary?.available_hours ?? 0)
+    );
   const projectedHoursSummary = useMemo(() => ({
     available_hours: projectedAvailableForCards,
     consumed_hours: projectedConsumedForCards,
@@ -1221,13 +1222,11 @@ export function ClientDetailPage() {
               <div className="form-subcard hours-bank-panel">
                 <h3>Ajuste manual</h3>
                 <p className="form-hint">
-                  Use para crédito/débito pontual. Com módulo selecionado: negativo consome retroativo, positivo estorna/credita.
+                  Use para ajuste pontual de consumo: valor positivo aumenta o consumido e valor negativo reduz o consumido.
                 </p>
                 <div className="form form-spacious">
                   <label>
-                    {hoursAdjustmentModuleId
-                      ? 'Horas do módulo (negativo = consumo, positivo = estorno)'
-                      : 'Δ horas (positivo ou negativo)'}
+                    Δ horas do consumo (positivo ou negativo)
                     <input
                       type="number"
                       step="0.5"
