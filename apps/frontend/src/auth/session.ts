@@ -13,6 +13,12 @@ export const INTERNAL_PERMISSION_KEYS = [
   'licenses',
   'license_programs',
   'docs',
+  'finance.read',
+  'finance.write',
+  'finance.approve',
+  'finance.reconcile',
+  'finance.close',
+  'finance.billing',
   'admin'
 ] as const;
 

@@ -17,6 +17,12 @@ export const INTERNAL_PERMISSION_KEYS = [
   'licenses',
   'license_programs',
   'docs',
+  'finance.read',
+  'finance.write',
+  'finance.approve',
+  'finance.reconcile',
+  'finance.close',
+  'finance.billing',
   'admin'
 ] as const;
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
@@ -316,6 +322,12 @@ function permissionLabel(value: string): string {
     licenses: 'Licenças',
     license_programs: 'Programas de licença',
     docs: 'Documentação',
+    'finance.read': 'Financeiro',
+    'finance.write': 'Financeiro (edição)',
+    'finance.approve': 'Financeiro (aprovação)',
+    'finance.reconcile': 'Financeiro (conciliação)',
+    'finance.close': 'Financeiro (fechamento)',
+    'finance.billing': 'Financeiro (billing)',
     admin: 'Administração'
   };
   return labels[value] ?? value;
@@ -333,6 +345,7 @@ function resourceLabel(resourceType: string): string {
     recruitment: 'candidato',
     implementation_kanban: 'item de implementação/suporte',
     implementation: 'item de implementação/suporte',
+    finance: 'financeiro',
     company_hours: 'banco de horas',
     internal_documents: 'documento interno',
     admin: 'configuração administrativa'
@@ -400,6 +413,7 @@ function buildSummaryText(row: InternalAuditLogDto, parsed: ReturnType<typeof pa
   const internalDocumentMatch = path.match(/^\/internal-documents\/([^/]+)$/);
   const licenseMatch = path.match(/^\/licenses\/([^/]+)$/);
   const licenseRenewMatch = path.match(/^\/licenses\/([^/]+)\/renew$/);
+  const financePathMatch = path.match(/^\/finance(?:\/([^/]+))?(?:\/([^/]+))?(?:\/([^/]+))?$/);
   const technicianMatch = path.match(/^\/technicians\/([^/]+)$/);
   const technicianSkillsMatch = path.match(/^\/technicians\/([^/]+)\/skills$/);
   const kanbanCardMatch = path.match(/^\/implementation\/kanban\/cards\/([^/]+)$/);
@@ -595,6 +609,33 @@ function buildSummaryText(row: InternalAuditLogDto, parsed: ReturnType<typeof pa
 
   if (method === 'POST' && path === '/licenses') {
     return `${actor} criou um registro de licença para cliente.`;
+  }
+
+  if (method === 'POST' && financePathMatch) {
+    const financeSection = financePathMatch[1] ?? '';
+    const financeSubsection = financePathMatch[2] ?? '';
+    const financeLabel = (() => {
+      if (financeSection === 'accounts') return 'uma conta financeira';
+      if (financeSection === 'categories') return 'uma categoria financeira';
+      if (financeSection === 'transactions') return 'uma movimentação financeira';
+      if (financeSection === 'payables') return 'uma conta a pagar';
+      if (financeSection === 'receivables') return 'uma conta a receber';
+      if (financeSection === 'reconciliation' || financeSection === 'reconciliations' || financeSection === 'matches') {
+        return 'uma conciliação financeira';
+      }
+      if (financeSection === 'debts') return 'uma dívida financeira';
+      if (financeSection === 'billing' && financeSubsection === 'plans') return 'um plano de billing';
+      if (financeSection === 'billing' && financeSubsection === 'subscriptions') return 'uma assinatura de billing';
+      if (financeSection === 'billing' && financeSubsection === 'invoices') return 'uma fatura de billing';
+      if (financeSection === 'imports') return 'uma importação financeira';
+      return 'um registro financeiro';
+    })();
+    const financeVerb = financeLabel.includes('movimentação')
+      || financeLabel.includes('conciliação')
+      || financeLabel.includes('importação')
+      ? 'registrou'
+      : 'criou';
+    return `${actor} ${financeVerb} ${financeLabel}.`;
   }
 
   if (method === 'PATCH' && licenseMatch) {

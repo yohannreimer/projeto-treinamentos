@@ -1,8 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import request from 'supertest';
 
+import { createApp } from '../app.js';
 import { db, initDb, resetDbConnection } from '../db.js';
+import {
+  createInternalUser,
+  hasAnyInternalPermission,
+  readInternalAuthContext,
+  requireInternalAuth
+} from '../internalAuth.js';
 import { assignTestDbPath } from '../test/testDb.js';
 
 function cleanupDbFiles(dbPath: string) {
@@ -60,6 +68,17 @@ function seedFinanceCompanies() {
     'company-b',
     'Company B'
   );
+}
+
+function registerFinanceOverviewRoute(app: ReturnType<typeof createApp>) {
+  app.get('/finance/overview', requireInternalAuth, (_req, res) => {
+    const context = readInternalAuthContext(res);
+    if (!context || !hasAnyInternalPermission(context, ['finance.read'])) {
+      return res.status(403).json({ message: 'Acesso negado para esta área.' });
+    }
+
+    return res.json({ ok: true });
+  });
 }
 
 test('initDb cria schema financeiro v1', () => {
@@ -182,6 +201,44 @@ test('initDb bloqueia referencias financeiras entre empresas diferentes', () => 
       (error) => error instanceof Error && 'code' in error && String((error as { code?: string }).code).startsWith('SQLITE_CONSTRAINT'),
       'expected a SQLITE_CONSTRAINT when company A references company B financial_account'
     );
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('GET /finance/overview bloqueia usuário sem finance.read', async () => {
+  const dbPath = assignTestDbPath('finance-route-auth-403');
+  cleanupDbFiles(dbPath);
+
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+  registerFinanceOverviewRoute(app);
+
+  try {
+    createInternalUser({
+      username: 'finance.viewer',
+      display_name: 'Finance Viewer',
+      password: 'Senha#123',
+      role: 'custom',
+      permissions: ['dashboard']
+    });
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.viewer', password: 'Senha#123' });
+
+    assert.equal(loginRes.status, 200);
+    const token = loginRes.body.token as string;
+    assert.equal(typeof token, 'string');
+
+    const overviewRes = await request(app)
+      .get('/finance/overview')
+      .set('Authorization', `Bearer ${token}`);
+
+    assert.equal(overviewRes.status, 403);
+    assert.deepEqual(overviewRes.body, {
+      message: 'Acesso negado para esta área.'
+    });
   } finally {
     db.close();
     cleanupDbFiles(dbPath);
