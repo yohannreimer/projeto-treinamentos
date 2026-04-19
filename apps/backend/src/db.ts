@@ -276,6 +276,247 @@ export function initDb() {
       foreign key(portal_client_id) references portal_client(id) on delete cascade
     );
 
+    create table if not exists financial_account (
+      id text primary key,
+      company_id text not null,
+      name text not null,
+      kind text not null,
+      currency text not null default 'BRL',
+      account_number text,
+      branch_number text,
+      is_active integer not null default 1,
+      created_at text not null,
+      updated_at text not null,
+      unique(company_id, id),
+      foreign key(company_id) references company(id) on delete cascade
+    );
+
+    create table if not exists financial_category (
+      id text primary key,
+      company_id text not null,
+      name text not null,
+      kind text not null,
+      parent_category_id text,
+      is_active integer not null default 1,
+      created_at text not null,
+      updated_at text not null,
+      unique(company_id, id),
+      foreign key(company_id) references company(id) on delete cascade,
+      foreign key(company_id, parent_category_id) references financial_category(company_id, id) on delete restrict
+    );
+
+    create table if not exists financial_transaction (
+      id text primary key,
+      company_id text not null,
+      financial_account_id text,
+      financial_category_id text,
+      kind text not null,
+      status text not null,
+      amount_cents integer not null,
+      issue_date text,
+      due_date text,
+      settlement_date text,
+      competence_date text,
+      source text not null default 'manual',
+      source_ref text,
+      note text,
+      created_by text,
+      created_at text not null,
+      updated_at text not null,
+      unique(company_id, id),
+      foreign key(company_id) references company(id) on delete cascade,
+      foreign key(company_id, financial_account_id) references financial_account(company_id, id) on delete restrict,
+      foreign key(company_id, financial_category_id) references financial_category(company_id, id) on delete restrict
+    );
+
+    create table if not exists financial_payable (
+      id text primary key,
+      company_id text not null,
+      financial_transaction_id text,
+      financial_account_id text,
+      financial_category_id text,
+      supplier_name text,
+      description text not null,
+      amount_cents integer not null,
+      status text not null,
+      issue_date text,
+      due_date text,
+      paid_at text,
+      source text not null default 'manual',
+      source_ref text,
+      note text,
+      created_at text not null,
+      updated_at text not null,
+      unique(company_id, id),
+      foreign key(company_id) references company(id) on delete cascade,
+      foreign key(company_id, financial_transaction_id) references financial_transaction(company_id, id) on delete restrict,
+      foreign key(company_id, financial_account_id) references financial_account(company_id, id) on delete restrict,
+      foreign key(company_id, financial_category_id) references financial_category(company_id, id) on delete restrict
+    );
+
+    create table if not exists financial_receivable (
+      id text primary key,
+      company_id text not null,
+      financial_transaction_id text,
+      financial_account_id text,
+      financial_category_id text,
+      customer_name text,
+      description text not null,
+      amount_cents integer not null,
+      status text not null,
+      issue_date text,
+      due_date text,
+      received_at text,
+      source text not null default 'manual',
+      source_ref text,
+      note text,
+      created_at text not null,
+      updated_at text not null,
+      unique(company_id, id),
+      foreign key(company_id) references company(id) on delete cascade,
+      foreign key(company_id, financial_transaction_id) references financial_transaction(company_id, id) on delete restrict,
+      foreign key(company_id, financial_account_id) references financial_account(company_id, id) on delete restrict,
+      foreign key(company_id, financial_category_id) references financial_category(company_id, id) on delete restrict
+    );
+
+    create table if not exists financial_import_job (
+      id text primary key,
+      company_id text not null,
+      import_type text not null,
+      source_file_name text not null,
+      source_file_mime_type text,
+      source_file_size_bytes integer not null default 0,
+      status text not null,
+      total_rows integer not null default 0,
+      processed_rows integer not null default 0,
+      error_rows integer not null default 0,
+      error_summary text,
+      created_by text,
+      created_at text not null,
+      updated_at text not null,
+      finished_at text,
+      unique(company_id, id),
+      foreign key(company_id) references company(id) on delete cascade
+    );
+
+    create table if not exists financial_bank_statement_entry (
+      id text primary key,
+      company_id text not null,
+      financial_account_id text not null,
+      financial_import_job_id text,
+      statement_date text not null,
+      posted_at text,
+      amount_cents integer not null,
+      description text not null,
+      reference_code text,
+      balance_cents integer,
+      source text not null default 'bank_import',
+      source_ref text,
+      created_at text not null,
+      updated_at text not null,
+      unique(company_id, id),
+      foreign key(company_id) references company(id) on delete cascade,
+      foreign key(company_id, financial_account_id) references financial_account(company_id, id) on delete restrict,
+      foreign key(company_id, financial_import_job_id) references financial_import_job(company_id, id) on delete restrict
+    );
+
+    create table if not exists financial_reconciliation_match (
+      id text primary key,
+      company_id text not null,
+      financial_bank_statement_entry_id text not null,
+      financial_transaction_id text not null,
+      match_type text not null,
+      match_status text not null,
+      matched_amount_cents integer not null,
+      matched_at text not null,
+      matched_by text,
+      note text,
+      created_at text not null,
+      updated_at text not null,
+      unique(company_id, id),
+      foreign key(company_id) references company(id) on delete cascade,
+      foreign key(company_id, financial_bank_statement_entry_id) references financial_bank_statement_entry(company_id, id) on delete cascade,
+      foreign key(company_id, financial_transaction_id) references financial_transaction(company_id, id) on delete cascade
+    );
+
+    create table if not exists financial_debt (
+      id text primary key,
+      company_id text not null,
+      financial_payable_id text,
+      financial_receivable_id text,
+      financial_transaction_id text,
+      debt_type text not null,
+      status text not null,
+      principal_amount_cents integer not null,
+      outstanding_amount_cents integer not null,
+      due_date text,
+      settled_at text,
+      note text,
+      created_at text not null,
+      updated_at text not null,
+      unique(company_id, id),
+      foreign key(company_id) references company(id) on delete cascade,
+      foreign key(company_id, financial_payable_id) references financial_payable(company_id, id) on delete restrict,
+      foreign key(company_id, financial_receivable_id) references financial_receivable(company_id, id) on delete restrict,
+      foreign key(company_id, financial_transaction_id) references financial_transaction(company_id, id) on delete restrict
+    );
+
+    create table if not exists billing_plan (
+      id text primary key,
+      company_id text not null,
+      code text not null,
+      name text not null,
+      billing_cycle text not null,
+      price_cents integer not null default 0,
+      currency text not null default 'BRL',
+      is_active integer not null default 1,
+      features_json text not null default '[]',
+      created_at text not null,
+      updated_at text not null,
+      unique(company_id, code),
+      unique(company_id, id),
+      foreign key(company_id) references company(id) on delete cascade
+    );
+
+    create table if not exists billing_subscription (
+      id text primary key,
+      company_id text not null,
+      billing_plan_id text not null,
+      status text not null,
+      started_at text not null,
+      current_period_start text,
+      current_period_end text,
+      trial_ends_at text,
+      canceled_at text,
+      auto_renew integer not null default 1,
+      created_at text not null,
+      updated_at text not null,
+      unique(company_id, id),
+      foreign key(company_id) references company(id) on delete cascade,
+      foreign key(company_id, billing_plan_id) references billing_plan(company_id, id) on delete restrict
+    );
+
+    create table if not exists billing_invoice (
+      id text primary key,
+      company_id text not null,
+      billing_subscription_id text,
+      invoice_number text not null,
+      status text not null,
+      issue_date text not null,
+      due_date text,
+      paid_at text,
+      amount_cents integer not null,
+      currency text not null default 'BRL',
+      pdf_url text,
+      note text,
+      created_at text not null,
+      updated_at text not null,
+      unique(company_id, invoice_number),
+      unique(company_id, id),
+      foreign key(company_id) references company(id) on delete cascade,
+      foreign key(company_id, billing_subscription_id) references billing_subscription(company_id, id) on delete restrict
+    );
+
     create table if not exists app_setting (
       key text primary key,
       value text not null,
@@ -698,6 +939,28 @@ export function initDb() {
     create index if not exists idx_internal_session_user on internal_session(internal_user_id);
     create index if not exists idx_internal_session_expires on internal_session(expires_at);
     create index if not exists idx_internal_audit_created on internal_audit_log(created_at desc);
+    create index if not exists idx_financial_account_company_active on financial_account(company_id, is_active);
+    create index if not exists idx_financial_category_company_parent on financial_category(company_id, parent_category_id);
+    create index if not exists idx_financial_transaction_company_status_due on financial_transaction(company_id, status, due_date);
+    create index if not exists idx_financial_transaction_company_account on financial_transaction(company_id, financial_account_id);
+    create index if not exists idx_financial_transaction_company_category on financial_transaction(company_id, financial_category_id);
+    create index if not exists idx_financial_payable_company_status_due on financial_payable(company_id, status, due_date);
+    create index if not exists idx_financial_payable_company_transaction on financial_payable(company_id, financial_transaction_id);
+    create index if not exists idx_financial_receivable_company_status_due on financial_receivable(company_id, status, due_date);
+    create index if not exists idx_financial_receivable_company_transaction on financial_receivable(company_id, financial_transaction_id);
+    create index if not exists idx_financial_import_job_company_status on financial_import_job(company_id, status, created_at desc);
+    create index if not exists idx_financial_bank_statement_entry_account_date
+      on financial_bank_statement_entry(company_id, financial_account_id, statement_date);
+    create index if not exists idx_financial_reconciliation_match_entry
+      on financial_reconciliation_match(company_id, financial_bank_statement_entry_id, financial_transaction_id);
+    create index if not exists idx_financial_debt_company_status_due on financial_debt(company_id, status, due_date);
+    create index if not exists idx_financial_debt_payable on financial_debt(company_id, financial_payable_id);
+    create index if not exists idx_financial_debt_receivable on financial_debt(company_id, financial_receivable_id);
+    create index if not exists idx_billing_plan_company_active on billing_plan(company_id, is_active);
+    create index if not exists idx_billing_subscription_company_status on billing_subscription(company_id, status, created_at desc);
+    create index if not exists idx_billing_subscription_plan on billing_subscription(company_id, billing_plan_id);
+    create index if not exists idx_billing_invoice_company_status_due on billing_invoice(company_id, status, due_date);
+    create index if not exists idx_billing_invoice_subscription on billing_invoice(company_id, billing_subscription_id);
   `);
 
   const internalUserCount = db.prepare('select count(*) as count from internal_user').get() as { count: number };
