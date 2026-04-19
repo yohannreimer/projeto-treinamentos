@@ -146,6 +146,7 @@ export function AdminPage() {
   const [savingPortalOperatorAccess, setSavingPortalOperatorAccess] = useState(false);
   const [internalUsers, setInternalUsers] = useState<InternalUserRow[]>([]);
   const [auditRows, setAuditRows] = useState<InternalAuditRow[]>([]);
+  const [showAuditSection, setShowAuditSection] = useState(false);
   const [selectedInternalUserId, setSelectedInternalUserId] = useState('');
   const [newInternalUsername, setNewInternalUsername] = useState('');
   const [newInternalDisplayName, setNewInternalDisplayName] = useState('');
@@ -828,39 +829,57 @@ export function AdminPage() {
         </div>
       </Section>
 
-      <Section title="Auditoria interna">
-        <div className="admin-audit-toolbar">
-          <p className="form-hint">Retenção automática: últimos 30 dias. Linguagem natural para leitura rápida e exportação em CSV.</p>
-          <button type="button" className="secondary" onClick={exportInternalAuditCsv}>
-            Exportar CSV
+      <Section
+        title="Auditoria interna"
+        className={showAuditSection ? '' : 'is-collapsed'}
+        action={(
+          <button
+            type="button"
+            className="section-collapse-btn"
+            onClick={() => setShowAuditSection((prev) => !prev)}
+            aria-expanded={showAuditSection}
+            aria-label={showAuditSection ? 'Minimizar auditoria interna' : 'Expandir auditoria interna'}
+          >
+            {showAuditSection ? '−' : '+'}
           </button>
-        </div>
-        <div className="table-wrap">
-          <table className="table table-tight table-hover">
-            <thead>
-              <tr>
-                <th>Data</th>
-                <th>Usuário</th>
-                <th>Resumo</th>
-                <th>Detalhe</th>
-              </tr>
-            </thead>
-            <tbody>
-              {auditRows.length === 0 ? (
-                <tr>
-                  <td colSpan={4}>Sem ações registradas.</td>
-                </tr>
-              ) : auditRows.map((row) => (
-                <tr key={row.id}>
-                  <td>{formatDateTime(row.created_at)}</td>
-                  <td>{row.username}</td>
-                  <td className="cell-wrap">{row.summary_text}</td>
-                  <td className="cell-wrap">{row.detail_text}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        )}
+      >
+        {showAuditSection ? (
+          <>
+            <div className="admin-audit-toolbar">
+              <p className="form-hint">Retenção automática: últimos 30 dias. Linguagem natural para leitura rápida e exportação em CSV.</p>
+              <button type="button" className="secondary" onClick={exportInternalAuditCsv}>
+                Exportar CSV
+              </button>
+            </div>
+            <div className="table-wrap">
+              <table className="table table-tight table-hover">
+                <thead>
+                  <tr>
+                    <th>Data</th>
+                    <th>Usuário</th>
+                    <th>Resumo</th>
+                    <th>Detalhe</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {auditRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={4}>Sem ações registradas.</td>
+                    </tr>
+                  ) : auditRows.map((row) => (
+                    <tr key={row.id}>
+                      <td>{formatDateTime(row.created_at)}</td>
+                      <td>{row.username}</td>
+                      <td className="cell-wrap">{row.summary_text}</td>
+                      <td className="cell-wrap">{row.detail_text}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        ) : null}
       </Section>
 
       <div className="two-col">

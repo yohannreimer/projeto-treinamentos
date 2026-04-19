@@ -6,7 +6,6 @@ import type { AppNavItem } from '../auth/navigation';
 
 type LayoutProps = PropsWithChildren<{
   loggedUser?: string;
-  userRoleLabel?: string;
   navItems: AppNavItem[];
   onLogout?: () => void;
 }>;
@@ -59,7 +58,7 @@ function topbarContext(pathname: string) {
   };
 }
 
-export function Layout({ children, loggedUser, userRoleLabel, navItems, onLogout }: LayoutProps) {
+export function Layout({ children, loggedUser, navItems, onLogout }: LayoutProps) {
   const location = useLocation();
   const context = topbarContext(location.pathname);
   const [viewMode, setViewMode] = useState<(typeof viewModes)[number]>(() => {
@@ -100,7 +99,6 @@ export function Layout({ children, loggedUser, userRoleLabel, navItems, onLogout
         {onLogout ? (
           <div className="sidebar-auth">
             <small>Usuário: {loggedUser ?? 'logado'}</small>
-            {userRoleLabel ? <small>Perfil: {userRoleLabel}</small> : null}
             <button type="button" onClick={onLogout}>Sair</button>
           </div>
         ) : null}

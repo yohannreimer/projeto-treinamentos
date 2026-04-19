@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { PortalShell } from './portal/PortalShell';
 import { DashboardPage } from './pages/DashboardPage';
@@ -26,13 +26,7 @@ import {
   type InternalSessionUser
 } from './auth/session';
 import { defaultRouteForUser, visibleNavItemsForUser } from './auth/navigation';
-
-function roleLabel(role: InternalSessionUser['role']) {
-  if (role === 'supremo') return 'Supremo';
-  if (role === 'intermediario') return 'Intermediário';
-  if (role === 'junior') return 'Júnior';
-  return 'Custom';
-}
+const INTERNAL_TAB_INITIALIZED_KEY = 'orquestrador_internal_tab_initialized_v1';
 
 function ProtectedRoute({
   user,
@@ -54,6 +48,8 @@ function ProtectedRoute({
 function InternalApp() {
   const [session, setSession] = useState<InternalSessionData | null>(() => internalSessionStore.read());
   const [loadingSession, setLoadingSession] = useState(true);
+  const navigate = useNavigate();
+  const location = useLocation();
 
   useEffect(() => {
     const sync = () => setSession(internalSessionStore.read());
@@ -99,6 +95,8 @@ function InternalApp() {
       const response = await api.internalLogin({ username, password });
       internalSessionStore.save(response);
       setSession(response);
+      window.sessionStorage.setItem(INTERNAL_TAB_INITIALIZED_KEY, '1');
+      navigate('/calendario', { replace: true });
       return { ok: true };
     } catch (error) {
       return { ok: false, message: (error as Error).message };
@@ -108,6 +106,7 @@ function InternalApp() {
   function handleLogout() {
     api.internalLogout().catch(() => null).finally(() => {
       internalSessionStore.clear();
+      window.sessionStorage.removeItem(INTERNAL_TAB_INITIALIZED_KEY);
       setSession(null);
     });
   }
@@ -115,6 +114,16 @@ function InternalApp() {
   const user = session?.user ?? null;
   const navItems = useMemo(() => visibleNavItemsForUser(user), [user]);
   const defaultRoute = defaultRouteForUser(user);
+
+  useEffect(() => {
+    if (!session || !user) return;
+    const tabInitialized = window.sessionStorage.getItem(INTERNAL_TAB_INITIALIZED_KEY) === '1';
+    if (tabInitialized) return;
+    window.sessionStorage.setItem(INTERNAL_TAB_INITIALIZED_KEY, '1');
+    if (location.pathname !== '/calendario') {
+      navigate('/calendario', { replace: true });
+    }
+  }, [session, user, location.pathname, navigate]);
 
   if (loadingSession) {
     return <p style={{ padding: '24px' }}>Carregando sessão...</p>;
@@ -128,7 +137,6 @@ function InternalApp() {
     <Layout
       onLogout={handleLogout}
       loggedUser={user.display_name || user.username}
-      userRoleLabel={roleLabel(user.role)}
       navItems={navItems}
     >
       <Routes>
