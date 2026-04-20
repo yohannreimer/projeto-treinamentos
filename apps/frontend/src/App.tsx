@@ -16,6 +16,7 @@ import { RecruitmentPage } from './pages/RecruitmentPage';
 import { LoginPage } from './pages/LoginPage';
 import { AdminPage } from './pages/AdminPage';
 import { InternalDocsPage } from './pages/InternalDocsPage';
+import { FinanceWorkspace } from './finance/FinanceWorkspace';
 import { api } from './services/api';
 import {
   INTERNAL_AUTH_CHANGED_EVENT,
@@ -234,6 +235,14 @@ function InternalApp() {
           element={(
             <ProtectedRoute user={user} permissions={['license_programs']} fallback={defaultRoute}>
               <LicenseProgramsPage />
+            </ProtectedRoute>
+          )}
+        />
+        <Route
+          path="/financeiro/*"
+          element={(
+            <ProtectedRoute user={user} permissions={['finance.read']} fallback={defaultRoute}>
+              <FinanceWorkspace />
             </ProtectedRoute>
           )}
         />

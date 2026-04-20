@@ -44,6 +44,13 @@ function topbarContext(pathname: string) {
       badge: 'Risco operacional'
     };
   }
+  if (pathname.startsWith('/financeiro')) {
+    return {
+      title: 'Gestão Financeira',
+      subtitle: 'Caixa, competência, projeção e governança.',
+      badge: 'Financeiro'
+    };
+  }
   if (pathname.startsWith('/admin')) {
     return {
       title: 'Governança da Jornada',
