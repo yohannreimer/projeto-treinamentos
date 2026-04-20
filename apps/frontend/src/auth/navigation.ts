@@ -16,7 +16,18 @@ export const APP_NAV_ITEMS: AppNavItem[] = [
   { to: '/processos-seletivos', label: 'Processos Seletivos', permissions: ['recruitment'] },
   { to: '/licencas', label: 'Licenças', permissions: ['licenses'] },
   { to: '/licencas/programas', label: 'Programas Licença', permissions: ['license_programs'] },
-  { to: '/financeiro', label: 'Financeiro', permissions: ['finance.read'] },
+  {
+    to: '/financeiro',
+    label: 'Financeiro',
+    permissions: [
+      'finance.read',
+      'finance.write',
+      'finance.approve',
+      'finance.reconcile',
+      'finance.close',
+      'finance.billing'
+    ]
+  },
   { to: '/documentacao', label: 'Documentação', permissions: ['docs'] },
   { to: '/admin', label: 'Administração', permissions: ['admin'] }
 ];

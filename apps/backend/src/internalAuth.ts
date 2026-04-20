@@ -327,7 +327,7 @@ function permissionLabel(value: string): string {
     'finance.approve': 'Financeiro (aprovação)',
     'finance.reconcile': 'Financeiro (conciliação)',
     'finance.close': 'Financeiro (fechamento)',
-    'finance.billing': 'Financeiro (billing)',
+    'finance.billing': 'Financeiro (cobrança)',
     admin: 'Administração'
   };
   return labels[value] ?? value;
