@@ -5,12 +5,7 @@ import request from 'supertest';
 
 import { createApp } from '../app.js';
 import { db, initDb, resetDbConnection } from '../db.js';
-import {
-  createInternalUser,
-  hasAnyInternalPermission,
-  readInternalAuthContext,
-  requireInternalAuth
-} from '../internalAuth.js';
+import { createInternalUser } from '../internalAuth.js';
 import { assignTestDbPath } from '../test/testDb.js';
 
 function cleanupDbFiles(dbPath: string) {
@@ -68,17 +63,6 @@ function seedFinanceCompanies() {
     'company-b',
     'Company B'
   );
-}
-
-function registerFinanceOverviewRoute(app: ReturnType<typeof createApp>) {
-  app.get('/finance/overview', requireInternalAuth, (_req, res) => {
-    const context = readInternalAuthContext(res);
-    if (!context || !hasAnyInternalPermission(context, ['finance.read'])) {
-      return res.status(403).json({ message: 'Acesso negado para esta área.' });
-    }
-
-    return res.json({ ok: true });
-  });
 }
 
 test('initDb cria schema financeiro v1', () => {
@@ -212,7 +196,6 @@ test('GET /finance/overview bloqueia usuário sem finance.read', async () => {
   cleanupDbFiles(dbPath);
 
   const app = createApp({ forceDbRefresh: true, seedDb: false });
-  registerFinanceOverviewRoute(app);
 
   try {
     createInternalUser({
@@ -239,6 +222,166 @@ test('GET /finance/overview bloqueia usuário sem finance.read', async () => {
     assert.deepEqual(overviewRes.body, {
       message: 'Acesso negado para esta área.'
     });
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('POST /finance/transactions cria lançamento manual e persiste', async () => {
+  const dbPath = assignTestDbPath('finance-transactions-create');
+  cleanupDbFiles(dbPath);
+
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+  try {
+    seedFinanceCompanies();
+    createInternalUser({
+      username: 'finance.writer',
+      display_name: 'Finance Writer',
+      password: 'Senha#123',
+      role: 'custom',
+      permissions: ['finance.write', 'finance.read']
+    });
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.writer', password: 'Senha#123' });
+
+    assert.equal(loginRes.status, 200);
+    const token = loginRes.body.token as string;
+
+    const createRes = await request(app)
+      .post('/finance/transactions')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        company_id: 'company-a',
+        kind: 'expense',
+        amount_cents: 12500,
+        due_date: '2026-05-10',
+        competence_date: '2026-05-01',
+        note: 'Mensalidade do sistema'
+      });
+
+    assert.equal(createRes.status, 201);
+    assert.equal(createRes.body.company_id, 'company-a');
+    assert.equal(createRes.body.kind, 'expense');
+    assert.equal(createRes.body.amount_cents, 12500);
+    assert.equal(createRes.body.source, 'manual');
+    assert.equal(createRes.body.created_by, 'finance.writer');
+    assert.equal(createRes.body.is_deleted, false);
+    assert.equal(createRes.body.views.projected_amount_cents, -12500);
+    assert.equal(createRes.body.views.competence_amount_cents, -12500);
+
+    const persisted = db.prepare(`
+      select company_id, kind, amount_cents, due_date, competence_date, source, note, created_by, coalesce(is_deleted, 0) as is_deleted
+      from financial_transaction
+      where id = ?
+    `).get(createRes.body.id) as
+      | {
+          company_id: string;
+          kind: string;
+          amount_cents: number;
+          due_date: string | null;
+          competence_date: string | null;
+          source: string;
+          note: string | null;
+          created_by: string | null;
+          is_deleted: number;
+        }
+      | undefined;
+
+    assert.deepEqual(persisted, {
+      company_id: 'company-a',
+      kind: 'expense',
+      amount_cents: 12500,
+      due_date: '2026-05-10',
+      competence_date: '2026-05-01',
+      source: 'manual',
+      note: 'Mensalidade do sistema',
+      created_by: 'finance.writer',
+      is_deleted: 0
+    });
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('DELETE /finance/transactions/:id faz soft-delete auditável', async () => {
+  const dbPath = assignTestDbPath('finance-transactions-soft-delete');
+  cleanupDbFiles(dbPath);
+
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+  try {
+    seedFinanceCompanies();
+    createInternalUser({
+      username: 'finance.approver',
+      display_name: 'Finance Approver',
+      password: 'Senha#123',
+      role: 'custom',
+      permissions: ['finance.read', 'finance.write', 'finance.approve']
+    });
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.approver', password: 'Senha#123' });
+
+    assert.equal(loginRes.status, 200);
+    const token = loginRes.body.token as string;
+
+    const createRes = await request(app)
+      .post('/finance/transactions')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        company_id: 'company-a',
+        kind: 'income',
+        amount_cents: 42000,
+        due_date: '2026-06-15',
+        competence_date: '2026-06-01',
+        note: 'Fatura principal'
+      });
+
+    assert.equal(createRes.status, 201);
+
+    const deleteRes = await request(app)
+      .delete(`/finance/transactions/${createRes.body.id}`)
+      .set('Authorization', `Bearer ${token}`);
+
+    assert.equal(deleteRes.status, 200);
+    assert.equal(deleteRes.body.ok, true);
+    assert.equal(deleteRes.body.transaction.id, createRes.body.id);
+    assert.equal(deleteRes.body.transaction.is_deleted, true);
+
+    const persisted = db.prepare(`
+      select coalesce(is_deleted, 0) as is_deleted
+      from financial_transaction
+      where id = ?
+    `).get(createRes.body.id) as { is_deleted: number } | undefined;
+    assert.equal(persisted?.is_deleted, 1);
+
+    const auditRows = db.prepare(`
+      select action, resource_type, resource_id, payload_json
+      from internal_audit_log
+      order by created_at desc, id desc
+      limit 50
+    `).all() as Array<{
+      action: string;
+      resource_type: string;
+      resource_id: string | null;
+      payload_json: string;
+    }>;
+
+    const auditLog = auditRows.find((row) => {
+      const payload = JSON.parse(row.payload_json) as { method?: string; path?: string; status?: number };
+      return payload.method === 'DELETE'
+        && typeof payload.path === 'string'
+        && payload.path.endsWith(`/transactions/${createRes.body.id}`)
+        && payload.status === 200;
+    });
+
+    assert.ok(auditLog, 'esperava auditoria para o soft-delete financeiro');
   } finally {
     db.close();
     cleanupDbFiles(dbPath);

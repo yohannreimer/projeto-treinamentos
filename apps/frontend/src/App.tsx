@@ -18,6 +18,7 @@ import { AdminPage } from './pages/AdminPage';
 import { InternalDocsPage } from './pages/InternalDocsPage';
 import { FinanceWorkspace } from './finance/FinanceWorkspace';
 import { FinanceOverviewPage } from './finance/pages/FinanceOverviewPage';
+import { FinanceTransactionsPage } from './finance/pages/FinanceTransactionsPage';
 import { api } from './services/api';
 import {
   INTERNAL_AUTH_CHANGED_EVENT,
@@ -290,15 +291,7 @@ function InternalApp() {
         >
           <Route index element={<Navigate to="overview" replace />} />
           <Route path="overview" element={<FinanceOverviewPage />} />
-          <Route
-            path="transactions"
-            element={(
-              <FinancePlaceholderPage
-                title="Movimentações"
-                description="Lançamentos manuais, ajustes, transferências e conciliações operacionais."
-              />
-            )}
-          />
+          <Route path="transactions" element={<FinanceTransactionsPage />} />
           <Route
             path="receivables"
             element={(
