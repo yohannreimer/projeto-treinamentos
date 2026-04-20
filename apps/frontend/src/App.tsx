@@ -17,6 +17,7 @@ import { LoginPage } from './pages/LoginPage';
 import { AdminPage } from './pages/AdminPage';
 import { InternalDocsPage } from './pages/InternalDocsPage';
 import { FinanceWorkspace } from './finance/FinanceWorkspace';
+import { FinanceOverviewPage } from './finance/pages/FinanceOverviewPage';
 import { api } from './services/api';
 import {
   INTERNAL_AUTH_CHANGED_EVENT,
@@ -28,6 +29,47 @@ import {
 } from './auth/session';
 import { defaultRouteForUser, visibleNavItemsForUser } from './auth/navigation';
 const INTERNAL_TAB_INITIALIZED_KEY = 'orquestrador_internal_tab_initialized_v1';
+const FINANCE_PERMISSIONS: InternalPermission[] = [
+  'finance.read',
+  'finance.write',
+  'finance.approve',
+  'finance.reconcile',
+  'finance.close',
+  'finance.billing'
+];
+
+function FinancePlaceholderPage({
+  title,
+  description
+}: {
+  title: string;
+  description: string;
+}) {
+  return (
+    <section className="page finance-page">
+      <header className="page-header">
+        <div className="page-header-copy">
+          <small style={{ color: 'var(--ink-soft)', fontSize: '0.76rem', fontWeight: 700, letterSpacing: '0.03em', textTransform: 'uppercase' }}>
+            {title}
+          </small>
+          <h1>{title}</h1>
+          <p>{description}</p>
+        </div>
+      </header>
+
+      <div className="panel">
+        <div className="panel-header">
+          <h2>Em construção</h2>
+        </div>
+        <div className="panel-content">
+          <p style={{ margin: 0, color: 'var(--ink-soft)' }}>
+            Esta área vai receber a funcionalidade completa do financeiro no próximo passo.
+          </p>
+        </div>
+      </div>
+    </section>
+  );
+}
 
 function ProtectedRoute({
   user,
@@ -241,11 +283,42 @@ function InternalApp() {
         <Route
           path="/financeiro/*"
           element={(
-            <ProtectedRoute user={user} permissions={['finance.read']} fallback={defaultRoute}>
+            <ProtectedRoute user={user} permissions={FINANCE_PERMISSIONS} fallback={defaultRoute}>
               <FinanceWorkspace />
             </ProtectedRoute>
           )}
-        />
+        >
+          <Route index element={<Navigate to="overview" replace />} />
+          <Route path="overview" element={<FinanceOverviewPage />} />
+          <Route
+            path="transactions"
+            element={(
+              <FinancePlaceholderPage
+                title="Movimentações"
+                description="Lançamentos manuais, ajustes, transferências e conciliações operacionais."
+              />
+            )}
+          />
+          <Route
+            path="receivables"
+            element={(
+              <FinancePlaceholderPage
+                title="Contas a Receber"
+                description="Gestão de títulos, vencimentos, baixas e acompanhamento de cobrança."
+              />
+            )}
+          />
+          <Route
+            path="payables"
+            element={(
+              <FinancePlaceholderPage
+                title="Contas a Pagar"
+                description="Compromissos, aprovações, programações e previsibilidade de saída."
+              />
+            )}
+          />
+          <Route path="*" element={<Navigate to="overview" replace />} />
+        </Route>
         <Route
           path="/documentacao"
           element={(
