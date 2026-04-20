@@ -33,6 +33,7 @@ export type InternalAuthContext = {
   display_name: string | null;
   role: InternalRole;
   permissions: InternalPermissionKey[];
+  organization_id: string | null;
 };
 
 export type InternalUserDto = {
@@ -41,6 +42,7 @@ export type InternalUserDto = {
   display_name: string | null;
   role: InternalRole;
   permissions: InternalPermissionKey[];
+  organization_id: string | null;
   is_active: boolean;
   last_login_at: string | null;
   created_at: string;
@@ -75,6 +77,7 @@ type InternalSessionRow = {
   display_name: string | null;
   role: InternalRole;
   permissions_json: string | null;
+  organization_id: string | null;
 };
 
 type InternalUserRow = {
@@ -83,6 +86,7 @@ type InternalUserRow = {
   display_name: string | null;
   role: InternalRole;
   permissions_json: string | null;
+  organization_id: string | null;
   password_hash: string;
   is_active: number;
   last_login_at: string | null;
@@ -151,6 +155,7 @@ function rowToDto(row: InternalUserRow): InternalUserDto {
     display_name: row.display_name,
     role,
     permissions: resolvePermissionsForRole(role, explicit),
+    organization_id: row.organization_id,
     is_active: Number(row.is_active) === 1,
     last_login_at: row.last_login_at,
     created_at: row.created_at,
@@ -211,7 +216,7 @@ export function resolvePermissionsForRole(role: InternalRole, explicit?: unknown
 
 function readInternalUserByUsername(username: string): InternalUserRow | null {
   const row = db.prepare(`
-    select id, username, display_name, role, permissions_json, password_hash, is_active, last_login_at, created_at, updated_at
+    select id, username, display_name, role, permissions_json, organization_id, password_hash, is_active, last_login_at, created_at, updated_at
     from internal_user
     where username = ?
     limit 1
@@ -221,7 +226,7 @@ function readInternalUserByUsername(username: string): InternalUserRow | null {
 
 function readInternalUserById(userId: string): InternalUserRow | null {
   const row = db.prepare(`
-    select id, username, display_name, role, permissions_json, password_hash, is_active, last_login_at, created_at, updated_at
+    select id, username, display_name, role, permissions_json, organization_id, password_hash, is_active, last_login_at, created_at, updated_at
     from internal_user
     where id = ?
     limit 1
@@ -239,7 +244,8 @@ function readInternalSessionByToken(token: string): InternalSessionRow | null {
       u.username,
       u.display_name,
       u.role,
-      u.permissions_json
+      u.permissions_json,
+      u.organization_id
     from internal_session s
     join internal_user u on u.id = s.internal_user_id
     where s.token_hash = ?
@@ -258,7 +264,8 @@ function buildAuthContextFromSessionRow(row: InternalSessionRow): InternalAuthCo
     username: row.username,
     display_name: row.display_name,
     role,
-    permissions: resolvePermissionsForRole(role, explicit)
+    permissions: resolvePermissionsForRole(role, explicit),
+    organization_id: row.organization_id
   };
 }
 
@@ -881,7 +888,8 @@ export function createInternalSessionForCredentials(username: string, password: 
     username: user.username,
     display_name: user.display_name,
     role: normalizeRole(user.role),
-    permissions: resolvePermissionsForRole(normalizeRole(user.role), parsePermissionsJson(user.permissions_json))
+    permissions: resolvePermissionsForRole(normalizeRole(user.role), parsePermissionsJson(user.permissions_json)),
+    organization_id: user.organization_id
   };
 
   return {
@@ -898,7 +906,7 @@ export function logoutInternalSessionByToken(token: string): void {
 
 export function listInternalUsers(): InternalUserDto[] {
   const rows = db.prepare(`
-    select id, username, display_name, role, permissions_json, password_hash, is_active, last_login_at, created_at, updated_at
+    select id, username, display_name, role, permissions_json, organization_id, password_hash, is_active, last_login_at, created_at, updated_at
     from internal_user
     order by username collate nocase asc
   `).all() as InternalUserRow[];
@@ -942,8 +950,8 @@ export function createInternalUser(payload: {
 
   db.prepare(`
     insert into internal_user (
-      id, username, display_name, password_hash, role, permissions_json, is_active, last_login_at, created_at, updated_at
-    ) values (?, ?, ?, ?, ?, ?, ?, null, ?, ?)
+      id, username, display_name, password_hash, role, permissions_json, organization_id, is_active, last_login_at, created_at, updated_at
+    ) values (?, ?, ?, ?, ?, ?, ?, ?, null, ?, ?)
   `).run(
     id,
     username,
@@ -951,6 +959,7 @@ export function createInternalUser(payload: {
     hashInternalPassword(payload.password),
     role,
     JSON.stringify(permissions),
+    'org-holand',
     payload.is_active === false ? 0 : 1,
     nowIso,
     nowIso

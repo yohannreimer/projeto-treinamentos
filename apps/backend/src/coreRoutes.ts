@@ -2601,7 +2601,8 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
         username: session.user.username,
         display_name: session.user.display_name,
         role: session.user.role,
-        permissions: session.user.permissions
+        permissions: session.user.permissions,
+        organization_id: session.user.organization_id
       }
     });
   });
@@ -2617,7 +2618,8 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
         username: context.username,
         display_name: context.display_name,
         role: context.role,
-        permissions: context.permissions
+        permissions: context.permissions,
+        organization_id: context.organization_id
       }
     });
   });

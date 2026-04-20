@@ -65,6 +65,99 @@ function seedFinanceCompanies() {
   );
 }
 
+test('initDb cria organization foundation e vincula auth interna ao org default', async () => {
+  const dbPath = assignTestDbPath('finance-organization-foundation');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+
+  try {
+    initDb();
+
+    const organizationTable = db.prepare(
+      "select name from sqlite_master where type = 'table' and name = ?"
+    ).get('organization') as { name: string } | undefined;
+    assert.ok(organizationTable, 'tabela organization ausente');
+
+    const organization = db.prepare(`
+      select id, name, slug, is_active
+      from organization
+      where id = ?
+    `).get('org-holand') as
+      | {
+          id: string;
+          name: string;
+          slug: string;
+          is_active: number;
+        }
+      | undefined;
+
+    assert.deepEqual(organization, {
+      id: 'org-holand',
+      name: 'Holand',
+      slug: 'holand',
+      is_active: 1
+    });
+
+    const organizationFk = db.prepare('pragma foreign_key_list(internal_user)').all() as Array<{
+      table: string;
+      from: string;
+      to: string;
+    }>;
+    assert.ok(
+      organizationFk.some((row) => row.table === 'organization' && row.from === 'organization_id' && row.to === 'id'),
+      'foreign key organization_id -> organization.id ausente em internal_user'
+    );
+
+    const seededUser = db.prepare(`
+      select organization_id
+      from internal_user
+      where username = ?
+    `).get('holand') as { organization_id: string | null } | undefined;
+    assert.equal(seededUser?.organization_id, 'org-holand');
+
+    db.prepare(`
+      update internal_user
+      set organization_id = null
+      where username = ?
+    `).run('holand');
+
+    initDb();
+
+    const backfilledUser = db.prepare(`
+      select organization_id
+      from internal_user
+      where username = ?
+    `).get('holand') as { organization_id: string | null } | undefined;
+    assert.equal(backfilledUser?.organization_id, 'org-holand');
+
+    const app = createApp({ forceDbRefresh: false, seedDb: false });
+
+    createInternalUser({
+      username: 'finance.org.viewer',
+      display_name: 'Finance Org Viewer',
+      password: 'Senha#123',
+      role: 'custom',
+      permissions: ['finance.read']
+    });
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.org.viewer', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+    assert.equal(loginRes.body.user.organization_id, 'org-holand');
+
+    const token = loginRes.body.token as string;
+    const meRes = await request(app)
+      .get('/auth/me')
+      .set('Authorization', `Bearer ${token}`);
+    assert.equal(meRes.status, 200);
+    assert.equal(meRes.body.user.organization_id, 'org-holand');
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
 test('initDb cria schema financeiro v1', () => {
   const dbPath = assignTestDbPath('finance-schema-v1');
   cleanupDbFiles(dbPath);

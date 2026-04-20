@@ -99,6 +99,8 @@ function hashInternalPasswordSeed(password: string): string {
   return `scrypt:${saltHex}:${digest.toString('hex')}`;
 }
 
+const DEFAULT_ORGANIZATION_ID = 'org-holand';
+
 export function initDb() {
   db.pragma('journal_mode = WAL');
 
@@ -523,6 +525,15 @@ export function initDb() {
       updated_at text not null
     );
 
+    create table if not exists organization (
+      id text primary key,
+      name text not null unique,
+      slug text not null unique,
+      is_active integer not null default 1,
+      created_at text not null,
+      updated_at text not null
+    );
+
     create table if not exists internal_user (
       id text primary key,
       username text not null unique,
@@ -530,6 +541,7 @@ export function initDb() {
       password_hash text not null,
       role text not null default 'supremo',
       permissions_json text not null default '[]',
+      organization_id text references organization(id) on delete set null,
       is_active integer not null default 1,
       last_login_at text,
       created_at text not null,
@@ -921,6 +933,11 @@ export function initDb() {
   ensureColumn('internal_user', 'display_name', 'display_name text');
   ensureColumn('internal_user', 'role', "role text not null default 'supremo'");
   ensureColumn('internal_user', 'permissions_json', "permissions_json text not null default '[]'");
+  ensureColumn(
+    'internal_user',
+    'organization_id',
+    'organization_id text references organization(id) on delete set null'
+  );
   ensureColumn('internal_user', 'is_active', 'is_active integer not null default 1');
   ensureColumn('internal_user', 'last_login_at', 'last_login_at text');
 
@@ -964,13 +981,19 @@ export function initDb() {
     create index if not exists idx_billing_invoice_subscription on billing_invoice(company_id, billing_subscription_id);
   `);
 
+  const organizationSeedNowIso = new Date().toISOString();
+  db.prepare(`
+    insert or ignore into organization (id, name, slug, is_active, created_at, updated_at)
+    values ('org-holand', 'Holand', 'holand', 1, ?, ?)
+  `).run(organizationSeedNowIso, organizationSeedNowIso);
+
   const internalUserCount = db.prepare('select count(*) as count from internal_user').get() as { count: number };
   if (internalUserCount.count === 0) {
-    const nowIso = new Date().toISOString();
+    const createdAtIso = new Date().toISOString();
     db.prepare(`
       insert into internal_user (
-        id, username, display_name, password_hash, role, permissions_json, is_active, last_login_at, created_at, updated_at
-      ) values (?, ?, ?, ?, ?, ?, 1, null, ?, ?)
+        id, username, display_name, password_hash, role, permissions_json, organization_id, is_active, last_login_at, created_at, updated_at
+      ) values (?, ?, ?, ?, ?, ?, ?, 1, null, ?, ?)
     `).run(
       'iuser-supremo-default',
       'holand',
@@ -991,10 +1014,17 @@ export function initDb() {
         'docs',
         'admin'
       ]),
-      nowIso,
-      nowIso
+      DEFAULT_ORGANIZATION_ID,
+      createdAtIso,
+      createdAtIso
     );
   }
+
+  db.prepare(`
+    update internal_user
+    set organization_id = coalesce(organization_id, ?)
+    where organization_id is null
+  `).run(DEFAULT_ORGANIZATION_ID);
 
   db.exec(`
     create trigger if not exists portal_session_tenant_consistency_insert
