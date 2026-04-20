@@ -464,6 +464,115 @@ test('POST/GET de payables e receivables funciona com tenant correto', async () 
   }
 });
 
+test('import jobs + extrato + conciliação inicial funcionam com rastreabilidade', async () => {
+  const dbPath = assignTestDbPath('finance-import-reconciliation-core');
+  cleanupDbFiles(dbPath);
+
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+  try {
+    seedFinanceCompanies();
+    createInternalUser({
+      username: 'finance.reconcile',
+      display_name: 'Finance Reconcile',
+      password: 'Senha#123',
+      role: 'custom',
+      permissions: ['finance.read', 'finance.write', 'finance.reconcile']
+    });
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.reconcile', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+    const token = loginRes.body.token as string;
+
+    const accountRes = await request(app)
+      .post('/finance/accounts')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        company_id: 'company-a',
+        name: 'Conta Conciliação',
+        kind: 'bank'
+      });
+    assert.equal(accountRes.status, 201);
+
+    const importJobRes = await request(app)
+      .post('/finance/import-jobs')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        company_id: 'company-a',
+        import_type: 'ofx',
+        source_file_name: 'abril.ofx',
+        source_file_size_bytes: 1024,
+        status: 'completed',
+        total_rows: 10,
+        processed_rows: 10
+      });
+    assert.equal(importJobRes.status, 201);
+
+    const statementEntryRes = await request(app)
+      .post('/finance/statement-entries')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        company_id: 'company-a',
+        financial_account_id: accountRes.body.id,
+        financial_import_job_id: importJobRes.body.id,
+        statement_date: '2026-08-05',
+        amount_cents: -12000,
+        description: 'Pagamento fornecedor XPTO',
+        source: 'bank_import'
+      });
+    assert.equal(statementEntryRes.status, 201);
+
+    const transactionRes = await request(app)
+      .post('/finance/transactions')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        company_id: 'company-a',
+        kind: 'expense',
+        amount_cents: 12000,
+        due_date: '2026-08-05',
+        note: 'Despesa operacional conciliável'
+      });
+    assert.equal(transactionRes.status, 201);
+
+    const reconciliationRes = await request(app)
+      .post('/finance/reconciliations')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        company_id: 'company-a',
+        financial_bank_statement_entry_id: statementEntryRes.body.id,
+        financial_transaction_id: transactionRes.body.id,
+        confidence_score: 0.98,
+        match_status: 'matched',
+        source: 'manual'
+      });
+    assert.equal(reconciliationRes.status, 201, JSON.stringify(reconciliationRes.body));
+    assert.equal(reconciliationRes.body.match_status, 'matched');
+
+    const listJobs = await request(app)
+      .get('/finance/import-jobs?company_id=company-a')
+      .set('Authorization', `Bearer ${token}`);
+    assert.equal(listJobs.status, 200);
+    assert.equal(listJobs.body.jobs.length, 1);
+
+    const listEntries = await request(app)
+      .get('/finance/statement-entries?company_id=company-a')
+      .set('Authorization', `Bearer ${token}`);
+    assert.equal(listEntries.status, 200);
+    assert.equal(listEntries.body.entries.length, 1);
+
+    const listMatches = await request(app)
+      .get('/finance/reconciliations?company_id=company-a')
+      .set('Authorization', `Bearer ${token}`);
+    assert.equal(listMatches.status, 200);
+    assert.equal(listMatches.body.matches.length, 1);
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
 test('DELETE /finance/transactions/:id faz soft-delete auditável', async () => {
   const dbPath = assignTestDbPath('finance-transactions-soft-delete');
   cleanupDbFiles(dbPath);

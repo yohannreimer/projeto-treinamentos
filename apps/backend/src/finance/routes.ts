@@ -9,13 +9,19 @@ import {
 import {
   createFinanceAccount,
   createFinanceCategory,
+  createFinanceImportJob,
   createFinancePayable,
+  createFinanceReconciliationMatch,
   createFinanceReceivable,
+  createFinanceStatementEntry,
   createFinanceTransaction,
   getFinanceOverview,
   listFinanceAccounts,
+  listFinanceImportJobs,
   listFinancePayables,
+  listFinanceReconciliationMatches,
   listFinanceReceivables,
+  listFinanceStatementEntries,
   listFinanceCategories,
   listFinanceTransactions,
   softDeleteFinanceTransaction,
@@ -33,6 +39,8 @@ const financeAccountKindValues = ['bank', 'cash', 'wallet', 'other'] as const sa
 const financeCategoryKindValues = ['income', 'expense', 'neutral'] as const satisfies readonly FinanceCategoryKind[];
 const payableStatusValues = ['planned', 'open', 'partial', 'paid', 'overdue', 'canceled'] as const;
 const receivableStatusValues = ['planned', 'open', 'partial', 'received', 'overdue', 'canceled'] as const;
+const importJobStatusValues = ['queued', 'processing', 'completed', 'failed'] as const;
+const reconciliationStatusValues = ['unmatched', 'matched', 'ignored'] as const;
 
 const accountCreateSchema = z.object({
   company_id: z.string().trim().min(1),
@@ -94,6 +102,44 @@ const receivableCreateSchema = z.object({
       message: 'Informe received_at para status received.'
     });
   }
+});
+
+const importJobCreateSchema = z.object({
+  company_id: z.string().trim().min(1),
+  import_type: z.string().trim().min(2).max(64),
+  source_file_name: z.string().trim().min(2).max(255),
+  source_file_mime_type: z.string().trim().max(120).nullable().optional(),
+  source_file_size_bytes: z.number().int().min(0).optional(),
+  status: z.enum(importJobStatusValues).optional(),
+  total_rows: z.number().int().min(0).optional(),
+  processed_rows: z.number().int().min(0).optional(),
+  error_rows: z.number().int().min(0).optional(),
+  error_summary: z.string().trim().max(2_000).nullable().optional(),
+  finished_at: z.string().trim().max(40).nullable().optional()
+});
+
+const statementEntryCreateSchema = z.object({
+  company_id: z.string().trim().min(1),
+  financial_account_id: z.string().trim().min(1),
+  financial_import_job_id: z.string().trim().min(1).nullable().optional(),
+  statement_date: isoDateSchema,
+  posted_at: isoDateSchema.nullable().optional(),
+  amount_cents: z.number().int(),
+  description: z.string().trim().min(2).max(320),
+  reference_code: z.string().trim().max(120).nullable().optional(),
+  balance_cents: z.number().int().nullable().optional(),
+  source: z.string().trim().min(2).max(40).optional(),
+  source_ref: z.string().trim().max(120).nullable().optional()
+});
+
+const reconciliationCreateSchema = z.object({
+  company_id: z.string().trim().min(1),
+  financial_bank_statement_entry_id: z.string().trim().min(1),
+  financial_transaction_id: z.string().trim().min(1),
+  confidence_score: z.number().min(0).max(1).nullable().optional(),
+  match_status: z.enum(reconciliationStatusValues),
+  source: z.string().trim().min(2).max(40).optional(),
+  reviewed_at: z.string().trim().max(40).nullable().optional()
 });
 
 const transactionCreateSchema = z.object({
@@ -265,6 +311,74 @@ export function registerFinanceRoutes(app: Express) {
     }
     try {
       return res.status(201).json(createFinanceReceivable(parsed.data));
+    } catch (error) {
+      return respondFinanceError(res, error);
+    }
+  });
+
+  router.get('/import-jobs', requireFinancePermission(['finance.read']), (req, res) => {
+    try {
+      return res.json(listFinanceImportJobs(parseCompanyId(req)));
+    } catch (error) {
+      return respondFinanceError(res, error);
+    }
+  });
+
+  router.post('/import-jobs', requireFinancePermission(['finance.write']), (req, res) => {
+    const parsed = importJobCreateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+    try {
+      const context = readInternalAuthContext(res);
+      return res.status(201).json(createFinanceImportJob({
+        ...parsed.data,
+        created_by: context?.username ?? null
+      }));
+    } catch (error) {
+      return respondFinanceError(res, error);
+    }
+  });
+
+  router.get('/statement-entries', requireFinancePermission(['finance.read']), (req, res) => {
+    try {
+      return res.json(listFinanceStatementEntries(parseCompanyId(req)));
+    } catch (error) {
+      return respondFinanceError(res, error);
+    }
+  });
+
+  router.post('/statement-entries', requireFinancePermission(['finance.write']), (req, res) => {
+    const parsed = statementEntryCreateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+    try {
+      return res.status(201).json(createFinanceStatementEntry(parsed.data));
+    } catch (error) {
+      return respondFinanceError(res, error);
+    }
+  });
+
+  router.get('/reconciliations', requireFinancePermission(['finance.read']), (req, res) => {
+    try {
+      return res.json(listFinanceReconciliationMatches(parseCompanyId(req)));
+    } catch (error) {
+      return respondFinanceError(res, error);
+    }
+  });
+
+  router.post('/reconciliations', requireFinancePermission(['finance.reconcile', 'finance.write']), (req, res) => {
+    const parsed = reconciliationCreateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+    try {
+      const context = readInternalAuthContext(res);
+      return res.status(201).json(createFinanceReconciliationMatch({
+        ...parsed.data,
+        reviewed_by: context?.username ?? null
+      }));
     } catch (error) {
       return respondFinanceError(res, error);
     }

@@ -222,6 +222,99 @@ export type CreateFinanceReceivableInput = {
   note?: string | null;
 };
 
+export type FinanceImportJobStatus = 'queued' | 'processing' | 'completed' | 'failed';
+export type FinanceReconciliationStatus = 'unmatched' | 'matched' | 'ignored';
+
+export type FinanceImportJobDto = {
+  id: string;
+  company_id: string;
+  import_type: string;
+  source_file_name: string;
+  source_file_mime_type: string | null;
+  source_file_size_bytes: number;
+  status: FinanceImportJobStatus;
+  total_rows: number;
+  processed_rows: number;
+  error_rows: number;
+  error_summary: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  finished_at: string | null;
+};
+
+export type FinanceStatementEntryDto = {
+  id: string;
+  company_id: string;
+  financial_account_id: string;
+  financial_account_name: string | null;
+  financial_import_job_id: string | null;
+  statement_date: string;
+  posted_at: string | null;
+  amount_cents: number;
+  description: string;
+  reference_code: string | null;
+  balance_cents: number | null;
+  source: string;
+  source_ref: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type FinanceReconciliationMatchDto = {
+  id: string;
+  company_id: string;
+  financial_bank_statement_entry_id: string;
+  financial_transaction_id: string | null;
+  confidence_score: number | null;
+  match_status: FinanceReconciliationStatus;
+  source: string;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CreateFinanceImportJobInput = {
+  company_id: string;
+  import_type: string;
+  source_file_name: string;
+  source_file_mime_type?: string | null;
+  source_file_size_bytes?: number;
+  status?: FinanceImportJobStatus;
+  total_rows?: number;
+  processed_rows?: number;
+  error_rows?: number;
+  error_summary?: string | null;
+  created_by?: string | null;
+  finished_at?: string | null;
+};
+
+export type CreateFinanceStatementEntryInput = {
+  company_id: string;
+  financial_account_id: string;
+  financial_import_job_id?: string | null;
+  statement_date: string;
+  posted_at?: string | null;
+  amount_cents: number;
+  description: string;
+  reference_code?: string | null;
+  balance_cents?: number | null;
+  source?: string;
+  source_ref?: string | null;
+};
+
+export type CreateFinanceReconciliationMatchInput = {
+  company_id: string;
+  financial_bank_statement_entry_id: string;
+  financial_transaction_id: string;
+  confidence_score?: number | null;
+  match_status: FinanceReconciliationStatus;
+  source?: string;
+  reviewed_by?: string | null;
+  reviewed_at?: string | null;
+};
+
 export type CreateFinanceTransactionInput = {
   company_id: string;
   financial_account_id?: string | null;

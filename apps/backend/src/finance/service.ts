@@ -2,13 +2,19 @@ import { db, uuid } from '../db.js';
 import { computeViews } from './ledger.js';
 import type {
   CreateFinanceAccountInput,
+  CreateFinanceImportJobInput,
   CreateFinancePayableInput,
+  CreateFinanceReconciliationMatchInput,
   CreateFinanceReceivableInput,
+  CreateFinanceStatementEntryInput,
   CreateFinanceCategoryInput,
   CreateFinanceTransactionInput,
   FinanceAccountDto,
+  FinanceImportJobDto,
   FinancePayableDto,
+  FinanceReconciliationMatchDto,
   FinanceReceivableDto,
+  FinanceStatementEntryDto,
   FinanceCategoryDto,
   FinanceOverviewDto,
   FinanceTransactionDto,
@@ -775,6 +781,566 @@ export function createFinanceReceivable(input: CreateFinanceReceivableInput): Fi
     throw new Error('Falha ao criar conta a receber.');
   }
   return mapReceivableRow(created);
+}
+
+function mapImportJobRow(row: {
+  id: string;
+  company_id: string;
+  import_type: string;
+  source_file_name: string;
+  source_file_mime_type: string | null;
+  source_file_size_bytes: number;
+  status: string;
+  total_rows: number;
+  processed_rows: number;
+  error_rows: number;
+  error_summary: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  finished_at: string | null;
+}): FinanceImportJobDto {
+  return {
+    id: row.id,
+    company_id: row.company_id,
+    import_type: row.import_type,
+    source_file_name: row.source_file_name,
+    source_file_mime_type: row.source_file_mime_type,
+    source_file_size_bytes: row.source_file_size_bytes,
+    status: row.status as FinanceImportJobDto['status'],
+    total_rows: row.total_rows,
+    processed_rows: row.processed_rows,
+    error_rows: row.error_rows,
+    error_summary: row.error_summary,
+    created_by: row.created_by,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    finished_at: row.finished_at
+  };
+}
+
+function mapStatementEntryRow(row: {
+  id: string;
+  company_id: string;
+  financial_account_id: string;
+  financial_account_name: string | null;
+  financial_import_job_id: string | null;
+  statement_date: string;
+  posted_at: string | null;
+  amount_cents: number;
+  description: string;
+  reference_code: string | null;
+  balance_cents: number | null;
+  source: string;
+  source_ref: string | null;
+  created_at: string;
+  updated_at: string;
+}): FinanceStatementEntryDto {
+  return {
+    id: row.id,
+    company_id: row.company_id,
+    financial_account_id: row.financial_account_id,
+    financial_account_name: row.financial_account_name,
+    financial_import_job_id: row.financial_import_job_id,
+    statement_date: row.statement_date,
+    posted_at: row.posted_at,
+    amount_cents: row.amount_cents,
+    description: row.description,
+    reference_code: row.reference_code,
+    balance_cents: row.balance_cents,
+    source: row.source,
+    source_ref: row.source_ref,
+    created_at: row.created_at,
+    updated_at: row.updated_at
+  };
+}
+
+function mapReconciliationRow(row: {
+  id: string;
+  company_id: string;
+  financial_bank_statement_entry_id: string;
+  financial_transaction_id: string;
+  match_status: string;
+  match_type: string;
+  matched_by: string | null;
+  matched_at: string;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+}): FinanceReconciliationMatchDto {
+  return {
+    id: row.id,
+    company_id: row.company_id,
+    financial_bank_statement_entry_id: row.financial_bank_statement_entry_id,
+    financial_transaction_id: row.financial_transaction_id,
+    confidence_score: null,
+    match_status: row.match_status as FinanceReconciliationMatchDto['match_status'],
+    source: row.match_type,
+    reviewed_by: row.matched_by,
+    reviewed_at: row.matched_at,
+    created_at: row.created_at,
+    updated_at: row.updated_at
+  };
+}
+
+export function listFinanceImportJobs(companyId?: string | null): {
+  company_id: string | null;
+  company_name: string | null;
+  jobs: FinanceImportJobDto[];
+} {
+  const company = resolveCompanyRow(companyId);
+  if (!company) {
+    return { company_id: null, company_name: null, jobs: [] };
+  }
+
+  const rows = db.prepare(`
+    select
+      id,
+      company_id,
+      import_type,
+      source_file_name,
+      source_file_mime_type,
+      source_file_size_bytes,
+      status,
+      total_rows,
+      processed_rows,
+      error_rows,
+      error_summary,
+      created_by,
+      created_at,
+      updated_at,
+      finished_at
+    from financial_import_job
+    where company_id = ?
+    order by created_at desc, id desc
+  `).all(company.id) as Array<{
+    id: string;
+    company_id: string;
+    import_type: string;
+    source_file_name: string;
+    source_file_mime_type: string | null;
+    source_file_size_bytes: number;
+    status: string;
+    total_rows: number;
+    processed_rows: number;
+    error_rows: number;
+    error_summary: string | null;
+    created_by: string | null;
+    created_at: string;
+    updated_at: string;
+    finished_at: string | null;
+  }>;
+
+  return {
+    company_id: company.id,
+    company_name: company.name,
+    jobs: rows.map(mapImportJobRow)
+  };
+}
+
+export function createFinanceImportJob(input: CreateFinanceImportJobInput): FinanceImportJobDto {
+  readCompanyRow(input.company_id);
+  const nowIso = new Date().toISOString();
+  const id = uuid('fimp');
+
+  db.prepare(`
+    insert into financial_import_job (
+      id,
+      company_id,
+      import_type,
+      source_file_name,
+      source_file_mime_type,
+      source_file_size_bytes,
+      status,
+      total_rows,
+      processed_rows,
+      error_rows,
+      error_summary,
+      created_by,
+      created_at,
+      updated_at,
+      finished_at
+    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    input.company_id,
+    input.import_type.trim(),
+    input.source_file_name.trim(),
+    input.source_file_mime_type?.trim() || null,
+    Math.max(0, Math.trunc(input.source_file_size_bytes ?? 0)),
+    input.status ?? 'queued',
+    Math.max(0, Math.trunc(input.total_rows ?? 0)),
+    Math.max(0, Math.trunc(input.processed_rows ?? 0)),
+    Math.max(0, Math.trunc(input.error_rows ?? 0)),
+    input.error_summary?.trim() || null,
+    input.created_by ?? null,
+    nowIso,
+    nowIso,
+    input.finished_at ?? null
+  );
+
+  const created = db.prepare(`
+    select
+      id,
+      company_id,
+      import_type,
+      source_file_name,
+      source_file_mime_type,
+      source_file_size_bytes,
+      status,
+      total_rows,
+      processed_rows,
+      error_rows,
+      error_summary,
+      created_by,
+      created_at,
+      updated_at,
+      finished_at
+    from financial_import_job
+    where id = ?
+    limit 1
+  `).get(id) as {
+    id: string;
+    company_id: string;
+    import_type: string;
+    source_file_name: string;
+    source_file_mime_type: string | null;
+    source_file_size_bytes: number;
+    status: string;
+    total_rows: number;
+    processed_rows: number;
+    error_rows: number;
+    error_summary: string | null;
+    created_by: string | null;
+    created_at: string;
+    updated_at: string;
+    finished_at: string | null;
+  } | undefined;
+
+  if (!created) {
+    throw new Error('Falha ao criar job de importação financeira.');
+  }
+  return mapImportJobRow(created);
+}
+
+export function listFinanceStatementEntries(companyId?: string | null): {
+  company_id: string | null;
+  company_name: string | null;
+  entries: FinanceStatementEntryDto[];
+} {
+  const company = resolveCompanyRow(companyId);
+  if (!company) {
+    return { company_id: null, company_name: null, entries: [] };
+  }
+
+  const rows = db.prepare(`
+    select
+      fbe.id,
+      fbe.company_id,
+      fbe.financial_account_id,
+      fa.name as financial_account_name,
+      fbe.financial_import_job_id,
+      fbe.statement_date,
+      fbe.posted_at,
+      fbe.amount_cents,
+      fbe.description,
+      fbe.reference_code,
+      fbe.balance_cents,
+      fbe.source,
+      fbe.source_ref,
+      fbe.created_at,
+      fbe.updated_at
+    from financial_bank_statement_entry fbe
+    left join financial_account fa
+      on fa.company_id = fbe.company_id
+      and fa.id = fbe.financial_account_id
+    where fbe.company_id = ?
+    order by fbe.statement_date desc, fbe.created_at desc
+  `).all(company.id) as Array<{
+    id: string;
+    company_id: string;
+    financial_account_id: string;
+    financial_account_name: string | null;
+    financial_import_job_id: string | null;
+    statement_date: string;
+    posted_at: string | null;
+    amount_cents: number;
+    description: string;
+    reference_code: string | null;
+    balance_cents: number | null;
+    source: string;
+    source_ref: string | null;
+    created_at: string;
+    updated_at: string;
+  }>;
+
+  return {
+    company_id: company.id,
+    company_name: company.name,
+    entries: rows.map(mapStatementEntryRow)
+  };
+}
+
+export function createFinanceStatementEntry(input: CreateFinanceStatementEntryInput): FinanceStatementEntryDto {
+  readCompanyRow(input.company_id);
+  const account = db.prepare(`
+    select id
+    from financial_account
+    where id = ?
+      and company_id = ?
+    limit 1
+  `).get(input.financial_account_id, input.company_id) as { id: string } | undefined;
+  if (!account) {
+    throw new Error('Conta financeira não encontrada.');
+  }
+
+  const importJobId = input.financial_import_job_id?.trim() || null;
+  if (importJobId) {
+    const importJob = db.prepare(`
+      select id
+      from financial_import_job
+      where id = ?
+        and company_id = ?
+      limit 1
+    `).get(importJobId, input.company_id) as { id: string } | undefined;
+    if (!importJob) {
+      throw new Error('Job de importação não encontrado.');
+    }
+  }
+
+  const nowIso = new Date().toISOString();
+  const id = uuid('fstm');
+  db.prepare(`
+    insert into financial_bank_statement_entry (
+      id,
+      company_id,
+      financial_account_id,
+      financial_import_job_id,
+      statement_date,
+      posted_at,
+      amount_cents,
+      description,
+      reference_code,
+      balance_cents,
+      source,
+      source_ref,
+      created_at,
+      updated_at
+    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    input.company_id,
+    input.financial_account_id,
+    importJobId,
+    input.statement_date,
+    input.posted_at ?? null,
+    Math.trunc(input.amount_cents),
+    input.description.trim(),
+    input.reference_code?.trim() || null,
+    input.balance_cents ?? null,
+    input.source?.trim() || 'bank_import',
+    input.source_ref?.trim() || null,
+    nowIso,
+    nowIso
+  );
+
+  const created = db.prepare(`
+    select
+      fbe.id,
+      fbe.company_id,
+      fbe.financial_account_id,
+      fa.name as financial_account_name,
+      fbe.financial_import_job_id,
+      fbe.statement_date,
+      fbe.posted_at,
+      fbe.amount_cents,
+      fbe.description,
+      fbe.reference_code,
+      fbe.balance_cents,
+      fbe.source,
+      fbe.source_ref,
+      fbe.created_at,
+      fbe.updated_at
+    from financial_bank_statement_entry fbe
+    left join financial_account fa
+      on fa.company_id = fbe.company_id
+      and fa.id = fbe.financial_account_id
+    where fbe.id = ?
+    limit 1
+  `).get(id) as {
+    id: string;
+    company_id: string;
+    financial_account_id: string;
+    financial_account_name: string | null;
+    financial_import_job_id: string | null;
+    statement_date: string;
+    posted_at: string | null;
+    amount_cents: number;
+    description: string;
+    reference_code: string | null;
+    balance_cents: number | null;
+    source: string;
+    source_ref: string | null;
+    created_at: string;
+    updated_at: string;
+  } | undefined;
+
+  if (!created) {
+    throw new Error('Falha ao criar lançamento de extrato.');
+  }
+  return mapStatementEntryRow(created);
+}
+
+export function listFinanceReconciliationMatches(companyId?: string | null): {
+  company_id: string | null;
+  company_name: string | null;
+  matches: FinanceReconciliationMatchDto[];
+} {
+  const company = resolveCompanyRow(companyId);
+  if (!company) {
+    return { company_id: null, company_name: null, matches: [] };
+  }
+
+  const rows = db.prepare(`
+    select
+      id,
+      company_id,
+      financial_bank_statement_entry_id,
+      financial_transaction_id,
+      match_status,
+      match_type,
+      matched_by,
+      matched_at,
+      note,
+      created_at,
+      updated_at
+    from financial_reconciliation_match
+    where company_id = ?
+    order by created_at desc, id desc
+  `).all(company.id) as Array<{
+    id: string;
+    company_id: string;
+    financial_bank_statement_entry_id: string;
+    financial_transaction_id: string;
+    match_status: string;
+    match_type: string;
+    matched_by: string | null;
+    matched_at: string;
+    note: string | null;
+    created_at: string;
+    updated_at: string;
+  }>;
+
+  return {
+    company_id: company.id,
+    company_name: company.name,
+    matches: rows.map(mapReconciliationRow)
+  };
+}
+
+export function createFinanceReconciliationMatch(input: CreateFinanceReconciliationMatchInput): FinanceReconciliationMatchDto {
+  readCompanyRow(input.company_id);
+
+  const statementEntry = db.prepare(`
+    select id
+    from financial_bank_statement_entry
+    where id = ?
+      and company_id = ?
+    limit 1
+  `).get(input.financial_bank_statement_entry_id, input.company_id) as { id: string } | undefined;
+  if (!statementEntry) {
+    throw new Error('Lançamento de extrato não encontrado.');
+  }
+
+  const transactionId = input.financial_transaction_id.trim();
+  const transaction = db.prepare(`
+    select id
+    from financial_transaction
+    where id = ?
+      and company_id = ?
+      and coalesce(is_deleted, 0) = 0
+    limit 1
+  `).get(transactionId, input.company_id) as { id: string } | undefined;
+  if (!transaction) {
+    throw new Error('Lançamento financeiro não encontrado.');
+  }
+
+  const statementAmount = db.prepare(`
+    select amount_cents
+    from financial_bank_statement_entry
+    where id = ?
+      and company_id = ?
+    limit 1
+  `).get(input.financial_bank_statement_entry_id, input.company_id) as { amount_cents: number } | undefined;
+  const matchedAmountCents = Math.abs(statementAmount?.amount_cents ?? 0);
+  const matchedAt = input.reviewed_at ?? new Date().toISOString();
+
+  const nowIso = new Date().toISOString();
+  const id = uuid('frecm');
+  db.prepare(`
+    insert into financial_reconciliation_match (
+      id,
+      company_id,
+      financial_bank_statement_entry_id,
+      financial_transaction_id,
+      match_type,
+      match_status,
+      matched_amount_cents,
+      matched_at,
+      matched_by,
+      note,
+      created_at,
+      updated_at
+    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    input.company_id,
+    input.financial_bank_statement_entry_id,
+    transactionId,
+    input.source?.trim() || 'manual',
+    input.match_status,
+    matchedAmountCents,
+    matchedAt,
+    input.reviewed_by ?? null,
+    input.confidence_score == null ? null : `confidence=${input.confidence_score.toFixed(4)}`,
+    nowIso,
+    nowIso
+  );
+
+  const created = db.prepare(`
+    select
+      id,
+      company_id,
+      financial_bank_statement_entry_id,
+      financial_transaction_id,
+      match_status,
+      match_type,
+      matched_by,
+      matched_at,
+      note,
+      created_at,
+      updated_at
+    from financial_reconciliation_match
+    where id = ?
+    limit 1
+  `).get(id) as {
+    id: string;
+    company_id: string;
+    financial_bank_statement_entry_id: string;
+    financial_transaction_id: string;
+    match_status: string;
+    match_type: string;
+    matched_by: string | null;
+    matched_at: string;
+    note: string | null;
+    created_at: string;
+    updated_at: string;
+  } | undefined;
+
+  if (!created) {
+    throw new Error('Falha ao registrar conciliação.');
+  }
+  return mapReconciliationRow(created);
 }
 
 function mapTransactionRow(row: FinanceTransactionRow): FinanceTransactionDto {

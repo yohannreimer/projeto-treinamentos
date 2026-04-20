@@ -79,6 +79,59 @@ export type FinanceReceivable = {
   updated_at: string;
 };
 
+export type FinanceImportJobStatus = 'queued' | 'processing' | 'completed' | 'failed';
+export type FinanceReconciliationStatus = 'unmatched' | 'matched' | 'ignored';
+
+export type FinanceImportJob = {
+  id: string;
+  company_id: string;
+  import_type: string;
+  source_file_name: string;
+  source_file_mime_type: string | null;
+  source_file_size_bytes: number;
+  status: FinanceImportJobStatus;
+  total_rows: number;
+  processed_rows: number;
+  error_rows: number;
+  error_summary: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  finished_at: string | null;
+};
+
+export type FinanceStatementEntry = {
+  id: string;
+  company_id: string;
+  financial_account_id: string;
+  financial_account_name: string | null;
+  financial_import_job_id: string | null;
+  statement_date: string;
+  posted_at: string | null;
+  amount_cents: number;
+  description: string;
+  reference_code: string | null;
+  balance_cents: number | null;
+  source: string;
+  source_ref: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type FinanceReconciliationMatch = {
+  id: string;
+  company_id: string;
+  financial_bank_statement_entry_id: string;
+  financial_transaction_id: string | null;
+  confidence_score: number | null;
+  match_status: FinanceReconciliationStatus;
+  source: string;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type FinanceTransaction = {
   id: string;
   company_id: string;
@@ -187,6 +240,44 @@ export type CreateFinanceReceivablePayload = {
   note?: string | null;
 };
 
+export type CreateFinanceImportJobPayload = {
+  company_id: string;
+  import_type: string;
+  source_file_name: string;
+  source_file_mime_type?: string | null;
+  source_file_size_bytes?: number;
+  status?: FinanceImportJobStatus;
+  total_rows?: number;
+  processed_rows?: number;
+  error_rows?: number;
+  error_summary?: string | null;
+  finished_at?: string | null;
+};
+
+export type CreateFinanceStatementEntryPayload = {
+  company_id: string;
+  financial_account_id: string;
+  financial_import_job_id?: string | null;
+  statement_date: string;
+  posted_at?: string | null;
+  amount_cents: number;
+  description: string;
+  reference_code?: string | null;
+  balance_cents?: number | null;
+  source?: string;
+  source_ref?: string | null;
+};
+
+export type CreateFinanceReconciliationPayload = {
+  company_id: string;
+  financial_bank_statement_entry_id: string;
+  financial_transaction_id: string;
+  confidence_score?: number | null;
+  match_status: FinanceReconciliationStatus;
+  source?: string;
+  reviewed_at?: string | null;
+};
+
 function withCompanyId(path: string, companyId?: string | null): string {
   const normalized = companyId?.trim();
   if (!normalized) {
@@ -266,6 +357,33 @@ export const financeApi = {
     ),
   createReceivable: (payload: CreateFinanceReceivablePayload) =>
     req<FinanceReceivable>('/finance/receivables', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  listImportJobs: (companyId?: string | null) =>
+    req<{ company_id: string | null; company_name: string | null; jobs: FinanceImportJob[] }>(
+      withCompanyId('/finance/import-jobs', companyId)
+    ),
+  createImportJob: (payload: CreateFinanceImportJobPayload) =>
+    req<FinanceImportJob>('/finance/import-jobs', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  listStatementEntries: (companyId?: string | null) =>
+    req<{ company_id: string | null; company_name: string | null; entries: FinanceStatementEntry[] }>(
+      withCompanyId('/finance/statement-entries', companyId)
+    ),
+  createStatementEntry: (payload: CreateFinanceStatementEntryPayload) =>
+    req<FinanceStatementEntry>('/finance/statement-entries', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  listReconciliations: (companyId?: string | null) =>
+    req<{ company_id: string | null; company_name: string | null; matches: FinanceReconciliationMatch[] }>(
+      withCompanyId('/finance/reconciliations', companyId)
+    ),
+  createReconciliation: (payload: CreateFinanceReconciliationPayload) =>
+    req<FinanceReconciliationMatch>('/finance/reconciliations', {
       method: 'POST',
       body: JSON.stringify(payload)
     }),
