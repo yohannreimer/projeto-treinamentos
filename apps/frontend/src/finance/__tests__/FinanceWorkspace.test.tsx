@@ -27,8 +27,18 @@ vi.mock('../../services/api', () => ({
 }));
 
 beforeEach(() => {
-  window.localStorage.clear();
-  window.sessionStorage.clear();
+  if (typeof window.localStorage.clear === 'function') {
+    window.localStorage.clear();
+  } else {
+    window.localStorage.removeItem(INTERNAL_AUTH_STORAGE_KEY);
+  }
+
+  if (typeof window.sessionStorage.clear === 'function') {
+    window.sessionStorage.clear();
+  } else {
+    window.sessionStorage.removeItem('orquestrador_internal_tab_initialized_v1');
+  }
+
   window.localStorage.setItem(INTERNAL_AUTH_STORAGE_KEY, JSON.stringify(mockAuth.session));
   window.sessionStorage.setItem('orquestrador_internal_tab_initialized_v1', '1');
 });

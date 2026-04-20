@@ -42,7 +42,7 @@ export function FinanceWorkspace() {
           </NavLink>
         </nav>
         <div style={{ marginTop: '8px', paddingTop: '12px', borderTop: '1px solid var(--line)' }}>
-          <Link to="/calendario" className="nav-item" style={{ marginBottom: 0 }}>
+          <Link to="/" className="nav-item" style={{ marginBottom: 0 }}>
             Voltar para Operações
           </Link>
         </div>
