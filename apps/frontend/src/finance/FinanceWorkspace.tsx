@@ -40,6 +40,9 @@ export function FinanceWorkspace() {
           <NavLink to="payables" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
             Contas a Pagar
           </NavLink>
+          <NavLink to="debts" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+            Dívidas
+          </NavLink>
           <NavLink to="reconciliation" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
             Conciliação
           </NavLink>

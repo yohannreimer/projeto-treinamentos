@@ -9,6 +9,7 @@ import {
 import {
   createFinanceAccount,
   createFinanceCategory,
+  createFinanceDebt,
   createFinanceImportJob,
   createFinancePayable,
   createFinanceReconciliationMatch,
@@ -17,6 +18,7 @@ import {
   createFinanceTransaction,
   getFinanceOverview,
   listFinanceAccounts,
+  listFinanceDebts,
   listFinanceImportJobs,
   listFinancePayables,
   listFinanceReconciliationMatches,
@@ -41,6 +43,7 @@ const payableStatusValues = ['planned', 'open', 'partial', 'paid', 'overdue', 'c
 const receivableStatusValues = ['planned', 'open', 'partial', 'received', 'overdue', 'canceled'] as const;
 const importJobStatusValues = ['queued', 'processing', 'completed', 'failed'] as const;
 const reconciliationStatusValues = ['unmatched', 'matched', 'ignored'] as const;
+const debtStatusValues = ['open', 'partial', 'settled', 'canceled'] as const;
 
 const accountCreateSchema = z.object({
   company_id: z.string().trim().min(1),
@@ -140,6 +143,20 @@ const reconciliationCreateSchema = z.object({
   match_status: z.enum(reconciliationStatusValues),
   source: z.string().trim().min(2).max(40).optional(),
   reviewed_at: z.string().trim().max(40).nullable().optional()
+});
+
+const debtCreateSchema = z.object({
+  company_id: z.string().trim().min(1),
+  financial_payable_id: z.string().trim().min(1).nullable().optional(),
+  financial_receivable_id: z.string().trim().min(1).nullable().optional(),
+  financial_transaction_id: z.string().trim().min(1).nullable().optional(),
+  debt_type: z.string().trim().min(2).max(80),
+  status: z.enum(debtStatusValues),
+  principal_amount_cents: z.number().int().positive(),
+  outstanding_amount_cents: z.number().int().min(0),
+  due_date: isoDateSchema.nullable().optional(),
+  settled_at: isoDateSchema.nullable().optional(),
+  note: z.string().trim().max(2_000).nullable().optional()
 });
 
 const transactionCreateSchema = z.object({
@@ -379,6 +396,26 @@ export function registerFinanceRoutes(app: Express) {
         ...parsed.data,
         reviewed_by: context?.username ?? null
       }));
+    } catch (error) {
+      return respondFinanceError(res, error);
+    }
+  });
+
+  router.get('/debts', requireFinancePermission(['finance.read']), (req, res) => {
+    try {
+      return res.json(listFinanceDebts(parseCompanyId(req)));
+    } catch (error) {
+      return respondFinanceError(res, error);
+    }
+  });
+
+  router.post('/debts', requireFinancePermission(['finance.write']), (req, res) => {
+    const parsed = debtCreateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+    try {
+      return res.status(201).json(createFinanceDebt(parsed.data));
     } catch (error) {
       return respondFinanceError(res, error);
     }

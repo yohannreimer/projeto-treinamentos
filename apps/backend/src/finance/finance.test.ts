@@ -464,6 +464,77 @@ test('POST/GET de payables e receivables funciona com tenant correto', async () 
   }
 });
 
+test('POST/GET de debts funciona com vínculos opcionais e isolamento de tenant', async () => {
+  const dbPath = assignTestDbPath('finance-debts-core');
+  cleanupDbFiles(dbPath);
+
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+  try {
+    seedFinanceCompanies();
+    createInternalUser({
+      username: 'finance.debts',
+      display_name: 'Finance Debts',
+      password: 'Senha#123',
+      role: 'custom',
+      permissions: ['finance.read', 'finance.write']
+    });
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.debts', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+    const token = loginRes.body.token as string;
+
+    const transactionRes = await request(app)
+      .post('/finance/transactions')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        company_id: 'company-a',
+        kind: 'expense',
+        amount_cents: 150000,
+        due_date: '2026-09-10',
+        note: 'Compra parcelada equipamento'
+      });
+    assert.equal(transactionRes.status, 201);
+
+    const debtRes = await request(app)
+      .post('/finance/debts')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        company_id: 'company-a',
+        financial_transaction_id: transactionRes.body.id,
+        debt_type: 'parcelamento',
+        status: 'open',
+        principal_amount_cents: 150000,
+        outstanding_amount_cents: 120000,
+        due_date: '2026-10-10',
+        note: 'Parcelas em andamento'
+      });
+    assert.equal(debtRes.status, 201);
+    assert.equal(debtRes.body.company_id, 'company-a');
+    assert.equal(debtRes.body.financial_transaction_id, transactionRes.body.id);
+    assert.equal(debtRes.body.status, 'open');
+    assert.equal(debtRes.body.principal_amount_cents, 150000);
+    assert.equal(debtRes.body.outstanding_amount_cents, 120000);
+
+    const listA = await request(app)
+      .get('/finance/debts?company_id=company-a')
+      .set('Authorization', `Bearer ${token}`);
+    assert.equal(listA.status, 200);
+    assert.equal(listA.body.debts.length, 1);
+
+    const listB = await request(app)
+      .get('/finance/debts?company_id=company-b')
+      .set('Authorization', `Bearer ${token}`);
+    assert.equal(listB.status, 200);
+    assert.equal(listB.body.debts.length, 0);
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
 test('import jobs + extrato + conciliação inicial funcionam com rastreabilidade', async () => {
   const dbPath = assignTestDbPath('finance-import-reconciliation-core');
   cleanupDbFiles(dbPath);

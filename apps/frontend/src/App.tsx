@@ -20,6 +20,7 @@ import { FinanceWorkspace } from './finance/FinanceWorkspace';
 import { FinanceOverviewPage } from './finance/pages/FinanceOverviewPage';
 import { FinanceReceivablesPage } from './finance/pages/FinanceReceivablesPage';
 import { FinancePayablesPage } from './finance/pages/FinancePayablesPage';
+import { FinanceDebtsPage } from './finance/pages/FinanceDebtsPage';
 import { FinanceReconciliationPage } from './finance/pages/FinanceReconciliationPage';
 import { FinanceTransactionsPage } from './finance/pages/FinanceTransactionsPage';
 import { api } from './services/api';
@@ -264,6 +265,7 @@ function InternalApp() {
           <Route path="transactions" element={<FinanceTransactionsPage />} />
           <Route path="receivables" element={<FinanceReceivablesPage />} />
           <Route path="payables" element={<FinancePayablesPage />} />
+          <Route path="debts" element={<FinanceDebtsPage />} />
           <Route path="reconciliation" element={<FinanceReconciliationPage />} />
           <Route path="*" element={<Navigate to="overview" replace />} />
         </Route>

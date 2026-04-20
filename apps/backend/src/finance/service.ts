@@ -2,6 +2,7 @@ import { db, uuid } from '../db.js';
 import { computeViews } from './ledger.js';
 import type {
   CreateFinanceAccountInput,
+  CreateFinanceDebtInput,
   CreateFinanceImportJobInput,
   CreateFinancePayableInput,
   CreateFinanceReconciliationMatchInput,
@@ -10,6 +11,7 @@ import type {
   CreateFinanceCategoryInput,
   CreateFinanceTransactionInput,
   FinanceAccountDto,
+  FinanceDebtDto,
   FinanceImportJobDto,
   FinancePayableDto,
   FinanceReconciliationMatchDto,
@@ -1341,6 +1343,204 @@ export function createFinanceReconciliationMatch(input: CreateFinanceReconciliat
     throw new Error('Falha ao registrar conciliação.');
   }
   return mapReconciliationRow(created);
+}
+
+function mapDebtRow(row: {
+  id: string;
+  company_id: string;
+  financial_payable_id: string | null;
+  financial_receivable_id: string | null;
+  financial_transaction_id: string | null;
+  debt_type: string;
+  status: string;
+  principal_amount_cents: number;
+  outstanding_amount_cents: number;
+  due_date: string | null;
+  settled_at: string | null;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+}): FinanceDebtDto {
+  return {
+    id: row.id,
+    company_id: row.company_id,
+    financial_payable_id: row.financial_payable_id,
+    financial_receivable_id: row.financial_receivable_id,
+    financial_transaction_id: row.financial_transaction_id,
+    debt_type: row.debt_type,
+    status: row.status as FinanceDebtDto['status'],
+    principal_amount_cents: row.principal_amount_cents,
+    outstanding_amount_cents: row.outstanding_amount_cents,
+    due_date: row.due_date,
+    settled_at: row.settled_at,
+    note: row.note,
+    created_at: row.created_at,
+    updated_at: row.updated_at
+  };
+}
+
+export function listFinanceDebts(companyId?: string | null): {
+  company_id: string | null;
+  company_name: string | null;
+  debts: FinanceDebtDto[];
+} {
+  const company = resolveCompanyRow(companyId);
+  if (!company) {
+    return { company_id: null, company_name: null, debts: [] };
+  }
+
+  const rows = db.prepare(`
+    select
+      id,
+      company_id,
+      financial_payable_id,
+      financial_receivable_id,
+      financial_transaction_id,
+      debt_type,
+      status,
+      principal_amount_cents,
+      outstanding_amount_cents,
+      due_date,
+      settled_at,
+      note,
+      created_at,
+      updated_at
+    from financial_debt
+    where company_id = ?
+    order by coalesce(due_date, created_at) asc, created_at desc
+  `).all(company.id) as Array<{
+    id: string;
+    company_id: string;
+    financial_payable_id: string | null;
+    financial_receivable_id: string | null;
+    financial_transaction_id: string | null;
+    debt_type: string;
+    status: string;
+    principal_amount_cents: number;
+    outstanding_amount_cents: number;
+    due_date: string | null;
+    settled_at: string | null;
+    note: string | null;
+    created_at: string;
+    updated_at: string;
+  }>;
+
+  return {
+    company_id: company.id,
+    company_name: company.name,
+    debts: rows.map(mapDebtRow)
+  };
+}
+
+export function createFinanceDebt(input: CreateFinanceDebtInput): FinanceDebtDto {
+  readCompanyRow(input.company_id);
+  const nowIso = new Date().toISOString();
+  const id = uuid('fdeb');
+
+  const payableId = input.financial_payable_id?.trim() || null;
+  const receivableId = input.financial_receivable_id?.trim() || null;
+  const transactionId = input.financial_transaction_id?.trim() || null;
+
+  if (payableId) {
+    const payable = db.prepare(`
+      select id from financial_payable
+      where id = ? and company_id = ?
+      limit 1
+    `).get(payableId, input.company_id) as { id: string } | undefined;
+    if (!payable) throw new Error('Conta a pagar não encontrada.');
+  }
+
+  if (receivableId) {
+    const receivable = db.prepare(`
+      select id from financial_receivable
+      where id = ? and company_id = ?
+      limit 1
+    `).get(receivableId, input.company_id) as { id: string } | undefined;
+    if (!receivable) throw new Error('Conta a receber não encontrada.');
+  }
+
+  if (transactionId) {
+    const transaction = db.prepare(`
+      select id from financial_transaction
+      where id = ? and company_id = ? and coalesce(is_deleted, 0) = 0
+      limit 1
+    `).get(transactionId, input.company_id) as { id: string } | undefined;
+    if (!transaction) throw new Error('Lançamento financeiro não encontrado.');
+  }
+
+  db.prepare(`
+    insert into financial_debt (
+      id,
+      company_id,
+      financial_payable_id,
+      financial_receivable_id,
+      financial_transaction_id,
+      debt_type,
+      status,
+      principal_amount_cents,
+      outstanding_amount_cents,
+      due_date,
+      settled_at,
+      note,
+      created_at,
+      updated_at
+    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    input.company_id,
+    payableId,
+    receivableId,
+    transactionId,
+    input.debt_type.trim(),
+    input.status,
+    Math.trunc(input.principal_amount_cents),
+    Math.trunc(input.outstanding_amount_cents),
+    input.due_date ?? null,
+    input.settled_at ?? null,
+    input.note?.trim() || null,
+    nowIso,
+    nowIso
+  );
+
+  const created = db.prepare(`
+    select
+      id,
+      company_id,
+      financial_payable_id,
+      financial_receivable_id,
+      financial_transaction_id,
+      debt_type,
+      status,
+      principal_amount_cents,
+      outstanding_amount_cents,
+      due_date,
+      settled_at,
+      note,
+      created_at,
+      updated_at
+    from financial_debt
+    where id = ?
+    limit 1
+  `).get(id) as {
+    id: string;
+    company_id: string;
+    financial_payable_id: string | null;
+    financial_receivable_id: string | null;
+    financial_transaction_id: string | null;
+    debt_type: string;
+    status: string;
+    principal_amount_cents: number;
+    outstanding_amount_cents: number;
+    due_date: string | null;
+    settled_at: string | null;
+    note: string | null;
+    created_at: string;
+    updated_at: string;
+  } | undefined;
+  if (!created) {
+    throw new Error('Falha ao criar dívida.');
+  }
+  return mapDebtRow(created);
 }
 
 function mapTransactionRow(row: FinanceTransactionRow): FinanceTransactionDto {

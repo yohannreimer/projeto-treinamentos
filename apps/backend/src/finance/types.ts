@@ -315,6 +315,39 @@ export type CreateFinanceReconciliationMatchInput = {
   reviewed_at?: string | null;
 };
 
+export type FinanceDebtStatus = 'open' | 'partial' | 'settled' | 'canceled';
+
+export type FinanceDebtDto = {
+  id: string;
+  company_id: string;
+  financial_payable_id: string | null;
+  financial_receivable_id: string | null;
+  financial_transaction_id: string | null;
+  debt_type: string;
+  status: FinanceDebtStatus;
+  principal_amount_cents: number;
+  outstanding_amount_cents: number;
+  due_date: string | null;
+  settled_at: string | null;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CreateFinanceDebtInput = {
+  company_id: string;
+  financial_payable_id?: string | null;
+  financial_receivable_id?: string | null;
+  financial_transaction_id?: string | null;
+  debt_type: string;
+  status: FinanceDebtStatus;
+  principal_amount_cents: number;
+  outstanding_amount_cents: number;
+  due_date?: string | null;
+  settled_at?: string | null;
+  note?: string | null;
+};
+
 export type CreateFinanceTransactionInput = {
   company_id: string;
   financial_account_id?: string | null;

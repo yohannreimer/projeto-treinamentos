@@ -81,6 +81,7 @@ export type FinanceReceivable = {
 
 export type FinanceImportJobStatus = 'queued' | 'processing' | 'completed' | 'failed';
 export type FinanceReconciliationStatus = 'unmatched' | 'matched' | 'ignored';
+export type FinanceDebtStatus = 'open' | 'partial' | 'settled' | 'canceled';
 
 export type FinanceImportJob = {
   id: string;
@@ -128,6 +129,23 @@ export type FinanceReconciliationMatch = {
   source: string;
   reviewed_by: string | null;
   reviewed_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type FinanceDebt = {
+  id: string;
+  company_id: string;
+  financial_payable_id: string | null;
+  financial_receivable_id: string | null;
+  financial_transaction_id: string | null;
+  debt_type: string;
+  status: FinanceDebtStatus;
+  principal_amount_cents: number;
+  outstanding_amount_cents: number;
+  due_date: string | null;
+  settled_at: string | null;
+  note: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -278,6 +296,20 @@ export type CreateFinanceReconciliationPayload = {
   reviewed_at?: string | null;
 };
 
+export type CreateFinanceDebtPayload = {
+  company_id: string;
+  financial_payable_id?: string | null;
+  financial_receivable_id?: string | null;
+  financial_transaction_id?: string | null;
+  debt_type: string;
+  status: FinanceDebtStatus;
+  principal_amount_cents: number;
+  outstanding_amount_cents: number;
+  due_date?: string | null;
+  settled_at?: string | null;
+  note?: string | null;
+};
+
 function withCompanyId(path: string, companyId?: string | null): string {
   const normalized = companyId?.trim();
   if (!normalized) {
@@ -384,6 +416,15 @@ export const financeApi = {
     ),
   createReconciliation: (payload: CreateFinanceReconciliationPayload) =>
     req<FinanceReconciliationMatch>('/finance/reconciliations', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  listDebts: (companyId?: string | null) =>
+    req<{ company_id: string | null; company_name: string | null; debts: FinanceDebt[] }>(
+      withCompanyId('/finance/debts', companyId)
+    ),
+  createDebt: (payload: CreateFinanceDebtPayload) =>
+    req<FinanceDebt>('/finance/debts', {
       method: 'POST',
       body: JSON.stringify(payload)
     }),
