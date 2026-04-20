@@ -18,6 +18,8 @@ import { AdminPage } from './pages/AdminPage';
 import { InternalDocsPage } from './pages/InternalDocsPage';
 import { FinanceWorkspace } from './finance/FinanceWorkspace';
 import { FinanceOverviewPage } from './finance/pages/FinanceOverviewPage';
+import { FinanceReceivablesPage } from './finance/pages/FinanceReceivablesPage';
+import { FinancePayablesPage } from './finance/pages/FinancePayablesPage';
 import { FinanceTransactionsPage } from './finance/pages/FinanceTransactionsPage';
 import { api } from './services/api';
 import {
@@ -38,39 +40,6 @@ const FINANCE_PERMISSIONS: InternalPermission[] = [
   'finance.close',
   'finance.billing'
 ];
-
-function FinancePlaceholderPage({
-  title,
-  description
-}: {
-  title: string;
-  description: string;
-}) {
-  return (
-    <section className="page finance-page">
-      <header className="page-header">
-        <div className="page-header-copy">
-          <small style={{ color: 'var(--ink-soft)', fontSize: '0.76rem', fontWeight: 700, letterSpacing: '0.03em', textTransform: 'uppercase' }}>
-            {title}
-          </small>
-          <h1>{title}</h1>
-          <p>{description}</p>
-        </div>
-      </header>
-
-      <div className="panel">
-        <div className="panel-header">
-          <h2>Em construção</h2>
-        </div>
-        <div className="panel-content">
-          <p style={{ margin: 0, color: 'var(--ink-soft)' }}>
-            Esta área vai receber a funcionalidade completa do financeiro no próximo passo.
-          </p>
-        </div>
-      </div>
-    </section>
-  );
-}
 
 function ProtectedRoute({
   user,
@@ -292,24 +261,8 @@ function InternalApp() {
           <Route index element={<Navigate to="overview" replace />} />
           <Route path="overview" element={<FinanceOverviewPage />} />
           <Route path="transactions" element={<FinanceTransactionsPage />} />
-          <Route
-            path="receivables"
-            element={(
-              <FinancePlaceholderPage
-                title="Contas a Receber"
-                description="Gestão de títulos, vencimentos, baixas e acompanhamento de cobrança."
-              />
-            )}
-          />
-          <Route
-            path="payables"
-            element={(
-              <FinancePlaceholderPage
-                title="Contas a Pagar"
-                description="Compromissos, aprovações, programações e previsibilidade de saída."
-              />
-            )}
-          />
+          <Route path="receivables" element={<FinanceReceivablesPage />} />
+          <Route path="payables" element={<FinancePayablesPage />} />
           <Route path="*" element={<Navigate to="overview" replace />} />
         </Route>
         <Route

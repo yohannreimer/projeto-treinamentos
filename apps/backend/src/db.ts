@@ -917,6 +917,7 @@ export function initDb() {
   ensureColumn('portal_client', 'hidden_module_ids_json', "hidden_module_ids_json text not null default '[]'");
   ensureColumn('portal_client', 'module_date_overrides_json', "module_date_overrides_json text not null default '{}'");
   ensureColumn('portal_client', 'module_status_overrides_json', "module_status_overrides_json text not null default '{}'");
+  ensureColumn('financial_transaction', 'is_deleted', 'is_deleted integer not null default 0');
   ensureColumn('internal_user', 'display_name', 'display_name text');
   ensureColumn('internal_user', 'role', "role text not null default 'supremo'");
   ensureColumn('internal_user', 'permissions_json', "permissions_json text not null default '[]'");

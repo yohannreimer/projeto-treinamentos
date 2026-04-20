@@ -101,6 +101,127 @@ export type FinanceOverviewDto = {
   };
 };
 
+export type FinanceAccountKind = 'bank' | 'cash' | 'wallet' | 'other';
+
+export type FinanceAccountDto = {
+  id: string;
+  company_id: string;
+  name: string;
+  kind: FinanceAccountKind;
+  currency: string;
+  account_number: string | null;
+  branch_number: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type FinanceCategoryKind = 'income' | 'expense' | 'neutral';
+
+export type FinanceCategoryDto = {
+  id: string;
+  company_id: string;
+  name: string;
+  kind: FinanceCategoryKind;
+  parent_category_id: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CreateFinanceAccountInput = {
+  company_id: string;
+  name: string;
+  kind: FinanceAccountKind;
+  currency?: string;
+  account_number?: string | null;
+  branch_number?: string | null;
+  is_active?: boolean;
+};
+
+export type CreateFinanceCategoryInput = {
+  company_id: string;
+  name: string;
+  kind: FinanceCategoryKind;
+  parent_category_id?: string | null;
+  is_active?: boolean;
+};
+
+export type FinancePayableStatus = 'planned' | 'open' | 'partial' | 'paid' | 'overdue' | 'canceled';
+export type FinanceReceivableStatus = 'planned' | 'open' | 'partial' | 'received' | 'overdue' | 'canceled';
+
+export type FinancePayableDto = {
+  id: string;
+  company_id: string;
+  financial_transaction_id: string | null;
+  financial_account_id: string | null;
+  financial_account_name: string | null;
+  financial_category_id: string | null;
+  financial_category_name: string | null;
+  supplier_name: string | null;
+  description: string;
+  amount_cents: number;
+  status: FinancePayableStatus;
+  issue_date: string | null;
+  due_date: string | null;
+  paid_at: string | null;
+  source: string;
+  source_ref: string | null;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type FinanceReceivableDto = {
+  id: string;
+  company_id: string;
+  financial_transaction_id: string | null;
+  financial_account_id: string | null;
+  financial_account_name: string | null;
+  financial_category_id: string | null;
+  financial_category_name: string | null;
+  customer_name: string | null;
+  description: string;
+  amount_cents: number;
+  status: FinanceReceivableStatus;
+  issue_date: string | null;
+  due_date: string | null;
+  received_at: string | null;
+  source: string;
+  source_ref: string | null;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CreateFinancePayableInput = {
+  company_id: string;
+  financial_account_id?: string | null;
+  financial_category_id?: string | null;
+  supplier_name?: string | null;
+  description: string;
+  amount_cents: number;
+  status: FinancePayableStatus;
+  issue_date?: string | null;
+  due_date?: string | null;
+  paid_at?: string | null;
+  note?: string | null;
+};
+
+export type CreateFinanceReceivableInput = {
+  company_id: string;
+  financial_account_id?: string | null;
+  financial_category_id?: string | null;
+  customer_name?: string | null;
+  description: string;
+  amount_cents: number;
+  status: FinanceReceivableStatus;
+  issue_date?: string | null;
+  due_date?: string | null;
+  received_at?: string | null;
+  note?: string | null;
+};
+
 export type CreateFinanceTransactionInput = {
   company_id: string;
   financial_account_id?: string | null;

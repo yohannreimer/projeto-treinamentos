@@ -5,6 +5,79 @@ const BASE_URL = env?.VITE_API_BASE_URL ?? `http://${window.location.hostname}:4
 
 export type FinanceTransactionKind = 'income' | 'expense' | 'transfer' | 'adjustment';
 export type FinanceTransactionStatus = 'planned' | 'open' | 'partial' | 'settled' | 'overdue' | 'canceled';
+export type FinanceAccountKind = 'bank' | 'cash' | 'wallet' | 'other';
+export type FinanceCategoryKind = 'income' | 'expense' | 'neutral';
+
+export type FinanceAccount = {
+  id: string;
+  company_id: string;
+  name: string;
+  kind: FinanceAccountKind;
+  currency: string;
+  account_number: string | null;
+  branch_number: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type FinanceCategory = {
+  id: string;
+  company_id: string;
+  name: string;
+  kind: FinanceCategoryKind;
+  parent_category_id: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type FinancePayableStatus = 'planned' | 'open' | 'partial' | 'paid' | 'overdue' | 'canceled';
+export type FinanceReceivableStatus = 'planned' | 'open' | 'partial' | 'received' | 'overdue' | 'canceled';
+
+export type FinancePayable = {
+  id: string;
+  company_id: string;
+  financial_transaction_id: string | null;
+  financial_account_id: string | null;
+  financial_account_name: string | null;
+  financial_category_id: string | null;
+  financial_category_name: string | null;
+  supplier_name: string | null;
+  description: string;
+  amount_cents: number;
+  status: FinancePayableStatus;
+  issue_date: string | null;
+  due_date: string | null;
+  paid_at: string | null;
+  source: string;
+  source_ref: string | null;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type FinanceReceivable = {
+  id: string;
+  company_id: string;
+  financial_transaction_id: string | null;
+  financial_account_id: string | null;
+  financial_account_name: string | null;
+  financial_category_id: string | null;
+  financial_category_name: string | null;
+  customer_name: string | null;
+  description: string;
+  amount_cents: number;
+  status: FinanceReceivableStatus;
+  issue_date: string | null;
+  due_date: string | null;
+  received_at: string | null;
+  source: string;
+  source_ref: string | null;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+};
 
 export type FinanceTransaction = {
   id: string;
@@ -56,6 +129,8 @@ export type FinanceOverview = {
 
 export type CreateFinanceTransactionPayload = {
   company_id: string;
+  financial_account_id?: string | null;
+  financial_category_id?: string | null;
   kind: FinanceTransactionKind;
   status?: FinanceTransactionStatus;
   amount_cents: number;
@@ -63,6 +138,52 @@ export type CreateFinanceTransactionPayload = {
   due_date?: string | null;
   settlement_date?: string | null;
   competence_date?: string | null;
+  note?: string | null;
+};
+
+export type CreateFinanceAccountPayload = {
+  company_id: string;
+  name: string;
+  kind: FinanceAccountKind;
+  currency?: string;
+  account_number?: string | null;
+  branch_number?: string | null;
+  is_active?: boolean;
+};
+
+export type CreateFinanceCategoryPayload = {
+  company_id: string;
+  name: string;
+  kind: FinanceCategoryKind;
+  parent_category_id?: string | null;
+  is_active?: boolean;
+};
+
+export type CreateFinancePayablePayload = {
+  company_id: string;
+  financial_account_id?: string | null;
+  financial_category_id?: string | null;
+  supplier_name?: string | null;
+  description: string;
+  amount_cents: number;
+  status: FinancePayableStatus;
+  issue_date?: string | null;
+  due_date?: string | null;
+  paid_at?: string | null;
+  note?: string | null;
+};
+
+export type CreateFinanceReceivablePayload = {
+  company_id: string;
+  financial_account_id?: string | null;
+  financial_category_id?: string | null;
+  customer_name?: string | null;
+  description: string;
+  amount_cents: number;
+  status: FinanceReceivableStatus;
+  issue_date?: string | null;
+  due_date?: string | null;
+  received_at?: string | null;
   note?: string | null;
 };
 
@@ -112,6 +233,42 @@ export const financeApi = {
     req<{ company_id: string | null; company_name: string | null; transactions: FinanceTransaction[] }>(
       withCompanyId('/finance/transactions', companyId)
     ),
+  listAccounts: (companyId?: string | null) =>
+    req<{ company_id: string | null; company_name: string | null; accounts: FinanceAccount[] }>(
+      withCompanyId('/finance/accounts', companyId)
+    ),
+  createAccount: (payload: CreateFinanceAccountPayload) =>
+    req<FinanceAccount>('/finance/accounts', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  listCategories: (companyId?: string | null) =>
+    req<{ company_id: string | null; company_name: string | null; categories: FinanceCategory[] }>(
+      withCompanyId('/finance/categories', companyId)
+    ),
+  createCategory: (payload: CreateFinanceCategoryPayload) =>
+    req<FinanceCategory>('/finance/categories', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  listPayables: (companyId?: string | null) =>
+    req<{ company_id: string | null; company_name: string | null; payables: FinancePayable[] }>(
+      withCompanyId('/finance/payables', companyId)
+    ),
+  createPayable: (payload: CreateFinancePayablePayload) =>
+    req<FinancePayable>('/finance/payables', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  listReceivables: (companyId?: string | null) =>
+    req<{ company_id: string | null; company_name: string | null; receivables: FinanceReceivable[] }>(
+      withCompanyId('/finance/receivables', companyId)
+    ),
+  createReceivable: (payload: CreateFinanceReceivablePayload) =>
+    req<FinanceReceivable>('/finance/receivables', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
   createTransaction: (payload: CreateFinanceTransactionPayload) =>
     req<FinanceTransaction>('/finance/transactions', {
       method: 'POST',

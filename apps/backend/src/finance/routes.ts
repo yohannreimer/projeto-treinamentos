@@ -7,18 +7,94 @@ import {
   type InternalPermissionKey
 } from '../internalAuth.js';
 import {
+  createFinanceAccount,
+  createFinanceCategory,
+  createFinancePayable,
+  createFinanceReceivable,
   createFinanceTransaction,
   getFinanceOverview,
+  listFinanceAccounts,
+  listFinancePayables,
+  listFinanceReceivables,
+  listFinanceCategories,
   listFinanceTransactions,
   softDeleteFinanceTransaction,
   updateFinanceTransaction
 } from './service.js';
 import {
+  type FinanceAccountKind,
+  type FinanceCategoryKind,
   FINANCE_TRANSACTION_KIND_VALUES,
   FINANCE_TRANSACTION_STATUS_VALUES
 } from './types.js';
 
 const isoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const financeAccountKindValues = ['bank', 'cash', 'wallet', 'other'] as const satisfies readonly FinanceAccountKind[];
+const financeCategoryKindValues = ['income', 'expense', 'neutral'] as const satisfies readonly FinanceCategoryKind[];
+const payableStatusValues = ['planned', 'open', 'partial', 'paid', 'overdue', 'canceled'] as const;
+const receivableStatusValues = ['planned', 'open', 'partial', 'received', 'overdue', 'canceled'] as const;
+
+const accountCreateSchema = z.object({
+  company_id: z.string().trim().min(1),
+  name: z.string().trim().min(2).max(120),
+  kind: z.enum(financeAccountKindValues),
+  currency: z.string().trim().min(3).max(8).optional(),
+  account_number: z.string().trim().max(64).nullable().optional(),
+  branch_number: z.string().trim().max(64).nullable().optional(),
+  is_active: z.boolean().optional()
+});
+
+const categoryCreateSchema = z.object({
+  company_id: z.string().trim().min(1),
+  name: z.string().trim().min(2).max(120),
+  kind: z.enum(financeCategoryKindValues),
+  parent_category_id: z.string().trim().min(1).nullable().optional(),
+  is_active: z.boolean().optional()
+});
+
+const payableCreateSchema = z.object({
+  company_id: z.string().trim().min(1),
+  financial_account_id: z.string().trim().min(1).nullable().optional(),
+  financial_category_id: z.string().trim().min(1).nullable().optional(),
+  supplier_name: z.string().trim().max(120).nullable().optional(),
+  description: z.string().trim().min(2).max(240),
+  amount_cents: z.number().int().positive(),
+  status: z.enum(payableStatusValues),
+  issue_date: isoDateSchema.nullable().optional(),
+  due_date: isoDateSchema.nullable().optional(),
+  paid_at: isoDateSchema.nullable().optional(),
+  note: z.string().trim().max(2_000).nullable().optional()
+}).superRefine((payload, ctx) => {
+  if (payload.status === 'paid' && !payload.paid_at) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['paid_at'],
+      message: 'Informe paid_at para status paid.'
+    });
+  }
+});
+
+const receivableCreateSchema = z.object({
+  company_id: z.string().trim().min(1),
+  financial_account_id: z.string().trim().min(1).nullable().optional(),
+  financial_category_id: z.string().trim().min(1).nullable().optional(),
+  customer_name: z.string().trim().max(120).nullable().optional(),
+  description: z.string().trim().min(2).max(240),
+  amount_cents: z.number().int().positive(),
+  status: z.enum(receivableStatusValues),
+  issue_date: isoDateSchema.nullable().optional(),
+  due_date: isoDateSchema.nullable().optional(),
+  received_at: isoDateSchema.nullable().optional(),
+  note: z.string().trim().max(2_000).nullable().optional()
+}).superRefine((payload, ctx) => {
+  if (payload.status === 'received' && !payload.received_at) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['received_at'],
+      message: 'Informe received_at para status received.'
+    });
+  }
+});
 
 const transactionCreateSchema = z.object({
   company_id: z.string().trim().min(1),
@@ -32,6 +108,14 @@ const transactionCreateSchema = z.object({
   settlement_date: isoDateSchema.nullable().optional(),
   competence_date: isoDateSchema.nullable().optional(),
   note: z.string().trim().max(2_000).nullable().optional()
+}).superRefine((payload, ctx) => {
+  if (payload.status === 'settled' && !payload.settlement_date) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['settlement_date'],
+      message: 'Informe settlement_date para status settled.'
+    });
+  }
 });
 
 const transactionUpdateSchema = z.object({
@@ -47,6 +131,16 @@ const transactionUpdateSchema = z.object({
   note: z.string().trim().max(2_000).nullable().optional()
 }).refine((payload) => Object.keys(payload).length > 0, {
   message: 'Informe ao menos um campo para atualização.'
+}).superRefine((payload, ctx) => {
+  if (payload.status === 'settled'
+    && Object.prototype.hasOwnProperty.call(payload, 'settlement_date')
+    && !payload.settlement_date) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['settlement_date'],
+      message: 'Informe settlement_date para status settled.'
+    });
+  }
 });
 
 function requireFinancePermission(permissions: InternalPermissionKey[]) {
@@ -89,6 +183,88 @@ export function registerFinanceRoutes(app: Express) {
   router.get('/transactions', requireFinancePermission(['finance.read']), (req, res) => {
     try {
       return res.json(listFinanceTransactions(parseCompanyId(req)));
+    } catch (error) {
+      return respondFinanceError(res, error);
+    }
+  });
+
+  router.get('/accounts', requireFinancePermission(['finance.read']), (req, res) => {
+    try {
+      return res.json(listFinanceAccounts(parseCompanyId(req)));
+    } catch (error) {
+      return respondFinanceError(res, error);
+    }
+  });
+
+  router.post('/accounts', requireFinancePermission(['finance.write']), (req, res) => {
+    const parsed = accountCreateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+
+    try {
+      return res.status(201).json(createFinanceAccount(parsed.data));
+    } catch (error) {
+      return respondFinanceError(res, error);
+    }
+  });
+
+  router.get('/categories', requireFinancePermission(['finance.read']), (req, res) => {
+    try {
+      return res.json(listFinanceCategories(parseCompanyId(req)));
+    } catch (error) {
+      return respondFinanceError(res, error);
+    }
+  });
+
+  router.post('/categories', requireFinancePermission(['finance.write']), (req, res) => {
+    const parsed = categoryCreateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+
+    try {
+      return res.status(201).json(createFinanceCategory(parsed.data));
+    } catch (error) {
+      return respondFinanceError(res, error);
+    }
+  });
+
+  router.get('/payables', requireFinancePermission(['finance.read']), (req, res) => {
+    try {
+      return res.json(listFinancePayables(parseCompanyId(req)));
+    } catch (error) {
+      return respondFinanceError(res, error);
+    }
+  });
+
+  router.post('/payables', requireFinancePermission(['finance.write']), (req, res) => {
+    const parsed = payableCreateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+    try {
+      return res.status(201).json(createFinancePayable(parsed.data));
+    } catch (error) {
+      return respondFinanceError(res, error);
+    }
+  });
+
+  router.get('/receivables', requireFinancePermission(['finance.read']), (req, res) => {
+    try {
+      return res.json(listFinanceReceivables(parseCompanyId(req)));
+    } catch (error) {
+      return respondFinanceError(res, error);
+    }
+  });
+
+  router.post('/receivables', requireFinancePermission(['finance.write']), (req, res) => {
+    const parsed = receivableCreateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+    try {
+      return res.status(201).json(createFinanceReceivable(parsed.data));
     } catch (error) {
       return respondFinanceError(res, error);
     }

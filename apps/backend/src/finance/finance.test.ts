@@ -96,6 +96,12 @@ test('initDb cria schema financeiro v1', () => {
       assert.ok(row, `tabela ausente: ${name}`);
     }
 
+    const transactionColumns = db.prepare('pragma table_info(financial_transaction)').all() as Array<{ name: string }>;
+    assert.ok(
+      transactionColumns.some((column) => column.name === 'is_deleted'),
+      'coluna is_deleted ausente em financial_transaction'
+    );
+
     assertCompositeForeignKey('financial_transaction', 'financial_account', [
       { from: 'company_id', to: 'company_id' },
       { from: 'financial_account_id', to: 'id' }
@@ -308,6 +314,156 @@ test('POST /finance/transactions cria lançamento manual e persiste', async () =
   }
 });
 
+test('CRUD base de contas/categorias respeita tenant e vínculos', async () => {
+  const dbPath = assignTestDbPath('finance-catalog-basics');
+  cleanupDbFiles(dbPath);
+
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+  try {
+    seedFinanceCompanies();
+    createInternalUser({
+      username: 'finance.catalog',
+      display_name: 'Finance Catalog',
+      password: 'Senha#123',
+      role: 'custom',
+      permissions: ['finance.read', 'finance.write']
+    });
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.catalog', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+    const token = loginRes.body.token as string;
+
+    const accountRes = await request(app)
+      .post('/finance/accounts')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        company_id: 'company-a',
+        name: 'Banco Operacional',
+        kind: 'bank'
+      });
+    assert.equal(accountRes.status, 201);
+    assert.equal(accountRes.body.company_id, 'company-a');
+    assert.equal(accountRes.body.name, 'Banco Operacional');
+
+    const parentCategoryRes = await request(app)
+      .post('/finance/categories')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        company_id: 'company-a',
+        name: 'Receita',
+        kind: 'income'
+      });
+    assert.equal(parentCategoryRes.status, 201);
+
+    const childCategoryRes = await request(app)
+      .post('/finance/categories')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        company_id: 'company-a',
+        name: 'Serviços',
+        kind: 'income',
+        parent_category_id: parentCategoryRes.body.id
+      });
+    assert.equal(childCategoryRes.status, 201);
+    assert.equal(childCategoryRes.body.parent_category_id, parentCategoryRes.body.id);
+
+    const listAccountsA = await request(app)
+      .get('/finance/accounts?company_id=company-a')
+      .set('Authorization', `Bearer ${token}`);
+    assert.equal(listAccountsA.status, 200);
+    assert.equal(listAccountsA.body.accounts.length, 1);
+
+    const listAccountsB = await request(app)
+      .get('/finance/accounts?company_id=company-b')
+      .set('Authorization', `Bearer ${token}`);
+    assert.equal(listAccountsB.status, 200);
+    assert.equal(listAccountsB.body.accounts.length, 0);
+
+    const listCategoriesA = await request(app)
+      .get('/finance/categories?company_id=company-a')
+      .set('Authorization', `Bearer ${token}`);
+    assert.equal(listCategoriesA.status, 200);
+    assert.equal(listCategoriesA.body.categories.length, 2);
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('POST/GET de payables e receivables funciona com tenant correto', async () => {
+  const dbPath = assignTestDbPath('finance-payable-receivable-core');
+  cleanupDbFiles(dbPath);
+
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+  try {
+    seedFinanceCompanies();
+    createInternalUser({
+      username: 'finance.cashflow',
+      display_name: 'Finance Cashflow',
+      password: 'Senha#123',
+      role: 'custom',
+      permissions: ['finance.read', 'finance.write']
+    });
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.cashflow', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+    const token = loginRes.body.token as string;
+
+    const payableRes = await request(app)
+      .post('/finance/payables')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        company_id: 'company-a',
+        description: 'Hospedagem mensal',
+        amount_cents: 8900,
+        status: 'open',
+        due_date: '2026-07-10'
+      });
+    assert.equal(payableRes.status, 201);
+    assert.equal(payableRes.body.company_id, 'company-a');
+
+    const receivableRes = await request(app)
+      .post('/finance/receivables')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        company_id: 'company-a',
+        description: 'Parcela contrato implantação',
+        amount_cents: 15900,
+        status: 'open',
+        due_date: '2026-07-12'
+      });
+    assert.equal(receivableRes.status, 201);
+    assert.equal(receivableRes.body.company_id, 'company-a');
+
+    const listPayablesA = await request(app)
+      .get('/finance/payables?company_id=company-a')
+      .set('Authorization', `Bearer ${token}`);
+    assert.equal(listPayablesA.status, 200);
+    assert.equal(listPayablesA.body.payables.length, 1);
+
+    const listReceivablesA = await request(app)
+      .get('/finance/receivables?company_id=company-a')
+      .set('Authorization', `Bearer ${token}`);
+    assert.equal(listReceivablesA.status, 200);
+    assert.equal(listReceivablesA.body.receivables.length, 1);
+
+    const listPayablesB = await request(app)
+      .get('/finance/payables?company_id=company-b')
+      .set('Authorization', `Bearer ${token}`);
+    assert.equal(listPayablesB.status, 200);
+    assert.equal(listPayablesB.body.payables.length, 0);
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
 test('DELETE /finance/transactions/:id faz soft-delete auditável', async () => {
   const dbPath = assignTestDbPath('finance-transactions-soft-delete');
   cleanupDbFiles(dbPath);
@@ -382,6 +538,100 @@ test('DELETE /finance/transactions/:id faz soft-delete auditável', async () => 
     });
 
     assert.ok(auditLog, 'esperava auditoria para o soft-delete financeiro');
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('POST /finance/transactions rejeita status settled sem settlement_date', async () => {
+  const dbPath = assignTestDbPath('finance-transactions-settled-without-date');
+  cleanupDbFiles(dbPath);
+
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+  try {
+    seedFinanceCompanies();
+    createInternalUser({
+      username: 'finance.validator',
+      display_name: 'Finance Validator',
+      password: 'Senha#123',
+      role: 'custom',
+      permissions: ['finance.read', 'finance.write']
+    });
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.validator', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+    const token = loginRes.body.token as string;
+
+    const createRes = await request(app)
+      .post('/finance/transactions')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        company_id: 'company-a',
+        kind: 'income',
+        status: 'settled',
+        amount_cents: 10000,
+        note: 'Teste sem data de liquidação'
+      });
+
+    assert.equal(createRes.status, 400);
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('PATCH e DELETE bloqueiam transação já soft-deletada', async () => {
+  const dbPath = assignTestDbPath('finance-transactions-no-mutate-after-delete');
+  cleanupDbFiles(dbPath);
+
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+  try {
+    seedFinanceCompanies();
+    createInternalUser({
+      username: 'finance.locked',
+      display_name: 'Finance Locked',
+      password: 'Senha#123',
+      role: 'custom',
+      permissions: ['finance.read', 'finance.write', 'finance.approve']
+    });
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.locked', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+    const token = loginRes.body.token as string;
+
+    const createRes = await request(app)
+      .post('/finance/transactions')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        company_id: 'company-a',
+        kind: 'expense',
+        amount_cents: 5000,
+        note: 'Transação para teste de bloqueio'
+      });
+    assert.equal(createRes.status, 201);
+
+    const firstDelete = await request(app)
+      .delete(`/finance/transactions/${createRes.body.id}`)
+      .set('Authorization', `Bearer ${token}`);
+    assert.equal(firstDelete.status, 200);
+
+    const patchRes = await request(app)
+      .patch(`/finance/transactions/${createRes.body.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ note: 'Tentativa após delete' });
+    assert.equal(patchRes.status, 404);
+
+    const secondDelete = await request(app)
+      .delete(`/finance/transactions/${createRes.body.id}`)
+      .set('Authorization', `Bearer ${token}`);
+    assert.equal(secondDelete.status, 404);
   } finally {
     db.close();
     cleanupDbFiles(dbPath);

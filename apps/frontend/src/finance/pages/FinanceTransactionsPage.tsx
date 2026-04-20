@@ -3,7 +3,11 @@ import { hasAnyPermission, internalSessionStore } from '../../auth/session';
 import { api } from '../../services/api';
 import {
   financeApi,
+  type CreateFinanceAccountPayload,
+  type CreateFinanceCategoryPayload,
   type CreateFinanceTransactionPayload,
+  type FinanceAccount,
+  type FinanceCategory,
   type FinanceOverview,
   type FinanceTransaction,
   type FinanceTransactionKind,
@@ -16,6 +20,8 @@ type CompanyOption = {
 };
 
 type TransactionFormState = {
+  financial_account_id: string;
+  financial_category_id: string;
   kind: FinanceTransactionKind;
   status: FinanceTransactionStatus;
   amount: string;
@@ -26,6 +32,8 @@ type TransactionFormState = {
 };
 
 const initialFormState: TransactionFormState = {
+  financial_account_id: '',
+  financial_category_id: '',
   kind: 'expense',
   status: 'open',
   amount: '',
@@ -81,7 +89,11 @@ function statusLabel(status: FinanceTransactionStatus): string {
 }
 
 function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 export function FinanceTransactionsPage() {
@@ -89,9 +101,21 @@ export function FinanceTransactionsPage() {
   const [selectedCompanyId, setSelectedCompanyId] = useState('');
   const [overview, setOverview] = useState<FinanceOverview | null>(null);
   const [transactions, setTransactions] = useState<FinanceTransaction[]>([]);
+  const [accounts, setAccounts] = useState<FinanceAccount[]>([]);
+  const [categories, setCategories] = useState<FinanceCategory[]>([]);
   const [form, setForm] = useState<TransactionFormState>(initialFormState);
+  const [accountForm, setAccountForm] = useState<{ name: string; kind: CreateFinanceAccountPayload['kind'] }>({
+    name: '',
+    kind: 'bank'
+  });
+  const [categoryForm, setCategoryForm] = useState<{ name: string; kind: CreateFinanceCategoryPayload['kind']; parent_category_id: string }>({
+    name: '',
+    kind: 'expense',
+    parent_category_id: ''
+  });
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [catalogSubmitting, setCatalogSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
 
@@ -125,16 +149,22 @@ export function FinanceTransactionsPage() {
     setError('');
 
     try {
-      const [overviewResponse, transactionsResponse] = await Promise.all([
+      const [overviewResponse, transactionsResponse, accountsResponse, categoriesResponse] = await Promise.all([
         financeApi.getOverview(companyId),
-        financeApi.listTransactions(companyId)
+        financeApi.listTransactions(companyId),
+        financeApi.listAccounts(companyId),
+        financeApi.listCategories(companyId)
       ]);
       setOverview(overviewResponse);
       setTransactions(transactionsResponse.transactions);
+      setAccounts(accountsResponse.accounts);
+      setCategories(categoriesResponse.categories);
     } catch (loadError) {
       setError((loadError as Error).message || 'Falha ao carregar movimentações.');
       setOverview(null);
       setTransactions([]);
+      setAccounts([]);
+      setCategories([]);
     } finally {
       setLoading(false);
     }
@@ -171,15 +201,19 @@ export function FinanceTransactionsPage() {
     setError('');
     setMessage('');
 
+    const settlementDate = form.settlement_date || (form.status === 'settled' ? todayIso() : '');
+
     const payload: CreateFinanceTransactionPayload = {
       company_id: selectedCompanyId,
+      financial_account_id: form.financial_account_id || null,
+      financial_category_id: form.financial_category_id || null,
       kind: form.kind,
-      status: form.settlement_date ? 'settled' : form.status,
+      status: settlementDate ? 'settled' : form.status,
       amount_cents: amountCents,
       issue_date: todayIso(),
       due_date: form.due_date || null,
       competence_date: form.competence_date || null,
-      settlement_date: form.settlement_date || null,
+      settlement_date: settlementDate || null,
       note: form.note.trim() || null
     };
 
@@ -196,6 +230,67 @@ export function FinanceTransactionsPage() {
       setError((submitError as Error).message || 'Falha ao criar lançamento.');
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function handleCreateAccount(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedCompanyId) {
+      setError('Selecione uma empresa antes de cadastrar conta.');
+      return;
+    }
+    if (!accountForm.name.trim()) {
+      setError('Informe o nome da conta.');
+      return;
+    }
+
+    setCatalogSubmitting(true);
+    setError('');
+    setMessage('');
+    try {
+      await financeApi.createAccount({
+        company_id: selectedCompanyId,
+        name: accountForm.name.trim(),
+        kind: accountForm.kind
+      });
+      setAccountForm({ name: '', kind: accountForm.kind });
+      setMessage('Conta financeira cadastrada com sucesso.');
+      await reload(selectedCompanyId);
+    } catch (submitError) {
+      setError((submitError as Error).message || 'Falha ao cadastrar conta financeira.');
+    } finally {
+      setCatalogSubmitting(false);
+    }
+  }
+
+  async function handleCreateCategory(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedCompanyId) {
+      setError('Selecione uma empresa antes de cadastrar categoria.');
+      return;
+    }
+    if (!categoryForm.name.trim()) {
+      setError('Informe o nome da categoria.');
+      return;
+    }
+
+    setCatalogSubmitting(true);
+    setError('');
+    setMessage('');
+    try {
+      await financeApi.createCategory({
+        company_id: selectedCompanyId,
+        name: categoryForm.name.trim(),
+        kind: categoryForm.kind,
+        parent_category_id: categoryForm.parent_category_id || null
+      });
+      setCategoryForm((current) => ({ ...current, name: '', parent_category_id: '' }));
+      setMessage('Categoria financeira cadastrada com sucesso.');
+      await reload(selectedCompanyId);
+    } catch (submitError) {
+      setError((submitError as Error).message || 'Falha ao cadastrar categoria financeira.');
+    } finally {
+      setCatalogSubmitting(false);
     }
   }
 
@@ -254,11 +349,141 @@ export function FinanceTransactionsPage() {
 
         <div className="panel">
           <div className="panel-header">
+            <h2>Catálogo financeiro base</h2>
+            <p style={{ margin: '4px 0 0', color: 'var(--ink-soft)' }}>
+              Cadastre contas e categorias para padronizar os lançamentos manuais por empresa.
+            </p>
+          </div>
+          <div className="panel-content" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '12px' }}>
+            <form className="form" onSubmit={handleCreateAccount} style={{ display: 'grid', gap: '8px' }}>
+              <h3 style={{ margin: 0 }}>Nova conta</h3>
+              <label style={{ display: 'grid', gap: '4px' }}>
+                <span>Nome da conta</span>
+                <input
+                  value={accountForm.name}
+                  onChange={(event) => setAccountForm((current) => ({ ...current, name: event.target.value }))}
+                  placeholder="Ex.: Itaú operacional"
+                  disabled={!canWrite || catalogSubmitting}
+                />
+              </label>
+              <label style={{ display: 'grid', gap: '4px' }}>
+                <span>Tipo</span>
+                <select
+                  value={accountForm.kind}
+                  onChange={(event) => setAccountForm((current) => ({ ...current, kind: event.target.value as CreateFinanceAccountPayload['kind'] }))}
+                  disabled={!canWrite || catalogSubmitting}
+                >
+                  <option value="bank">Banco</option>
+                  <option value="cash">Caixa</option>
+                  <option value="wallet">Carteira</option>
+                  <option value="other">Outro</option>
+                </select>
+              </label>
+              <button type="submit" disabled={!canWrite || catalogSubmitting || !selectedCompanyId}>
+                {catalogSubmitting ? 'Salvando...' : 'Criar conta'}
+              </button>
+            </form>
+
+            <form className="form" onSubmit={handleCreateCategory} style={{ display: 'grid', gap: '8px' }}>
+              <h3 style={{ margin: 0 }}>Nova categoria</h3>
+              <label style={{ display: 'grid', gap: '4px' }}>
+                <span>Nome da categoria</span>
+                <input
+                  value={categoryForm.name}
+                  onChange={(event) => setCategoryForm((current) => ({ ...current, name: event.target.value }))}
+                  placeholder="Ex.: Serviços técnicos"
+                  disabled={!canWrite || catalogSubmitting}
+                />
+              </label>
+              <label style={{ display: 'grid', gap: '4px' }}>
+                <span>Tipo</span>
+                <select
+                  value={categoryForm.kind}
+                  onChange={(event) => setCategoryForm((current) => ({ ...current, kind: event.target.value as CreateFinanceCategoryPayload['kind'] }))}
+                  disabled={!canWrite || catalogSubmitting}
+                >
+                  <option value="expense">Despesa</option>
+                  <option value="income">Receita</option>
+                  <option value="neutral">Neutro</option>
+                </select>
+              </label>
+              <label style={{ display: 'grid', gap: '4px' }}>
+                <span>Categoria pai (opcional)</span>
+                <select
+                  value={categoryForm.parent_category_id}
+                  onChange={(event) => setCategoryForm((current) => ({ ...current, parent_category_id: event.target.value }))}
+                  disabled={!canWrite || catalogSubmitting}
+                >
+                  <option value="">Sem categoria pai</option>
+                  {categories.map((item) => (
+                    <option key={item.id} value={item.id}>{item.name}</option>
+                  ))}
+                </select>
+              </label>
+              <button type="submit" disabled={!canWrite || catalogSubmitting || !selectedCompanyId}>
+                {catalogSubmitting ? 'Salvando...' : 'Criar categoria'}
+              </button>
+            </form>
+          </div>
+          <div className="panel-content" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '12px', borderTop: '1px solid var(--line)' }}>
+            <div>
+              <h3 style={{ marginTop: 0 }}>Contas cadastradas ({accounts.length})</h3>
+              <ul style={{ margin: 0, paddingLeft: '18px', color: 'var(--ink-soft)' }}>
+                {accounts.slice(0, 8).map((item) => (
+                  <li key={item.id}>
+                    <strong style={{ color: 'var(--ink)' }}>{item.name}</strong> • {item.kind.toUpperCase()}
+                  </li>
+                ))}
+                {accounts.length === 0 ? <li>Nenhuma conta cadastrada.</li> : null}
+              </ul>
+            </div>
+            <div>
+              <h3 style={{ marginTop: 0 }}>Categorias cadastradas ({categories.length})</h3>
+              <ul style={{ margin: 0, paddingLeft: '18px', color: 'var(--ink-soft)' }}>
+                {categories.slice(0, 8).map((item) => (
+                  <li key={item.id}>
+                    <strong style={{ color: 'var(--ink)' }}>{item.name}</strong> • {item.kind.toUpperCase()}
+                  </li>
+                ))}
+                {categories.length === 0 ? <li>Nenhuma categoria cadastrada.</li> : null}
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <div className="panel">
+          <div className="panel-header">
             <h2>Novo lançamento manual</h2>
           </div>
           <div className="panel-content">
             <form className="form form-spacious" onSubmit={handleSubmit} style={{ display: 'grid', gap: '12px' }}>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
+                <label style={{ display: 'grid', gap: '6px' }}>
+                  <span>Conta (opcional)</span>
+                  <select
+                    value={form.financial_account_id}
+                    onChange={(event) => setForm((current) => ({ ...current, financial_account_id: event.target.value }))}
+                    disabled={!canWrite || submitting}
+                  >
+                    <option value="">Sem conta vinculada</option>
+                    {accounts.map((account) => (
+                      <option key={account.id} value={account.id}>{account.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <label style={{ display: 'grid', gap: '6px' }}>
+                  <span>Categoria (opcional)</span>
+                  <select
+                    value={form.financial_category_id}
+                    onChange={(event) => setForm((current) => ({ ...current, financial_category_id: event.target.value }))}
+                    disabled={!canWrite || submitting}
+                  >
+                    <option value="">Sem categoria vinculada</option>
+                    {categories.map((category) => (
+                      <option key={category.id} value={category.id}>{category.name}</option>
+                    ))}
+                  </select>
+                </label>
                 <label style={{ display: 'grid', gap: '6px' }}>
                   <span>Tipo</span>
                   <select value={form.kind} onChange={(event) => setForm((current) => ({ ...current, kind: event.target.value as FinanceTransactionKind }))} disabled={!canWrite || submitting}>
@@ -354,6 +579,13 @@ export function FinanceTransactionsPage() {
                         <div style={{ color: 'var(--ink-soft)', fontSize: '0.82rem', marginTop: '4px' }}>
                           Criado por {transaction.created_by ?? 'sistema'} em {formatDate(transaction.issue_date ?? transaction.created_at.slice(0, 10))}
                         </div>
+                        {transaction.financial_account_name || transaction.financial_category_name ? (
+                          <div style={{ color: 'var(--ink-soft)', fontSize: '0.8rem', marginTop: '4px' }}>
+                            {transaction.financial_account_name ? `Conta: ${transaction.financial_account_name}` : 'Conta: —'}
+                            {' • '}
+                            {transaction.financial_category_name ? `Categoria: ${transaction.financial_category_name}` : 'Categoria: —'}
+                          </div>
+                        ) : null}
                       </td>
                       <td>{kindLabel(transaction.kind)}</td>
                       <td>{statusLabel(transaction.status)}</td>
