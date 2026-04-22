@@ -30,6 +30,7 @@ import {
   softDeleteFinanceTransaction,
   updateFinanceTransaction
 } from './service.js';
+import { getFinanceExecutiveOverview } from './context.js';
 import {
   type FinanceAccountKind,
   type FinanceCategoryKind,
@@ -282,6 +283,14 @@ export function registerFinanceRoutes(app: Express) {
   router.get('/overview', requireFinancePermission(['finance.read']), (req, res) => {
     try {
       return res.json(getFinanceOverview(readFinanceOrganizationId(res), parseCounterpartyCompanyId(req)));
+    } catch (error) {
+      return respondFinanceError(res, error);
+    }
+  });
+
+  router.get('/overview/executive', requireFinancePermission(['finance.read']), (_req, res) => {
+    try {
+      return res.json(getFinanceExecutiveOverview(readFinanceOrganizationId(res)));
     } catch (error) {
       return respondFinanceError(res, error);
     }

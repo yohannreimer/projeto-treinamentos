@@ -114,6 +114,71 @@ export type FinanceContextDto = {
   timezone: string;
 };
 
+export type FinanceExecutiveKpiTone = 'neutral' | 'positive' | 'warning' | 'critical';
+
+export type FinanceExecutiveKpiDto = {
+  id: string;
+  label: string;
+  amount_cents: number;
+  hint: string;
+  tone: FinanceExecutiveKpiTone;
+  value_kind: 'currency' | 'number';
+};
+
+export type FinanceExecutiveQueueTone = 'critical' | 'warning' | 'neutral';
+
+export type FinanceExecutiveQueueItemDto = {
+  id: string;
+  status: string;
+  title: string;
+  detail: string;
+  amount_cents: number;
+  tone: FinanceExecutiveQueueTone;
+  href: string;
+  cta: string;
+};
+
+export type FinanceExecutiveCashflowBandDto = {
+  label: string;
+  inflow_cents: number;
+  outflow_cents: number;
+  net_cents: number;
+  balance_cents: number;
+  balance_label: string;
+  inflow_share: number;
+  outflow_share: number;
+};
+
+export type FinanceExecutiveQuickActionDto = {
+  id: string;
+  label: string;
+  detail: string;
+  href: string;
+};
+
+export type FinanceExecutiveOverviewDto = {
+  organization_id: string;
+  organization_name: string | null;
+  currency: string;
+  timezone: string;
+  generated_at: string;
+  kpis: FinanceExecutiveKpiDto[];
+  queue: FinanceExecutiveQueueItemDto[];
+  cashflow_bands: FinanceExecutiveCashflowBandDto[];
+  quick_actions: FinanceExecutiveQuickActionDto[];
+  summary: {
+    cash_balance_cents: number;
+    receivables_open_cents: number;
+    payables_open_cents: number;
+    projected_result_cents: number;
+    reconciliation_pending_count: number;
+    uncategorized_count: number;
+    overdue_count: number;
+    monthly_income_cents: number;
+    monthly_expense_cents: number;
+  };
+};
+
 export type FinanceEntityKind = 'customer' | 'supplier' | 'both';
 
 export type FinanceEntityDto = {

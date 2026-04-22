@@ -10,6 +10,7 @@ export type FinanceCategoryKind = 'income' | 'expense' | 'neutral';
 
 export type FinanceAccount = {
   id: string;
+  organization_id: string;
   company_id: string;
   name: string;
   kind: FinanceAccountKind;
@@ -23,6 +24,7 @@ export type FinanceAccount = {
 
 export type FinanceCategory = {
   id: string;
+  organization_id: string;
   company_id: string;
   name: string;
   kind: FinanceCategoryKind;
@@ -37,6 +39,7 @@ export type FinanceReceivableStatus = 'planned' | 'open' | 'partial' | 'received
 
 export type FinancePayable = {
   id: string;
+  organization_id: string;
   company_id: string;
   financial_transaction_id: string | null;
   financial_account_id: string | null;
@@ -59,6 +62,7 @@ export type FinancePayable = {
 
 export type FinanceReceivable = {
   id: string;
+  organization_id: string;
   company_id: string;
   financial_transaction_id: string | null;
   financial_account_id: string | null;
@@ -85,6 +89,7 @@ export type FinanceDebtStatus = 'open' | 'partial' | 'settled' | 'canceled';
 
 export type FinanceImportJob = {
   id: string;
+  organization_id: string;
   company_id: string;
   import_type: string;
   source_file_name: string;
@@ -103,6 +108,7 @@ export type FinanceImportJob = {
 
 export type FinanceStatementEntry = {
   id: string;
+  organization_id: string;
   company_id: string;
   financial_account_id: string;
   financial_account_name: string | null;
@@ -121,6 +127,7 @@ export type FinanceStatementEntry = {
 
 export type FinanceReconciliationMatch = {
   id: string;
+  organization_id: string;
   company_id: string;
   financial_bank_statement_entry_id: string;
   financial_transaction_id: string | null;
@@ -135,6 +142,7 @@ export type FinanceReconciliationMatch = {
 
 export type FinanceDebt = {
   id: string;
+  organization_id: string;
   company_id: string;
   financial_payable_id: string | null;
   financial_receivable_id: string | null;
@@ -152,6 +160,7 @@ export type FinanceDebt = {
 
 export type FinanceTransaction = {
   id: string;
+  organization_id: string;
   company_id: string;
   company_name: string | null;
   financial_account_id: string | null;
@@ -185,6 +194,8 @@ export type FinanceTransaction = {
 };
 
 export type FinanceOverview = {
+  organization_id: string;
+  organization_name: string | null;
   company_id: string | null;
   company_name: string | null;
   transaction_count: number;
@@ -198,8 +209,81 @@ export type FinanceOverview = {
   };
 };
 
+export type FinanceContext = {
+  organization_id: string;
+  organization_name: string | null;
+  currency: string;
+  timezone: string;
+};
+
+export type FinanceExecutiveKpiTone = 'neutral' | 'positive' | 'warning' | 'critical';
+
+export type FinanceExecutiveKpi = {
+  id: string;
+  label: string;
+  amount_cents: number;
+  hint: string;
+  tone: FinanceExecutiveKpiTone;
+  value_kind: 'currency' | 'number';
+};
+
+export type FinanceExecutiveQueueTone = 'critical' | 'warning' | 'neutral';
+
+export type FinanceExecutiveQueueItem = {
+  id: string;
+  status: string;
+  title: string;
+  detail: string;
+  amount_cents: number;
+  tone: FinanceExecutiveQueueTone;
+  href: string;
+  cta: string;
+};
+
+export type FinanceExecutiveCashflowBand = {
+  label: string;
+  inflow_cents: number;
+  outflow_cents: number;
+  net_cents: number;
+  balance_cents: number;
+  balance_label: string;
+  inflow_share: number;
+  outflow_share: number;
+};
+
+export type FinanceExecutiveQuickAction = {
+  id: string;
+  label: string;
+  detail: string;
+  href: string;
+};
+
+export type FinanceExecutiveOverview = {
+  organization_id: string;
+  organization_name: string | null;
+  currency: string;
+  timezone: string;
+  generated_at: string;
+  kpis: FinanceExecutiveKpi[];
+  queue: FinanceExecutiveQueueItem[];
+  cashflow_bands: FinanceExecutiveCashflowBand[];
+  quick_actions: FinanceExecutiveQuickAction[];
+  summary: {
+    cash_balance_cents: number;
+    receivables_open_cents: number;
+    payables_open_cents: number;
+    projected_result_cents: number;
+    reconciliation_pending_count: number;
+    uncategorized_count: number;
+    overdue_count: number;
+    monthly_income_cents: number;
+    monthly_expense_cents: number;
+  };
+};
+
 export type CreateFinanceTransactionPayload = {
-  company_id: string;
+  company_id?: string | null;
+  counterparty_company_id?: string | null;
   financial_account_id?: string | null;
   financial_category_id?: string | null;
   kind: FinanceTransactionKind;
@@ -213,7 +297,8 @@ export type CreateFinanceTransactionPayload = {
 };
 
 export type CreateFinanceAccountPayload = {
-  company_id: string;
+  company_id?: string | null;
+  counterparty_company_id?: string | null;
   name: string;
   kind: FinanceAccountKind;
   currency?: string;
@@ -223,7 +308,8 @@ export type CreateFinanceAccountPayload = {
 };
 
 export type CreateFinanceCategoryPayload = {
-  company_id: string;
+  company_id?: string | null;
+  counterparty_company_id?: string | null;
   name: string;
   kind: FinanceCategoryKind;
   parent_category_id?: string | null;
@@ -231,7 +317,8 @@ export type CreateFinanceCategoryPayload = {
 };
 
 export type CreateFinancePayablePayload = {
-  company_id: string;
+  company_id?: string | null;
+  counterparty_company_id?: string | null;
   financial_account_id?: string | null;
   financial_category_id?: string | null;
   supplier_name?: string | null;
@@ -245,7 +332,8 @@ export type CreateFinancePayablePayload = {
 };
 
 export type CreateFinanceReceivablePayload = {
-  company_id: string;
+  company_id?: string | null;
+  counterparty_company_id?: string | null;
   financial_account_id?: string | null;
   financial_category_id?: string | null;
   customer_name?: string | null;
@@ -259,7 +347,8 @@ export type CreateFinanceReceivablePayload = {
 };
 
 export type CreateFinanceImportJobPayload = {
-  company_id: string;
+  company_id?: string | null;
+  counterparty_company_id?: string | null;
   import_type: string;
   source_file_name: string;
   source_file_mime_type?: string | null;
@@ -273,7 +362,8 @@ export type CreateFinanceImportJobPayload = {
 };
 
 export type CreateFinanceStatementEntryPayload = {
-  company_id: string;
+  company_id?: string | null;
+  counterparty_company_id?: string | null;
   financial_account_id: string;
   financial_import_job_id?: string | null;
   statement_date: string;
@@ -287,7 +377,8 @@ export type CreateFinanceStatementEntryPayload = {
 };
 
 export type CreateFinanceReconciliationPayload = {
-  company_id: string;
+  company_id?: string | null;
+  counterparty_company_id?: string | null;
   financial_bank_statement_entry_id: string;
   financial_transaction_id: string;
   confidence_score?: number | null;
@@ -297,7 +388,8 @@ export type CreateFinanceReconciliationPayload = {
 };
 
 export type CreateFinanceDebtPayload = {
-  company_id: string;
+  company_id?: string | null;
+  counterparty_company_id?: string | null;
   financial_payable_id?: string | null;
   financial_receivable_id?: string | null;
   financial_transaction_id?: string | null;
@@ -350,6 +442,10 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const financeApi = {
+  getContext: () =>
+    req<FinanceContext>('/finance/context'),
+  getExecutiveOverview: () =>
+    req<FinanceExecutiveOverview>('/finance/overview/executive'),
   getOverview: (companyId?: string | null) =>
     req<FinanceOverview>(withCompanyId('/finance/overview', companyId)),
   listTransactions: (companyId?: string | null) =>
