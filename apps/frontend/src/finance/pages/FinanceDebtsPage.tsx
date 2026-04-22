@@ -1,10 +1,16 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { hasAnyPermission, internalSessionStore } from '../../auth/session';
+import { financeApi, type FinanceDebt, type FinanceDebtStatus } from '../api';
 import {
-  financeApi,
-  type FinanceDebt,
-  type FinanceDebtStatus
-} from '../api';
+  FinanceEmptyState,
+  FinanceErrorState,
+  FinanceLoadingState,
+  FinanceMono,
+  FinancePageHeader,
+  FinancePanel,
+  FinanceTableShell
+} from '../components/FinancePrimitives';
+import { formatCurrency, formatDate, parseAmountToCents } from '../utils/financeFormatters';
 
 type DebtForm = {
   debt_type: string;
@@ -25,24 +31,6 @@ const initialForm: DebtForm = {
   settled_at: '',
   note: ''
 };
-
-function parseAmountToCents(value: string): number {
-  const normalized = value.trim().replace(/\./g, '').replace(',', '.');
-  const parsed = Number(normalized);
-  if (!Number.isFinite(parsed) || parsed < 0) return 0;
-  return Math.round(parsed * 100);
-}
-
-function formatCurrency(cents: number): string {
-  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(cents / 100);
-}
-
-function formatDate(dateIso?: string | null): string {
-  if (!dateIso) return '-';
-  const [year, month, day] = dateIso.split('-').map(Number);
-  if (!year || !month || !day) return dateIso;
-  return new Date(year, month - 1, day).toLocaleDateString('pt-BR');
-}
 
 function statusLabel(status: FinanceDebtStatus): string {
   if (status === 'open') return 'Em aberto';
@@ -114,116 +102,98 @@ export function FinanceDebtsPage() {
 
   return (
     <section className="page finance-page">
-      <header className="page-header">
-        <div className="page-header-copy">
-          <small style={{ color: 'var(--ink-soft)', fontSize: '0.76rem', fontWeight: 700, letterSpacing: '0.03em', textTransform: 'uppercase' }}>
-            Dívidas e parcelamentos
-          </small>
-          <h1>Passivos controlados</h1>
-          <p>Registro de obrigações financeiras para rastrear principal, saldo pendente e liquidação.</p>
-        </div>
-      </header>
+      <FinancePageHeader
+        eyebrow="Dívidas e parcelamentos"
+        title="Passivos controlados"
+        description="Registro de obrigações financeiras para rastrear principal, saldo pendente e liquidação."
+      />
 
-      <div style={{ display: 'grid', gap: '16px' }}>
-        <div className="panel">
-          <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
-            <div>
-              <h2>Passivos da empresa logada</h2>
-              <p style={{ margin: '4px 0 0', color: 'var(--ink-soft)' }}>Controle de obrigações financeiras da empresa logada, com leitura direta do passivo em aberto.</p>
-            </div>
-          </div>
-          <div className="panel-content">
-            <form className="form form-spacious" onSubmit={handleSubmit} style={{ display: 'grid', gap: '10px' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px' }}>
-                <label style={{ display: 'grid', gap: '4px' }}>
-                  <span>Tipo da dívida</span>
-                  <input value={form.debt_type} onChange={(event) => setForm((current) => ({ ...current, debt_type: event.target.value }))} disabled={!canWrite || submitting} />
-                </label>
-                <label style={{ display: 'grid', gap: '4px' }}>
-                  <span>Status</span>
-                  <select value={form.status} onChange={(event) => setForm((current) => ({ ...current, status: event.target.value as FinanceDebtStatus }))} disabled={!canWrite || submitting}>
-                    <option value="open">Em aberto</option>
-                    <option value="partial">Parcial</option>
-                    <option value="settled">Liquidada</option>
-                    <option value="canceled">Cancelada</option>
-                  </select>
-                </label>
-                <label style={{ display: 'grid', gap: '4px' }}>
-                  <span>Principal (R$)</span>
-                  <input value={form.principal} onChange={(event) => setForm((current) => ({ ...current, principal: event.target.value }))} placeholder="0,00" disabled={!canWrite || submitting} />
-                </label>
-                <label style={{ display: 'grid', gap: '4px' }}>
-                  <span>Saldo pendente (R$)</span>
-                  <input value={form.outstanding} onChange={(event) => setForm((current) => ({ ...current, outstanding: event.target.value }))} placeholder="0,00" disabled={!canWrite || submitting} />
-                </label>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px' }}>
-                <label style={{ display: 'grid', gap: '4px' }}>
-                  <span>Vencimento</span>
-                  <input type="date" value={form.due_date} onChange={(event) => setForm((current) => ({ ...current, due_date: event.target.value }))} disabled={!canWrite || submitting} />
-                </label>
-                <label style={{ display: 'grid', gap: '4px' }}>
-                  <span>Liquidada em</span>
-                  <input type="date" value={form.settled_at} onChange={(event) => setForm((current) => ({ ...current, settled_at: event.target.value }))} disabled={!canWrite || submitting} />
-                </label>
-              </div>
-              <label style={{ display: 'grid', gap: '4px' }}>
-                <span>Observação</span>
-                <textarea value={form.note} onChange={(event) => setForm((current) => ({ ...current, note: event.target.value }))} rows={2} disabled={!canWrite || submitting} />
+      <div className="finance-page-stack">
+        <FinancePanel title="Passivos da empresa logada" description="Controle de obrigações financeiras da empresa logada, com leitura direta do passivo em aberto." eyebrow="Base passiva">
+          <form className="form form-spacious finance-form-shell" onSubmit={handleSubmit}>
+            <div className="finance-form-grid finance-form-grid--compact">
+              <label>
+                <span>Tipo da dívida</span>
+                <input value={form.debt_type} onChange={(event) => setForm((current) => ({ ...current, debt_type: event.target.value }))} disabled={!canWrite || submitting} />
               </label>
-              <div className="actions" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                <button type="submit" disabled={!canWrite || submitting}>
-                  {submitting ? 'Salvando...' : 'Registrar dívida'}
-                </button>
-                <button type="button" onClick={() => setForm(initialForm)} disabled={submitting}>Limpar</button>
-              </div>
-            </form>
-          </div>
-        </div>
+              <label>
+                <span>Status</span>
+                <select value={form.status} onChange={(event) => setForm((current) => ({ ...current, status: event.target.value as FinanceDebtStatus }))} disabled={!canWrite || submitting}>
+                  <option value="open">Em aberto</option>
+                  <option value="partial">Parcial</option>
+                  <option value="settled">Liquidada</option>
+                  <option value="canceled">Cancelada</option>
+                </select>
+              </label>
+              <label>
+                <span>Principal (R$)</span>
+                <input value={form.principal} onChange={(event) => setForm((current) => ({ ...current, principal: event.target.value }))} placeholder="0,00" disabled={!canWrite || submitting} />
+              </label>
+              <label>
+                <span>Saldo pendente (R$)</span>
+                <input value={form.outstanding} onChange={(event) => setForm((current) => ({ ...current, outstanding: event.target.value }))} placeholder="0,00" disabled={!canWrite || submitting} />
+              </label>
+            </div>
+            <div className="finance-form-grid finance-form-grid--compact">
+              <label>
+                <span>Vencimento</span>
+                <input type="date" value={form.due_date} onChange={(event) => setForm((current) => ({ ...current, due_date: event.target.value }))} disabled={!canWrite || submitting} />
+              </label>
+              <label>
+                <span>Liquidada em</span>
+                <input type="date" value={form.settled_at} onChange={(event) => setForm((current) => ({ ...current, settled_at: event.target.value }))} disabled={!canWrite || submitting} />
+              </label>
+            </div>
+            <label>
+              <span>Observação</span>
+              <textarea value={form.note} onChange={(event) => setForm((current) => ({ ...current, note: event.target.value }))} rows={2} disabled={!canWrite || submitting} />
+            </label>
+            <div className="actions">
+              <button type="submit" disabled={!canWrite || submitting}>
+                {submitting ? 'Salvando...' : 'Registrar dívida'}
+              </button>
+              <button type="button" onClick={() => setForm(initialForm)} disabled={submitting}>Limpar</button>
+            </div>
+          </form>
+        </FinancePanel>
 
-        <div className="panel">
-          <div className="panel-header">
-            <h2>Passivos registrados</h2>
-            <p style={{ margin: '4px 0 0', color: 'var(--ink-soft)' }}>{debts.length} dívida(s) no controle.</p>
-          </div>
-          <div className="panel-content" style={{ overflowX: 'auto' }}>
-            {error ? <p style={{ marginTop: 0, color: '#9f3a38' }}>{error}</p> : null}
-            {message ? <p style={{ marginTop: 0, color: '#1c8b61' }}>{message}</p> : null}
-            {loading ? (
-              <p style={{ margin: 0, color: 'var(--ink-soft)' }}>Carregando dívidas...</p>
-            ) : debts.length === 0 ? (
-              <p style={{ margin: 0, color: 'var(--ink-soft)' }}>Nenhuma dívida cadastrada.</p>
-            ) : (
-              <table>
-                <thead>
-                  <tr>
-                    <th>Tipo</th>
-                    <th>Status</th>
-                    <th>Principal</th>
-                    <th>Saldo</th>
-                    <th>Vencimento</th>
-                    <th>Liquidada em</th>
+        <FinanceTableShell title="Passivos registrados" description={`${debts.length} dívida(s) no controle.`}>
+          {error ? <FinanceErrorState title="Falha ao carregar dívidas." description={error} /> : null}
+          {message ? <p className="finance-inline-message finance-inline-message--success">{message}</p> : null}
+          {loading ? (
+            <FinanceLoadingState title="Carregando dívidas..." />
+          ) : debts.length === 0 ? (
+            <FinanceEmptyState title="Nenhuma dívida cadastrada." />
+          ) : (
+            <table aria-label="Dívidas registradas">
+              <thead>
+                <tr>
+                  <th>Tipo</th>
+                  <th>Status</th>
+                  <th>Principal</th>
+                  <th>Saldo</th>
+                  <th>Vencimento</th>
+                  <th>Liquidada em</th>
+                </tr>
+              </thead>
+              <tbody>
+                {debts.map((item) => (
+                  <tr key={item.id}>
+                    <td>
+                      <strong>{item.debt_type}</strong>
+                      {item.note ? <div className="finance-note-muted">{item.note}</div> : null}
+                    </td>
+                    <td>{statusLabel(item.status)}</td>
+                    <td><FinanceMono>{formatCurrency(item.principal_amount_cents)}</FinanceMono></td>
+                    <td><FinanceMono>{formatCurrency(item.outstanding_amount_cents)}</FinanceMono></td>
+                    <td><FinanceMono>{formatDate(item.due_date)}</FinanceMono></td>
+                    <td><FinanceMono>{formatDate(item.settled_at)}</FinanceMono></td>
                   </tr>
-                </thead>
-                <tbody>
-                  {debts.map((item) => (
-                    <tr key={item.id}>
-                      <td>
-                        <strong>{item.debt_type}</strong>
-                        {item.note ? <div style={{ color: 'var(--ink-soft)', fontSize: '0.82rem' }}>{item.note}</div> : null}
-                      </td>
-                      <td>{statusLabel(item.status)}</td>
-                      <td>{formatCurrency(item.principal_amount_cents)}</td>
-                      <td>{formatCurrency(item.outstanding_amount_cents)}</td>
-                      <td>{formatDate(item.due_date)}</td>
-                      <td>{formatDate(item.settled_at)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        </div>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </FinanceTableShell>
       </div>
     </section>
   );

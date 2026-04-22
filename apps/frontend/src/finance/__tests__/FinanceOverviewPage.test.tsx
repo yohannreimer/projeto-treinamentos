@@ -139,7 +139,7 @@ test('FinanceOverviewPage renders the approved executive split-control home', as
   );
 
   expect(await screen.findByText('R$ 1.284.300,00')).toBeInTheDocument();
-  expect(screen.getByRole('heading', { name: 'Executive Overview' })).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: 'Visão Geral' })).toBeInTheDocument();
   expect(screen.getByText('Leitura executiva do financeiro da Holand.')).toBeInTheDocument();
   expect(screen.getByRole('heading', { name: 'Saldo em conta' })).toBeInTheDocument();
   expect(screen.getByRole('heading', { name: 'Fila operacional' })).toBeInTheDocument();

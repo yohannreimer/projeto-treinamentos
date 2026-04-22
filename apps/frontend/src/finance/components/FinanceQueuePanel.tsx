@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import type { FinanceExecutiveQueueItem } from '../api';
+import { FinanceBadge, FinanceMono, FinancePanel } from './FinancePrimitives';
 
 type FinanceQueuePanelProps = {
   items: FinanceExecutiveQueueItem[];
@@ -15,21 +16,20 @@ function formatCurrency(amountCents: number, currency: string) {
 }
 
 export function FinanceQueuePanel({ items, currency }: FinanceQueuePanelProps) {
-  return (
-    <section className="panel finance-queue-panel" aria-labelledby="finance-queue-title">
-      <header className="panel-header">
-        <div>
-          <small className="finance-panel-eyebrow">Split control</small>
-          <h2 id="finance-queue-title">Fila operacional</h2>
-        </div>
-      </header>
+  const toneMap = (tone: FinanceExecutiveQueueItem['tone']) => {
+    if (tone === 'critical') return 'danger' as const;
+    if (tone === 'warning') return 'warning' as const;
+    return 'neutral' as const;
+  };
 
-      <div className="panel-content finance-queue-panel__content">
+  return (
+    <FinancePanel className="finance-queue-panel" eyebrow="Split control" title="Fila operacional">
+      <div className="finance-queue-panel__content">
         {items.map((item) => (
           <article key={item.id} className={`finance-queue-item finance-queue-item--${item.tone}`}>
             <div className="finance-queue-item__header">
-              <span className="finance-queue-item__status">{item.status}</span>
-              <strong>{formatCurrency(item.amount_cents, currency)}</strong>
+              <FinanceBadge tone={toneMap(item.tone)}>{item.status}</FinanceBadge>
+              <FinanceMono>{formatCurrency(item.amount_cents, currency)}</FinanceMono>
             </div>
             <h3>{item.title}</h3>
             <p>{item.detail}</p>
@@ -39,6 +39,6 @@ export function FinanceQueuePanel({ items, currency }: FinanceQueuePanelProps) {
           </article>
         ))}
       </div>
-    </section>
+    </FinancePanel>
   );
 }

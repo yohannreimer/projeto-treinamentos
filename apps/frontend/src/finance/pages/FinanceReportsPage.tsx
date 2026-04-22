@@ -8,6 +8,16 @@ import {
   type FinanceReports
 } from '../api';
 import { FinanceReportCard } from '../components/FinanceReportCard';
+import {
+  FinanceEmptyState,
+  FinanceErrorState,
+  FinanceKpiCard,
+  FinanceLoadingState,
+  FinanceMono,
+  FinancePageHeader,
+  FinancePanel,
+  FinanceTableShell
+} from '../components/FinancePrimitives';
 
 function formatCurrency(cents: number): string {
   return new Intl.NumberFormat('pt-BR', {
@@ -38,60 +48,45 @@ function SummaryStat(props: {
   detail: string;
   tone?: 'default' | 'positive' | 'warning';
 }) {
-  const tone = props.tone ?? 'default';
-  const styles = {
-    default: {
-      border: '1px solid rgba(18, 31, 53, 0.10)',
-      background: 'rgba(255,255,255,0.94)'
-    },
-    positive: {
-      border: '1px solid rgba(46, 125, 50, 0.14)',
-      background: 'linear-gradient(180deg, rgba(240,249,242,0.95), rgba(255,255,255,0.96))'
-    },
-    warning: {
-      border: '1px solid rgba(180, 110, 0, 0.18)',
-      background: 'linear-gradient(180deg, rgba(255,248,233,0.96), rgba(255,255,255,0.96))'
-    }
-  } as const;
-
   return (
-    <article style={{ borderRadius: '18px', padding: '18px', display: 'grid', gap: '8px', ...styles[tone] }}>
-      <span style={{ fontSize: '0.78rem', letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--ink-soft)', fontWeight: 700 }}>
-        {props.label}
-      </span>
-      <strong style={{ fontSize: '1.5rem', lineHeight: 1.08 }}>{props.value}</strong>
-      <span style={{ color: 'var(--ink-soft)', fontSize: '0.9rem' }}>{props.detail}</span>
-    </article>
+    <FinanceKpiCard
+      label={props.label}
+      value={<FinanceMono>{props.value}</FinanceMono>}
+      description={props.detail}
+      tone={props.tone === 'positive' ? 'success' : props.tone === 'warning' ? 'warning' : 'neutral'}
+      accentLabel="Gerencial"
+    />
   );
 }
 
 function ComparisonTable(props: { rows: FinanceReportComparisonRow[] }) {
   return (
-    <div style={{ display: 'grid', gap: '10px' }}>
+    <FinanceTableShell title="Realizado vs projetado" description="Compara o que já virou número confirmado com a trilha ainda projetada por período.">
       {props.rows.length === 0 ? (
-        <p style={{ margin: 0, color: 'var(--ink-soft)' }}>Sem períodos rastreados no momento.</p>
+        <FinanceEmptyState title="Sem períodos rastreados no momento." />
       ) : (
-        props.rows.map((row) => (
-          <article
-            key={row.period}
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'minmax(120px, 1fr) repeat(3, minmax(120px, 1fr))',
-              gap: '12px',
-              padding: '14px 16px',
-              borderRadius: '16px',
-              border: '1px solid rgba(18, 31, 53, 0.08)',
-              background: 'rgba(255, 255, 255, 0.9)'
-            }}
-          >
-            <strong>{formatPeriod(row.period)}</strong>
-            <span>Realizado {formatCurrency(row.realized_cents)}</span>
-            <span>Projetado {formatCurrency(row.projected_cents)}</span>
-            <span>Variação {formatCurrency(row.variance_cents)}</span>
-          </article>
-        ))
+        <table aria-label="Realizado versus projetado">
+          <thead>
+            <tr>
+              <th>Período</th>
+              <th>Realizado</th>
+              <th>Projetado</th>
+              <th>Variação</th>
+            </tr>
+          </thead>
+          <tbody>
+            {props.rows.map((row) => (
+              <tr key={row.period}>
+                <td><FinanceMono>{formatPeriod(row.period)}</FinanceMono></td>
+                <td><FinanceMono>{formatCurrency(row.realized_cents)}</FinanceMono></td>
+                <td><FinanceMono>{formatCurrency(row.projected_cents)}</FinanceMono></td>
+                <td><FinanceMono>{formatCurrency(row.variance_cents)}</FinanceMono></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       )}
-    </div>
+    </FinanceTableShell>
   );
 }
 
@@ -100,29 +95,17 @@ function CategoryList(props: {
   emptyMessage: string;
 }) {
   return (
-    <div style={{ display: 'grid', gap: '10px' }}>
+    <div className="finance-list-stack">
       {props.rows.length === 0 ? (
-        <p style={{ margin: 0, color: 'var(--ink-soft)' }}>{props.emptyMessage}</p>
+        <FinanceEmptyState title={props.emptyMessage} />
       ) : (
         props.rows.map((row) => (
-          <article
-            key={row.category_name}
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              gap: '12px',
-              padding: '14px 16px',
-              borderRadius: '16px',
-              border: '1px solid rgba(18, 31, 53, 0.08)',
-              background: 'rgba(255, 255, 255, 0.9)'
-            }}
-          >
-            <div style={{ display: 'grid', gap: '4px' }}>
+          <article key={row.category_name} className="finance-list-row">
+            <div className="finance-list-row__copy">
               <strong>{row.category_name}</strong>
-              <span style={{ color: 'var(--ink-soft)', fontSize: '0.88rem' }}>{row.transaction_count} movimentação(ões)</span>
+              <span><FinanceMono>{row.transaction_count}</FinanceMono> movimentação(ões)</span>
             </div>
-            <strong>{formatCurrency(row.amount_cents)}</strong>
+            <strong><FinanceMono>{formatCurrency(row.amount_cents)}</FinanceMono></strong>
           </article>
         ))
       )}
@@ -135,30 +118,18 @@ function AgingList(props: {
   emptyMessage: string;
 }) {
   return (
-    <div style={{ display: 'grid', gap: '10px' }}>
+    <div className="finance-list-stack">
       {props.rows.length === 0 ? (
-        <p style={{ margin: 0, color: 'var(--ink-soft)' }}>{props.emptyMessage}</p>
+        <FinanceEmptyState title={props.emptyMessage} />
       ) : (
         props.rows.map((row) => (
-          <article
-            key={`${row.entity_name}-${row.description}-${row.due_date ?? 'sem-data'}`}
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'flex-start',
-              gap: '12px',
-              padding: '14px 16px',
-              borderRadius: '16px',
-              border: '1px solid rgba(18, 31, 53, 0.08)',
-              background: 'rgba(255, 255, 255, 0.9)'
-            }}
-          >
-            <div style={{ display: 'grid', gap: '4px' }}>
+          <article key={`${row.entity_name}-${row.description}-${row.due_date ?? 'sem-data'}`} className="finance-list-row">
+            <div className="finance-list-row__copy">
               <strong>{row.entity_name}</strong>
-              <span style={{ color: 'var(--ink-soft)', fontSize: '0.88rem' }}>{row.description}</span>
-              <span style={{ color: 'var(--ink-soft)', fontSize: '0.84rem' }}>Vencimento {formatDate(row.due_date)}</span>
+              <span>{row.description}</span>
+              <span>Vencimento <FinanceMono>{formatDate(row.due_date)}</FinanceMono></span>
             </div>
-            <strong>{formatCurrency(row.amount_cents)}</strong>
+            <strong><FinanceMono>{formatCurrency(row.amount_cents)}</FinanceMono></strong>
           </article>
         ))
       )}
@@ -168,31 +139,32 @@ function AgingList(props: {
 
 function CashflowList(props: { rows: FinanceConsolidatedCashflowRow[] }) {
   return (
-    <div style={{ display: 'grid', gap: '10px' }}>
+    <FinanceTableShell title="Fluxo consolidado por período" description="Consolida entradas, saídas e saldo acumulado em uma leitura mais executiva do tempo.">
       {props.rows.length === 0 ? (
-        <p style={{ margin: 0, color: 'var(--ink-soft)' }}>Sem fluxo consolidado disponível.</p>
+        <FinanceEmptyState title="Sem fluxo consolidado disponível." />
       ) : (
-        props.rows.map((row) => (
-          <article
-            key={row.period}
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'minmax(100px, 1fr) repeat(3, minmax(120px, 1fr))',
-              gap: '12px',
-              padding: '14px 16px',
-              borderRadius: '16px',
-              border: '1px solid rgba(18, 31, 53, 0.08)',
-              background: 'rgba(255, 255, 255, 0.9)'
-            }}
-          >
-            <strong>{formatPeriod(row.period)}</strong>
-            <span>Entradas {formatCurrency(row.inflow_cents)}</span>
-            <span>Saídas {formatCurrency(row.outflow_cents)}</span>
-            <span>Saldo {formatCurrency(row.balance_cents)}</span>
-          </article>
-        ))
+        <table aria-label="Fluxo consolidado por período">
+          <thead>
+            <tr>
+              <th>Período</th>
+              <th>Entradas</th>
+              <th>Saídas</th>
+              <th>Saldo</th>
+            </tr>
+          </thead>
+          <tbody>
+            {props.rows.map((row) => (
+              <tr key={row.period}>
+                <td><FinanceMono>{formatPeriod(row.period)}</FinanceMono></td>
+                <td><FinanceMono>{formatCurrency(row.inflow_cents)}</FinanceMono></td>
+                <td><FinanceMono>{formatCurrency(row.outflow_cents)}</FinanceMono></td>
+                <td><FinanceMono>{formatCurrency(row.balance_cents)}</FinanceMono></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       )}
-    </div>
+    </FinanceTableShell>
   );
 }
 
@@ -244,51 +216,28 @@ export function FinanceReportsPage() {
 
   return (
     <section className="page finance-page">
-      <header className="page-header">
-        <div className="page-header-copy">
-          <small style={{ color: 'var(--ink-soft)', fontSize: '0.76rem', fontWeight: 700, letterSpacing: '0.03em', textTransform: 'uppercase' }}>
-            Relatórios
-          </small>
-          <h1>Leituras gerenciais</h1>
-          <p>DRE gerencial, comparativos e análises derivadas do ledger financeiro da empresa logada.</p>
-        </div>
-      </header>
+      <FinancePageHeader
+        eyebrow="Relatórios"
+        title="Leituras gerenciais"
+        description="DRE gerencial, comparativos e análises derivadas do ledger financeiro da empresa logada."
+      />
 
       {loading ? (
-        <section className="panel">
-          <div className="panel-content">
-            <div className="finance-empty-state">Carregando relatórios gerenciais...</div>
-          </div>
-        </section>
+        <FinanceLoadingState title="Carregando relatórios gerenciais..." />
       ) : error ? (
-        <section className="panel">
-          <div className="panel-content">
-            <div className="finance-inline-error">{error}</div>
-          </div>
-        </section>
+        <FinanceErrorState title="Falha ao carregar relatórios." description={error} />
       ) : reports && summary ? (
-        <div style={{ display: 'grid', gap: '18px' }}>
-          <section className="panel">
-            <div className="panel-header">
-              <small style={{ color: '#b4442f', fontSize: '0.74rem', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase' }}>
-                Camada gerencial
-              </small>
-              <h2>Visão executiva dos relatórios</h2>
-              <p style={{ margin: '4px 0 0', color: 'var(--ink-soft)', maxWidth: '64ch' }}>
-                Base derivada do ledger, do contas a pagar/receber e do fluxo consolidado para leitura confiável.
-              </p>
-            </div>
-            <div className="panel-content">
-              <div style={{ display: 'grid', gap: '14px', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
+        <div className="finance-report-stack">
+          <FinancePanel eyebrow="Camada gerencial" title="Visão executiva dos relatórios" description="Base derivada do ledger, do contas a pagar/receber e do fluxo consolidado para leitura confiável.">
+            <div className="finance-kpi-grid finance-kpi-grid--three">
                 <SummaryStat label="Receita líquida" value={formatCurrency(reports.dre.net_revenue_cents)} detail="após deduções do período lido" tone="positive" />
                 <SummaryStat label="Despesas operacionais" value={formatCurrency(reports.dre.operating_expenses_cents)} detail="pressão operacional consolidada" tone="warning" />
                 <SummaryStat label="Resultado operacional" value={formatCurrency(reports.dre.operating_result_cents)} detail="resultado base do DRE gerencial" tone={reports.dre.operating_result_cents >= 0 ? 'positive' : 'warning'} />
                 <SummaryStat label="Recebíveis vencidos" value={formatCurrency(summary.overdueReceivables)} detail={`${reports.overdue_receivables.length} item(ns) em atraso`} />
                 <SummaryStat label="Pagáveis vencidos" value={formatCurrency(summary.overduePayables)} detail={`${reports.overdue_payables.length} obrigação(ões) fora do prazo`} />
                 <SummaryStat label="Períodos rastreados" value={String(summary.projectedPeriods)} detail={`${summary.consolidatedPeriods} janela(s) no fluxo consolidado`} />
-              </div>
             </div>
-          </section>
+          </FinancePanel>
 
           <div className="finance-report-list">
             <FinanceReportCard
@@ -297,37 +246,31 @@ export function FinanceReportsPage() {
               eyebrow="Relatório principal"
               emphasis="primary"
             >
-              <div style={{ display: 'grid', gap: '10px' }}>
-                <article style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}>
+              <div className="finance-report-metrics">
+                <article className="finance-report-metric-row">
                   <span>Receita bruta</span>
-                  <strong>{formatCurrency(reports.dre.gross_revenue_cents)}</strong>
+                  <strong><FinanceMono>{formatCurrency(reports.dre.gross_revenue_cents)}</FinanceMono></strong>
                 </article>
-                <article style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}>
+                <article className="finance-report-metric-row">
                   <span>Deduções</span>
-                  <strong>{formatCurrency(reports.dre.deductions_cents)}</strong>
+                  <strong><FinanceMono>{formatCurrency(reports.dre.deductions_cents)}</FinanceMono></strong>
                 </article>
-                <article style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}>
+                <article className="finance-report-metric-row">
                   <span>Receita líquida</span>
-                  <strong>{formatCurrency(reports.dre.net_revenue_cents)}</strong>
+                  <strong><FinanceMono>{formatCurrency(reports.dre.net_revenue_cents)}</FinanceMono></strong>
                 </article>
-                <article style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}>
+                <article className="finance-report-metric-row">
                   <span>Despesas operacionais</span>
-                  <strong>{formatCurrency(reports.dre.operating_expenses_cents)}</strong>
+                  <strong><FinanceMono>{formatCurrency(reports.dre.operating_expenses_cents)}</FinanceMono></strong>
                 </article>
-                <article style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', paddingTop: '10px', borderTop: '1px solid rgba(18, 31, 53, 0.08)' }}>
+                <article className="finance-report-metric-row finance-report-metric-row--total">
                   <span>Resultado operacional</span>
-                  <strong>{formatCurrency(reports.dre.operating_result_cents)}</strong>
+                  <strong><FinanceMono>{formatCurrency(reports.dre.operating_result_cents)}</FinanceMono></strong>
                 </article>
               </div>
             </FinanceReportCard>
 
-            <FinanceReportCard
-              title="Realizado vs projetado"
-              description="Compara o que já virou número confirmado com a trilha ainda projetada por período."
-              eyebrow="Controle gerencial"
-            >
-              <ComparisonTable rows={reports.realized_vs_projected} />
-            </FinanceReportCard>
+            <ComparisonTable rows={reports.realized_vs_projected} />
 
             <FinanceReportCard
               title="Receitas por categoria"
@@ -361,13 +304,7 @@ export function FinanceReportsPage() {
               <AgingList rows={reports.overdue_payables} emptyMessage="Nenhuma obrigação vencida no momento." />
             </FinanceReportCard>
 
-            <FinanceReportCard
-              title="Fluxo consolidado por período"
-              description="Consolida entradas, saídas e saldo acumulado em uma leitura mais executiva do tempo."
-              eyebrow="Fluxo"
-            >
-              <CashflowList rows={reports.consolidated_cashflow} />
-            </FinanceReportCard>
+            <CashflowList rows={reports.consolidated_cashflow} />
           </div>
         </div>
       ) : null}

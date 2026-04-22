@@ -1,6 +1,7 @@
 import { Outlet } from 'react-router-dom';
 import { FinanceSidebar } from './components/FinanceSidebar';
 import { useFinanceContext } from './hooks/useFinanceContext';
+import './finance.css';
 
 export function FinanceWorkspace() {
   const { context, loading, error } = useFinanceContext();

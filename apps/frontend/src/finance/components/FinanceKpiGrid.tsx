@@ -1,4 +1,5 @@
 import type { FinanceExecutiveKpi } from '../api';
+import { FinanceKpiCard, FinanceMono } from './FinancePrimitives';
 
 type FinanceKpiGridProps = {
   kpis: FinanceExecutiveKpi[];
@@ -21,12 +22,14 @@ export function FinanceKpiGrid({ kpis, currency }: FinanceKpiGridProps) {
   return (
     <section className="finance-kpi-grid" aria-label="KPIs executivos">
       {kpis.map((kpi) => (
-        <article key={kpi.id} className={`finance-kpi-card finance-kpi-card--${kpi.tone}`}>
-          <small className="finance-kpi-card__eyebrow">KPI executivo</small>
-          <h2>{kpi.label}</h2>
-          <strong>{formatExecutiveValue(kpi, currency)}</strong>
-          <p>{kpi.hint}</p>
-        </article>
+        <FinanceKpiCard
+          key={kpi.id}
+          label={kpi.label}
+          value={<FinanceMono>{formatExecutiveValue(kpi, currency)}</FinanceMono>}
+          description={kpi.hint}
+          tone={kpi.tone}
+          accentLabel="KPI executivo"
+        />
       ))}
     </section>
   );

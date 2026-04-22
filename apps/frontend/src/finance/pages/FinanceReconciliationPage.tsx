@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { financeApi, type FinanceReconciliationInbox } from '../api';
 import { FinanceStatementInbox } from '../components/FinanceStatementInbox';
+import { FinanceEmptyState, FinanceErrorState, FinanceLoadingState, FinanceMono, FinancePageHeader, FinancePanel } from '../components/FinancePrimitives';
 
 function formatCurrency(cents: number): string {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(cents / 100);
@@ -61,162 +62,108 @@ export function FinanceReconciliationPage() {
 
   return (
     <section className="page finance-page">
-      <header className="page-header">
-        <div className="page-header-copy">
-          <small style={{ color: 'var(--ink-soft)', fontSize: '0.76rem', fontWeight: 700, letterSpacing: '0.03em', textTransform: 'uppercase' }}>
-            Conciliação
-          </small>
-          <h1>Inbox operacional de extratos</h1>
-          <p>
-            Leitura contínua das pendências bancárias da organização, com sugestões de match e rastreio dos arquivos importados.
-          </p>
-        </div>
-      </header>
+      <FinancePageHeader
+        eyebrow="Conciliação"
+        title="Inbox operacional de extratos"
+        description="Leitura contínua das pendências bancárias da organização, com sugestões de match e rastreio dos arquivos importados."
+      />
 
       {loading ? (
-        <div className="panel">
-          <div className="panel-content">
-            <p style={{ margin: 0, color: 'var(--ink-soft)' }}>Carregando painel de conciliação...</p>
-          </div>
-        </div>
+        <FinanceLoadingState title="Carregando painel de conciliação..." />
       ) : error ? (
-        <div className="panel">
-          <div className="panel-content">
-            <p style={{ margin: 0, color: '#9f3a38' }}>{error}</p>
-          </div>
-        </div>
+        <FinanceErrorState title="Falha ao carregar a inbox de conciliação." description={error} />
       ) : inbox ? (
         <div className="finance-reconciliation-layout">
           <div className="finance-reconciliation-main">
-            <section className="panel">
-              <div className="panel-header">
-                <div>
-                  <h2>Radar da fila</h2>
-                  <p className="finance-reconciliation-panel__copy">
-                    Leitura rápida da pressão operacional antes de abrir cada item da inbox.
-                  </p>
-                </div>
-              </div>
-              <div className="panel-content finance-reconciliation-panel__content">
+            <FinancePanel title="Radar da fila" description="Leitura rápida da pressão operacional antes de abrir cada item da inbox." eyebrow="Leitura operacional">
                 <div className="finance-reconciliation-radar">
                   <article>
                     <span>Na fila</span>
-                    <strong>{inbox.summary.pending_count}</strong>
-                    <small>{formatCurrency(inbox.summary.pending_amount_cents)}</small>
+                    <strong><FinanceMono>{inbox.summary.pending_count}</FinanceMono></strong>
+                    <small><FinanceMono>{formatCurrency(inbox.summary.pending_amount_cents)}</FinanceMono></small>
                   </article>
                   <article>
                     <span>Match hoje</span>
-                    <strong>{inbox.summary.matched_today_count}</strong>
+                    <strong><FinanceMono>{inbox.summary.matched_today_count}</FinanceMono></strong>
                     <small>baixas revisadas no dia</small>
                   </article>
                   <article>
                     <span>Cobertura</span>
-                    <strong>{coveragePercentage}%</strong>
-                    <small>{inbox.summary.with_suggestion_count} itens com sugestão</small>
+                    <strong><FinanceMono>{coveragePercentage}%</FinanceMono></strong>
+                    <small><FinanceMono>{inbox.summary.with_suggestion_count}</FinanceMono> itens com sugestão</small>
                   </article>
                   <article>
                     <span>Sem sugestão</span>
-                    <strong>{inbox.summary.without_suggestion_count}</strong>
+                    <strong><FinanceMono>{inbox.summary.without_suggestion_count}</FinanceMono></strong>
                     <small>pedem revisão manual</small>
                   </article>
                 </div>
-              </div>
-            </section>
+            </FinancePanel>
 
             <FinanceStatementInbox inbox={inbox} />
           </div>
 
           <div className="finance-reconciliation-side">
-            <section className="panel">
-              <div className="panel-header">
-                <div>
-                  <h2>Sugestões de match</h2>
-                  <p className="finance-reconciliation-panel__copy">
-                    Candidatos mais prováveis para acelerar a baixa dos itens na fila.
-                  </p>
-                </div>
-              </div>
-              <div className="panel-content finance-reconciliation-panel__content">
+            <FinancePanel title="Sugestões de match" description="Candidatos mais prováveis para acelerar a baixa dos itens na fila." eyebrow="Fila de leitura">
                 {suggestionRows.length === 0 ? (
-                  <p className="finance-reconciliation-panel__empty">Nenhuma sugestão disponível no momento.</p>
+                  <FinanceEmptyState title="Nenhuma sugestão disponível no momento." />
                 ) : (
                   suggestionRows.map((row) => (
                     <article key={`${row.entry_id}-${row.financial_transaction_id}`} className="finance-reconciliation-suggestion-card">
                       <div className="finance-reconciliation-suggestion-card__head">
                         <strong>{row.description}</strong>
-                        <span>{Math.round(row.confidence_score * 100)}%</span>
+                        <span><FinanceMono>{Math.round(row.confidence_score * 100)}%</FinanceMono></span>
                       </div>
                       <p>
-                        Extrato: {row.entry_description} • {formatDate(row.statement_date)}
+                        Extrato: {row.entry_description} • <FinanceMono>{formatDate(row.statement_date)}</FinanceMono>
                       </p>
                       <div className="finance-reconciliation-suggestion-card__meta">
                         <span>{row.financial_entity_name ?? 'Sem entidade'}</span>
-                        <span>{formatCurrency(row.amount_cents)}</span>
-                        <span>Vencimento {formatDate(row.due_date)}</span>
+                        <span><FinanceMono>{formatCurrency(row.amount_cents)}</FinanceMono></span>
+                        <span>Vencimento <FinanceMono>{formatDate(row.due_date)}</FinanceMono></span>
                       </div>
                     </article>
                   ))
                 )}
-              </div>
-            </section>
+            </FinancePanel>
 
-            <section className="panel">
-              <div className="panel-header">
-                <div>
-                  <h2>Extratos importados</h2>
-                  <p className="finance-reconciliation-panel__copy">
-                    Últimos jobs processados para rastreabilidade e contexto da fila.
-                  </p>
-                </div>
-              </div>
-              <div className="panel-content finance-reconciliation-panel__content">
+            <FinancePanel title="Extratos importados" description="Últimos jobs processados para rastreabilidade e contexto da fila." eyebrow="Importação">
                 {inbox.imported_jobs.length === 0 ? (
-                  <p className="finance-reconciliation-panel__empty">Nenhum extrato importado ainda.</p>
+                  <FinanceEmptyState title="Nenhum extrato importado ainda." />
                 ) : (
                   inbox.imported_jobs.map((job) => (
                     <article key={job.id} className="finance-reconciliation-job-card">
                       <div className="finance-reconciliation-job-card__head">
                         <strong>{job.source_file_name}</strong>
-                        <span>{job.status}</span>
+                        <span><FinanceMono>{job.status}</FinanceMono></span>
                       </div>
-                      <p>{job.import_type.toUpperCase()} • {job.processed_rows}/{job.total_rows} linhas processadas</p>
+                      <p><FinanceMono>{job.import_type.toUpperCase()}</FinanceMono> • <FinanceMono>{job.processed_rows}</FinanceMono>/<FinanceMono>{job.total_rows}</FinanceMono> linhas processadas</p>
                       <small>
-                        Finalizado em {formatDate(job.finished_at?.slice(0, 10) ?? job.updated_at.slice(0, 10))}
+                        Finalizado em <FinanceMono>{formatDate(job.finished_at?.slice(0, 10) ?? job.updated_at.slice(0, 10))}</FinanceMono>
                       </small>
                     </article>
                   ))
                 )}
-              </div>
-            </section>
+            </FinancePanel>
 
-            <section className="panel">
-              <div className="panel-header">
-                <div>
-                  <h2>Matches recentes</h2>
-                  <p className="finance-reconciliation-panel__copy">
-                    Últimas conciliações aprovadas para manter rastreabilidade da operação.
-                  </p>
-                </div>
-              </div>
-              <div className="panel-content finance-reconciliation-panel__content">
+            <FinancePanel title="Matches recentes" description="Últimas conciliações aprovadas para manter rastreabilidade da operação." eyebrow="Histórico">
                 {inbox.recent_matches.length === 0 ? (
-                  <p className="finance-reconciliation-panel__empty">Nenhuma conciliação recente disponível.</p>
+                  <FinanceEmptyState title="Nenhuma conciliação recente disponível." />
                 ) : (
                   inbox.recent_matches.map((match) => (
                     <article key={match.id} className="finance-reconciliation-job-card">
                       <div className="finance-reconciliation-job-card__head">
                         <strong>{match.source === 'manual' ? 'Conciliação manual' : match.source}</strong>
-                        <span>{match.match_status}</span>
+                        <span><FinanceMono>{match.match_status}</FinanceMono></span>
                       </div>
-                      <p>Transação vinculada: {match.financial_transaction_id ?? 'Sem transação'}</p>
+                      <p>Transação vinculada: <FinanceMono>{match.financial_transaction_id ?? 'Sem transação'}</FinanceMono></p>
                       <small>
-                        Revisado em {formatDate(match.reviewed_at?.slice(0, 10) ?? match.created_at.slice(0, 10))}
+                        Revisado em <FinanceMono>{formatDate(match.reviewed_at?.slice(0, 10) ?? match.created_at.slice(0, 10))}</FinanceMono>
                       </small>
                     </article>
                   ))
                 )}
-              </div>
-            </section>
+            </FinancePanel>
           </div>
         </div>
       ) : null}

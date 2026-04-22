@@ -2,6 +2,7 @@ import { Link, NavLink } from 'react-router-dom';
 import { defaultRouteForUser, visibleNavItemsForUser } from '../../auth/navigation';
 import { internalSessionStore } from '../../auth/session';
 import type { FinanceContext } from '../api';
+import { FinanceMono } from './FinancePrimitives';
 
 type FinanceSidebarProps = {
   context: FinanceContext | null;
@@ -29,7 +30,7 @@ export function FinanceSidebar({ context, loading, error }: FinanceSidebarProps)
   const exitLabel = backLink ? 'Voltar ao sistema' : 'Módulo financeiro principal';
 
   return (
-    <aside className="panel finance-sidebar" aria-label="Navegação financeira">
+    <aside className="finance-sidebar" aria-label="Navegação financeira">
       <div className="finance-sidebar__intro">
         <small className="finance-sidebar__eyebrow">Financeiro ERP</small>
         <strong className="finance-sidebar__title">{organizationName}</strong>
@@ -42,7 +43,7 @@ export function FinanceSidebar({ context, loading, error }: FinanceSidebarProps)
         <small className="finance-sidebar__label">Contexto da organização</small>
         <strong>{loading ? 'Carregando...' : organizationName}</strong>
         <span>
-          {context ? `${context.currency} • ${context.timezone}` : 'Tenant financeiro da empresa autenticada'}
+          {context ? <FinanceMono>{`${context.currency} • ${context.timezone}`}</FinanceMono> : 'Tenant financeiro da empresa autenticada'}
         </span>
         {error ? <small className="finance-sidebar__error">{error}</small> : null}
       </div>
@@ -62,11 +63,11 @@ export function FinanceSidebar({ context, loading, error }: FinanceSidebarProps)
 
       <div className="finance-sidebar__footer">
         {backLink ? (
-          <Link to={backLink} className="nav-item">
+          <Link to={backLink} className="finance-sidebar__back-link">
             Voltar ao sistema
           </Link>
         ) : (
-          <span className="nav-item finance-sidebar__footer-note" aria-label={exitLabel}>
+          <span className="finance-sidebar__footer-note" aria-label={exitLabel}>
             {fallbackRoute === '/financeiro' ? 'Você está no módulo principal disponível para este usuário.' : 'Navegação principal disponível neste contexto.'}
           </span>
         )}

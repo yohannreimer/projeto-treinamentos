@@ -1,4 +1,5 @@
 import type { FinanceTransaction } from '../api';
+import { FinanceEmptyState, FinanceMono, FinanceStatusPill } from './FinancePrimitives';
 
 type FinanceLedgerTableProps = {
   rows: FinanceTransaction[];
@@ -42,6 +43,15 @@ function statusLabel(status: FinanceTransaction['status']): string {
   return 'Cancelado';
 }
 
+function statusTone(status: FinanceTransaction['status'] | 'deleted') {
+  if (status === 'deleted') return 'neutral' as const;
+  if (status === 'settled') return 'success' as const;
+  if (status === 'overdue') return 'danger' as const;
+  if (status === 'planned') return 'accent' as const;
+  if (status === 'partial') return 'warning' as const;
+  return 'neutral' as const;
+}
+
 export function FinanceLedgerTable({
   rows,
   selectedTransactionId,
@@ -49,9 +59,10 @@ export function FinanceLedgerTable({
 }: FinanceLedgerTableProps) {
   if (rows.length === 0) {
     return (
-      <div className="finance-ledger-table__empty" role="status">
-        Nenhuma movimentação encontrada para os filtros aplicados.
-      </div>
+      <FinanceEmptyState
+        title="Nenhuma movimentação encontrada."
+        description="Ajuste os filtros para localizar lançamentos no ledger."
+      />
     );
   }
 
@@ -86,7 +97,7 @@ export function FinanceLedgerTable({
                 >
                   <strong>{label}</strong>
                   <span>
-                    #{row.id.slice(-6)}
+                    <FinanceMono>#{row.id.slice(-6)}</FinanceMono>
                     {row.is_deleted ? ' • histórico' : ''}
                   </span>
                 </button>
@@ -95,14 +106,16 @@ export function FinanceLedgerTable({
               <td>{row.financial_account_name || '—'}</td>
               <td>{row.financial_category_name || '—'}</td>
               <td>{kindLabel(row.kind)}</td>
-              <td>{statusText}</td>
-              <td>{formatDate(row.competence_date || row.due_date || row.issue_date)}</td>
-              <td>{formatCurrency(row.amount_cents)}</td>
+              <td>
+                <FinanceStatusPill tone={statusTone(row.is_deleted ? 'deleted' : row.status)}>{statusText}</FinanceStatusPill>
+              </td>
+              <td><FinanceMono>{formatDate(row.competence_date || row.due_date || row.issue_date)}</FinanceMono></td>
+              <td><FinanceMono>{formatCurrency(row.amount_cents)}</FinanceMono></td>
               <td>
                 <div className="finance-ledger-table__drilldown">
-                  <span>{formatCurrency(row.views.signed_amount_cents)}</span>
+                  <span><FinanceMono>{formatCurrency(row.views.signed_amount_cents)}</FinanceMono></span>
                   <small>
-                    Caixa {formatCurrency(row.views.cash_amount_cents)} • Competência {formatCurrency(row.views.competence_amount_cents)}
+                    Caixa <FinanceMono>{formatCurrency(row.views.cash_amount_cents)}</FinanceMono> • Competência <FinanceMono>{formatCurrency(row.views.competence_amount_cents)}</FinanceMono>
                   </small>
                 </div>
               </td>

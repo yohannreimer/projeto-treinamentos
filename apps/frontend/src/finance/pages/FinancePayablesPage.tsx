@@ -4,12 +4,25 @@ import {
   financeApi,
   type FinanceAccount,
   type FinanceCategory,
-  type FinancePayable,
   type FinancePayableStatus,
   type FinancePayablesGroups,
   type FinancePayablesList,
   type FinancePayablesSummary
 } from '../api';
+import {
+  FinanceErrorState,
+  FinanceKpiCard,
+  FinancePanel,
+  FinancePageHeader,
+  FinanceLoadingState,
+  FinanceMono,
+  FinanceStatusPill
+} from '../components/FinancePrimitives';
+import { formatCurrency, parseAmountToCents, todayIso } from '../utils/financeFormatters';
+import {
+  FinanceOperationalListGroup,
+  FinanceOperationalRow
+} from '../components/FinanceOperationalBlocks';
 
 type PayableForm = {
   description: string;
@@ -50,24 +63,6 @@ const emptyGroups: FinancePayablesGroups = {
   settled: []
 };
 
-function parseAmountToCents(value: string): number {
-  const normalized = value.trim().replace(/\./g, '').replace(',', '.');
-  const parsed = Number(normalized);
-  if (!Number.isFinite(parsed) || parsed <= 0) return 0;
-  return Math.round(parsed * 100);
-}
-
-function formatCurrency(cents: number): string {
-  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(cents / 100);
-}
-
-function formatDate(dateIso?: string | null): string {
-  if (!dateIso) return '-';
-  const [year, month, day] = dateIso.split('-').map(Number);
-  if (!year || !month || !day) return dateIso;
-  return new Date(year, month - 1, day).toLocaleDateString('pt-BR');
-}
-
 function statusLabel(status: FinancePayableStatus): string {
   if (status === 'planned') return 'Planejado';
   if (status === 'open') return 'Em aberto';
@@ -77,116 +72,26 @@ function statusLabel(status: FinancePayableStatus): string {
   return 'Cancelado';
 }
 
-function todayIso(): string {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
 function SummaryCard(props: {
   label: string;
   amount: number;
   detail: string;
   tone: 'default' | 'warning' | 'critical';
 }) {
-  const toneStyles = {
-    default: {
-      border: '1px solid rgba(18, 31, 53, 0.12)',
-      background: 'linear-gradient(180deg, rgba(255,255,255,0.98), rgba(247,249,252,0.96))'
-    },
-    warning: {
-      border: '1px solid rgba(180, 110, 0, 0.18)',
-      background: 'linear-gradient(180deg, rgba(255,248,233,0.98), rgba(255,243,214,0.94))'
-    },
-    critical: {
-      border: '1px solid rgba(159, 58, 56, 0.18)',
-      background: 'linear-gradient(180deg, rgba(255,241,240,0.98), rgba(252,228,226,0.94))'
-    }
-  } as const;
-
   return (
-    <article style={{ borderRadius: '18px', padding: '18px', display: 'grid', gap: '8px', ...toneStyles[props.tone] }}>
-      <span style={{ fontSize: '0.78rem', letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--ink-soft)', fontWeight: 700 }}>
-        {props.label}
-      </span>
-      <strong style={{ fontSize: '1.5rem', lineHeight: 1.1 }}>{formatCurrency(props.amount)}</strong>
-      <span style={{ color: 'var(--ink-soft)', fontSize: '0.9rem' }}>{props.detail}</span>
-    </article>
-  );
-}
-
-function GroupedPayablesList(props: {
-  title: string;
-  caption: string;
-  rows: FinancePayable[];
-  emptyMessage: string;
-}) {
-  return (
-    <section className="panel" style={{ borderRadius: '20px' }}>
-      <div className="panel-header">
-        <h2>{props.title}</h2>
-        <p style={{ margin: '4px 0 0', color: 'var(--ink-soft)' }}>{props.caption}</p>
-      </div>
-      <div className="panel-content" style={{ display: 'grid', gap: '10px' }}>
-        {props.rows.length === 0 ? (
-          <p style={{ margin: 0, color: 'var(--ink-soft)' }}>{props.emptyMessage}</p>
-        ) : (
-          props.rows.map((item) => (
-            <article
-              key={item.id}
-              style={{
-                display: 'grid',
-                gap: '8px',
-                padding: '14px 16px',
-                borderRadius: '16px',
-                border: '1px solid rgba(18, 31, 53, 0.1)',
-                background: 'rgba(255, 255, 255, 0.82)'
-              }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'flex-start', flexWrap: 'wrap' }}>
-                <div style={{ display: 'grid', gap: '4px' }}>
-                  <strong>{item.description}</strong>
-                  <span style={{ color: 'var(--ink-soft)', fontSize: '0.88rem' }}>
-                    {item.supplier_name || 'Fornecedor não informado'}
-                    {(item.financial_account_name || item.financial_category_name)
-                      ? ` • ${item.financial_account_name ?? 'Sem conta'} • ${item.financial_category_name ?? 'Sem categoria'}`
-                      : ''}
-                  </span>
-                </div>
-                <strong style={{ fontSize: '1rem' }}>{formatCurrency(item.amount_cents)}</strong>
-              </div>
-              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', color: 'var(--ink-soft)', fontSize: '0.84rem' }}>
-                <span>Vencimento: {formatDate(item.due_date)}</span>
-                <span>Pago em: {formatDate(item.paid_at)}</span>
-                <span>Status: {statusLabel(item.status)}</span>
-              </div>
-            </article>
-          ))
-        )}
-      </div>
-    </section>
+    <FinanceKpiCard
+      label={props.label}
+      value={<FinanceMono>{formatCurrency(props.amount)}</FinanceMono>}
+      description={props.detail}
+      tone={props.tone === 'critical' ? 'danger' : props.tone === 'warning' ? 'warning' : 'neutral'}
+      accentLabel="Obrigações"
+    />
   );
 }
 
 function CountBadge(props: { children: ReactNode }) {
   return (
-    <span
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: '6px',
-        borderRadius: '999px',
-        padding: '7px 12px',
-        background: 'rgba(18, 31, 53, 0.06)',
-        color: 'var(--ink-soft)',
-        fontSize: '0.84rem',
-        fontWeight: 600
-      }}
-    >
-      {props.children}
-    </span>
+    <FinanceStatusPill tone="neutral">{props.children}</FinanceStatusPill>
   );
 }
 
@@ -270,30 +175,17 @@ export function FinancePayablesPage() {
 
   return (
     <section className="page finance-page">
-      <header className="page-header">
-        <div className="page-header-copy">
-          <small style={{ color: 'var(--ink-soft)', fontSize: '0.76rem', fontWeight: 700, letterSpacing: '0.03em', textTransform: 'uppercase' }}>
-            Contas a pagar
-          </small>
-          <h1>Rotina operacional de obrigações</h1>
-          <p>Priorize atrasos, organize o que vence hoje, antecipe desembolsos e acompanhe as baixas concluídas.</p>
-        </div>
-      </header>
+      <FinancePageHeader
+        eyebrow="Contas a pagar"
+        title="Rotina operacional de obrigações"
+        description="Priorize atrasos, organize o que vence hoje, antecipe desembolsos e acompanhe as baixas concluídas."
+      />
 
-      <div style={{ display: 'grid', gap: '16px' }}>
-        <div className="panel">
-          <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
-            <div style={{ display: 'grid', gap: '6px' }}>
-              <h2>Operação da empresa logada</h2>
-              <p style={{ margin: 0, color: 'var(--ink-soft)' }}>
-                Registre compromissos, distribua o caixa com antecedência e trate rapidamente o que já saiu da janela combinada.
-              </p>
-            </div>
-          </div>
-          <div className="panel-content">
-            <form className="form form-spacious" onSubmit={handleSubmit} style={{ display: 'grid', gap: '10px' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '10px' }}>
-                <label style={{ display: 'grid', gap: '4px' }}>
+      <div className="finance-page-stack">
+        <FinancePanel title="Operação da empresa logada" description="Registre compromissos, distribua o caixa com antecedência e trate rapidamente o que já saiu da janela combinada." eyebrow="Base única">
+            <form className="form form-spacious finance-form-shell" onSubmit={handleSubmit}>
+              <div className="finance-form-grid">
+                <label className="finance-form-field">
                   <span>Descrição</span>
                   <input
                     value={form.description}
@@ -302,7 +194,7 @@ export function FinancePayablesPage() {
                     disabled={!canWrite || submitting}
                   />
                 </label>
-                <label style={{ display: 'grid', gap: '4px' }}>
+                <label className="finance-form-field">
                   <span>Fornecedor</span>
                   <input
                     value={form.supplier_name}
@@ -311,7 +203,7 @@ export function FinancePayablesPage() {
                     disabled={!canWrite || submitting}
                   />
                 </label>
-                <label style={{ display: 'grid', gap: '4px' }}>
+                <label className="finance-form-field">
                   <span>Valor (R$)</span>
                   <input
                     value={form.amount}
@@ -321,8 +213,8 @@ export function FinancePayablesPage() {
                   />
                 </label>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px' }}>
-                <label style={{ display: 'grid', gap: '4px' }}>
+              <div className="finance-form-grid finance-form-grid--compact">
+                <label className="finance-form-field">
                   <span>Status</span>
                   <select value={form.status} onChange={(event) => setForm((current) => ({ ...current, status: event.target.value as FinancePayableStatus }))} disabled={!canWrite || submitting}>
                     <option value="planned">Planejado</option>
@@ -333,72 +225,68 @@ export function FinancePayablesPage() {
                     <option value="canceled">Cancelado</option>
                   </select>
                 </label>
-                <label style={{ display: 'grid', gap: '4px' }}>
+                <label className="finance-form-field">
                   <span>Vencimento</span>
                   <input type="date" value={form.due_date} onChange={(event) => setForm((current) => ({ ...current, due_date: event.target.value }))} disabled={!canWrite || submitting} />
                 </label>
-                <label style={{ display: 'grid', gap: '4px' }}>
+                <label className="finance-form-field">
                   <span>Pago em</span>
                   <input type="date" value={form.paid_at} onChange={(event) => setForm((current) => ({ ...current, paid_at: event.target.value }))} disabled={!canWrite || submitting} />
                 </label>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px' }}>
-                <label style={{ display: 'grid', gap: '4px' }}>
+              <div className="finance-form-grid finance-form-grid--compact">
+                <label className="finance-form-field">
                   <span>Conta</span>
                   <select value={form.financial_account_id} onChange={(event) => setForm((current) => ({ ...current, financial_account_id: event.target.value }))} disabled={!canWrite || submitting}>
                     <option value="">Sem conta vinculada</option>
                     {accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
                   </select>
                 </label>
-                <label style={{ display: 'grid', gap: '4px' }}>
+                <label className="finance-form-field">
                   <span>Categoria</span>
                   <select value={form.financial_category_id} onChange={(event) => setForm((current) => ({ ...current, financial_category_id: event.target.value }))} disabled={!canWrite || submitting}>
                     <option value="">Sem categoria vinculada</option>
                     {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
                   </select>
                 </label>
-                <label style={{ display: 'grid', gap: '4px' }}>
+                <label className="finance-form-field">
                   <span>Emissão</span>
                   <input type="date" value={form.issue_date} onChange={(event) => setForm((current) => ({ ...current, issue_date: event.target.value }))} disabled={!canWrite || submitting} />
                 </label>
               </div>
-              <label style={{ display: 'grid', gap: '4px' }}>
+              <label className="finance-form-field">
                 <span>Observação</span>
                 <textarea value={form.note} onChange={(event) => setForm((current) => ({ ...current, note: event.target.value }))} rows={2} disabled={!canWrite || submitting} />
               </label>
-              <div className="actions" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <div className="actions finance-inline-actions">
                 <button type="submit" disabled={!canWrite || submitting}>
                   {submitting ? 'Salvando...' : 'Registrar conta a pagar'}
                 </button>
                 <button type="button" onClick={() => setForm(initialForm)} disabled={submitting}>Limpar</button>
               </div>
             </form>
-          </div>
-        </div>
+        </FinancePanel>
 
-        <div className="panel">
-          <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'flex-start', flexWrap: 'wrap' }}>
-            <div>
-              <h2>Pulso operacional</h2>
-              <p style={{ margin: '4px 0 0', color: 'var(--ink-soft)' }}>
-                {registeredCount} obrigação(ões) na base, {operationalCount} em acompanhamento e {settledCount} já quitada(s).
-              </p>
-            </div>
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+        <FinancePanel
+          title="Pulso operacional"
+          description={`${registeredCount} obrigação(ões) na base, ${operationalCount} em acompanhamento e ${settledCount} já quitada(s).`}
+          eyebrow="Leitura operacional"
+          action={(
+            <div className="finance-inline-badges">
               <CountBadge>{groups.overdue.length} atrasado(s)</CountBadge>
               <CountBadge>{groups.due_today.length} vencendo hoje</CountBadge>
               <CountBadge>{groups.upcoming.length} próximo(s)</CountBadge>
               <CountBadge>{groups.settled.length} pago(s)</CountBadge>
             </div>
-          </div>
-          <div className="panel-content" style={{ display: 'grid', gap: '14px' }}>
-            {error ? <p style={{ marginTop: 0, color: '#9f3a38' }}>{error}</p> : null}
-            {message ? <p style={{ marginTop: 0, color: '#1c8b61' }}>{message}</p> : null}
+          )}
+        >
+            {error ? <FinanceErrorState title="Falha ao carregar contas a pagar." description={error} /> : null}
+            {message ? <p className="finance-inline-message finance-inline-message--success">{message}</p> : null}
             {loading ? (
-              <p style={{ margin: 0, color: 'var(--ink-soft)' }}>Carregando contas a pagar...</p>
+              <FinanceLoadingState title="Carregando contas a pagar..." />
             ) : (
               <>
-                <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
+                <section className="finance-kpi-grid finance-kpi-grid--three">
                   <SummaryCard
                     label="Carteira em aberto"
                     amount={summary.open_cents}
@@ -419,36 +307,103 @@ export function FinancePayablesPage() {
                   />
                 </section>
 
-                <div style={{ display: 'grid', gap: '12px' }}>
-                  <GroupedPayablesList
+                <div className="finance-section-stack">
+                  <FinanceOperationalListGroup
                     title="Atrasados"
                     caption="Débitos que exigem renegociação ou pagamento imediato."
                     rows={groups.overdue}
                     emptyMessage="Nenhuma obrigação atrasada neste recorte."
+                    rowKey={(item) => item.id}
+                    renderRow={(item) => (
+                      <FinanceOperationalRow
+                        description={item.description}
+                        counterpartyLabel="Fornecedor"
+                        counterpartyValue={item.supplier_name}
+                        accountName={item.financial_account_name}
+                        categoryName={item.financial_category_name}
+                        amountCents={item.amount_cents}
+                        primaryDateLabel="Vencimento"
+                        primaryDate={item.due_date}
+                        secondaryDateLabel="Pago em"
+                        secondaryDate={item.paid_at}
+                        statusLabel={statusLabel(item.status)}
+                        statusTone={item.status === 'paid' ? 'success' : item.status === 'overdue' ? 'danger' : item.status === 'partial' ? 'warning' : 'neutral'}
+                      />
+                    )}
                   />
-                  <GroupedPayablesList
+                  <FinanceOperationalListGroup
                     title="Vencendo hoje"
                     caption="Pagamentos que precisam de aprovação ou baixa ainda hoje."
                     rows={groups.due_today}
                     emptyMessage="Nada vencendo hoje."
+                    rowKey={(item) => item.id}
+                    renderRow={(item) => (
+                      <FinanceOperationalRow
+                        description={item.description}
+                        counterpartyLabel="Fornecedor"
+                        counterpartyValue={item.supplier_name}
+                        accountName={item.financial_account_name}
+                        categoryName={item.financial_category_name}
+                        amountCents={item.amount_cents}
+                        primaryDateLabel="Vencimento"
+                        primaryDate={item.due_date}
+                        secondaryDateLabel="Pago em"
+                        secondaryDate={item.paid_at}
+                        statusLabel={statusLabel(item.status)}
+                        statusTone={item.status === 'paid' ? 'success' : item.status === 'overdue' ? 'danger' : item.status === 'partial' ? 'warning' : 'neutral'}
+                      />
+                    )}
                   />
-                  <GroupedPayablesList
+                  <FinanceOperationalListGroup
                     title="Próximos vencimentos"
                     caption="Planejamento dos próximos desembolsos."
                     rows={groups.upcoming}
                     emptyMessage="Sem próximos pagamentos no momento."
+                    rowKey={(item) => item.id}
+                    renderRow={(item) => (
+                      <FinanceOperationalRow
+                        description={item.description}
+                        counterpartyLabel="Fornecedor"
+                        counterpartyValue={item.supplier_name}
+                        accountName={item.financial_account_name}
+                        categoryName={item.financial_category_name}
+                        amountCents={item.amount_cents}
+                        primaryDateLabel="Vencimento"
+                        primaryDate={item.due_date}
+                        secondaryDateLabel="Pago em"
+                        secondaryDate={item.paid_at}
+                        statusLabel={statusLabel(item.status)}
+                        statusTone={item.status === 'paid' ? 'success' : item.status === 'overdue' ? 'danger' : item.status === 'partial' ? 'warning' : 'neutral'}
+                      />
+                    )}
                   />
-                  <GroupedPayablesList
+                  <FinanceOperationalListGroup
                     title="Liquidados"
                     caption="Histórico recente das baixas concluídas."
                     rows={groups.settled}
                     emptyMessage="Nenhuma obrigação liquidada neste recorte."
+                    rowKey={(item) => item.id}
+                    renderRow={(item) => (
+                      <FinanceOperationalRow
+                        description={item.description}
+                        counterpartyLabel="Fornecedor"
+                        counterpartyValue={item.supplier_name}
+                        accountName={item.financial_account_name}
+                        categoryName={item.financial_category_name}
+                        amountCents={item.amount_cents}
+                        primaryDateLabel="Vencimento"
+                        primaryDate={item.due_date}
+                        secondaryDateLabel="Pago em"
+                        secondaryDate={item.paid_at}
+                        statusLabel={statusLabel(item.status)}
+                        statusTone={item.status === 'paid' ? 'success' : item.status === 'overdue' ? 'danger' : item.status === 'partial' ? 'warning' : 'neutral'}
+                      />
+                    )}
                   />
                 </div>
               </>
             )}
-          </div>
-        </div>
+        </FinancePanel>
       </div>
     </section>
   );

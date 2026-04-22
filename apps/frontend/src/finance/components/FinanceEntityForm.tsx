@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import type { CreateFinanceEntityPayload, FinanceEntityKind } from '../api';
+import { FinancePanel } from './FinancePrimitives';
 
 type FinanceEntityFormProps = {
   onSubmit: (payload: CreateFinanceEntityPayload) => Promise<void>;
@@ -57,15 +58,8 @@ export function FinanceEntityForm({ onSubmit }: FinanceEntityFormProps) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="finance-entity-form" aria-label="Cadastro de entidade financeira">
-      <header className="panel-header">
-        <div>
-          <small className="finance-panel-eyebrow">Base única</small>
-          <h2>Nova entidade financeira</h2>
-        </div>
-      </header>
-
-      <div className="panel-content">
+    <FinancePanel className="finance-entity-form" eyebrow="Base única" title="Nova entidade financeira">
+      <form onSubmit={handleSubmit} aria-label="Cadastro de entidade financeira" className="finance-entity-form__form">
         <label>
           Razão social
           <input
@@ -133,7 +127,7 @@ export function FinanceEntityForm({ onSubmit }: FinanceEntityFormProps) {
           />
         </label>
 
-        <label style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+        <label className="finance-entity-form__toggle">
           <input
             checked={isActive}
             onChange={(event) => setIsActive(event.target.checked)}
@@ -148,7 +142,7 @@ export function FinanceEntityForm({ onSubmit }: FinanceEntityFormProps) {
 
         {message ? <p role="status">{message}</p> : null}
         {error ? <p role="alert">{error}</p> : null}
-      </div>
-    </form>
+      </form>
+    </FinancePanel>
   );
 }

@@ -4,6 +4,7 @@ import { FinanceCashflowPanel } from '../components/FinanceCashflowPanel';
 import { FinanceKpiGrid } from '../components/FinanceKpiGrid';
 import { FinanceQuickActions } from '../components/FinanceQuickActions';
 import { FinanceQueuePanel } from '../components/FinanceQueuePanel';
+import { FinanceErrorState, FinanceLoadingState, FinancePageHeader, FinanceMono } from '../components/FinancePrimitives';
 
 export function FinanceOverviewPage() {
   const [overview, setOverview] = useState<FinanceExecutiveOverview | null>(null);
@@ -32,11 +33,10 @@ export function FinanceOverviewPage() {
   if (error) {
     return (
       <section className="page finance-page finance-overview-page" aria-live="polite">
-        <div className="panel finance-overview-loading">
-          <small className="finance-overview-eyebrow">Executive Overview</small>
-          <h1>Executive Overview</h1>
-          <p>{error}</p>
-        </div>
+        <FinanceErrorState
+          title="Executive Overview"
+          description={error}
+        />
       </section>
     );
   }
@@ -44,11 +44,10 @@ export function FinanceOverviewPage() {
   if (!overview) {
     return (
       <section className="page finance-page finance-overview-page" aria-live="polite">
-        <div className="panel finance-overview-loading">
-          <small className="finance-overview-eyebrow">Executive Overview</small>
-          <h1>Executive Overview</h1>
-          <p>Carregando visão executiva do financeiro...</p>
-        </div>
+        <FinanceLoadingState
+          title="Executive Overview"
+          description="Carregando visão executiva do financeiro..."
+        />
       </section>
     );
   }
@@ -57,25 +56,24 @@ export function FinanceOverviewPage() {
 
   return (
     <section className="page finance-page finance-overview-page">
-      <header className="panel finance-overview-hero">
-        <div className="finance-overview-hero__copy">
-          <small className="finance-overview-eyebrow">Executive Overview</small>
-          <h1>Executive Overview</h1>
-          <p>Leitura executiva do financeiro da {organizationName}.</p>
-        </div>
-
-        <div className="finance-overview-hero__meta" aria-label="Resumo do contexto financeiro">
-          <span>{overview.currency} · {overview.timezone}</span>
-          <span>Atualizado em {new Intl.DateTimeFormat('pt-BR', {
-            day: '2-digit',
-            month: '2-digit',
-            hour: '2-digit',
-            minute: '2-digit',
-            timeZone: overview.timezone
-          }).format(new Date(overview.generated_at))}</span>
-          <span>Home principal do módulo</span>
-        </div>
-      </header>
+      <FinancePageHeader
+        eyebrow="Executive Overview"
+        title="Visão Geral"
+        description={`Leitura executiva do financeiro da ${organizationName}.`}
+        meta={(
+          <>
+            <span>{overview.currency} · <FinanceMono>{overview.timezone}</FinanceMono></span>
+            <span>Atualizado em {new Intl.DateTimeFormat('pt-BR', {
+              day: '2-digit',
+              month: '2-digit',
+              hour: '2-digit',
+              minute: '2-digit',
+              timeZone: overview.timezone
+            }).format(new Date(overview.generated_at))}</span>
+            <span>Home principal do módulo</span>
+          </>
+        )}
+      />
 
       <FinanceKpiGrid kpis={overview.kpis} currency={overview.currency} />
 

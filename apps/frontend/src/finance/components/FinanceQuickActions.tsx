@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import type { FinanceExecutiveQuickAction } from '../api';
+import { FinancePanel } from './FinancePrimitives';
 
 type FinanceQuickActionsProps = {
   actions: FinanceExecutiveQuickAction[];
@@ -7,15 +8,8 @@ type FinanceQuickActionsProps = {
 
 export function FinanceQuickActions({ actions }: FinanceQuickActionsProps) {
   return (
-    <section className="panel finance-quick-actions-panel" aria-labelledby="finance-quick-actions-title">
-      <header className="panel-header">
-        <div>
-          <small className="finance-panel-eyebrow">Utility layer</small>
-          <h2 id="finance-quick-actions-title">Ações rápidas</h2>
-        </div>
-      </header>
-
-      <div className="panel-content finance-quick-actions-panel__content">
+    <FinancePanel className="finance-quick-actions-panel" eyebrow="Utility layer" title="Ações rápidas">
+      <div className="finance-quick-actions-panel__content">
         {actions.map((action) => (
           <Link key={action.id} to={action.href} className="finance-quick-action">
             <strong>{action.label}</strong>
@@ -23,6 +17,6 @@ export function FinanceQuickActions({ actions }: FinanceQuickActionsProps) {
           </Link>
         ))}
       </div>
-    </section>
+    </FinancePanel>
   );
 }

@@ -6,6 +6,7 @@ import {
   type FinanceEntityKind
 } from '../api';
 import { FinanceEntityForm } from '../components/FinanceEntityForm';
+import { FinanceEmptyState, FinanceErrorState, FinanceLoadingState, FinanceMono, FinancePageHeader, FinancePanel, FinanceTableShell } from '../components/FinancePrimitives';
 
 type EntityFilter = 'all' | 'customer' | 'supplier';
 
@@ -129,33 +130,18 @@ export function FinanceCadastrosPage() {
 
   return (
     <section className="page finance-page">
-      <header className="page-header">
-        <div className="page-header-copy">
-          <small style={{ color: 'var(--ink-soft)', fontSize: '0.76rem', fontWeight: 700, letterSpacing: '0.03em', textTransform: 'uppercase' }}>
-            Cadastros
-          </small>
-          <h1>Cadastros híbridos</h1>
-          <p>Base única para clientes e fornecedores, com catálogos separados para suportar o ERP financeiro.</p>
-        </div>
-      </header>
+      <FinancePageHeader
+        eyebrow="Cadastros"
+        title="Cadastros híbridos"
+        description="Base única para clientes e fornecedores, com catálogos separados para suportar o ERP financeiro."
+      />
 
       {error ? (
-        <div className="panel" aria-live="polite">
-          <div className="panel-content">
-            <p role="alert">{error}</p>
-          </div>
-        </div>
+        <FinanceErrorState title="Falha ao carregar cadastros." description={error} />
       ) : null}
 
-      <div className="panel" aria-label="Filtros de entidades">
-        <div className="panel-header">
-          <div>
-            <small className="finance-panel-eyebrow">Base única</small>
-            <h2>Filtro de leitura</h2>
-          </div>
-        </div>
-        <div className="panel-content">
-          <div role="tablist" aria-label="Filtrar entidades" style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem' }}>
+      <FinancePanel title="Filtro de leitura" eyebrow="Base única" ariaLabel="Filtros de entidades">
+          <div role="tablist" aria-label="Filtrar entidades" className="finance-cadastros-tabs">
             {filterTabs.map((tab) => (
               <button
                 key={tab.value}
@@ -168,78 +154,63 @@ export function FinanceCadastrosPage() {
               </button>
             ))}
           </div>
-          <p style={{ marginTop: '0.85rem' }}>
+          <p className="finance-cadastros-summary">
             {loading ? 'Carregando a base única...' : `${filteredEntities.length} entidade(s) exibida(s) de ${entities.length}.`}
           </p>
-        </div>
-      </div>
+      </FinancePanel>
 
-      <div className="finance-cadastros-grid" style={{ display: 'grid', gap: '1rem' }}>
-        <div className="panel">
+      <div className="finance-cadastros-grid">
+        <div className="finance-cadastros-form-shell">
           <FinanceEntityForm onSubmit={handleCreateEntity} />
         </div>
 
-        <div className="panel">
-          <div className="panel-header">
-            <div>
-              <small className="finance-panel-eyebrow">Leitura operacional</small>
-              <h2>Entidades cadastradas</h2>
-            </div>
-          </div>
-          <div className="panel-content">
-            {filteredEntities.length === 0 ? (
-              <p>{loading ? 'Carregando entidades...' : 'Nenhuma entidade encontrada para este filtro.'}</p>
-            ) : (
-              <table aria-label="Entidades financeiras">
-                <thead>
-                  <tr>
-                    <th>Razão social</th>
-                    <th>Fantasia</th>
-                    <th>Tipo</th>
-                    <th>Documento</th>
-                    <th>Status</th>
+        <FinanceTableShell title="Entidades cadastradas" description="Leitura operacional da base única de clientes e fornecedores.">
+          {loading ? (
+            <FinanceLoadingState title="Carregando entidades..." />
+          ) : filteredEntities.length === 0 ? (
+            <FinanceEmptyState title="Nenhuma entidade encontrada para este filtro." />
+          ) : (
+            <table aria-label="Entidades financeiras">
+              <thead>
+                <tr>
+                  <th>Razão social</th>
+                  <th>Fantasia</th>
+                  <th>Tipo</th>
+                  <th>Documento</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredEntities.map((entity) => (
+                  <tr key={entity.id}>
+                    <td><strong>{entity.legal_name}</strong></td>
+                    <td>{entity.trade_name || '—'}</td>
+                    <td>{entityKindLabel(entity.kind)}</td>
+                    <td><FinanceMono>{entity.document_number || '—'}</FinanceMono></td>
+                    <td>{entity.is_active ? 'Ativa' : 'Inativa'}</td>
                   </tr>
-                </thead>
-                <tbody>
-                  {filteredEntities.map((entity) => (
-                    <tr key={entity.id}>
-                      <td>{entity.legal_name}</td>
-                      <td>{entity.trade_name || '—'}</td>
-                      <td>{entityKindLabel(entity.kind)}</td>
-                      <td>{entity.document_number || '—'}</td>
-                      <td>{entity.is_active ? 'Ativa' : 'Inativa'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        </div>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </FinanceTableShell>
 
-        <div className="panel">
-          <div className="panel-header">
-            <div>
-              <small className="finance-panel-eyebrow">Catálogo financeiro</small>
-              <h2>Contas, categorias e referências</h2>
-            </div>
+        <FinancePanel title="Contas, categorias e referências" eyebrow="Catálogo financeiro" ariaLabel="Catálogo financeiro">
+          <div className="finance-report-list">
+            {catalogBlocks.map((block) => {
+              const items = catalog?.[block.key] ?? [];
+              const count = catalogSummary?.[block.key] ?? 0;
+              return (
+                <article key={block.key} className="finance-report-card">
+                  <small><FinanceMono>{count}</FinanceMono> registro(s)</small>
+                  <strong>{block.title}</strong>
+                  <p>{block.copy}</p>
+                  <p>{formatCatalogPreview(items as Array<{ name: string }>)}</p>
+                </article>
+              );
+            })}
           </div>
-          <div className="panel-content">
-            <div className="finance-report-list">
-              {catalogBlocks.map((block) => {
-                const items = catalog?.[block.key] ?? [];
-                const count = catalogSummary?.[block.key] ?? 0;
-                return (
-                  <article key={block.key} className="finance-report-card">
-                    <small>{count} registro(s)</small>
-                    <strong>{block.title}</strong>
-                    <p>{block.copy}</p>
-                    <p>{formatCatalogPreview(items as Array<{ name: string }>)}</p>
-                  </article>
-                );
-              })}
-            </div>
-          </div>
-        </div>
+        </FinancePanel>
       </div>
     </section>
   );
