@@ -280,6 +280,7 @@ export function initDb() {
 
     create table if not exists financial_account (
       id text primary key,
+      organization_id text not null,
       company_id text not null,
       name text not null,
       kind text not null,
@@ -289,12 +290,15 @@ export function initDb() {
       is_active integer not null default 1,
       created_at text not null,
       updated_at text not null,
+      unique(organization_id, id),
       unique(company_id, id),
-      foreign key(company_id) references company(id) on delete cascade
+      foreign key(company_id) references company(id) on delete cascade,
+      foreign key(organization_id) references organization(id) on delete cascade
     );
 
     create table if not exists financial_category (
       id text primary key,
+      organization_id text not null,
       company_id text not null,
       name text not null,
       kind text not null,
@@ -302,14 +306,18 @@ export function initDb() {
       is_active integer not null default 1,
       created_at text not null,
       updated_at text not null,
+      unique(organization_id, id),
       unique(company_id, id),
       foreign key(company_id) references company(id) on delete cascade,
+      foreign key(organization_id) references organization(id) on delete cascade,
       foreign key(company_id, parent_category_id) references financial_category(company_id, id) on delete restrict
     );
 
     create table if not exists financial_transaction (
       id text primary key,
-      company_id text not null,
+      organization_id text not null,
+      company_id text,
+      financial_entity_id text,
       financial_account_id text,
       financial_category_id text,
       kind text not null,
@@ -325,14 +333,34 @@ export function initDb() {
       created_by text,
       created_at text not null,
       updated_at text not null,
+      unique(organization_id, id),
       unique(company_id, id),
+      foreign key(organization_id) references organization(id) on delete cascade,
       foreign key(company_id) references company(id) on delete cascade,
-      foreign key(company_id, financial_account_id) references financial_account(company_id, id) on delete restrict,
-      foreign key(company_id, financial_category_id) references financial_category(company_id, id) on delete restrict
+      foreign key(organization_id, financial_entity_id) references financial_entity(organization_id, id) on delete restrict,
+      foreign key(organization_id, financial_account_id) references financial_account(organization_id, id) on delete restrict,
+      foreign key(organization_id, financial_category_id) references financial_category(organization_id, id) on delete restrict
+    );
+
+    create table if not exists financial_entity (
+      id text primary key,
+      organization_id text not null,
+      legal_name text not null,
+      trade_name text,
+      document_number text,
+      kind text not null check(kind in ('customer', 'supplier', 'both')),
+      email text,
+      phone text,
+      is_active integer not null default 1,
+      created_at text not null,
+      updated_at text not null,
+      unique(organization_id, id),
+      foreign key(organization_id) references organization(id) on delete cascade
     );
 
     create table if not exists financial_payable (
       id text primary key,
+      organization_id text not null,
       company_id text not null,
       financial_transaction_id text,
       financial_account_id text,
@@ -349,7 +377,9 @@ export function initDb() {
       note text,
       created_at text not null,
       updated_at text not null,
+      unique(organization_id, id),
       unique(company_id, id),
+      foreign key(organization_id) references organization(id) on delete cascade,
       foreign key(company_id) references company(id) on delete cascade,
       foreign key(company_id, financial_transaction_id) references financial_transaction(company_id, id) on delete restrict,
       foreign key(company_id, financial_account_id) references financial_account(company_id, id) on delete restrict,
@@ -358,6 +388,7 @@ export function initDb() {
 
     create table if not exists financial_receivable (
       id text primary key,
+      organization_id text not null,
       company_id text not null,
       financial_transaction_id text,
       financial_account_id text,
@@ -374,7 +405,9 @@ export function initDb() {
       note text,
       created_at text not null,
       updated_at text not null,
+      unique(organization_id, id),
       unique(company_id, id),
+      foreign key(organization_id) references organization(id) on delete cascade,
       foreign key(company_id) references company(id) on delete cascade,
       foreign key(company_id, financial_transaction_id) references financial_transaction(company_id, id) on delete restrict,
       foreign key(company_id, financial_account_id) references financial_account(company_id, id) on delete restrict,
@@ -383,6 +416,7 @@ export function initDb() {
 
     create table if not exists financial_import_job (
       id text primary key,
+      organization_id text not null,
       company_id text not null,
       import_type text not null,
       source_file_name text not null,
@@ -397,12 +431,15 @@ export function initDb() {
       created_at text not null,
       updated_at text not null,
       finished_at text,
+      unique(organization_id, id),
       unique(company_id, id),
+      foreign key(organization_id) references organization(id) on delete cascade,
       foreign key(company_id) references company(id) on delete cascade
     );
 
     create table if not exists financial_bank_statement_entry (
       id text primary key,
+      organization_id text not null,
       company_id text not null,
       financial_account_id text not null,
       financial_import_job_id text,
@@ -416,7 +453,9 @@ export function initDb() {
       source_ref text,
       created_at text not null,
       updated_at text not null,
+      unique(organization_id, id),
       unique(company_id, id),
+      foreign key(organization_id) references organization(id) on delete cascade,
       foreign key(company_id) references company(id) on delete cascade,
       foreign key(company_id, financial_account_id) references financial_account(company_id, id) on delete restrict,
       foreign key(company_id, financial_import_job_id) references financial_import_job(company_id, id) on delete restrict
@@ -424,6 +463,7 @@ export function initDb() {
 
     create table if not exists financial_reconciliation_match (
       id text primary key,
+      organization_id text not null,
       company_id text not null,
       financial_bank_statement_entry_id text not null,
       financial_transaction_id text not null,
@@ -435,14 +475,16 @@ export function initDb() {
       note text,
       created_at text not null,
       updated_at text not null,
+      unique(organization_id, id),
       unique(company_id, id),
       foreign key(company_id) references company(id) on delete cascade,
       foreign key(company_id, financial_bank_statement_entry_id) references financial_bank_statement_entry(company_id, id) on delete cascade,
-      foreign key(company_id, financial_transaction_id) references financial_transaction(company_id, id) on delete cascade
+      foreign key(organization_id, financial_transaction_id) references financial_transaction(organization_id, id) on delete cascade
     );
 
     create table if not exists financial_debt (
       id text primary key,
+      organization_id text not null,
       company_id text not null,
       financial_payable_id text,
       financial_receivable_id text,
@@ -456,15 +498,17 @@ export function initDb() {
       note text,
       created_at text not null,
       updated_at text not null,
+      unique(organization_id, id),
       unique(company_id, id),
       foreign key(company_id) references company(id) on delete cascade,
       foreign key(company_id, financial_payable_id) references financial_payable(company_id, id) on delete restrict,
       foreign key(company_id, financial_receivable_id) references financial_receivable(company_id, id) on delete restrict,
-      foreign key(company_id, financial_transaction_id) references financial_transaction(company_id, id) on delete restrict
+      foreign key(organization_id, financial_transaction_id) references financial_transaction(organization_id, id) on delete restrict
     );
 
     create table if not exists billing_plan (
       id text primary key,
+      organization_id text not null,
       company_id text not null,
       code text not null,
       name text not null,
@@ -475,13 +519,16 @@ export function initDb() {
       features_json text not null default '[]',
       created_at text not null,
       updated_at text not null,
+      unique(organization_id, id),
       unique(company_id, code),
       unique(company_id, id),
+      foreign key(organization_id) references organization(id) on delete cascade,
       foreign key(company_id) references company(id) on delete cascade
     );
 
     create table if not exists billing_subscription (
       id text primary key,
+      organization_id text not null,
       company_id text not null,
       billing_plan_id text not null,
       status text not null,
@@ -493,13 +540,16 @@ export function initDb() {
       auto_renew integer not null default 1,
       created_at text not null,
       updated_at text not null,
+      unique(organization_id, id),
       unique(company_id, id),
+      foreign key(organization_id) references organization(id) on delete cascade,
       foreign key(company_id) references company(id) on delete cascade,
       foreign key(company_id, billing_plan_id) references billing_plan(company_id, id) on delete restrict
     );
 
     create table if not exists billing_invoice (
       id text primary key,
+      organization_id text not null,
       company_id text not null,
       billing_subscription_id text,
       invoice_number text not null,
@@ -513,8 +563,10 @@ export function initDb() {
       note text,
       created_at text not null,
       updated_at text not null,
+      unique(organization_id, id),
       unique(company_id, invoice_number),
       unique(company_id, id),
+      foreign key(organization_id) references organization(id) on delete cascade,
       foreign key(company_id) references company(id) on delete cascade,
       foreign key(company_id, billing_subscription_id) references billing_subscription(company_id, id) on delete restrict
     );
@@ -930,6 +982,71 @@ export function initDb() {
   ensureColumn('portal_client', 'module_date_overrides_json', "module_date_overrides_json text not null default '{}'");
   ensureColumn('portal_client', 'module_status_overrides_json', "module_status_overrides_json text not null default '{}'");
   ensureColumn('financial_transaction', 'is_deleted', 'is_deleted integer not null default 0');
+  ensureColumn(
+    'financial_account',
+    'organization_id',
+    'organization_id text references organization(id) on delete cascade'
+  );
+  ensureColumn(
+    'financial_category',
+    'organization_id',
+    'organization_id text references organization(id) on delete cascade'
+  );
+  ensureColumn(
+    'financial_transaction',
+    'organization_id',
+    'organization_id text references organization(id) on delete cascade'
+  );
+  ensureColumn(
+    'financial_transaction',
+    'financial_entity_id',
+    'financial_entity_id text'
+  );
+  ensureColumn(
+    'financial_payable',
+    'organization_id',
+    'organization_id text references organization(id) on delete cascade'
+  );
+  ensureColumn(
+    'financial_receivable',
+    'organization_id',
+    'organization_id text references organization(id) on delete cascade'
+  );
+  ensureColumn(
+    'financial_import_job',
+    'organization_id',
+    'organization_id text references organization(id) on delete cascade'
+  );
+  ensureColumn(
+    'financial_bank_statement_entry',
+    'organization_id',
+    'organization_id text references organization(id) on delete cascade'
+  );
+  ensureColumn(
+    'financial_reconciliation_match',
+    'organization_id',
+    'organization_id text references organization(id) on delete cascade'
+  );
+  ensureColumn(
+    'financial_debt',
+    'organization_id',
+    'organization_id text references organization(id) on delete cascade'
+  );
+  ensureColumn(
+    'billing_plan',
+    'organization_id',
+    'organization_id text references organization(id) on delete cascade'
+  );
+  ensureColumn(
+    'billing_subscription',
+    'organization_id',
+    'organization_id text references organization(id) on delete cascade'
+  );
+  ensureColumn(
+    'billing_invoice',
+    'organization_id',
+    'organization_id text references organization(id) on delete cascade'
+  );
   ensureColumn('internal_user', 'display_name', 'display_name text');
   ensureColumn('internal_user', 'role', "role text not null default 'supremo'");
   ensureColumn('internal_user', 'permissions_json', "permissions_json text not null default '[]'");
@@ -940,6 +1057,123 @@ export function initDb() {
   );
   ensureColumn('internal_user', 'is_active', 'is_active integer not null default 1');
   ensureColumn('internal_user', 'last_login_at', 'last_login_at text');
+
+  const transactionColumns = db.prepare('pragma table_info(financial_transaction)').all() as Array<{
+    name: string;
+    notnull: number;
+  }>;
+  const transactionForeignKeys = db.prepare('pragma foreign_key_list(financial_transaction)').all() as Array<{
+    table: string;
+    from: string;
+    to: string;
+  }>;
+  const transactionCompanyIdColumn = transactionColumns.find((column) => column.name === 'company_id');
+  const transactionOrganizationIdColumn = transactionColumns.find((column) => column.name === 'organization_id');
+  const hasFinancialEntityForeignKey = transactionForeignKeys.some(
+    (row) => row.table === 'financial_entity' && row.from === 'organization_id' && row.to === 'organization_id'
+  );
+  const hasFinancialAccountForeignKey = transactionForeignKeys.some(
+    (row) => row.table === 'financial_account' && row.from === 'organization_id' && row.to === 'organization_id'
+  );
+  const hasFinancialCategoryForeignKey = transactionForeignKeys.some(
+    (row) => row.table === 'financial_category' && row.from === 'organization_id' && row.to === 'organization_id'
+  );
+  const financialTransactionNeedsRebuild = Boolean(
+    transactionColumns.length > 0 && (
+      !transactionOrganizationIdColumn ||
+      transactionCompanyIdColumn?.notnull === 1 ||
+      !hasFinancialEntityForeignKey ||
+      !hasFinancialAccountForeignKey ||
+      !hasFinancialCategoryForeignKey
+    )
+  );
+
+  if (financialTransactionNeedsRebuild) {
+    db.exec('pragma foreign_keys = off');
+    try {
+      db.exec(`
+        create table financial_transaction_new (
+          id text primary key,
+          organization_id text not null,
+          company_id text,
+          financial_entity_id text,
+          financial_account_id text,
+          financial_category_id text,
+          kind text not null,
+          status text not null,
+          amount_cents integer not null,
+          issue_date text,
+          due_date text,
+          settlement_date text,
+          competence_date text,
+          source text not null default 'manual',
+          source_ref text,
+          note text,
+          created_by text,
+          created_at text not null,
+          updated_at text not null,
+          is_deleted integer not null default 0,
+          unique(organization_id, id),
+          unique(company_id, id),
+          foreign key(organization_id) references organization(id) on delete cascade,
+          foreign key(company_id) references company(id) on delete cascade,
+          foreign key(organization_id, financial_entity_id) references financial_entity(organization_id, id) on delete restrict,
+          foreign key(organization_id, financial_account_id) references financial_account(organization_id, id) on delete restrict,
+          foreign key(organization_id, financial_category_id) references financial_category(organization_id, id) on delete restrict
+        );
+      `);
+      db.exec(`
+        insert into financial_transaction_new (
+          id,
+          organization_id,
+          company_id,
+          financial_entity_id,
+          financial_account_id,
+          financial_category_id,
+          kind,
+          status,
+          amount_cents,
+          issue_date,
+          due_date,
+          settlement_date,
+          competence_date,
+          source,
+          source_ref,
+          note,
+          created_by,
+          created_at,
+          updated_at,
+          is_deleted
+        )
+        select
+          id,
+          organization_id,
+          company_id,
+          financial_entity_id,
+          financial_account_id,
+          financial_category_id,
+          kind,
+          status,
+          amount_cents,
+          issue_date,
+          due_date,
+          settlement_date,
+          competence_date,
+          coalesce(source, 'manual'),
+          source_ref,
+          note,
+          created_by,
+          created_at,
+          updated_at,
+          coalesce(is_deleted, 0)
+        from financial_transaction;
+      `);
+      db.exec('drop table financial_transaction;');
+      db.exec('alter table financial_transaction_new rename to financial_transaction;');
+    } finally {
+      db.exec('pragma foreign_keys = on');
+    }
+  }
 
   db.exec(`
     drop index if exists idx_portal_user_username;
@@ -957,6 +1191,29 @@ export function initDb() {
     create index if not exists idx_internal_session_user on internal_session(internal_user_id);
     create index if not exists idx_internal_session_expires on internal_session(expires_at);
     create index if not exists idx_internal_audit_created on internal_audit_log(created_at desc);
+    create index if not exists idx_financial_account_org_active on financial_account(organization_id, is_active);
+    create index if not exists idx_financial_category_org_parent on financial_category(organization_id, parent_category_id);
+    create index if not exists idx_financial_transaction_org_status_due on financial_transaction(organization_id, status, due_date);
+    create index if not exists idx_financial_transaction_org_account on financial_transaction(organization_id, financial_account_id);
+    create index if not exists idx_financial_transaction_org_category on financial_transaction(organization_id, financial_category_id);
+    create index if not exists idx_financial_payable_org_status_due on financial_payable(organization_id, status, due_date);
+    create index if not exists idx_financial_payable_org_transaction on financial_payable(organization_id, financial_transaction_id);
+    create index if not exists idx_financial_receivable_org_status_due on financial_receivable(organization_id, status, due_date);
+    create index if not exists idx_financial_receivable_org_transaction on financial_receivable(organization_id, financial_transaction_id);
+    create index if not exists idx_financial_entity_org_kind on financial_entity(organization_id, kind, is_active);
+    create index if not exists idx_financial_import_job_org_status on financial_import_job(organization_id, status, created_at desc);
+    create index if not exists idx_financial_bank_statement_entry_org_account_date
+      on financial_bank_statement_entry(organization_id, financial_account_id, statement_date);
+    create index if not exists idx_financial_reconciliation_match_org_entry
+      on financial_reconciliation_match(organization_id, financial_bank_statement_entry_id, financial_transaction_id);
+    create index if not exists idx_financial_debt_org_status_due on financial_debt(organization_id, status, due_date);
+    create index if not exists idx_financial_debt_org_payable on financial_debt(organization_id, financial_payable_id);
+    create index if not exists idx_financial_debt_org_receivable on financial_debt(organization_id, financial_receivable_id);
+    create index if not exists idx_billing_plan_org_active on billing_plan(organization_id, is_active);
+    create index if not exists idx_billing_subscription_org_status on billing_subscription(organization_id, status, created_at desc);
+    create index if not exists idx_billing_subscription_org_plan on billing_subscription(organization_id, billing_plan_id);
+    create index if not exists idx_billing_invoice_org_status_due on billing_invoice(organization_id, status, due_date);
+    create index if not exists idx_billing_invoice_org_subscription on billing_invoice(organization_id, billing_subscription_id);
     create index if not exists idx_financial_account_company_active on financial_account(company_id, is_active);
     create index if not exists idx_financial_category_company_parent on financial_category(company_id, parent_category_id);
     create index if not exists idx_financial_transaction_company_status_due on financial_transaction(company_id, status, due_date);
@@ -1026,7 +1283,96 @@ export function initDb() {
     where organization_id is null
   `).run(DEFAULT_ORGANIZATION_ID);
 
+  db.prepare(`
+    update financial_account
+    set organization_id = coalesce(organization_id, ?)
+    where organization_id is null
+  `).run(DEFAULT_ORGANIZATION_ID);
+  db.prepare(`
+    update financial_category
+    set organization_id = coalesce(organization_id, ?)
+    where organization_id is null
+  `).run(DEFAULT_ORGANIZATION_ID);
+  db.prepare(`
+    update financial_transaction
+    set organization_id = coalesce(organization_id, ?)
+    where organization_id is null
+  `).run(DEFAULT_ORGANIZATION_ID);
+  db.prepare(`
+    update financial_payable
+    set organization_id = coalesce(organization_id, ?)
+    where organization_id is null
+  `).run(DEFAULT_ORGANIZATION_ID);
+  db.prepare(`
+    update financial_receivable
+    set organization_id = coalesce(organization_id, ?)
+    where organization_id is null
+  `).run(DEFAULT_ORGANIZATION_ID);
+  db.prepare(`
+    update financial_import_job
+    set organization_id = coalesce(organization_id, ?)
+    where organization_id is null
+  `).run(DEFAULT_ORGANIZATION_ID);
+  db.prepare(`
+    update financial_bank_statement_entry
+    set organization_id = coalesce(organization_id, ?)
+    where organization_id is null
+  `).run(DEFAULT_ORGANIZATION_ID);
+  db.prepare(`
+    update financial_reconciliation_match
+    set organization_id = coalesce(organization_id, ?)
+    where organization_id is null
+  `).run(DEFAULT_ORGANIZATION_ID);
+  db.prepare(`
+    update financial_debt
+    set organization_id = coalesce(organization_id, ?)
+    where organization_id is null
+  `).run(DEFAULT_ORGANIZATION_ID);
+  db.prepare(`
+    update billing_plan
+    set organization_id = coalesce(organization_id, ?)
+    where organization_id is null
+  `).run(DEFAULT_ORGANIZATION_ID);
+  db.prepare(`
+    update billing_subscription
+    set organization_id = coalesce(organization_id, ?)
+    where organization_id is null
+  `).run(DEFAULT_ORGANIZATION_ID);
+  db.prepare(`
+    update billing_invoice
+    set organization_id = coalesce(organization_id, ?)
+    where organization_id is null
+  `).run(DEFAULT_ORGANIZATION_ID);
+
   db.exec(`
+    create trigger if not exists financial_transaction_financial_entity_consistency_insert
+    before insert on financial_transaction
+    for each row
+    when new.financial_entity_id is not null
+      and not exists (
+        select 1
+        from financial_entity fe
+        where fe.organization_id = new.organization_id
+          and fe.id = new.financial_entity_id
+      )
+    begin
+      select raise(abort, 'financial_transaction financial_entity mismatch');
+    end;
+
+    create trigger if not exists financial_transaction_financial_entity_consistency_update
+    before update of organization_id, financial_entity_id on financial_transaction
+    for each row
+    when new.financial_entity_id is not null
+      and not exists (
+        select 1
+        from financial_entity fe
+        where fe.organization_id = new.organization_id
+          and fe.id = new.financial_entity_id
+      )
+    begin
+      select raise(abort, 'financial_transaction financial_entity mismatch');
+    end;
+
     create trigger if not exists portal_session_tenant_consistency_insert
     before insert on portal_session
     for each row

@@ -65,6 +65,114 @@ function seedFinanceCompanies() {
   );
 }
 
+function seedFinanceEntity() {
+  db.prepare(`
+    insert into financial_entity (
+      id,
+      organization_id,
+      legal_name,
+      trade_name,
+      document_number,
+      kind,
+      email,
+      phone,
+      is_active,
+      created_at,
+      updated_at
+    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    'entity-holand-supplier',
+    'org-holand',
+    'Fornecedor Holand',
+    'Fornecedor Holand LTDA',
+    '12.345.678/0001-90',
+    'supplier',
+    'financeiro@fornecedorholand.com',
+    '+55 11 99999-0000',
+    1,
+    '2026-04-21T12:00:00.000Z',
+    '2026-04-21T12:00:00.000Z'
+  );
+}
+
+function seedFinanceEntityPartner() {
+  db.prepare(`
+    insert into financial_entity (
+      id,
+      organization_id,
+      legal_name,
+      trade_name,
+      document_number,
+      kind,
+      email,
+      phone,
+      is_active,
+      created_at,
+      updated_at
+    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    'entity-holand-client',
+    'org-holand',
+    'Cliente Holand',
+    'Cliente Holand SA',
+    '98.765.432/0001-10',
+    'customer',
+    'financeiro@clienteholand.com',
+    '+55 11 98888-0000',
+    1,
+    '2026-04-21T12:00:00.000Z',
+    '2026-04-21T12:00:00.000Z'
+  );
+}
+
+function seedFinanceAccountAndCategory() {
+  db.prepare(`
+    insert into financial_account (
+      id,
+      organization_id,
+      company_id,
+      name,
+      kind,
+      currency,
+      is_active,
+      created_at,
+      updated_at
+    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    'financial-account-holand',
+    'org-holand',
+    'company-a',
+    'Conta Holand',
+    'bank',
+    'BRL',
+    1,
+    '2026-04-21T12:00:00.000Z',
+    '2026-04-21T12:00:00.000Z'
+  );
+
+  db.prepare(`
+    insert into financial_category (
+      id,
+      organization_id,
+      company_id,
+      name,
+      kind,
+      is_active,
+      created_at,
+      updated_at
+    ) values (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    'financial-category-holand',
+    'org-holand',
+    'company-a',
+    'Despesas Operacionais',
+    'expense',
+    1,
+    '2026-04-21T12:00:00.000Z',
+    '2026-04-21T12:00:00.000Z'
+  );
+}
+
 test('initDb cria organization foundation e vincula auth interna ao org default', async () => {
   const dbPath = assignTestDbPath('finance-organization-foundation');
   cleanupDbFiles(dbPath);
@@ -195,13 +303,28 @@ test('initDb cria schema financeiro v1', () => {
       'coluna is_deleted ausente em financial_transaction'
     );
 
+    const financialEntityTrigger = db.prepare(`
+      select name
+      from sqlite_master
+      where type = 'trigger'
+        and name = ?
+    `).get('financial_transaction_financial_entity_consistency_insert') as { name: string } | undefined;
+    assert.ok(financialEntityTrigger, 'trigger de integridade para financial_entity_id ausente');
+
     assertCompositeForeignKey('financial_transaction', 'financial_account', [
-      { from: 'company_id', to: 'company_id' },
+      { from: 'organization_id', to: 'organization_id' },
       { from: 'financial_account_id', to: 'id' }
     ]);
+    assertCompositeForeignKey('financial_transaction', 'company', [
+      { from: 'company_id', to: 'id' }
+    ]);
     assertCompositeForeignKey('financial_transaction', 'financial_category', [
-      { from: 'company_id', to: 'company_id' },
+      { from: 'organization_id', to: 'organization_id' },
       { from: 'financial_category_id', to: 'id' }
+    ]);
+    assertCompositeForeignKey('financial_transaction', 'financial_entity', [
+      { from: 'organization_id', to: 'organization_id' },
+      { from: 'financial_entity_id', to: 'id' }
     ]);
     assertCompositeForeignKey('financial_payable', 'financial_transaction', [
       { from: 'company_id', to: 'company_id' },
@@ -219,8 +342,12 @@ test('initDb cria schema financeiro v1', () => {
       { from: 'company_id', to: 'company_id' },
       { from: 'financial_bank_statement_entry_id', to: 'id' }
     ]);
+    assertCompositeForeignKey('financial_reconciliation_match', 'financial_transaction', [
+      { from: 'organization_id', to: 'organization_id' },
+      { from: 'financial_transaction_id', to: 'id' }
+    ]);
     assertCompositeForeignKey('financial_debt', 'financial_transaction', [
-      { from: 'company_id', to: 'company_id' },
+      { from: 'organization_id', to: 'organization_id' },
       { from: 'financial_transaction_id', to: 'id' }
     ]);
     assertCompositeForeignKey('billing_subscription', 'billing_plan', [
@@ -245,13 +372,25 @@ test('initDb bloqueia referencias financeiras entre empresas diferentes', () => 
   try {
     initDb();
     seedFinanceCompanies();
+    db.prepare(`
+      insert into organization (id, name, slug, is_active, created_at, updated_at)
+      values (?, ?, ?, ?, ?, ?)
+    `).run(
+      'org-other',
+      'Other Org',
+      'other-org',
+      1,
+      '2026-04-21T12:00:00.000Z',
+      '2026-04-21T12:00:00.000Z'
+    );
 
     db.prepare(`
       insert into financial_account (
-        id, company_id, name, kind, currency, is_active, created_at, updated_at
-      ) values (?, ?, ?, ?, ?, ?, ?, ?)
+        id, organization_id, company_id, name, kind, currency, is_active, created_at, updated_at
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       'financial-account-b',
+      'org-other',
       'company-b',
       'Banco B',
       'bank',
@@ -265,12 +404,13 @@ test('initDb bloqueia referencias financeiras entre empresas diferentes', () => 
       () => {
         db.prepare(`
           insert into financial_transaction (
-            id, company_id, financial_account_id, financial_category_id, kind, status, amount_cents,
+            id, organization_id, company_id, financial_account_id, financial_category_id, kind, status, amount_cents,
             source, created_at, updated_at
-          ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           'financial-transaction-a',
-          'company-a',
+          'org-holand',
+          null,
           'financial-account-b',
           null,
           'expense',
@@ -282,9 +422,261 @@ test('initDb bloqueia referencias financeiras entre empresas diferentes', () => 
         );
       },
       (error) => error instanceof Error && 'code' in error && String((error as { code?: string }).code).startsWith('SQLITE_CONSTRAINT'),
-      'expected a SQLITE_CONSTRAINT when company A references company B financial_account'
+      'expected a SQLITE_CONSTRAINT when an organization references a financial_account from another organization'
     );
   } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('initDb migra financial_transaction legado para company_id nullable', () => {
+  const dbPath = assignTestDbPath('finance-transaction-migration');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+
+  try {
+    initDb();
+    seedFinanceCompanies();
+    db.prepare(`
+      insert into financial_entity (
+        id,
+        organization_id,
+        legal_name,
+        trade_name,
+        document_number,
+        kind,
+        email,
+        phone,
+        is_active,
+        created_at,
+        updated_at
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'entity-migration-supplier',
+      'org-holand',
+      'Fornecedor Migração',
+      'Fornecedor Migração LTDA',
+      '11.222.333/0001-44',
+      'supplier',
+      'financeiro@migracao.com',
+      '+55 11 97777-0000',
+      1,
+      '2026-04-21T12:00:00.000Z',
+      '2026-04-21T12:00:00.000Z'
+    );
+    db.prepare(`
+      insert into financial_account (
+        id,
+        organization_id,
+        company_id,
+        name,
+        kind,
+        currency,
+        is_active,
+        created_at,
+        updated_at
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'financial-account-migration',
+      'org-holand',
+      'company-a',
+      'Conta Migração',
+      'bank',
+      'BRL',
+      1,
+      '2026-04-21T12:00:00.000Z',
+      '2026-04-21T12:00:00.000Z'
+    );
+    db.prepare(`
+      insert into financial_category (
+        id,
+        organization_id,
+        company_id,
+        name,
+        kind,
+        is_active,
+        created_at,
+        updated_at
+      ) values (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'financial-category-migration',
+      'org-holand',
+      'company-a',
+      'Categoria Migração',
+      'expense',
+      1,
+      '2026-04-21T12:00:00.000Z',
+      '2026-04-21T12:00:00.000Z'
+    );
+
+    db.exec('pragma foreign_keys = off');
+    db.exec('drop table financial_transaction');
+    db.exec(`
+      create table financial_transaction (
+        id text primary key,
+        organization_id text,
+        company_id text not null,
+        financial_account_id text,
+        financial_category_id text,
+        kind text not null,
+        status text not null,
+        amount_cents integer not null,
+        issue_date text,
+        due_date text,
+        settlement_date text,
+        competence_date text,
+        source text not null default 'manual',
+        source_ref text,
+        note text,
+        created_by text,
+        created_at text not null,
+        updated_at text not null,
+        is_deleted integer not null default 0,
+        unique(company_id, id),
+        foreign key(company_id) references company(id) on delete cascade,
+        foreign key(company_id, financial_account_id) references financial_account(company_id, id) on delete restrict,
+        foreign key(company_id, financial_category_id) references financial_category(company_id, id) on delete restrict
+      );
+    `);
+    db.exec(`
+      insert into financial_transaction (
+        id,
+        organization_id,
+        company_id,
+        financial_account_id,
+        financial_category_id,
+        kind,
+        status,
+        amount_cents,
+        issue_date,
+        due_date,
+        settlement_date,
+        competence_date,
+        source,
+        source_ref,
+        note,
+        created_by,
+        created_at,
+        updated_at,
+        is_deleted
+      ) values (
+        'ftxn-legacy',
+        'org-holand',
+        'company-a',
+        'financial-account-migration',
+        'financial-category-migration',
+        'expense',
+        'open',
+        7800,
+        null,
+        '2026-05-10',
+        null,
+        '2026-05-01',
+        'manual',
+        null,
+        'Legado',
+        'legacy.user',
+        '2026-04-21T12:00:00.000Z',
+        '2026-04-21T12:00:00.000Z',
+        0
+      );
+    `);
+    db.exec('pragma foreign_keys = on');
+
+    initDb();
+
+    const transactionColumns = db.prepare('pragma table_info(financial_transaction)').all() as Array<{
+      name: string;
+      notnull: number;
+    }>;
+    assert.equal(
+      transactionColumns.find((column) => column.name === 'company_id')?.notnull,
+      0
+    );
+    assert.equal(
+      transactionColumns.find((column) => column.name === 'organization_id')?.notnull,
+      1
+    );
+
+    const migratedLegacy = db.prepare(`
+      select company_id, organization_id, financial_account_id, financial_category_id, coalesce(is_deleted, 0) as is_deleted
+      from financial_transaction
+      where id = ?
+    `).get('ftxn-legacy') as {
+      company_id: string | null;
+      organization_id: string | null;
+      financial_account_id: string | null;
+      financial_category_id: string | null;
+      is_deleted: number;
+    } | undefined;
+
+    assert.deepEqual(migratedLegacy, {
+      company_id: 'company-a',
+      organization_id: 'org-holand',
+      financial_account_id: 'financial-account-migration',
+      financial_category_id: 'financial-category-migration',
+      is_deleted: 0
+    });
+
+    db.prepare(`
+      insert into financial_transaction (
+        id,
+        organization_id,
+        company_id,
+        financial_entity_id,
+        financial_account_id,
+        financial_category_id,
+        kind,
+        status,
+        amount_cents,
+        issue_date,
+        due_date,
+        settlement_date,
+        competence_date,
+        source,
+        source_ref,
+        note,
+        created_by,
+        created_at,
+        updated_at,
+        is_deleted
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'ftxn-org-first',
+      'org-holand',
+      null,
+      'entity-migration-supplier',
+      'financial-account-migration',
+      'financial-category-migration',
+      'expense',
+      'open',
+      9900,
+      null,
+      '2026-05-12',
+      null,
+      '2026-05-01',
+      'manual',
+      null,
+      'Org-first',
+      'finance.migration',
+      '2026-04-21T12:00:00.000Z',
+      '2026-04-21T12:00:00.000Z',
+      0
+    );
+
+    const orgFirst = db.prepare(`
+      select company_id, financial_entity_id
+      from financial_transaction
+      where id = ?
+    `).get('ftxn-org-first') as { company_id: string | null; financial_entity_id: string | null } | undefined;
+
+    assert.deepEqual(orgFirst, {
+      company_id: null,
+      financial_entity_id: 'entity-migration-supplier'
+    });
+  } finally {
+    db.exec('pragma foreign_keys = on');
     db.close();
     cleanupDbFiles(dbPath);
   }
@@ -327,6 +719,48 @@ test('GET /finance/overview bloqueia usuário sem finance.read', async () => {
   }
 });
 
+test('GET /finance/context returns only tenant organization context without company selector', async () => {
+  const dbPath = assignTestDbPath('finance-context-route');
+  cleanupDbFiles(dbPath);
+
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+  try {
+    createInternalUser({
+      username: 'finance.context',
+      display_name: 'Finance Context',
+      password: 'Senha#123',
+      role: 'custom',
+      permissions: ['finance.read']
+    });
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.context', password: 'Senha#123' });
+
+    assert.equal(loginRes.status, 200);
+    const token = loginRes.body.token as string;
+
+    const contextRes = await request(app)
+      .get('/finance/context')
+      .set('Authorization', `Bearer ${token}`);
+
+    assert.equal(contextRes.status, 200);
+    assert.deepEqual(contextRes.body, {
+      organization_id: 'org-holand',
+      organization_name: 'Holand',
+      currency: 'BRL',
+      timezone: 'America/Sao_Paulo'
+    });
+    assert.ok(!('company_id' in contextRes.body));
+    assert.ok(!('company_name' in contextRes.body));
+    assert.ok(!('counterparty_company_id' in contextRes.body));
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
 test('POST /finance/transactions cria lançamento manual e persiste', async () => {
   const dbPath = assignTestDbPath('finance-transactions-create');
   cleanupDbFiles(dbPath);
@@ -335,6 +769,9 @@ test('POST /finance/transactions cria lançamento manual e persiste', async () =
 
   try {
     seedFinanceCompanies();
+    seedFinanceEntity();
+    seedFinanceEntityPartner();
+    seedFinanceAccountAndCategory();
     createInternalUser({
       username: 'finance.writer',
       display_name: 'Finance Writer',
@@ -354,7 +791,9 @@ test('POST /finance/transactions cria lançamento manual e persiste', async () =
       .post('/finance/transactions')
       .set('Authorization', `Bearer ${token}`)
       .send({
-        company_id: 'company-a',
+        financial_entity_id: 'entity-holand-supplier',
+        financial_account_id: 'financial-account-holand',
+        financial_category_id: 'financial-category-holand',
         kind: 'expense',
         amount_cents: 12500,
         due_date: '2026-05-10',
@@ -363,7 +802,13 @@ test('POST /finance/transactions cria lançamento manual e persiste', async () =
       });
 
     assert.equal(createRes.status, 201);
-    assert.equal(createRes.body.company_id, 'company-a');
+    assert.equal(createRes.body.organization_id, 'org-holand');
+    assert.equal(createRes.body.company_id, null);
+    assert.equal(createRes.body.financial_entity_id, 'entity-holand-supplier');
+    assert.equal(createRes.body.financial_account_id, 'financial-account-holand');
+    assert.equal(createRes.body.financial_category_id, 'financial-category-holand');
+    assert.equal(createRes.body.financial_account_name, 'Conta Holand');
+    assert.equal(createRes.body.financial_category_name, 'Despesas Operacionais');
     assert.equal(createRes.body.kind, 'expense');
     assert.equal(createRes.body.amount_cents, 12500);
     assert.equal(createRes.body.source, 'manual');
@@ -373,12 +818,15 @@ test('POST /finance/transactions cria lançamento manual e persiste', async () =
     assert.equal(createRes.body.views.competence_amount_cents, -12500);
 
     const persisted = db.prepare(`
-      select company_id, kind, amount_cents, due_date, competence_date, source, note, created_by, coalesce(is_deleted, 0) as is_deleted
+      select company_id, financial_entity_id, financial_account_id, financial_category_id, kind, amount_cents, due_date, competence_date, source, note, created_by, coalesce(is_deleted, 0) as is_deleted
       from financial_transaction
       where id = ?
     `).get(createRes.body.id) as
       | {
-          company_id: string;
+          company_id: string | null;
+          financial_entity_id: string | null;
+          financial_account_id: string | null;
+          financial_category_id: string | null;
           kind: string;
           amount_cents: number;
           due_date: string | null;
@@ -391,7 +839,10 @@ test('POST /finance/transactions cria lançamento manual e persiste', async () =
       | undefined;
 
     assert.deepEqual(persisted, {
-      company_id: 'company-a',
+      company_id: null,
+      financial_entity_id: 'entity-holand-supplier',
+      financial_account_id: 'financial-account-holand',
+      financial_category_id: 'financial-category-holand',
       kind: 'expense',
       amount_cents: 12500,
       due_date: '2026-05-10',
@@ -401,6 +852,35 @@ test('POST /finance/transactions cria lançamento manual e persiste', async () =
       created_by: 'finance.writer',
       is_deleted: 0
     });
+
+    const patchRes = await request(app)
+      .patch(`/finance/transactions/${createRes.body.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        financial_entity_id: 'entity-holand-client'
+      });
+
+    assert.equal(patchRes.status, 200);
+    assert.equal(patchRes.body.financial_entity_id, 'entity-holand-client');
+    assert.equal(patchRes.body.company_id, null);
+
+    const clearedRes = await request(app)
+      .patch(`/finance/transactions/${createRes.body.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        financial_entity_id: null
+      });
+
+    assert.equal(clearedRes.status, 200);
+    assert.equal(clearedRes.body.financial_entity_id, null);
+
+    const persistedAfterPatch = db.prepare(`
+      select financial_entity_id
+      from financial_transaction
+      where id = ?
+    `).get(createRes.body.id) as { financial_entity_id: string | null } | undefined;
+
+    assert.equal(persistedAfterPatch?.financial_entity_id, null);
   } finally {
     db.close();
     cleanupDbFiles(dbPath);
@@ -583,7 +1063,6 @@ test('POST/GET de debts funciona com vínculos opcionais e isolamento de tenant'
       .post('/finance/transactions')
       .set('Authorization', `Bearer ${token}`)
       .send({
-        company_id: 'company-a',
         kind: 'expense',
         amount_cents: 150000,
         due_date: '2026-09-10',
@@ -692,7 +1171,6 @@ test('import jobs + extrato + conciliação inicial funcionam com rastreabilidad
       .post('/finance/transactions')
       .set('Authorization', `Bearer ${token}`)
       .send({
-        company_id: 'company-a',
         kind: 'expense',
         amount_cents: 12000,
         due_date: '2026-08-05',
@@ -764,7 +1242,6 @@ test('DELETE /finance/transactions/:id faz soft-delete auditável', async () => 
       .post('/finance/transactions')
       .set('Authorization', `Bearer ${token}`)
       .send({
-        company_id: 'company-a',
         kind: 'income',
         amount_cents: 42000,
         due_date: '2026-06-15',
@@ -843,7 +1320,6 @@ test('POST /finance/transactions rejeita status settled sem settlement_date', as
       .post('/finance/transactions')
       .set('Authorization', `Bearer ${token}`)
       .send({
-        company_id: 'company-a',
         kind: 'income',
         status: 'settled',
         amount_cents: 10000,
@@ -883,7 +1359,6 @@ test('PATCH e DELETE bloqueiam transação já soft-deletada', async () => {
       .post('/finance/transactions')
       .set('Authorization', `Bearer ${token}`)
       .send({
-        company_id: 'company-a',
         kind: 'expense',
         amount_cents: 5000,
         note: 'Transação para teste de bloqueio'
