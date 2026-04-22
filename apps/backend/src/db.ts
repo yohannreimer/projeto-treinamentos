@@ -358,6 +358,30 @@ export function initDb() {
       foreign key(organization_id) references organization(id) on delete cascade
     );
 
+    create table if not exists financial_cost_center (
+      id text primary key,
+      organization_id text not null,
+      name text not null,
+      code text,
+      is_active integer not null default 1,
+      created_at text not null,
+      updated_at text not null,
+      unique(organization_id, id),
+      foreign key(organization_id) references organization(id) on delete cascade
+    );
+
+    create table if not exists financial_payment_method (
+      id text primary key,
+      organization_id text not null,
+      name text not null,
+      kind text not null check(kind in ('cash', 'pix', 'boleto', 'card', 'transfer', 'other')),
+      is_active integer not null default 1,
+      created_at text not null,
+      updated_at text not null,
+      unique(organization_id, id),
+      foreign key(organization_id) references organization(id) on delete cascade
+    );
+
     create table if not exists financial_payable (
       id text primary key,
       organization_id text not null,
@@ -1201,6 +1225,8 @@ export function initDb() {
     create index if not exists idx_financial_receivable_org_status_due on financial_receivable(organization_id, status, due_date);
     create index if not exists idx_financial_receivable_org_transaction on financial_receivable(organization_id, financial_transaction_id);
     create index if not exists idx_financial_entity_org_kind on financial_entity(organization_id, kind, is_active);
+    create index if not exists idx_financial_cost_center_org_active on financial_cost_center(organization_id, is_active);
+    create index if not exists idx_financial_payment_method_org_kind on financial_payment_method(organization_id, kind, is_active);
     create index if not exists idx_financial_import_job_org_status on financial_import_job(organization_id, status, created_at desc);
     create index if not exists idx_financial_bank_statement_entry_org_account_date
       on financial_bank_statement_entry(organization_id, financial_account_id, statement_date);

@@ -216,6 +216,61 @@ export type FinanceContext = {
   timezone: string;
 };
 
+export type FinanceEntityKind = 'customer' | 'supplier' | 'both';
+
+export type FinanceEntity = {
+  id: string;
+  organization_id: string;
+  legal_name: string;
+  trade_name: string | null;
+  document_number: string | null;
+  kind: FinanceEntityKind;
+  email: string | null;
+  phone: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CreateFinanceEntityPayload = {
+  legal_name: string;
+  trade_name?: string | null;
+  document_number?: string | null;
+  kind: FinanceEntityKind;
+  email?: string | null;
+  phone?: string | null;
+  is_active?: boolean;
+};
+
+export type FinanceCostCenter = {
+  id: string;
+  organization_id: string;
+  name: string;
+  code: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type FinancePaymentMethodKind = 'cash' | 'pix' | 'boleto' | 'card' | 'transfer' | 'other';
+
+export type FinancePaymentMethod = {
+  id: string;
+  organization_id: string;
+  name: string;
+  kind: FinancePaymentMethodKind;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type FinanceCatalogSnapshot = {
+  accounts: FinanceAccount[];
+  categories: FinanceCategory[];
+  cost_centers: FinanceCostCenter[];
+  payment_methods: FinancePaymentMethod[];
+};
+
 export type FinanceExecutiveKpiTone = 'neutral' | 'positive' | 'warning' | 'critical';
 
 export type FinanceExecutiveKpi = {
@@ -444,6 +499,33 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 export const financeApi = {
   getContext: () =>
     req<FinanceContext>('/finance/context'),
+  listEntities: () =>
+    req<FinanceEntity[]>('/finance/entities'),
+  createEntity: (payload: CreateFinanceEntityPayload) =>
+    req<FinanceEntity>('/finance/entities', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  getCatalogSnapshot: () =>
+    req<FinanceCatalogSnapshot>('/finance/catalog'),
+  listCatalogAccounts: () =>
+    req<FinanceAccount[]>('/finance/catalog/accounts'),
+  listCatalogCategories: () =>
+    req<FinanceCategory[]>('/finance/catalog/categories'),
+  listCostCenters: () =>
+    req<FinanceCostCenter[]>('/finance/catalog/cost-centers'),
+  createCostCenter: (payload: { name: string; code?: string | null; is_active?: boolean }) =>
+    req<FinanceCostCenter>('/finance/catalog/cost-centers', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  listPaymentMethods: () =>
+    req<FinancePaymentMethod[]>('/finance/catalog/payment-methods'),
+  createPaymentMethod: (payload: { name: string; kind: FinancePaymentMethodKind; is_active?: boolean }) =>
+    req<FinancePaymentMethod>('/finance/catalog/payment-methods', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
   getExecutiveOverview: () =>
     req<FinanceExecutiveOverview>('/finance/overview/executive'),
   getOverview: (companyId?: string | null) =>

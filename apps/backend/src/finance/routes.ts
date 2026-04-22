@@ -31,9 +31,21 @@ import {
   updateFinanceTransaction
 } from './service.js';
 import { getFinanceExecutiveOverview } from './context.js';
+import { createFinanceEntity, listFinanceEntities } from './entities.js';
 import {
+  createFinanceCostCenter,
+  createFinancePaymentMethod,
+  getFinanceCatalogSnapshot,
+  listFinanceCatalogAccounts,
+  listFinanceCatalogCategories,
+  listFinanceCostCenters,
+  listFinancePaymentMethods
+} from './catalog.js';
+import {
+  type FinanceEntityKind,
   type FinanceAccountKind,
   type FinanceCategoryKind,
+  type FinancePaymentMethodKind,
   FINANCE_TRANSACTION_KIND_VALUES,
   FINANCE_TRANSACTION_STATUS_VALUES
 } from './types.js';
@@ -41,11 +53,35 @@ import {
 const isoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const financeAccountKindValues = ['bank', 'cash', 'wallet', 'other'] as const satisfies readonly FinanceAccountKind[];
 const financeCategoryKindValues = ['income', 'expense', 'neutral'] as const satisfies readonly FinanceCategoryKind[];
+const financeEntityKindValues = ['customer', 'supplier', 'both'] as const satisfies readonly FinanceEntityKind[];
+const financePaymentMethodKindValues = ['cash', 'pix', 'boleto', 'card', 'transfer', 'other'] as const satisfies readonly FinancePaymentMethodKind[];
 const payableStatusValues = ['planned', 'open', 'partial', 'paid', 'overdue', 'canceled'] as const;
 const receivableStatusValues = ['planned', 'open', 'partial', 'received', 'overdue', 'canceled'] as const;
 const importJobStatusValues = ['queued', 'processing', 'completed', 'failed'] as const;
 const reconciliationStatusValues = ['unmatched', 'matched', 'ignored'] as const;
 const debtStatusValues = ['open', 'partial', 'settled', 'canceled'] as const;
+
+const entityCreateSchema = z.object({
+  legal_name: z.string().trim().min(2).max(160),
+  trade_name: z.string().trim().max(160).nullable().optional(),
+  document_number: z.string().trim().max(32).nullable().optional(),
+  kind: z.enum(financeEntityKindValues),
+  email: z.string().trim().email().nullable().optional(),
+  phone: z.string().trim().max(32).nullable().optional(),
+  is_active: z.boolean().optional()
+});
+
+const costCenterCreateSchema = z.object({
+  name: z.string().trim().min(2).max(120),
+  code: z.string().trim().max(40).nullable().optional(),
+  is_active: z.boolean().optional()
+});
+
+const paymentMethodCreateSchema = z.object({
+  name: z.string().trim().min(2).max(120),
+  kind: z.enum(financePaymentMethodKindValues),
+  is_active: z.boolean().optional()
+});
 
 const accountCreateSchema = z.object({
   company_id: z.string().trim().min(1).nullable().optional(),
@@ -275,6 +311,106 @@ export function registerFinanceRoutes(app: Express) {
   router.get('/context', requireFinancePermission(['finance.read']), (_req, res) => {
     try {
       return res.json(getFinanceContext(readFinanceOrganizationId(res)));
+    } catch (error) {
+      return respondFinanceError(res, error);
+    }
+  });
+
+  router.get('/entities', requireFinancePermission(['finance.read']), (req, res) => {
+    try {
+      const kind = typeof req.query.kind === 'string' ? req.query.kind : null;
+      if (kind && !financeEntityKindValues.includes(kind as FinanceEntityKind)) {
+        return res.status(400).json({ message: 'kind inválido.' });
+      }
+      return res.json(listFinanceEntities(readFinanceOrganizationId(res), kind as FinanceEntityKind | null));
+    } catch (error) {
+      return respondFinanceError(res, error);
+    }
+  });
+
+  router.post('/entities', requireFinancePermission(['finance.write']), (req, res) => {
+    const parsed = entityCreateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+
+    try {
+      return res.status(201).json(createFinanceEntity({
+        ...parsed.data,
+        organization_id: readFinanceOrganizationId(res)
+      }));
+    } catch (error) {
+      return respondFinanceError(res, error);
+    }
+  });
+
+  router.get('/catalog', requireFinancePermission(['finance.read']), (_req, res) => {
+    try {
+      return res.json(getFinanceCatalogSnapshot(readFinanceOrganizationId(res)));
+    } catch (error) {
+      return respondFinanceError(res, error);
+    }
+  });
+
+  router.get('/catalog/accounts', requireFinancePermission(['finance.read']), (_req, res) => {
+    try {
+      return res.json(listFinanceCatalogAccounts(readFinanceOrganizationId(res)));
+    } catch (error) {
+      return respondFinanceError(res, error);
+    }
+  });
+
+  router.get('/catalog/categories', requireFinancePermission(['finance.read']), (_req, res) => {
+    try {
+      return res.json(listFinanceCatalogCategories(readFinanceOrganizationId(res)));
+    } catch (error) {
+      return respondFinanceError(res, error);
+    }
+  });
+
+  router.get('/catalog/cost-centers', requireFinancePermission(['finance.read']), (_req, res) => {
+    try {
+      return res.json(listFinanceCostCenters(readFinanceOrganizationId(res)));
+    } catch (error) {
+      return respondFinanceError(res, error);
+    }
+  });
+
+  router.post('/catalog/cost-centers', requireFinancePermission(['finance.write']), (req, res) => {
+    const parsed = costCenterCreateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+
+    try {
+      return res.status(201).json(createFinanceCostCenter({
+        ...parsed.data,
+        organization_id: readFinanceOrganizationId(res)
+      }));
+    } catch (error) {
+      return respondFinanceError(res, error);
+    }
+  });
+
+  router.get('/catalog/payment-methods', requireFinancePermission(['finance.read']), (_req, res) => {
+    try {
+      return res.json(listFinancePaymentMethods(readFinanceOrganizationId(res)));
+    } catch (error) {
+      return respondFinanceError(res, error);
+    }
+  });
+
+  router.post('/catalog/payment-methods', requireFinancePermission(['finance.write']), (req, res) => {
+    const parsed = paymentMethodCreateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+
+    try {
+      return res.status(201).json(createFinancePaymentMethod({
+        ...parsed.data,
+        organization_id: readFinanceOrganizationId(res)
+      }));
     } catch (error) {
       return respondFinanceError(res, error);
     }

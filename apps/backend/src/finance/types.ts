@@ -114,6 +114,76 @@ export type FinanceContextDto = {
   timezone: string;
 };
 
+export type FinanceEntityKind = 'customer' | 'supplier' | 'both';
+
+export type FinanceEntityDto = {
+  id: string;
+  organization_id: string;
+  legal_name: string;
+  trade_name: string | null;
+  document_number: string | null;
+  kind: FinanceEntityKind;
+  email: string | null;
+  phone: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CreateFinanceEntityInput = {
+  organization_id: string;
+  legal_name: string;
+  trade_name?: string | null;
+  document_number?: string | null;
+  kind: FinanceEntityKind;
+  email?: string | null;
+  phone?: string | null;
+  is_active?: boolean;
+};
+
+export type FinanceCostCenterDto = {
+  id: string;
+  organization_id: string;
+  name: string;
+  code: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CreateFinanceCostCenterInput = {
+  organization_id: string;
+  name: string;
+  code?: string | null;
+  is_active?: boolean;
+};
+
+export type FinancePaymentMethodKind = 'cash' | 'pix' | 'boleto' | 'card' | 'transfer' | 'other';
+
+export type FinancePaymentMethodDto = {
+  id: string;
+  organization_id: string;
+  name: string;
+  kind: FinancePaymentMethodKind;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CreateFinancePaymentMethodInput = {
+  organization_id: string;
+  name: string;
+  kind: FinancePaymentMethodKind;
+  is_active?: boolean;
+};
+
+export type FinanceCatalogSnapshotDto = {
+  accounts: FinanceAccountDto[];
+  categories: FinanceCategoryDto[];
+  cost_centers: FinanceCostCenterDto[];
+  payment_methods: FinancePaymentMethodDto[];
+};
+
 export type FinanceExecutiveKpiTone = 'neutral' | 'positive' | 'warning' | 'critical';
 
 export type FinanceExecutiveKpiDto = {
@@ -177,22 +247,6 @@ export type FinanceExecutiveOverviewDto = {
     monthly_income_cents: number;
     monthly_expense_cents: number;
   };
-};
-
-export type FinanceEntityKind = 'customer' | 'supplier' | 'both';
-
-export type FinanceEntityDto = {
-  id: string;
-  organization_id: string;
-  legal_name: string;
-  trade_name: string | null;
-  document_number: string | null;
-  kind: FinanceEntityKind;
-  email: string | null;
-  phone: string | null;
-  is_active: boolean;
-  created_at: string;
-  updated_at: string;
 };
 
 export type FinanceAccountKind = 'bank' | 'cash' | 'wallet' | 'other';
