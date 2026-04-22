@@ -18,9 +18,11 @@ import { AdminPage } from './pages/AdminPage';
 import { InternalDocsPage } from './pages/InternalDocsPage';
 import { FinanceWorkspace } from './finance/FinanceWorkspace';
 import { FinanceOverviewPage } from './finance/pages/FinanceOverviewPage';
+import { FinanceCashflowPage } from './finance/pages/FinanceCashflowPage';
+import { FinanceCadastrosPage } from './finance/pages/FinanceCadastrosPage';
 import { FinanceReceivablesPage } from './finance/pages/FinanceReceivablesPage';
 import { FinancePayablesPage } from './finance/pages/FinancePayablesPage';
-import { FinanceDebtsPage } from './finance/pages/FinanceDebtsPage';
+import { FinanceReportsPage } from './finance/pages/FinanceReportsPage';
 import { FinanceReconciliationPage } from './finance/pages/FinanceReconciliationPage';
 import { FinanceTransactionsPage } from './finance/pages/FinanceTransactionsPage';
 import { api } from './services/api';
@@ -265,8 +267,10 @@ function InternalApp() {
           <Route path="transactions" element={<FinanceTransactionsPage />} />
           <Route path="receivables" element={<FinanceReceivablesPage />} />
           <Route path="payables" element={<FinancePayablesPage />} />
-          <Route path="debts" element={<FinanceDebtsPage />} />
           <Route path="reconciliation" element={<FinanceReconciliationPage />} />
+          <Route path="cashflow" element={<FinanceCashflowPage />} />
+          <Route path="reports" element={<FinanceReportsPage />} />
+          <Route path="cadastros" element={<FinanceCadastrosPage />} />
           <Route path="*" element={<Navigate to="overview" replace />} />
         </Route>
         <Route

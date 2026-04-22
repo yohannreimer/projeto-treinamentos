@@ -315,6 +315,226 @@ h1, h2, h3, h4, h5, h6,
   animation: fade-up 220ms ease;
 }
 
+.finance-shell {
+  display: grid;
+  grid-template-columns: minmax(240px, 290px) minmax(0, 1fr) !important;
+  gap: 18px !important;
+  align-items: start;
+}
+
+.finance-workspace__main {
+  min-width: 0;
+  display: grid;
+  gap: 16px;
+}
+
+.finance-sidebar {
+  position: sticky;
+  top: 16px;
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border-radius: 20px;
+}
+
+.finance-sidebar__intro,
+.finance-sidebar__context {
+  display: grid;
+  gap: 6px;
+}
+
+.finance-sidebar__eyebrow,
+.finance-sidebar__label {
+  color: var(--ink-soft);
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.finance-sidebar__title {
+  font-size: 1rem;
+  color: var(--ink);
+}
+
+.finance-sidebar__copy {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.finance-sidebar__context {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.finance-sidebar__context strong {
+  font-size: 0.94rem;
+}
+
+.finance-sidebar__context span,
+.finance-sidebar__context small {
+  color: var(--ink-soft);
+  font-size: 0.82rem;
+}
+
+.finance-sidebar__error {
+  color: var(--warn) !important;
+}
+
+.finance-sidebar__nav {
+  display: grid;
+  gap: 4px;
+}
+
+.finance-sidebar__footer {
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.finance-sidebar__footer-note {
+  display: block;
+  color: var(--ink-soft);
+  cursor: default;
+}
+
+.finance-placeholder-grid,
+.finance-report-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+}
+
+.finance-placeholder-card,
+.finance-report-card {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(248, 250, 251, 0.98) 100%);
+}
+
+.finance-placeholder-card small,
+.finance-report-card small {
+  color: #b4442f;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.finance-placeholder-card strong,
+.finance-report-card strong {
+  font-size: 0.98rem;
+  letter-spacing: -0.01em;
+}
+
+.finance-placeholder-card p,
+.finance-report-card p {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.finance-shell .panel {
+  border-color: #d9dee3;
+  border-radius: 20px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(250, 251, 252, 0.96) 100%);
+  box-shadow:
+    0 18px 42px rgba(17, 25, 32, 0.05),
+    0 2px 10px rgba(17, 25, 32, 0.04);
+}
+
+.finance-shell .panel:hover {
+  border-color: #d3d9df;
+  box-shadow:
+    0 18px 42px rgba(17, 25, 32, 0.06),
+    0 2px 12px rgba(17, 25, 32, 0.045);
+}
+
+.finance-shell aside.panel {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(247, 249, 251, 0.96) 100%);
+  border: 1px solid #d9dee3;
+}
+
+.finance-shell .nav-item {
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+
+.finance-shell .nav-item.active,
+.finance-shell .nav-item:hover {
+  background:
+    linear-gradient(180deg, rgba(239, 47, 15, 0.08) 0%, rgba(239, 47, 15, 0.04) 100%);
+  border-color: #efc3ba;
+}
+
+.finance-page {
+  gap: 18px;
+}
+
+.finance-page .page-header {
+  position: relative;
+  overflow: hidden;
+  border-color: #d8dee3;
+  border-radius: 20px;
+  padding: 18px 20px 18px 22px;
+  background:
+    radial-gradient(420px 160px at 0% 0%, rgba(239, 47, 15, 0.07) 0%, transparent 68%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(248, 250, 251, 0.98) 100%);
+}
+
+.finance-page .page-header::after {
+  content: '';
+  position: absolute;
+  inset: auto 20px 0 20px;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(239, 47, 15, 0.22) 0%, rgba(214, 219, 224, 0.1) 100%);
+}
+
+.finance-page .page-header h1 {
+  font-size: 1.72rem;
+  letter-spacing: -0.03em;
+}
+
+.finance-page .page-header-copy small {
+  color: #b4442f !important;
+}
+
+.finance-page .panel-header {
+  padding: 14px 16px;
+  background:
+    linear-gradient(180deg, rgba(252, 253, 253, 0.98) 0%, rgba(244, 247, 249, 0.98) 100%);
+}
+
+.finance-page .panel-header h2 {
+  font-size: 1.05rem;
+  letter-spacing: -0.02em;
+}
+
+.finance-page .panel-content {
+  padding: 16px;
+}
+
+.finance-page table th {
+  background: #f5f7f9;
+}
+
+.finance-page table tbody tr:hover {
+  background: #fafcfd;
+}
+
+.finance-page .panel-content .panel {
+  border-radius: 16px;
+}
+
 @keyframes fade-up {
   from {
     opacity: 0;
