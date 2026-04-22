@@ -265,7 +265,7 @@ export type FinanceAccountKind = 'bank' | 'cash' | 'wallet' | 'other';
 export type FinanceAccountDto = {
   id: string;
   organization_id: string;
-  company_id: string;
+  company_id: string | null;
   name: string;
   kind: FinanceAccountKind;
   currency: string;
@@ -281,7 +281,7 @@ export type FinanceCategoryKind = 'income' | 'expense' | 'neutral';
 export type FinanceCategoryDto = {
   id: string;
   organization_id: string;
-  company_id: string;
+  company_id: string | null;
   name: string;
   kind: FinanceCategoryKind;
   parent_category_id: string | null;
@@ -316,8 +316,10 @@ export type FinanceReceivableStatus = 'planned' | 'open' | 'partial' | 'received
 export type FinancePayableDto = {
   id: string;
   organization_id: string;
-  company_id: string;
+  company_id: string | null;
   financial_transaction_id: string | null;
+  financial_entity_id: string | null;
+  financial_entity_name: string | null;
   financial_account_id: string | null;
   financial_account_name: string | null;
   financial_category_id: string | null;
@@ -336,11 +338,34 @@ export type FinancePayableDto = {
   updated_at: string;
 };
 
+export type FinancePayablesSummaryDto = {
+  open_cents: number;
+  overdue_cents: number;
+  due_today_cents: number;
+};
+
+export type FinancePayablesGroupsDto = {
+  overdue: FinancePayableDto[];
+  due_today: FinancePayableDto[];
+  upcoming: FinancePayableDto[];
+  settled: FinancePayableDto[];
+};
+
+export type FinancePayablesListDto = {
+  company_id: string | null;
+  company_name: string | null;
+  payables: FinancePayableDto[];
+  summary: FinancePayablesSummaryDto;
+  groups: FinancePayablesGroupsDto;
+};
+
 export type FinanceReceivableDto = {
   id: string;
   organization_id: string;
-  company_id: string;
+  company_id: string | null;
   financial_transaction_id: string | null;
+  financial_entity_id: string | null;
+  financial_entity_name: string | null;
   financial_account_id: string | null;
   financial_account_name: string | null;
   financial_category_id: string | null;
@@ -359,9 +384,31 @@ export type FinanceReceivableDto = {
   updated_at: string;
 };
 
+export type FinanceReceivablesSummaryDto = {
+  open_cents: number;
+  overdue_cents: number;
+  due_today_cents: number;
+};
+
+export type FinanceReceivablesGroupsDto = {
+  overdue: FinanceReceivableDto[];
+  due_today: FinanceReceivableDto[];
+  upcoming: FinanceReceivableDto[];
+  settled: FinanceReceivableDto[];
+};
+
+export type FinanceReceivablesListDto = {
+  company_id: string | null;
+  company_name: string | null;
+  receivables: FinanceReceivableDto[];
+  summary: FinanceReceivablesSummaryDto;
+  groups: FinanceReceivablesGroupsDto;
+};
+
 export type CreateFinancePayableInput = {
   organization_id: string;
   company_id?: string | null;
+  financial_entity_id?: string | null;
   financial_account_id?: string | null;
   financial_category_id?: string | null;
   supplier_name?: string | null;
@@ -377,6 +424,7 @@ export type CreateFinancePayableInput = {
 export type CreateFinanceReceivableInput = {
   organization_id: string;
   company_id?: string | null;
+  financial_entity_id?: string | null;
   financial_account_id?: string | null;
   financial_category_id?: string | null;
   customer_name?: string | null;
@@ -395,7 +443,7 @@ export type FinanceReconciliationStatus = 'unmatched' | 'matched' | 'ignored';
 export type FinanceImportJobDto = {
   id: string;
   organization_id: string;
-  company_id: string;
+  company_id: string | null;
   import_type: string;
   source_file_name: string;
   source_file_mime_type: string | null;
@@ -414,7 +462,7 @@ export type FinanceImportJobDto = {
 export type FinanceStatementEntryDto = {
   id: string;
   organization_id: string;
-  company_id: string;
+  company_id: string | null;
   financial_account_id: string;
   financial_account_name: string | null;
   financial_import_job_id: string | null;
@@ -433,7 +481,7 @@ export type FinanceStatementEntryDto = {
 export type FinanceReconciliationMatchDto = {
   id: string;
   organization_id: string;
-  company_id: string;
+  company_id: string | null;
   financial_bank_statement_entry_id: string;
   financial_transaction_id: string | null;
   confidence_score: number | null;
@@ -443,6 +491,64 @@ export type FinanceReconciliationMatchDto = {
   reviewed_at: string | null;
   created_at: string;
   updated_at: string;
+};
+
+export type FinanceReconciliationSuggestionDto = {
+  financial_transaction_id: string;
+  description: string;
+  amount_cents: number;
+  kind: FinanceTransactionKind;
+  status: FinanceTransactionStatus;
+  due_date: string | null;
+  competence_date: string | null;
+  financial_entity_name: string | null;
+  confidence_score: number;
+};
+
+export type FinanceReconciliationBucketKey = 'urgent' | 'today' | 'review';
+
+export type FinanceReconciliationInboxEntryDto = FinanceStatementEntryDto & {
+  matched_transaction_id: string | null;
+  matched_at: string | null;
+  queue_bucket: FinanceReconciliationBucketKey;
+  age_days: number;
+  suggestion_count: number;
+  suggested_matches: FinanceReconciliationSuggestionDto[];
+};
+
+export type FinanceReconciliationBucketDto = {
+  key: FinanceReconciliationBucketKey;
+  label: string;
+  count: number;
+  amount_cents: number;
+  entries: FinanceReconciliationInboxEntryDto[];
+};
+
+export type FinanceReconciliationInsightDto = {
+  id: string;
+  label: string;
+  value: string;
+  tone: 'neutral' | 'warning' | 'critical';
+};
+
+export type FinanceReconciliationInboxDto = {
+  organization_id: string;
+  organization_name: string | null;
+  generated_at: string;
+  summary: {
+    pending_count: number;
+    pending_amount_cents: number;
+    matched_today_count: number;
+    imported_jobs_count: number;
+    stale_count: number;
+    with_suggestion_count: number;
+    without_suggestion_count: number;
+  };
+  buckets: FinanceReconciliationBucketDto[];
+  insights: FinanceReconciliationInsightDto[];
+  inbox: FinanceReconciliationInboxEntryDto[];
+  recent_matches: FinanceReconciliationMatchDto[];
+  imported_jobs: FinanceImportJobDto[];
 };
 
 export type CreateFinanceImportJobInput = {
@@ -488,12 +594,104 @@ export type CreateFinanceReconciliationMatchInput = {
   reviewed_at?: string | null;
 };
 
+export type FinanceCashflowHorizon = 30 | 60 | 90;
+
+export type FinanceCashflowPointDto = {
+  date: string;
+  inflow_cents: number;
+  outflow_cents: number;
+  net_cents: number;
+  balance_cents: number;
+};
+
+export type FinanceCashflowWindowDto = {
+  horizon_days: FinanceCashflowHorizon;
+  inflow_cents: number;
+  outflow_cents: number;
+  net_cents: number;
+  starting_balance_cents: number;
+  ending_balance_cents: number;
+  lowest_balance_cents: number;
+  risk_level: 'healthy' | 'attention' | 'critical';
+};
+
+export type FinanceCashflowAlertDto = {
+  id: string;
+  tone: 'neutral' | 'warning' | 'critical';
+  title: string;
+  detail: string;
+};
+
+export type FinanceCashflowDto = {
+  organization_id: string;
+  organization_name: string | null;
+  generated_at: string;
+  horizon_days: FinanceCashflowHorizon;
+  points: FinanceCashflowPointDto[];
+  windows: FinanceCashflowWindowDto[];
+  alerts: FinanceCashflowAlertDto[];
+  totals: {
+    inflow_cents: number;
+    outflow_cents: number;
+    ending_balance_cents: number;
+    starting_balance_cents: number;
+  };
+};
+
+export type FinanceReportComparisonRowDto = {
+  period: string;
+  realized_cents: number;
+  projected_cents: number;
+  variance_cents: number;
+};
+
+export type FinanceCategoryBreakdownRowDto = {
+  category_name: string;
+  amount_cents: number;
+  transaction_count: number;
+};
+
+export type FinanceAgingRowDto = {
+  entity_name: string;
+  due_date: string | null;
+  amount_cents: number;
+  description: string;
+};
+
+export type FinanceConsolidatedCashflowRowDto = {
+  period: string;
+  inflow_cents: number;
+  outflow_cents: number;
+  balance_cents: number;
+};
+
+export type FinanceDreGerencialDto = {
+  gross_revenue_cents: number;
+  deductions_cents: number;
+  net_revenue_cents: number;
+  operating_expenses_cents: number;
+  operating_result_cents: number;
+};
+
+export type FinanceReportsDto = {
+  organization_id: string;
+  organization_name: string | null;
+  generated_at: string;
+  realized_vs_projected: FinanceReportComparisonRowDto[];
+  income_by_category: FinanceCategoryBreakdownRowDto[];
+  expense_by_category: FinanceCategoryBreakdownRowDto[];
+  overdue_receivables: FinanceAgingRowDto[];
+  overdue_payables: FinanceAgingRowDto[];
+  consolidated_cashflow: FinanceConsolidatedCashflowRowDto[];
+  dre: FinanceDreGerencialDto;
+};
+
 export type FinanceDebtStatus = 'open' | 'partial' | 'settled' | 'canceled';
 
 export type FinanceDebtDto = {
   id: string;
   organization_id: string;
-  company_id: string;
+  company_id: string | null;
   financial_payable_id: string | null;
   financial_receivable_id: string | null;
   financial_transaction_id: string | null;

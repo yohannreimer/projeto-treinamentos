@@ -11,7 +11,7 @@ export type FinanceCategoryKind = 'income' | 'expense' | 'neutral';
 export type FinanceAccount = {
   id: string;
   organization_id: string;
-  company_id: string;
+  company_id: string | null;
   name: string;
   kind: FinanceAccountKind;
   currency: string;
@@ -25,7 +25,7 @@ export type FinanceAccount = {
 export type FinanceCategory = {
   id: string;
   organization_id: string;
-  company_id: string;
+  company_id: string | null;
   name: string;
   kind: FinanceCategoryKind;
   parent_category_id: string | null;
@@ -40,8 +40,10 @@ export type FinanceReceivableStatus = 'planned' | 'open' | 'partial' | 'received
 export type FinancePayable = {
   id: string;
   organization_id: string;
-  company_id: string;
+  company_id: string | null;
   financial_transaction_id: string | null;
+  financial_entity_id: string | null;
+  financial_entity_name: string | null;
   financial_account_id: string | null;
   financial_account_name: string | null;
   financial_category_id: string | null;
@@ -60,11 +62,34 @@ export type FinancePayable = {
   updated_at: string;
 };
 
+export type FinancePayablesSummary = {
+  open_cents: number;
+  overdue_cents: number;
+  due_today_cents: number;
+};
+
+export type FinancePayablesGroups = {
+  overdue: FinancePayable[];
+  due_today: FinancePayable[];
+  upcoming: FinancePayable[];
+  settled: FinancePayable[];
+};
+
+export type FinancePayablesList = {
+  company_id: string | null;
+  company_name: string | null;
+  payables: FinancePayable[];
+  summary: FinancePayablesSummary;
+  groups: FinancePayablesGroups;
+};
+
 export type FinanceReceivable = {
   id: string;
   organization_id: string;
-  company_id: string;
+  company_id: string | null;
   financial_transaction_id: string | null;
+  financial_entity_id: string | null;
+  financial_entity_name: string | null;
   financial_account_id: string | null;
   financial_account_name: string | null;
   financial_category_id: string | null;
@@ -83,6 +108,27 @@ export type FinanceReceivable = {
   updated_at: string;
 };
 
+export type FinanceReceivablesSummary = {
+  open_cents: number;
+  overdue_cents: number;
+  due_today_cents: number;
+};
+
+export type FinanceReceivablesGroups = {
+  overdue: FinanceReceivable[];
+  due_today: FinanceReceivable[];
+  upcoming: FinanceReceivable[];
+  settled: FinanceReceivable[];
+};
+
+export type FinanceReceivablesList = {
+  company_id: string | null;
+  company_name: string | null;
+  receivables: FinanceReceivable[];
+  summary: FinanceReceivablesSummary;
+  groups: FinanceReceivablesGroups;
+};
+
 export type FinanceImportJobStatus = 'queued' | 'processing' | 'completed' | 'failed';
 export type FinanceReconciliationStatus = 'unmatched' | 'matched' | 'ignored';
 export type FinanceDebtStatus = 'open' | 'partial' | 'settled' | 'canceled';
@@ -90,7 +136,7 @@ export type FinanceDebtStatus = 'open' | 'partial' | 'settled' | 'canceled';
 export type FinanceImportJob = {
   id: string;
   organization_id: string;
-  company_id: string;
+  company_id: string | null;
   import_type: string;
   source_file_name: string;
   source_file_mime_type: string | null;
@@ -109,7 +155,7 @@ export type FinanceImportJob = {
 export type FinanceStatementEntry = {
   id: string;
   organization_id: string;
-  company_id: string;
+  company_id: string | null;
   financial_account_id: string;
   financial_account_name: string | null;
   financial_import_job_id: string | null;
@@ -128,7 +174,7 @@ export type FinanceStatementEntry = {
 export type FinanceReconciliationMatch = {
   id: string;
   organization_id: string;
-  company_id: string;
+  company_id: string | null;
   financial_bank_statement_entry_id: string;
   financial_transaction_id: string | null;
   confidence_score: number | null;
@@ -140,10 +186,160 @@ export type FinanceReconciliationMatch = {
   updated_at: string;
 };
 
+export type FinanceReconciliationSuggestion = {
+  financial_transaction_id: string;
+  description: string;
+  amount_cents: number;
+  kind: FinanceTransactionKind;
+  status: FinanceTransactionStatus;
+  due_date: string | null;
+  competence_date: string | null;
+  financial_entity_name: string | null;
+  confidence_score: number;
+};
+
+export type FinanceReconciliationBucketKey = 'urgent' | 'today' | 'review';
+
+export type FinanceReconciliationInboxEntry = FinanceStatementEntry & {
+  matched_transaction_id: string | null;
+  matched_at: string | null;
+  queue_bucket: FinanceReconciliationBucketKey;
+  age_days: number;
+  suggestion_count: number;
+  suggested_matches: FinanceReconciliationSuggestion[];
+};
+
+export type FinanceReconciliationBucket = {
+  key: FinanceReconciliationBucketKey;
+  label: string;
+  count: number;
+  amount_cents: number;
+  entries: FinanceReconciliationInboxEntry[];
+};
+
+export type FinanceReconciliationInsight = {
+  id: string;
+  label: string;
+  value: string;
+  tone: 'neutral' | 'warning' | 'critical';
+};
+
+export type FinanceReconciliationInbox = {
+  organization_id: string;
+  organization_name: string | null;
+  generated_at: string;
+  summary: {
+    pending_count: number;
+    pending_amount_cents: number;
+    matched_today_count: number;
+    imported_jobs_count: number;
+    stale_count: number;
+    with_suggestion_count: number;
+    without_suggestion_count: number;
+  };
+  buckets: FinanceReconciliationBucket[];
+  insights: FinanceReconciliationInsight[];
+  inbox: FinanceReconciliationInboxEntry[];
+  recent_matches: FinanceReconciliationMatch[];
+  imported_jobs: FinanceImportJob[];
+};
+
+export type FinanceCashflowHorizon = 30 | 60 | 90;
+
+export type FinanceCashflowPoint = {
+  date: string;
+  inflow_cents: number;
+  outflow_cents: number;
+  net_cents: number;
+  balance_cents: number;
+};
+
+export type FinanceCashflowWindow = {
+  horizon_days: FinanceCashflowHorizon;
+  inflow_cents: number;
+  outflow_cents: number;
+  net_cents: number;
+  starting_balance_cents: number;
+  ending_balance_cents: number;
+  lowest_balance_cents: number;
+  risk_level: 'healthy' | 'attention' | 'critical';
+};
+
+export type FinanceCashflowAlert = {
+  id: string;
+  tone: 'neutral' | 'warning' | 'critical';
+  title: string;
+  detail: string;
+};
+
+export type FinanceCashflow = {
+  organization_id: string;
+  organization_name: string | null;
+  generated_at: string;
+  horizon_days: FinanceCashflowHorizon;
+  points: FinanceCashflowPoint[];
+  windows: FinanceCashflowWindow[];
+  alerts: FinanceCashflowAlert[];
+  totals: {
+    inflow_cents: number;
+    outflow_cents: number;
+    ending_balance_cents: number;
+    starting_balance_cents: number;
+  };
+};
+
+export type FinanceReportComparisonRow = {
+  period: string;
+  realized_cents: number;
+  projected_cents: number;
+  variance_cents: number;
+};
+
+export type FinanceCategoryBreakdownRow = {
+  category_name: string;
+  amount_cents: number;
+  transaction_count: number;
+};
+
+export type FinanceAgingRow = {
+  entity_name: string;
+  due_date: string | null;
+  amount_cents: number;
+  description: string;
+};
+
+export type FinanceConsolidatedCashflowRow = {
+  period: string;
+  inflow_cents: number;
+  outflow_cents: number;
+  balance_cents: number;
+};
+
+export type FinanceDreGerencial = {
+  gross_revenue_cents: number;
+  deductions_cents: number;
+  net_revenue_cents: number;
+  operating_expenses_cents: number;
+  operating_result_cents: number;
+};
+
+export type FinanceReports = {
+  organization_id: string;
+  organization_name: string | null;
+  generated_at: string;
+  realized_vs_projected: FinanceReportComparisonRow[];
+  income_by_category: FinanceCategoryBreakdownRow[];
+  expense_by_category: FinanceCategoryBreakdownRow[];
+  overdue_receivables: FinanceAgingRow[];
+  overdue_payables: FinanceAgingRow[];
+  consolidated_cashflow: FinanceConsolidatedCashflowRow[];
+  dre: FinanceDreGerencial;
+};
+
 export type FinanceDebt = {
   id: string;
   organization_id: string;
-  company_id: string;
+  company_id: string | null;
   financial_payable_id: string | null;
   financial_receivable_id: string | null;
   financial_transaction_id: string | null;
@@ -363,8 +559,6 @@ export type CreateFinanceTransactionPayload = {
 };
 
 export type CreateFinanceAccountPayload = {
-  company_id?: string | null;
-  counterparty_company_id?: string | null;
   name: string;
   kind: FinanceAccountKind;
   currency?: string;
@@ -374,8 +568,6 @@ export type CreateFinanceAccountPayload = {
 };
 
 export type CreateFinanceCategoryPayload = {
-  company_id?: string | null;
-  counterparty_company_id?: string | null;
   name: string;
   kind: FinanceCategoryKind;
   parent_category_id?: string | null;
@@ -383,8 +575,7 @@ export type CreateFinanceCategoryPayload = {
 };
 
 export type CreateFinancePayablePayload = {
-  company_id?: string | null;
-  counterparty_company_id?: string | null;
+  financial_entity_id?: string | null;
   financial_account_id?: string | null;
   financial_category_id?: string | null;
   supplier_name?: string | null;
@@ -398,8 +589,7 @@ export type CreateFinancePayablePayload = {
 };
 
 export type CreateFinanceReceivablePayload = {
-  company_id?: string | null;
-  counterparty_company_id?: string | null;
+  financial_entity_id?: string | null;
   financial_account_id?: string | null;
   financial_category_id?: string | null;
   customer_name?: string | null;
@@ -413,8 +603,6 @@ export type CreateFinanceReceivablePayload = {
 };
 
 export type CreateFinanceImportJobPayload = {
-  company_id?: string | null;
-  counterparty_company_id?: string | null;
   import_type: string;
   source_file_name: string;
   source_file_mime_type?: string | null;
@@ -428,8 +616,6 @@ export type CreateFinanceImportJobPayload = {
 };
 
 export type CreateFinanceStatementEntryPayload = {
-  company_id?: string | null;
-  counterparty_company_id?: string | null;
   financial_account_id: string;
   financial_import_job_id?: string | null;
   statement_date: string;
@@ -443,8 +629,6 @@ export type CreateFinanceStatementEntryPayload = {
 };
 
 export type CreateFinanceReconciliationPayload = {
-  company_id?: string | null;
-  counterparty_company_id?: string | null;
   financial_bank_statement_entry_id: string;
   financial_transaction_id: string;
   confidence_score?: number | null;
@@ -454,8 +638,6 @@ export type CreateFinanceReconciliationPayload = {
 };
 
 export type CreateFinanceDebtPayload = {
-  company_id?: string | null;
-  counterparty_company_id?: string | null;
   financial_payable_id?: string | null;
   financial_receivable_id?: string | null;
   financial_transaction_id?: string | null;
@@ -467,16 +649,6 @@ export type CreateFinanceDebtPayload = {
   settled_at?: string | null;
   note?: string | null;
 };
-
-function withCompanyId(path: string, companyId?: string | null): string {
-  const normalized = companyId?.trim();
-  if (!normalized) {
-    return path;
-  }
-
-  const separator = path.includes('?') ? '&' : '?';
-  return `${path}${separator}company_id=${encodeURIComponent(normalized)}`;
-}
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const currentSession = internalSessionStore.read();
@@ -539,9 +711,9 @@ export const financeApi = {
     }),
   getExecutiveOverview: () =>
     req<FinanceExecutiveOverview>('/finance/overview/executive'),
-  getOverview: (companyId?: string | null) =>
-    req<FinanceOverview>(withCompanyId('/finance/overview', companyId)),
-  listTransactions: (_companyId?: string | null, filters?: FinanceTransactionLedgerFilters) => {
+  getOverview: () =>
+    req<FinanceOverview>('/finance/overview'),
+  listTransactions: (filters?: FinanceTransactionLedgerFilters) => {
     const params = new URLSearchParams();
     if (filters?.status) {
       params.set('status', filters.status);
@@ -576,73 +748,63 @@ export const financeApi = {
       queryString.length > 0 ? `/finance/transactions?${queryString}` : '/finance/transactions'
     );
   },
-  listAccounts: (companyId?: string | null) =>
-    req<{ company_id: string | null; company_name: string | null; accounts: FinanceAccount[] }>(
-      withCompanyId('/finance/accounts', companyId)
-    ),
+  listAccounts: () =>
+    req<{ company_id: string | null; company_name: string | null; accounts: FinanceAccount[] }>('/finance/accounts'),
   createAccount: (payload: CreateFinanceAccountPayload) =>
     req<FinanceAccount>('/finance/accounts', {
       method: 'POST',
       body: JSON.stringify(payload)
     }),
-  listCategories: (companyId?: string | null) =>
-    req<{ company_id: string | null; company_name: string | null; categories: FinanceCategory[] }>(
-      withCompanyId('/finance/categories', companyId)
-    ),
+  listCategories: () =>
+    req<{ company_id: string | null; company_name: string | null; categories: FinanceCategory[] }>('/finance/categories'),
   createCategory: (payload: CreateFinanceCategoryPayload) =>
     req<FinanceCategory>('/finance/categories', {
       method: 'POST',
       body: JSON.stringify(payload)
     }),
-  listPayables: (companyId?: string | null) =>
-    req<{ company_id: string | null; company_name: string | null; payables: FinancePayable[] }>(
-      withCompanyId('/finance/payables', companyId)
-    ),
+  listPayables: () =>
+    req<FinancePayablesList>('/finance/payables'),
   createPayable: (payload: CreateFinancePayablePayload) =>
     req<FinancePayable>('/finance/payables', {
       method: 'POST',
       body: JSON.stringify(payload)
     }),
-  listReceivables: (companyId?: string | null) =>
-    req<{ company_id: string | null; company_name: string | null; receivables: FinanceReceivable[] }>(
-      withCompanyId('/finance/receivables', companyId)
-    ),
+  listReceivables: () =>
+    req<FinanceReceivablesList>('/finance/receivables'),
   createReceivable: (payload: CreateFinanceReceivablePayload) =>
     req<FinanceReceivable>('/finance/receivables', {
       method: 'POST',
       body: JSON.stringify(payload)
     }),
-  listImportJobs: (companyId?: string | null) =>
-    req<{ company_id: string | null; company_name: string | null; jobs: FinanceImportJob[] }>(
-      withCompanyId('/finance/import-jobs', companyId)
-    ),
+  listImportJobs: () =>
+    req<{ company_id: string | null; company_name: string | null; jobs: FinanceImportJob[] }>('/finance/import-jobs'),
   createImportJob: (payload: CreateFinanceImportJobPayload) =>
     req<FinanceImportJob>('/finance/import-jobs', {
       method: 'POST',
       body: JSON.stringify(payload)
     }),
-  listStatementEntries: (companyId?: string | null) =>
-    req<{ company_id: string | null; company_name: string | null; entries: FinanceStatementEntry[] }>(
-      withCompanyId('/finance/statement-entries', companyId)
-    ),
+  listStatementEntries: () =>
+    req<{ company_id: string | null; company_name: string | null; entries: FinanceStatementEntry[] }>('/finance/statement-entries'),
   createStatementEntry: (payload: CreateFinanceStatementEntryPayload) =>
     req<FinanceStatementEntry>('/finance/statement-entries', {
       method: 'POST',
       body: JSON.stringify(payload)
     }),
-  listReconciliations: (companyId?: string | null) =>
-    req<{ company_id: string | null; company_name: string | null; matches: FinanceReconciliationMatch[] }>(
-      withCompanyId('/finance/reconciliations', companyId)
-    ),
+  listReconciliations: () =>
+    req<{ company_id: string | null; company_name: string | null; matches: FinanceReconciliationMatch[] }>('/finance/reconciliations'),
   createReconciliation: (payload: CreateFinanceReconciliationPayload) =>
     req<FinanceReconciliationMatch>('/finance/reconciliations', {
       method: 'POST',
       body: JSON.stringify(payload)
     }),
-  listDebts: (companyId?: string | null) =>
-    req<{ company_id: string | null; company_name: string | null; debts: FinanceDebt[] }>(
-      withCompanyId('/finance/debts', companyId)
-    ),
+  getReconciliationInbox: () =>
+    req<FinanceReconciliationInbox>('/finance/reconciliation/inbox'),
+  getCashflow: (horizon: FinanceCashflowHorizon = 90) =>
+    req<FinanceCashflow>(`/finance/cashflow?horizon=${encodeURIComponent(String(horizon))}`),
+  getReports: () =>
+    req<FinanceReports>('/finance/reports'),
+  listDebts: () =>
+    req<{ company_id: string | null; company_name: string | null; debts: FinanceDebt[] }>('/finance/debts'),
   createDebt: (payload: CreateFinanceDebtPayload) =>
     req<FinanceDebt>('/finance/debts', {
       method: 'POST',

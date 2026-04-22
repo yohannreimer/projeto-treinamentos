@@ -271,7 +271,7 @@ export function FinanceTransactionsPage() {
     setLoading(true);
     setError('');
 
-    financeApi.listTransactions(undefined, ledgerFilters)
+    financeApi.listTransactions(ledgerFilters)
       .then((response) => {
         if (cancelled) return;
         setTransactions(response.transactions);

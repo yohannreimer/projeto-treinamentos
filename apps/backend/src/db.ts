@@ -91,6 +91,27 @@ function hasCompositeUniqueIndex(table: string, columns: string[]) {
   });
 }
 
+function readTableColumns(table: string) {
+  return db.prepare(`pragma table_info(${table})`).all() as Array<{
+    name: string;
+    notnull: number;
+  }>;
+}
+
+function hasColumn(table: string, column: string) {
+  return readTableColumns(table).some((item) => item.name === column);
+}
+
+function hasForeignKey(table: string, targetTable: string, from: string, to: string) {
+  const foreignKeys = db.prepare(`pragma foreign_key_list(${table})`).all() as Array<{
+    table: string;
+    from: string;
+    to: string;
+  }>;
+
+  return foreignKeys.some((item) => item.table === targetTable && item.from === from && item.to === to);
+}
+
 function uniqueSortedIsoDates(values: string[]): string[] {
   return Array.from(new Set(values
     .map((item) => item.trim())
@@ -306,7 +327,7 @@ export function initDb() {
     create table if not exists financial_account (
       id text primary key,
       organization_id text not null,
-      company_id text not null,
+      company_id text,
       name text not null,
       kind text not null,
       currency text not null default 'BRL',
@@ -324,7 +345,7 @@ export function initDb() {
     create table if not exists financial_category (
       id text primary key,
       organization_id text not null,
-      company_id text not null,
+      company_id text,
       name text not null,
       kind text not null,
       parent_category_id text,
@@ -410,8 +431,9 @@ export function initDb() {
     create table if not exists financial_payable (
       id text primary key,
       organization_id text not null,
-      company_id text not null,
+      company_id text,
       financial_transaction_id text,
+      financial_entity_id text,
       financial_account_id text,
       financial_category_id text,
       supplier_name text,
@@ -430,16 +452,18 @@ export function initDb() {
       unique(company_id, id),
       foreign key(organization_id) references organization(id) on delete cascade,
       foreign key(company_id) references company(id) on delete cascade,
-      foreign key(company_id, financial_transaction_id) references financial_transaction(company_id, id) on delete restrict,
-      foreign key(company_id, financial_account_id) references financial_account(company_id, id) on delete restrict,
-      foreign key(company_id, financial_category_id) references financial_category(company_id, id) on delete restrict
+      foreign key(organization_id, financial_transaction_id) references financial_transaction(organization_id, id) on delete restrict,
+      foreign key(organization_id, financial_entity_id) references financial_entity(organization_id, id) on delete restrict,
+      foreign key(organization_id, financial_account_id) references financial_account(organization_id, id) on delete restrict,
+      foreign key(organization_id, financial_category_id) references financial_category(organization_id, id) on delete restrict
     );
 
     create table if not exists financial_receivable (
       id text primary key,
       organization_id text not null,
-      company_id text not null,
+      company_id text,
       financial_transaction_id text,
+      financial_entity_id text,
       financial_account_id text,
       financial_category_id text,
       customer_name text,
@@ -458,15 +482,16 @@ export function initDb() {
       unique(company_id, id),
       foreign key(organization_id) references organization(id) on delete cascade,
       foreign key(company_id) references company(id) on delete cascade,
-      foreign key(company_id, financial_transaction_id) references financial_transaction(company_id, id) on delete restrict,
-      foreign key(company_id, financial_account_id) references financial_account(company_id, id) on delete restrict,
-      foreign key(company_id, financial_category_id) references financial_category(company_id, id) on delete restrict
+      foreign key(organization_id, financial_transaction_id) references financial_transaction(organization_id, id) on delete restrict,
+      foreign key(organization_id, financial_entity_id) references financial_entity(organization_id, id) on delete restrict,
+      foreign key(organization_id, financial_account_id) references financial_account(organization_id, id) on delete restrict,
+      foreign key(organization_id, financial_category_id) references financial_category(organization_id, id) on delete restrict
     );
 
     create table if not exists financial_import_job (
       id text primary key,
       organization_id text not null,
-      company_id text not null,
+      company_id text,
       import_type text not null,
       source_file_name text not null,
       source_file_mime_type text,
@@ -489,7 +514,7 @@ export function initDb() {
     create table if not exists financial_bank_statement_entry (
       id text primary key,
       organization_id text not null,
-      company_id text not null,
+      company_id text,
       financial_account_id text not null,
       financial_import_job_id text,
       statement_date text not null,
@@ -506,14 +531,14 @@ export function initDb() {
       unique(company_id, id),
       foreign key(organization_id) references organization(id) on delete cascade,
       foreign key(company_id) references company(id) on delete cascade,
-      foreign key(company_id, financial_account_id) references financial_account(company_id, id) on delete restrict,
-      foreign key(company_id, financial_import_job_id) references financial_import_job(company_id, id) on delete restrict
+      foreign key(organization_id, financial_account_id) references financial_account(organization_id, id) on delete restrict,
+      foreign key(organization_id, financial_import_job_id) references financial_import_job(organization_id, id) on delete restrict
     );
 
     create table if not exists financial_reconciliation_match (
       id text primary key,
       organization_id text not null,
-      company_id text not null,
+      company_id text,
       financial_bank_statement_entry_id text not null,
       financial_transaction_id text not null,
       match_type text not null,
@@ -526,15 +551,16 @@ export function initDb() {
       updated_at text not null,
       unique(organization_id, id),
       unique(company_id, id),
+      foreign key(organization_id) references organization(id) on delete cascade,
       foreign key(company_id) references company(id) on delete cascade,
-      foreign key(company_id, financial_bank_statement_entry_id) references financial_bank_statement_entry(company_id, id) on delete cascade,
+      foreign key(organization_id, financial_bank_statement_entry_id) references financial_bank_statement_entry(organization_id, id) on delete cascade,
       foreign key(organization_id, financial_transaction_id) references financial_transaction(organization_id, id) on delete cascade
     );
 
     create table if not exists financial_debt (
       id text primary key,
       organization_id text not null,
-      company_id text not null,
+      company_id text,
       financial_payable_id text,
       financial_receivable_id text,
       financial_transaction_id text,
@@ -549,9 +575,10 @@ export function initDb() {
       updated_at text not null,
       unique(organization_id, id),
       unique(company_id, id),
+      foreign key(organization_id) references organization(id) on delete cascade,
       foreign key(company_id) references company(id) on delete cascade,
-      foreign key(company_id, financial_payable_id) references financial_payable(company_id, id) on delete restrict,
-      foreign key(company_id, financial_receivable_id) references financial_receivable(company_id, id) on delete restrict,
+      foreign key(organization_id, financial_payable_id) references financial_payable(organization_id, id) on delete restrict,
+      foreign key(organization_id, financial_receivable_id) references financial_receivable(organization_id, id) on delete restrict,
       foreign key(organization_id, financial_transaction_id) references financial_transaction(organization_id, id) on delete restrict
     );
 
@@ -1107,8 +1134,12 @@ export function initDb() {
   ensureColumn('internal_user', 'is_active', 'is_active integer not null default 1');
   ensureColumn('internal_user', 'last_login_at', 'last_login_at text');
 
-  const financialAccountNeedsRebuild = !hasCompositeUniqueIndex('financial_account', ['organization_id', 'id']);
-  const financialCategoryNeedsRebuild = !hasCompositeUniqueIndex('financial_category', ['organization_id', 'id']);
+  const financialAccountColumns = readTableColumns('financial_account');
+  const financialCategoryColumns = readTableColumns('financial_category');
+  const financialAccountNeedsRebuild = !hasCompositeUniqueIndex('financial_account', ['organization_id', 'id'])
+    || financialAccountColumns.find((column) => column.name === 'company_id')?.notnull === 1;
+  const financialCategoryNeedsRebuild = !hasCompositeUniqueIndex('financial_category', ['organization_id', 'id'])
+    || financialCategoryColumns.find((column) => column.name === 'company_id')?.notnull === 1;
 
   if (financialAccountNeedsRebuild || financialCategoryNeedsRebuild) {
     db.exec('pragma foreign_keys = off');
@@ -1118,7 +1149,7 @@ export function initDb() {
           create table financial_account_new (
             id text primary key,
             organization_id text not null,
-            company_id text not null,
+            company_id text,
             name text not null,
             kind text not null,
             currency text not null default 'BRL',
@@ -1170,7 +1201,7 @@ export function initDb() {
           create table financial_category_new (
             id text primary key,
             organization_id text not null,
-            company_id text not null,
+            company_id text,
             name text not null,
             kind text not null,
             parent_category_id text,
@@ -1328,6 +1359,489 @@ export function initDb() {
       `);
       db.exec('drop table financial_transaction;');
       db.exec('alter table financial_transaction_new rename to financial_transaction;');
+    } finally {
+      db.exec('pragma foreign_keys = on');
+    }
+  }
+
+  const payableColumns = readTableColumns('financial_payable');
+  const receivableColumns = readTableColumns('financial_receivable');
+  const importJobColumns = readTableColumns('financial_import_job');
+  const statementEntryColumns = readTableColumns('financial_bank_statement_entry');
+  const reconciliationColumns = readTableColumns('financial_reconciliation_match');
+  const debtColumns = readTableColumns('financial_debt');
+
+  const financialPayableNeedsRebuild = payableColumns.length > 0 && (
+    payableColumns.find((column) => column.name === 'company_id')?.notnull === 1
+    || !hasColumn('financial_payable', 'financial_entity_id')
+    || !hasForeignKey('financial_payable', 'financial_transaction', 'organization_id', 'organization_id')
+    || !hasForeignKey('financial_payable', 'financial_entity', 'organization_id', 'organization_id')
+    || !hasForeignKey('financial_payable', 'financial_account', 'organization_id', 'organization_id')
+    || !hasForeignKey('financial_payable', 'financial_category', 'organization_id', 'organization_id')
+  );
+
+  const financialReceivableNeedsRebuild = receivableColumns.length > 0 && (
+    receivableColumns.find((column) => column.name === 'company_id')?.notnull === 1
+    || !hasColumn('financial_receivable', 'financial_entity_id')
+    || !hasForeignKey('financial_receivable', 'financial_transaction', 'organization_id', 'organization_id')
+    || !hasForeignKey('financial_receivable', 'financial_entity', 'organization_id', 'organization_id')
+    || !hasForeignKey('financial_receivable', 'financial_account', 'organization_id', 'organization_id')
+    || !hasForeignKey('financial_receivable', 'financial_category', 'organization_id', 'organization_id')
+  );
+
+  const financialImportJobNeedsRebuild = importJobColumns.length > 0
+    && importJobColumns.find((column) => column.name === 'company_id')?.notnull === 1;
+
+  const financialStatementEntryNeedsRebuild = statementEntryColumns.length > 0 && (
+    statementEntryColumns.find((column) => column.name === 'company_id')?.notnull === 1
+    || !hasForeignKey('financial_bank_statement_entry', 'financial_account', 'organization_id', 'organization_id')
+    || !hasForeignKey('financial_bank_statement_entry', 'financial_import_job', 'organization_id', 'organization_id')
+  );
+
+  const financialReconciliationNeedsRebuild = reconciliationColumns.length > 0 && (
+    reconciliationColumns.find((column) => column.name === 'company_id')?.notnull === 1
+    || !hasForeignKey('financial_reconciliation_match', 'organization', 'organization_id', 'id')
+    || !hasForeignKey('financial_reconciliation_match', 'financial_bank_statement_entry', 'organization_id', 'organization_id')
+    || !hasForeignKey('financial_reconciliation_match', 'financial_transaction', 'organization_id', 'organization_id')
+  );
+
+  const financialDebtNeedsRebuild = debtColumns.length > 0 && (
+    debtColumns.find((column) => column.name === 'company_id')?.notnull === 1
+    || !hasForeignKey('financial_debt', 'organization', 'organization_id', 'id')
+    || !hasForeignKey('financial_debt', 'financial_payable', 'organization_id', 'organization_id')
+    || !hasForeignKey('financial_debt', 'financial_receivable', 'organization_id', 'organization_id')
+    || !hasForeignKey('financial_debt', 'financial_transaction', 'organization_id', 'organization_id')
+  );
+
+  if (
+    financialPayableNeedsRebuild
+    || financialReceivableNeedsRebuild
+    || financialImportJobNeedsRebuild
+    || financialStatementEntryNeedsRebuild
+    || financialReconciliationNeedsRebuild
+    || financialDebtNeedsRebuild
+  ) {
+    db.exec('pragma foreign_keys = off');
+    try {
+      if (financialPayableNeedsRebuild) {
+        db.exec(`
+          create table financial_payable_new (
+            id text primary key,
+            organization_id text not null,
+            company_id text,
+            financial_transaction_id text,
+            financial_entity_id text,
+            financial_account_id text,
+            financial_category_id text,
+            supplier_name text,
+            description text not null,
+            amount_cents integer not null,
+            status text not null,
+            issue_date text,
+            due_date text,
+            paid_at text,
+            source text not null default 'manual',
+            source_ref text,
+            note text,
+            created_at text not null,
+            updated_at text not null,
+            unique(organization_id, id),
+            unique(company_id, id),
+            foreign key(organization_id) references organization(id) on delete cascade,
+            foreign key(company_id) references company(id) on delete cascade,
+            foreign key(organization_id, financial_transaction_id) references financial_transaction(organization_id, id) on delete restrict,
+            foreign key(organization_id, financial_entity_id) references financial_entity(organization_id, id) on delete restrict,
+            foreign key(organization_id, financial_account_id) references financial_account(organization_id, id) on delete restrict,
+            foreign key(organization_id, financial_category_id) references financial_category(organization_id, id) on delete restrict
+          );
+        `);
+        db.exec(`
+          insert into financial_payable_new (
+            id,
+            organization_id,
+            company_id,
+            financial_transaction_id,
+            financial_entity_id,
+            financial_account_id,
+            financial_category_id,
+            supplier_name,
+            description,
+            amount_cents,
+            status,
+            issue_date,
+            due_date,
+            paid_at,
+            source,
+            source_ref,
+            note,
+            created_at,
+            updated_at
+          )
+          select
+            id,
+            coalesce(organization_id, '${DEFAULT_ORGANIZATION_ID}'),
+            company_id,
+            financial_transaction_id,
+            null,
+            financial_account_id,
+            financial_category_id,
+            supplier_name,
+            description,
+            amount_cents,
+            status,
+            issue_date,
+            due_date,
+            paid_at,
+            coalesce(source, 'manual'),
+            source_ref,
+            note,
+            created_at,
+            updated_at
+          from financial_payable;
+        `);
+        db.exec('drop table financial_payable;');
+        db.exec('alter table financial_payable_new rename to financial_payable;');
+      }
+
+      if (financialReceivableNeedsRebuild) {
+        db.exec(`
+          create table financial_receivable_new (
+            id text primary key,
+            organization_id text not null,
+            company_id text,
+            financial_transaction_id text,
+            financial_entity_id text,
+            financial_account_id text,
+            financial_category_id text,
+            customer_name text,
+            description text not null,
+            amount_cents integer not null,
+            status text not null,
+            issue_date text,
+            due_date text,
+            received_at text,
+            source text not null default 'manual',
+            source_ref text,
+            note text,
+            created_at text not null,
+            updated_at text not null,
+            unique(organization_id, id),
+            unique(company_id, id),
+            foreign key(organization_id) references organization(id) on delete cascade,
+            foreign key(company_id) references company(id) on delete cascade,
+            foreign key(organization_id, financial_transaction_id) references financial_transaction(organization_id, id) on delete restrict,
+            foreign key(organization_id, financial_entity_id) references financial_entity(organization_id, id) on delete restrict,
+            foreign key(organization_id, financial_account_id) references financial_account(organization_id, id) on delete restrict,
+            foreign key(organization_id, financial_category_id) references financial_category(organization_id, id) on delete restrict
+          );
+        `);
+        db.exec(`
+          insert into financial_receivable_new (
+            id,
+            organization_id,
+            company_id,
+            financial_transaction_id,
+            financial_entity_id,
+            financial_account_id,
+            financial_category_id,
+            customer_name,
+            description,
+            amount_cents,
+            status,
+            issue_date,
+            due_date,
+            received_at,
+            source,
+            source_ref,
+            note,
+            created_at,
+            updated_at
+          )
+          select
+            id,
+            coalesce(organization_id, '${DEFAULT_ORGANIZATION_ID}'),
+            company_id,
+            financial_transaction_id,
+            null,
+            financial_account_id,
+            financial_category_id,
+            customer_name,
+            description,
+            amount_cents,
+            status,
+            issue_date,
+            due_date,
+            received_at,
+            coalesce(source, 'manual'),
+            source_ref,
+            note,
+            created_at,
+            updated_at
+          from financial_receivable;
+        `);
+        db.exec('drop table financial_receivable;');
+        db.exec('alter table financial_receivable_new rename to financial_receivable;');
+      }
+
+      if (financialImportJobNeedsRebuild) {
+        db.exec(`
+          create table financial_import_job_new (
+            id text primary key,
+            organization_id text not null,
+            company_id text,
+            import_type text not null,
+            source_file_name text not null,
+            source_file_mime_type text,
+            source_file_size_bytes integer not null default 0,
+            status text not null,
+            total_rows integer not null default 0,
+            processed_rows integer not null default 0,
+            error_rows integer not null default 0,
+            error_summary text,
+            created_by text,
+            created_at text not null,
+            updated_at text not null,
+            finished_at text,
+            unique(organization_id, id),
+            unique(company_id, id),
+            foreign key(organization_id) references organization(id) on delete cascade,
+            foreign key(company_id) references company(id) on delete cascade
+          );
+        `);
+        db.exec(`
+          insert into financial_import_job_new (
+            id,
+            organization_id,
+            company_id,
+            import_type,
+            source_file_name,
+            source_file_mime_type,
+            source_file_size_bytes,
+            status,
+            total_rows,
+            processed_rows,
+            error_rows,
+            error_summary,
+            created_by,
+            created_at,
+            updated_at,
+            finished_at
+          )
+          select
+            id,
+            coalesce(organization_id, '${DEFAULT_ORGANIZATION_ID}'),
+            company_id,
+            import_type,
+            source_file_name,
+            source_file_mime_type,
+            coalesce(source_file_size_bytes, 0),
+            status,
+            coalesce(total_rows, 0),
+            coalesce(processed_rows, 0),
+            coalesce(error_rows, 0),
+            error_summary,
+            created_by,
+            created_at,
+            updated_at,
+            finished_at
+          from financial_import_job;
+        `);
+        db.exec('drop table financial_import_job;');
+        db.exec('alter table financial_import_job_new rename to financial_import_job;');
+      }
+
+      if (financialStatementEntryNeedsRebuild) {
+        db.exec(`
+          create table financial_bank_statement_entry_new (
+            id text primary key,
+            organization_id text not null,
+            company_id text,
+            financial_account_id text not null,
+            financial_import_job_id text,
+            statement_date text not null,
+            posted_at text,
+            amount_cents integer not null,
+            description text not null,
+            reference_code text,
+            balance_cents integer,
+            source text not null default 'bank_import',
+            source_ref text,
+            created_at text not null,
+            updated_at text not null,
+            unique(organization_id, id),
+            unique(company_id, id),
+            foreign key(organization_id) references organization(id) on delete cascade,
+            foreign key(company_id) references company(id) on delete cascade,
+            foreign key(organization_id, financial_account_id) references financial_account(organization_id, id) on delete restrict,
+            foreign key(organization_id, financial_import_job_id) references financial_import_job(organization_id, id) on delete restrict
+          );
+        `);
+        db.exec(`
+          insert into financial_bank_statement_entry_new (
+            id,
+            organization_id,
+            company_id,
+            financial_account_id,
+            financial_import_job_id,
+            statement_date,
+            posted_at,
+            amount_cents,
+            description,
+            reference_code,
+            balance_cents,
+            source,
+            source_ref,
+            created_at,
+            updated_at
+          )
+          select
+            id,
+            coalesce(organization_id, '${DEFAULT_ORGANIZATION_ID}'),
+            company_id,
+            financial_account_id,
+            financial_import_job_id,
+            statement_date,
+            posted_at,
+            amount_cents,
+            description,
+            reference_code,
+            balance_cents,
+            coalesce(source, 'bank_import'),
+            source_ref,
+            created_at,
+            updated_at
+          from financial_bank_statement_entry;
+        `);
+        db.exec('drop table financial_bank_statement_entry;');
+        db.exec('alter table financial_bank_statement_entry_new rename to financial_bank_statement_entry;');
+      }
+
+      if (financialReconciliationNeedsRebuild) {
+        db.exec(`
+          create table financial_reconciliation_match_new (
+            id text primary key,
+            organization_id text not null,
+            company_id text,
+            financial_bank_statement_entry_id text not null,
+            financial_transaction_id text not null,
+            match_type text not null,
+            match_status text not null,
+            matched_amount_cents integer not null,
+            matched_at text not null,
+            matched_by text,
+            note text,
+            created_at text not null,
+            updated_at text not null,
+            unique(organization_id, id),
+            unique(company_id, id),
+            foreign key(organization_id) references organization(id) on delete cascade,
+            foreign key(company_id) references company(id) on delete cascade,
+            foreign key(organization_id, financial_bank_statement_entry_id) references financial_bank_statement_entry(organization_id, id) on delete cascade,
+            foreign key(organization_id, financial_transaction_id) references financial_transaction(organization_id, id) on delete cascade
+          );
+        `);
+        db.exec(`
+          insert into financial_reconciliation_match_new (
+            id,
+            organization_id,
+            company_id,
+            financial_bank_statement_entry_id,
+            financial_transaction_id,
+            match_type,
+            match_status,
+            matched_amount_cents,
+            matched_at,
+            matched_by,
+            note,
+            created_at,
+            updated_at
+          )
+          select
+            id,
+            coalesce(organization_id, '${DEFAULT_ORGANIZATION_ID}'),
+            company_id,
+            financial_bank_statement_entry_id,
+            financial_transaction_id,
+            match_type,
+            match_status,
+            matched_amount_cents,
+            matched_at,
+            matched_by,
+            note,
+            created_at,
+            updated_at
+          from financial_reconciliation_match;
+        `);
+        db.exec('drop table financial_reconciliation_match;');
+        db.exec('alter table financial_reconciliation_match_new rename to financial_reconciliation_match;');
+      }
+
+      if (financialDebtNeedsRebuild) {
+        db.exec(`
+          create table financial_debt_new (
+            id text primary key,
+            organization_id text not null,
+            company_id text,
+            financial_payable_id text,
+            financial_receivable_id text,
+            financial_transaction_id text,
+            debt_type text not null,
+            status text not null,
+            principal_amount_cents integer not null,
+            outstanding_amount_cents integer not null,
+            due_date text,
+            settled_at text,
+            note text,
+            created_at text not null,
+            updated_at text not null,
+            unique(organization_id, id),
+            unique(company_id, id),
+            foreign key(organization_id) references organization(id) on delete cascade,
+            foreign key(company_id) references company(id) on delete cascade,
+            foreign key(organization_id, financial_payable_id) references financial_payable(organization_id, id) on delete restrict,
+            foreign key(organization_id, financial_receivable_id) references financial_receivable(organization_id, id) on delete restrict,
+            foreign key(organization_id, financial_transaction_id) references financial_transaction(organization_id, id) on delete restrict
+          );
+        `);
+        db.exec(`
+          insert into financial_debt_new (
+            id,
+            organization_id,
+            company_id,
+            financial_payable_id,
+            financial_receivable_id,
+            financial_transaction_id,
+            debt_type,
+            status,
+            principal_amount_cents,
+            outstanding_amount_cents,
+            due_date,
+            settled_at,
+            note,
+            created_at,
+            updated_at
+          )
+          select
+            id,
+            coalesce(organization_id, '${DEFAULT_ORGANIZATION_ID}'),
+            company_id,
+            financial_payable_id,
+            financial_receivable_id,
+            financial_transaction_id,
+            debt_type,
+            status,
+            principal_amount_cents,
+            outstanding_amount_cents,
+            due_date,
+            settled_at,
+            note,
+            created_at,
+            updated_at
+          from financial_debt;
+        `);
+        db.exec('drop table financial_debt;');
+        db.exec('alter table financial_debt_new rename to financial_debt;');
+      }
     } finally {
       db.exec('pragma foreign_keys = on');
     }

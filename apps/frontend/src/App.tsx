@@ -62,6 +62,154 @@ function ProtectedRoute({
   return <>{children}</>;
 }
 
+function FinanceModuleRoutes({ user, defaultRoute }: { user: InternalSessionUser; defaultRoute: string }) {
+  return (
+    <Routes>
+      <Route
+        path="/financeiro/*"
+        element={(
+          <ProtectedRoute user={user} permissions={FINANCE_PERMISSIONS} fallback={defaultRoute}>
+            <FinanceWorkspace />
+          </ProtectedRoute>
+        )}
+      >
+        <Route index element={<Navigate to="overview" replace />} />
+        <Route path="overview" element={<FinanceOverviewPage />} />
+        <Route path="transactions" element={<FinanceTransactionsPage />} />
+        <Route path="receivables" element={<FinanceReceivablesPage />} />
+        <Route path="payables" element={<FinancePayablesPage />} />
+        <Route path="reconciliation" element={<FinanceReconciliationPage />} />
+        <Route path="cashflow" element={<FinanceCashflowPage />} />
+        <Route path="reports" element={<FinanceReportsPage />} />
+        <Route path="cadastros" element={<FinanceCadastrosPage />} />
+        <Route path="*" element={<Navigate to="overview" replace />} />
+      </Route>
+      <Route path="*" element={<Navigate to={defaultRoute} replace />} />
+    </Routes>
+  );
+}
+
+function OperationsRoutes({ user, defaultRoute }: { user: InternalSessionUser; defaultRoute: string }) {
+  return (
+    <Routes>
+      <Route path="/" element={<Navigate to={defaultRoute} replace />} />
+      <Route
+        path="/dashboard"
+        element={(
+          <ProtectedRoute user={user} permissions={['dashboard']} fallback={defaultRoute}>
+            <DashboardPage />
+          </ProtectedRoute>
+        )}
+      />
+      <Route
+        path="/calendario"
+        element={(
+          <ProtectedRoute user={user} permissions={['calendar']} fallback={defaultRoute}>
+            <CalendarPage />
+          </ProtectedRoute>
+        )}
+      />
+      <Route
+        path="/turmas"
+        element={(
+          <ProtectedRoute user={user} permissions={['cohorts']} fallback={defaultRoute}>
+            <CohortsPage />
+          </ProtectedRoute>
+        )}
+      />
+      <Route
+        path="/turmas/:id"
+        element={(
+          <ProtectedRoute user={user} permissions={['cohorts']} fallback={defaultRoute}>
+            <CohortDetailPage />
+          </ProtectedRoute>
+        )}
+      />
+      <Route
+        path="/clientes"
+        element={(
+          <ProtectedRoute user={user} permissions={['clients']} fallback={defaultRoute}>
+            <ClientsPage />
+          </ProtectedRoute>
+        )}
+      />
+      <Route
+        path="/clientes/:id"
+        element={(
+          <ProtectedRoute user={user} permissions={['clients']} fallback={defaultRoute}>
+            <ClientDetailPage />
+          </ProtectedRoute>
+        )}
+      />
+      <Route
+        path="/tecnicos"
+        element={(
+          <ProtectedRoute user={user} permissions={['technicians']} fallback={defaultRoute}>
+            <TechniciansPage />
+          </ProtectedRoute>
+        )}
+      />
+      <Route
+        path="/implementacao"
+        element={(
+          <ProtectedRoute user={user} permissions={['implementation']} fallback={defaultRoute}>
+            <ImplementationPage boardMode="implementation" />
+          </ProtectedRoute>
+        )}
+      />
+      <Route
+        path="/suporte"
+        element={(
+          <ProtectedRoute user={user} permissions={['support', 'implementation']} fallback={defaultRoute}>
+            <ImplementationPage boardMode="support" />
+          </ProtectedRoute>
+        )}
+      />
+      <Route
+        path="/processos-seletivos"
+        element={(
+          <ProtectedRoute user={user} permissions={['recruitment']} fallback={defaultRoute}>
+            <RecruitmentPage />
+          </ProtectedRoute>
+        )}
+      />
+      <Route
+        path="/licencas"
+        element={(
+          <ProtectedRoute user={user} permissions={['licenses']} fallback={defaultRoute}>
+            <LicensesPage />
+          </ProtectedRoute>
+        )}
+      />
+      <Route
+        path="/licencas/programas"
+        element={(
+          <ProtectedRoute user={user} permissions={['license_programs']} fallback={defaultRoute}>
+            <LicenseProgramsPage />
+          </ProtectedRoute>
+        )}
+      />
+      <Route
+        path="/documentacao"
+        element={(
+          <ProtectedRoute user={user} permissions={['docs']} fallback={defaultRoute}>
+            <InternalDocsPage />
+          </ProtectedRoute>
+        )}
+      />
+      <Route
+        path="/admin"
+        element={(
+          <ProtectedRoute user={user} permissions={['admin']} fallback={defaultRoute}>
+            <AdminPage />
+          </ProtectedRoute>
+        )}
+      />
+      <Route path="*" element={<Navigate to={defaultRoute} replace />} />
+    </Routes>
+  );
+}
+
 function InternalApp() {
   const [session, setSession] = useState<InternalSessionData | null>(() => internalSessionStore.read());
   const [loadingSession, setLoadingSession] = useState(true);
@@ -131,6 +279,7 @@ function InternalApp() {
   const user = session?.user ?? null;
   const navItems = useMemo(() => visibleNavItemsForUser(user), [user]);
   const defaultRoute = defaultRouteForUser(user);
+  const isFinanceRoute = location.pathname.startsWith('/financeiro');
 
   useEffect(() => {
     if (!session || !user) return;
@@ -150,147 +299,17 @@ function InternalApp() {
     return <LoginPage onLogin={handleLogin} />;
   }
 
+  if (isFinanceRoute) {
+    return <FinanceModuleRoutes user={user} defaultRoute={defaultRoute} />;
+  }
+
   return (
     <Layout
       onLogout={handleLogout}
       loggedUser={user.display_name || user.username}
       navItems={navItems}
     >
-      <Routes>
-        <Route path="/" element={<Navigate to={defaultRoute} replace />} />
-        <Route
-          path="/dashboard"
-          element={(
-            <ProtectedRoute user={user} permissions={['dashboard']} fallback={defaultRoute}>
-              <DashboardPage />
-            </ProtectedRoute>
-          )}
-        />
-        <Route
-          path="/calendario"
-          element={(
-            <ProtectedRoute user={user} permissions={['calendar']} fallback={defaultRoute}>
-              <CalendarPage />
-            </ProtectedRoute>
-          )}
-        />
-        <Route
-          path="/turmas"
-          element={(
-            <ProtectedRoute user={user} permissions={['cohorts']} fallback={defaultRoute}>
-              <CohortsPage />
-            </ProtectedRoute>
-          )}
-        />
-        <Route
-          path="/turmas/:id"
-          element={(
-            <ProtectedRoute user={user} permissions={['cohorts']} fallback={defaultRoute}>
-              <CohortDetailPage />
-            </ProtectedRoute>
-          )}
-        />
-        <Route
-          path="/clientes"
-          element={(
-            <ProtectedRoute user={user} permissions={['clients']} fallback={defaultRoute}>
-              <ClientsPage />
-            </ProtectedRoute>
-          )}
-        />
-        <Route
-          path="/clientes/:id"
-          element={(
-            <ProtectedRoute user={user} permissions={['clients']} fallback={defaultRoute}>
-              <ClientDetailPage />
-            </ProtectedRoute>
-          )}
-        />
-        <Route
-          path="/tecnicos"
-          element={(
-            <ProtectedRoute user={user} permissions={['technicians']} fallback={defaultRoute}>
-              <TechniciansPage />
-            </ProtectedRoute>
-          )}
-        />
-        <Route
-          path="/implementacao"
-          element={(
-            <ProtectedRoute user={user} permissions={['implementation']} fallback={defaultRoute}>
-              <ImplementationPage boardMode="implementation" />
-            </ProtectedRoute>
-          )}
-        />
-        <Route
-          path="/suporte"
-          element={(
-            <ProtectedRoute user={user} permissions={['support', 'implementation']} fallback={defaultRoute}>
-              <ImplementationPage boardMode="support" />
-            </ProtectedRoute>
-          )}
-        />
-        <Route
-          path="/processos-seletivos"
-          element={(
-            <ProtectedRoute user={user} permissions={['recruitment']} fallback={defaultRoute}>
-              <RecruitmentPage />
-            </ProtectedRoute>
-          )}
-        />
-        <Route
-          path="/licencas"
-          element={(
-            <ProtectedRoute user={user} permissions={['licenses']} fallback={defaultRoute}>
-              <LicensesPage />
-            </ProtectedRoute>
-          )}
-        />
-        <Route
-          path="/licencas/programas"
-          element={(
-            <ProtectedRoute user={user} permissions={['license_programs']} fallback={defaultRoute}>
-              <LicenseProgramsPage />
-            </ProtectedRoute>
-          )}
-        />
-        <Route
-          path="/financeiro/*"
-          element={(
-            <ProtectedRoute user={user} permissions={FINANCE_PERMISSIONS} fallback={defaultRoute}>
-              <FinanceWorkspace />
-            </ProtectedRoute>
-          )}
-        >
-          <Route index element={<Navigate to="overview" replace />} />
-          <Route path="overview" element={<FinanceOverviewPage />} />
-          <Route path="transactions" element={<FinanceTransactionsPage />} />
-          <Route path="receivables" element={<FinanceReceivablesPage />} />
-          <Route path="payables" element={<FinancePayablesPage />} />
-          <Route path="reconciliation" element={<FinanceReconciliationPage />} />
-          <Route path="cashflow" element={<FinanceCashflowPage />} />
-          <Route path="reports" element={<FinanceReportsPage />} />
-          <Route path="cadastros" element={<FinanceCadastrosPage />} />
-          <Route path="*" element={<Navigate to="overview" replace />} />
-        </Route>
-        <Route
-          path="/documentacao"
-          element={(
-            <ProtectedRoute user={user} permissions={['docs']} fallback={defaultRoute}>
-              <InternalDocsPage />
-            </ProtectedRoute>
-          )}
-        />
-        <Route
-          path="/admin"
-          element={(
-            <ProtectedRoute user={user} permissions={['admin']} fallback={defaultRoute}>
-              <AdminPage />
-            </ProtectedRoute>
-          )}
-        />
-        <Route path="*" element={<Navigate to={defaultRoute} replace />} />
-      </Routes>
+      <OperationsRoutes user={user} defaultRoute={defaultRoute} />
     </Layout>
   );
 }

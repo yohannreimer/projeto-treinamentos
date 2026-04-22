@@ -72,6 +72,66 @@ vi.mock('../../finance/api', () => ({
       organization_name: 'Holand',
       currency: 'BRL',
       timezone: 'America/Sao_Paulo'
+    }),
+    getExecutiveOverview: vi.fn().mockResolvedValue({
+      organization_id: 'org-holand',
+      organization_name: 'Holand',
+      currency: 'BRL',
+      timezone: 'America/Sao_Paulo',
+      generated_at: '2026-04-22T12:00:00.000Z',
+      kpis: [
+        {
+          id: 'balance',
+          label: 'Saldo em conta',
+          amount_cents: 0,
+          hint: 'Mock do shell',
+          tone: 'positive',
+          value_kind: 'currency'
+        }
+      ],
+      queue: [
+        {
+          id: 'reconciliation',
+          status: 'Crítico',
+          title: 'Sem conciliação',
+          detail: 'Mock do shell.',
+          amount_cents: 0,
+          tone: 'critical',
+          href: '/financeiro/reconciliation',
+          cta: 'Conciliar extrato'
+        }
+      ],
+      cashflow_bands: [
+        {
+          label: '30 dias',
+          inflow_cents: 0,
+          outflow_cents: 0,
+          net_cents: 0,
+          balance_cents: 0,
+          balance_label: 'saldo acumulado',
+          inflow_share: 10,
+          outflow_share: 10
+        }
+      ],
+      quick_actions: [
+        {
+          id: 'new-revenue',
+          label: 'Nova receita',
+          detail: 'Mock do shell.',
+          href: '/financeiro/receivables'
+        }
+      ],
+      summary: {
+        cash_balance_cents: 0,
+        receivables_open_cents: 0,
+        payables_open_cents: 0,
+        projected_result_cents: 0,
+        reconciliation_pending_count: 0,
+        uncategorized_count: 0,
+        overdue_count: 0,
+        monthly_income_cents: 0,
+        monthly_expense_cents: 0
+      }
     })
   }
 }));
@@ -104,6 +164,8 @@ test('finance workspace shows the approved ERP sitemap and no counterparty copy 
     expect(within(sidebar).queryAllByText('Holand').length).toBeGreaterThan(0);
   });
   expect(screen.queryByRole('link', { name: 'Dívidas' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('link', { name: 'Calendário' })).not.toBeInTheDocument();
+  expect(screen.queryByText('Orquestrador de Jornadas')).not.toBeInTheDocument();
 });
 
 test('finance workspace keeps footer informative for finance-only users', async () => {

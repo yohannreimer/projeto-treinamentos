@@ -1,16 +1,10 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { hasAnyPermission, internalSessionStore } from '../../auth/session';
-import { api } from '../../services/api';
 import {
   financeApi,
   type FinanceDebt,
   type FinanceDebtStatus
 } from '../api';
-
-type CompanyOption = {
-  id: string;
-  name: string;
-};
 
 type DebtForm = {
   debt_type: string;
@@ -58,8 +52,6 @@ function statusLabel(status: FinanceDebtStatus): string {
 }
 
 export function FinanceDebtsPage() {
-  const [companies, setCompanies] = useState<CompanyOption[]>([]);
-  const [selectedCompanyId, setSelectedCompanyId] = useState('');
   const [debts, setDebts] = useState<FinanceDebt[]>([]);
   const [form, setForm] = useState<DebtForm>(initialForm);
   const [loading, setLoading] = useState(true);
@@ -70,31 +62,11 @@ export function FinanceDebtsPage() {
   const session = internalSessionStore.read();
   const canWrite = hasAnyPermission(session?.user, ['finance.write']);
 
-  useEffect(() => {
-    let cancelled = false;
-    api.companies()
-      .then((rows) => {
-        if (cancelled) return;
-        const normalized = (rows as CompanyOption[]).map((item) => ({ id: item.id, name: item.name }));
-        setCompanies(normalized);
-        if (normalized.length > 0) {
-          setSelectedCompanyId((current) => current || normalized[0]!.id);
-        }
-      })
-      .catch((loadError) => {
-        if (cancelled) return;
-        setError((loadError as Error).message || 'Falha ao carregar empresas.');
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  async function reload(companyId: string) {
+  async function reload() {
     setLoading(true);
     setError('');
     try {
-      const response = await financeApi.listDebts(companyId);
+      const response = await financeApi.listDebts();
       setDebts(response.debts);
     } catch (loadError) {
       setError((loadError as Error).message || 'Falha ao carregar dívidas.');
@@ -105,24 +77,11 @@ export function FinanceDebtsPage() {
   }
 
   useEffect(() => {
-    if (!selectedCompanyId) {
-      setLoading(false);
-      return;
-    }
-    reload(selectedCompanyId).catch(() => undefined);
-  }, [selectedCompanyId]);
-
-  const selectedCompanyName = useMemo(
-    () => companies.find((company) => company.id === selectedCompanyId)?.name ?? 'Empresa',
-    [companies, selectedCompanyId]
-  );
+    reload().catch(() => undefined);
+  }, []);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!selectedCompanyId) {
-      setError('Selecione uma empresa.');
-      return;
-    }
     const principal = parseAmountToCents(form.principal);
     const outstanding = parseAmountToCents(form.outstanding || form.principal);
     if (principal <= 0) {
@@ -135,7 +94,6 @@ export function FinanceDebtsPage() {
     setMessage('');
     try {
       await financeApi.createDebt({
-        company_id: selectedCompanyId,
         debt_type: form.debt_type.trim() || 'operacional',
         status: form.status,
         principal_amount_cents: principal,
@@ -146,7 +104,7 @@ export function FinanceDebtsPage() {
       });
       setForm(initialForm);
       setMessage('Dívida registrada com sucesso.');
-      await reload(selectedCompanyId);
+      await reload();
     } catch (submitError) {
       setError((submitError as Error).message || 'Falha ao registrar dívida.');
     } finally {
@@ -170,17 +128,9 @@ export function FinanceDebtsPage() {
         <div className="panel">
           <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
             <div>
-              <h2>{selectedCompanyName}</h2>
-              <p style={{ margin: '4px 0 0', color: 'var(--ink-soft)' }}>Controle de passivos financeiros por empresa.</p>
+              <h2>Passivos da empresa logada</h2>
+              <p style={{ margin: '4px 0 0', color: 'var(--ink-soft)' }}>Controle de obrigações financeiras da empresa logada, com leitura direta do passivo em aberto.</p>
             </div>
-            <label style={{ display: 'grid', gap: '4px' }}>
-              <span style={{ fontSize: '0.82rem', color: 'var(--ink-soft)' }}>Empresa</span>
-              <select value={selectedCompanyId} onChange={(event) => setSelectedCompanyId(event.target.value)}>
-                {companies.map((company) => (
-                  <option key={company.id} value={company.id}>{company.name}</option>
-                ))}
-              </select>
-            </label>
           </div>
           <div className="panel-content">
             <form className="form form-spacious" onSubmit={handleSubmit} style={{ display: 'grid', gap: '10px' }}>
@@ -222,7 +172,7 @@ export function FinanceDebtsPage() {
                 <textarea value={form.note} onChange={(event) => setForm((current) => ({ ...current, note: event.target.value }))} rows={2} disabled={!canWrite || submitting} />
               </label>
               <div className="actions" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                <button type="submit" disabled={!canWrite || submitting || !selectedCompanyId}>
+                <button type="submit" disabled={!canWrite || submitting}>
                   {submitting ? 'Salvando...' : 'Registrar dívida'}
                 </button>
                 <button type="button" onClick={() => setForm(initialForm)} disabled={submitting}>Limpar</button>

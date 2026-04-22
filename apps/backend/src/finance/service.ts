@@ -14,8 +14,15 @@ import type {
   FinanceDebtDto,
   FinanceImportJobDto,
   FinancePayableDto,
+  FinancePayablesListDto,
+  FinanceReconciliationInboxDto,
+  FinanceReconciliationInsightDto,
   FinanceReconciliationMatchDto,
+  FinanceReconciliationBucketDto,
+  FinanceReconciliationBucketKey,
   FinanceReceivableDto,
+  FinanceReceivablesListDto,
+  FinanceReconciliationSuggestionDto,
   FinanceStatementEntryDto,
   FinanceCategoryDto,
   FinanceContextDto,
@@ -28,6 +35,7 @@ import type {
 } from './types.js';
 
 const DEFAULT_ORGANIZATION_ID = 'org-holand';
+type FinanceOperationalGroupKey = 'overdue' | 'due_today' | 'upcoming' | 'settled';
 
 function resolveDefaultStatus(input: {
   status?: FinanceTransactionStatus;
@@ -119,7 +127,7 @@ function readFinanceEntityRow(organizationId: string, entityId: string) {
 function mapAccountRow(row: {
   id: string;
   organization_id: string;
-  company_id: string;
+  company_id: string | null;
   name: string;
   kind: string;
   currency: string;
@@ -147,7 +155,7 @@ function mapAccountRow(row: {
 function mapCategoryRow(row: {
   id: string;
   organization_id: string;
-  company_id: string;
+  company_id: string | null;
   name: string;
   kind: string;
   parent_category_id: string | null;
@@ -198,7 +206,7 @@ export function listFinanceAccounts(organizationId: string, companyId?: string |
   `).all(normalizedOrganizationId, companyFilter, companyFilter) as Array<{
     id: string;
     organization_id: string;
-    company_id: string;
+    company_id: string | null;
     name: string;
     kind: string;
     currency: string;
@@ -244,7 +252,7 @@ export function listFinanceCategories(organizationId: string, companyId?: string
   `).all(normalizedOrganizationId, companyFilter, companyFilter) as Array<{
     id: string;
     organization_id: string;
-    company_id: string;
+    company_id: string | null;
     name: string;
     kind: string;
     parent_category_id: string | null;
@@ -264,10 +272,9 @@ export function createFinanceAccount(input: CreateFinanceAccountInput): FinanceA
   const normalizedOrganizationId = resolveOrganizationId(input.organization_id);
   readOrganizationRow(normalizedOrganizationId);
   const companyId = input.company_id?.trim() || null;
-  if (!companyId) {
-    throw new Error('Informe company_id para registrar a contraparte.');
+  if (companyId) {
+    readCompanyRow(companyId);
   }
-  readCompanyRow(companyId);
   const nowIso = new Date().toISOString();
   const id = uuid('facc');
 
@@ -318,7 +325,7 @@ export function createFinanceAccount(input: CreateFinanceAccountInput): FinanceA
   `).get(id) as {
     id: string;
     organization_id: string;
-    company_id: string;
+    company_id: string | null;
     name: string;
     kind: string;
     currency: string;
@@ -339,10 +346,9 @@ export function createFinanceCategory(input: CreateFinanceCategoryInput): Financ
   const normalizedOrganizationId = resolveOrganizationId(input.organization_id);
   readOrganizationRow(normalizedOrganizationId);
   const companyId = input.company_id?.trim() || null;
-  if (!companyId) {
-    throw new Error('Informe company_id para registrar a contraparte.');
+  if (companyId) {
+    readCompanyRow(companyId);
   }
-  readCompanyRow(companyId);
   const nowIso = new Date().toISOString();
   const id = uuid('fcat');
   const parentCategoryId = input.parent_category_id?.trim() || null;
@@ -352,9 +358,12 @@ export function createFinanceCategory(input: CreateFinanceCategoryInput): Financ
       from financial_category
       where id = ?
         and organization_id = ?
-        and company_id = ?
+        and (
+          (? is null and company_id is null)
+          or company_id = ?
+        )
       limit 1
-    `).get(parentCategoryId, normalizedOrganizationId, companyId) as { id: string } | undefined;
+    `).get(parentCategoryId, normalizedOrganizationId, companyId, companyId) as { id: string } | undefined;
     if (!parent) {
       throw new Error('Categoria pai não encontrada.');
     }
@@ -401,7 +410,7 @@ export function createFinanceCategory(input: CreateFinanceCategoryInput): Financ
   `).get(id) as {
     id: string;
     organization_id: string;
-    company_id: string;
+    company_id: string | null;
     name: string;
     kind: string;
     parent_category_id: string | null;
@@ -419,8 +428,10 @@ export function createFinanceCategory(input: CreateFinanceCategoryInput): Financ
 function mapPayableRow(row: {
   id: string;
   organization_id: string;
-  company_id: string;
+  company_id: string | null;
   financial_transaction_id: string | null;
+  financial_entity_id: string | null;
+  financial_entity_name: string | null;
   financial_account_id: string | null;
   financial_account_name: string | null;
   financial_category_id: string | null;
@@ -443,6 +454,8 @@ function mapPayableRow(row: {
     organization_id: row.organization_id,
     company_id: row.company_id,
     financial_transaction_id: row.financial_transaction_id,
+    financial_entity_id: row.financial_entity_id,
+    financial_entity_name: row.financial_entity_name,
     financial_account_id: row.financial_account_id,
     financial_account_name: row.financial_account_name,
     financial_category_id: row.financial_category_id,
@@ -465,8 +478,10 @@ function mapPayableRow(row: {
 function mapReceivableRow(row: {
   id: string;
   organization_id: string;
-  company_id: string;
+  company_id: string | null;
   financial_transaction_id: string | null;
+  financial_entity_id: string | null;
+  financial_entity_name: string | null;
   financial_account_id: string | null;
   financial_account_name: string | null;
   financial_category_id: string | null;
@@ -489,6 +504,8 @@ function mapReceivableRow(row: {
     organization_id: row.organization_id,
     company_id: row.company_id,
     financial_transaction_id: row.financial_transaction_id,
+    financial_entity_id: row.financial_entity_id,
+    financial_entity_name: row.financial_entity_name,
     financial_account_id: row.financial_account_id,
     financial_account_name: row.financial_account_name,
     financial_category_id: row.financial_category_id,
@@ -508,11 +525,76 @@ function mapReceivableRow(row: {
   };
 }
 
-export function listFinancePayables(organizationId: string, companyId?: string | null): {
-  company_id: string | null;
-  company_name: string | null;
-  payables: FinancePayableDto[];
-} {
+function getOperationalTodayIso() {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  });
+  const parts = formatter.formatToParts(new Date());
+  const year = parts.find((part) => part.type === 'year')?.value ?? '1970';
+  const month = parts.find((part) => part.type === 'month')?.value ?? '01';
+  const day = parts.find((part) => part.type === 'day')?.value ?? '01';
+  return `${year}-${month}-${day}`;
+}
+
+function buildOperationalGroups<T>(rows: T[], options: {
+  getAmountCents: (row: T) => number;
+  getDueDate: (row: T) => string | null;
+  getStatus: (row: T) => string;
+  isCanceled: (row: T) => boolean;
+  isSettled: (row: T) => boolean;
+}) {
+  const todayIso = getOperationalTodayIso();
+  const groups: Record<FinanceOperationalGroupKey, T[]> = {
+    overdue: [],
+    due_today: [],
+    upcoming: [],
+    settled: []
+  };
+  const summary = {
+    open_cents: 0,
+    overdue_cents: 0,
+    due_today_cents: 0
+  };
+
+  for (const row of rows) {
+    if (options.isCanceled(row)) {
+      continue;
+    }
+
+    const dueDate = options.getDueDate(row);
+    const status = options.getStatus(row);
+    const amountCents = options.getAmountCents(row);
+
+    if (options.isSettled(row)) {
+      groups.settled.push(row);
+      continue;
+    }
+
+    if (status === 'overdue' || (dueDate && dueDate < todayIso)) {
+      groups.overdue.push(row);
+      summary.open_cents += amountCents;
+      summary.overdue_cents += amountCents;
+      continue;
+    }
+
+    if (dueDate === todayIso) {
+      groups.due_today.push(row);
+      summary.open_cents += amountCents;
+      summary.due_today_cents += amountCents;
+      continue;
+    }
+
+    groups.upcoming.push(row);
+    summary.open_cents += amountCents;
+  }
+
+  return { summary, groups };
+}
+
+export function listFinancePayables(organizationId: string, companyId?: string | null): FinancePayablesListDto {
   const normalizedOrganizationId = resolveOrganizationId(organizationId);
   readOrganizationRow(normalizedOrganizationId);
   const company = resolveCompanyRow(companyId);
@@ -524,6 +606,8 @@ export function listFinancePayables(organizationId: string, companyId?: string |
       fp.organization_id,
       fp.company_id,
       fp.financial_transaction_id,
+      fp.financial_entity_id,
+      coalesce(fe.trade_name, fe.legal_name) as financial_entity_name,
       fp.financial_account_id,
       fa.name as financial_account_name,
       fp.financial_category_id,
@@ -541,13 +625,14 @@ export function listFinancePayables(organizationId: string, companyId?: string |
       fp.created_at,
       fp.updated_at
     from financial_payable fp
+    left join financial_entity fe
+      on fe.organization_id = fp.organization_id
+      and fe.id = fp.financial_entity_id
     left join financial_account fa
       on fa.organization_id = fp.organization_id
-      and fa.company_id = fp.company_id
       and fa.id = fp.financial_account_id
     left join financial_category fc
       on fc.organization_id = fp.organization_id
-      and fc.company_id = fp.company_id
       and fc.id = fp.financial_category_id
     where fp.organization_id = ?
       and (? is null or fp.company_id = ?)
@@ -555,8 +640,10 @@ export function listFinancePayables(organizationId: string, companyId?: string |
   `).all(normalizedOrganizationId, companyFilter, companyFilter) as Array<{
     id: string;
     organization_id: string;
-    company_id: string;
+    company_id: string | null;
     financial_transaction_id: string | null;
+    financial_entity_id: string | null;
+    financial_entity_name: string | null;
     financial_account_id: string | null;
     financial_account_name: string | null;
     financial_category_id: string | null;
@@ -574,19 +661,25 @@ export function listFinancePayables(organizationId: string, companyId?: string |
     created_at: string;
     updated_at: string;
   }>;
+  const payables = rows.map(mapPayableRow);
+  const operational = buildOperationalGroups(payables, {
+    getAmountCents: (row) => row.amount_cents,
+    getDueDate: (row) => row.due_date,
+    getStatus: (row) => row.status,
+    isCanceled: (row) => row.status === 'canceled',
+    isSettled: (row) => row.status === 'paid' || Boolean(row.paid_at)
+  });
 
   return {
     company_id: company?.id ?? null,
     company_name: company?.name ?? null,
-    payables: rows.map(mapPayableRow)
+    payables,
+    summary: operational.summary,
+    groups: operational.groups
   };
 }
 
-export function listFinanceReceivables(organizationId: string, companyId?: string | null): {
-  company_id: string | null;
-  company_name: string | null;
-  receivables: FinanceReceivableDto[];
-} {
+export function listFinanceReceivables(organizationId: string, companyId?: string | null): FinanceReceivablesListDto {
   const normalizedOrganizationId = resolveOrganizationId(organizationId);
   readOrganizationRow(normalizedOrganizationId);
   const company = resolveCompanyRow(companyId);
@@ -598,6 +691,8 @@ export function listFinanceReceivables(organizationId: string, companyId?: strin
       fr.organization_id,
       fr.company_id,
       fr.financial_transaction_id,
+      fr.financial_entity_id,
+      coalesce(fe.trade_name, fe.legal_name) as financial_entity_name,
       fr.financial_account_id,
       fa.name as financial_account_name,
       fr.financial_category_id,
@@ -615,13 +710,14 @@ export function listFinanceReceivables(organizationId: string, companyId?: strin
       fr.created_at,
       fr.updated_at
     from financial_receivable fr
+    left join financial_entity fe
+      on fe.organization_id = fr.organization_id
+      and fe.id = fr.financial_entity_id
     left join financial_account fa
       on fa.organization_id = fr.organization_id
-      and fa.company_id = fr.company_id
       and fa.id = fr.financial_account_id
     left join financial_category fc
       on fc.organization_id = fr.organization_id
-      and fc.company_id = fr.company_id
       and fc.id = fr.financial_category_id
     where fr.organization_id = ?
       and (? is null or fr.company_id = ?)
@@ -629,8 +725,10 @@ export function listFinanceReceivables(organizationId: string, companyId?: strin
   `).all(normalizedOrganizationId, companyFilter, companyFilter) as Array<{
     id: string;
     organization_id: string;
-    company_id: string;
+    company_id: string | null;
     financial_transaction_id: string | null;
+    financial_entity_id: string | null;
+    financial_entity_name: string | null;
     financial_account_id: string | null;
     financial_account_name: string | null;
     financial_category_id: string | null;
@@ -648,11 +746,21 @@ export function listFinanceReceivables(organizationId: string, companyId?: strin
     created_at: string;
     updated_at: string;
   }>;
+  const receivables = rows.map(mapReceivableRow);
+  const operational = buildOperationalGroups(receivables, {
+    getAmountCents: (row) => row.amount_cents,
+    getDueDate: (row) => row.due_date,
+    getStatus: (row) => row.status,
+    isCanceled: (row) => row.status === 'canceled',
+    isSettled: (row) => row.status === 'received' || Boolean(row.received_at)
+  });
 
   return {
     company_id: company?.id ?? null,
     company_name: company?.name ?? null,
-    receivables: rows.map(mapReceivableRow)
+    receivables,
+    summary: operational.summary,
+    groups: operational.groups
   };
 }
 
@@ -660,10 +768,10 @@ export function createFinancePayable(input: CreateFinancePayableInput): FinanceP
   const normalizedOrganizationId = resolveOrganizationId(input.organization_id);
   readOrganizationRow(normalizedOrganizationId);
   const companyId = input.company_id?.trim() || null;
-  if (!companyId) {
-    throw new Error('Informe company_id para registrar a contraparte.');
+  const financialEntityId = input.financial_entity_id?.trim() || null;
+  if (financialEntityId) {
+    readFinanceEntityRow(normalizedOrganizationId, financialEntityId);
   }
-  readCompanyRow(companyId);
   const nowIso = new Date().toISOString();
   const id = uuid('fpay');
 
@@ -673,6 +781,7 @@ export function createFinancePayable(input: CreateFinancePayableInput): FinanceP
       organization_id,
       company_id,
       financial_transaction_id,
+      financial_entity_id,
       financial_account_id,
       financial_category_id,
       supplier_name,
@@ -687,11 +796,12 @@ export function createFinancePayable(input: CreateFinancePayableInput): FinanceP
       note,
       created_at,
       updated_at
-    ) values (?, ?, ?, null, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', null, ?, ?, ?)
+    ) values (?, ?, ?, null, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', null, ?, ?, ?)
   `).run(
     id,
     normalizedOrganizationId,
     companyId,
+    financialEntityId,
     input.financial_account_id ?? null,
     input.financial_category_id ?? null,
     input.supplier_name?.trim() || null,
@@ -712,6 +822,8 @@ export function createFinancePayable(input: CreateFinancePayableInput): FinanceP
       fp.organization_id,
       fp.company_id,
       fp.financial_transaction_id,
+      fp.financial_entity_id,
+      coalesce(fe.trade_name, fe.legal_name) as financial_entity_name,
       fp.financial_account_id,
       fa.name as financial_account_name,
       fp.financial_category_id,
@@ -729,21 +841,24 @@ export function createFinancePayable(input: CreateFinancePayableInput): FinanceP
       fp.created_at,
       fp.updated_at
     from financial_payable fp
+    left join financial_entity fe
+      on fe.organization_id = fp.organization_id
+      and fe.id = fp.financial_entity_id
     left join financial_account fa
       on fa.organization_id = fp.organization_id
-      and fa.company_id = fp.company_id
       and fa.id = fp.financial_account_id
     left join financial_category fc
       on fc.organization_id = fp.organization_id
-      and fc.company_id = fp.company_id
       and fc.id = fp.financial_category_id
     where fp.id = ?
     limit 1
   `).get(id) as {
     id: string;
     organization_id: string;
-    company_id: string;
+    company_id: string | null;
     financial_transaction_id: string | null;
+    financial_entity_id: string | null;
+    financial_entity_name: string | null;
     financial_account_id: string | null;
     financial_account_name: string | null;
     financial_category_id: string | null;
@@ -772,10 +887,10 @@ export function createFinanceReceivable(input: CreateFinanceReceivableInput): Fi
   const normalizedOrganizationId = resolveOrganizationId(input.organization_id);
   readOrganizationRow(normalizedOrganizationId);
   const companyId = input.company_id?.trim() || null;
-  if (!companyId) {
-    throw new Error('Informe company_id para registrar a contraparte.');
+  const financialEntityId = input.financial_entity_id?.trim() || null;
+  if (financialEntityId) {
+    readFinanceEntityRow(normalizedOrganizationId, financialEntityId);
   }
-  readCompanyRow(companyId);
   const nowIso = new Date().toISOString();
   const id = uuid('frec');
 
@@ -785,6 +900,7 @@ export function createFinanceReceivable(input: CreateFinanceReceivableInput): Fi
       organization_id,
       company_id,
       financial_transaction_id,
+      financial_entity_id,
       financial_account_id,
       financial_category_id,
       customer_name,
@@ -799,11 +915,12 @@ export function createFinanceReceivable(input: CreateFinanceReceivableInput): Fi
       note,
       created_at,
       updated_at
-    ) values (?, ?, ?, null, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', null, ?, ?, ?)
+    ) values (?, ?, ?, null, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', null, ?, ?, ?)
   `).run(
     id,
     normalizedOrganizationId,
     companyId,
+    financialEntityId,
     input.financial_account_id ?? null,
     input.financial_category_id ?? null,
     input.customer_name?.trim() || null,
@@ -824,6 +941,8 @@ export function createFinanceReceivable(input: CreateFinanceReceivableInput): Fi
       fr.organization_id,
       fr.company_id,
       fr.financial_transaction_id,
+      fr.financial_entity_id,
+      coalesce(fe.trade_name, fe.legal_name) as financial_entity_name,
       fr.financial_account_id,
       fa.name as financial_account_name,
       fr.financial_category_id,
@@ -841,21 +960,24 @@ export function createFinanceReceivable(input: CreateFinanceReceivableInput): Fi
       fr.created_at,
       fr.updated_at
     from financial_receivable fr
+    left join financial_entity fe
+      on fe.organization_id = fr.organization_id
+      and fe.id = fr.financial_entity_id
     left join financial_account fa
       on fa.organization_id = fr.organization_id
-      and fa.company_id = fr.company_id
       and fa.id = fr.financial_account_id
     left join financial_category fc
       on fc.organization_id = fr.organization_id
-      and fc.company_id = fr.company_id
       and fc.id = fr.financial_category_id
     where fr.id = ?
     limit 1
   `).get(id) as {
     id: string;
     organization_id: string;
-    company_id: string;
+    company_id: string | null;
     financial_transaction_id: string | null;
+    financial_entity_id: string | null;
+    financial_entity_name: string | null;
     financial_account_id: string | null;
     financial_account_name: string | null;
     financial_category_id: string | null;
@@ -883,7 +1005,7 @@ export function createFinanceReceivable(input: CreateFinanceReceivableInput): Fi
 function mapImportJobRow(row: {
   id: string;
   organization_id: string;
-  company_id: string;
+  company_id: string | null;
   import_type: string;
   source_file_name: string;
   source_file_mime_type: string | null;
@@ -921,7 +1043,7 @@ function mapImportJobRow(row: {
 function mapStatementEntryRow(row: {
   id: string;
   organization_id: string;
-  company_id: string;
+  company_id: string | null;
   financial_account_id: string;
   financial_account_name: string | null;
   financial_import_job_id: string | null;
@@ -959,7 +1081,7 @@ function mapStatementEntryRow(row: {
 function mapReconciliationRow(row: {
   id: string;
   organization_id: string;
-  company_id: string;
+  company_id: string | null;
   financial_bank_statement_entry_id: string;
   financial_transaction_id: string;
   match_status: string;
@@ -983,6 +1105,261 @@ function mapReconciliationRow(row: {
     reviewed_at: row.matched_at,
     created_at: row.created_at,
     updated_at: row.updated_at
+  };
+}
+
+function getDateDifferenceInDays(left: string, right: string) {
+  const leftValue = new Date(`${left}T00:00:00.000Z`).getTime();
+  const rightValue = new Date(`${right}T00:00:00.000Z`).getTime();
+  return Math.round((leftValue - rightValue) / 86_400_000);
+}
+
+function getDateOffsetIso(baseDate: string, offsetDays: number) {
+  const value = new Date(`${baseDate}T00:00:00.000Z`);
+  value.setUTCDate(value.getUTCDate() + offsetDays);
+  return value.toISOString().slice(0, 10);
+}
+
+function getTransactionAnchorDate(transaction: FinanceTransactionDto) {
+  return transaction.settlement_date
+    ?? transaction.due_date
+    ?? transaction.competence_date
+    ?? transaction.issue_date
+    ?? transaction.created_at.slice(0, 10);
+}
+
+function buildReconciliationSuggestion(
+  entry: FinanceStatementEntryDto,
+  transaction: FinanceTransactionDto
+): FinanceReconciliationSuggestionDto {
+  const entryDate = entry.posted_at ?? entry.statement_date;
+  const anchorDate = getTransactionAnchorDate(transaction);
+  const dateGapDays = anchorDate ? Math.abs(getDateDifferenceInDays(entryDate, anchorDate)) : 30;
+  const entryDirection = entry.amount_cents >= 0 ? 'inflow' : 'outflow';
+  const transactionDirection = transaction.kind === 'income' ? 'inflow' : 'outflow';
+  const directionMatches = entryDirection === transactionDirection;
+  const entryLabel = entry.description.toLowerCase();
+  const transactionLabel = `${transaction.note ?? ''} ${transaction.financial_entity_name ?? ''}`.toLowerCase();
+  const hasTextOverlap = entryLabel.split(/\s+/).some((token) => token.length >= 4 && transactionLabel.includes(token));
+
+  let confidence = 0.55;
+  if (directionMatches) {
+    confidence += 0.18;
+  }
+  if (dateGapDays <= 1) {
+    confidence += 0.17;
+  } else if (dateGapDays <= 3) {
+    confidence += 0.11;
+  } else if (dateGapDays <= 7) {
+    confidence += 0.06;
+  }
+  if (hasTextOverlap) {
+    confidence += 0.05;
+  }
+
+  return {
+    financial_transaction_id: transaction.id,
+    description: transaction.note?.trim()
+      || transaction.financial_entity_name
+      || transaction.financial_category_name
+      || (transaction.kind === 'income' ? 'Receita operacional' : 'Despesa operacional'),
+    amount_cents: transaction.amount_cents,
+    kind: transaction.kind,
+    status: transaction.status,
+    due_date: transaction.due_date,
+    competence_date: transaction.competence_date,
+    financial_entity_name: transaction.financial_entity_name,
+    confidence_score: Number(Math.min(confidence, 0.99).toFixed(2))
+  };
+}
+
+function buildReconciliationSuggestions(params: {
+  entry: FinanceStatementEntryDto;
+  transactions: FinanceTransactionDto[];
+  matchedTransactionIds: Set<string>;
+}) {
+  const entryAmount = Math.abs(params.entry.amount_cents);
+  const entryDirection = params.entry.amount_cents >= 0 ? 'income' : 'expense';
+
+  return params.transactions
+    .filter((transaction) => !params.matchedTransactionIds.has(transaction.id))
+    .filter((transaction) => !transaction.is_deleted && transaction.status !== 'canceled')
+    .filter((transaction) => Math.abs(transaction.amount_cents) === entryAmount)
+    .filter((transaction) => {
+      if (transaction.kind === 'transfer' || transaction.kind === 'adjustment') {
+        return true;
+      }
+      return transaction.kind === entryDirection;
+    })
+    .map((transaction) => buildReconciliationSuggestion(params.entry, transaction))
+    .sort((left, right) => right.confidence_score - left.confidence_score)
+    .slice(0, 3);
+}
+
+function classifyReconciliationBucket(params: {
+  entryDate: string;
+  ageDays: number;
+  suggestionCount: number;
+}): FinanceReconciliationBucketKey {
+  if (params.ageDays >= 3 || params.suggestionCount === 0) {
+    return 'urgent';
+  }
+  if (params.entryDate === getOperationalTodayIso()) {
+    return 'today';
+  }
+  return 'review';
+}
+
+function buildReconciliationBucketDtos(
+  entries: FinanceReconciliationInboxDto['inbox']
+): FinanceReconciliationBucketDto[] {
+  const bucketMap = new Map<FinanceReconciliationBucketKey, FinanceReconciliationBucketDto>([
+    ['urgent', { key: 'urgent', label: 'Urgentes', count: 0, amount_cents: 0, entries: [] }],
+    ['today', { key: 'today', label: 'Movimento de hoje', count: 0, amount_cents: 0, entries: [] }],
+    ['review', { key: 'review', label: 'Fila geral', count: 0, amount_cents: 0, entries: [] }]
+  ]);
+
+  for (const entry of entries) {
+    const bucket = bucketMap.get(entry.queue_bucket);
+    if (!bucket) continue;
+    bucket.entries.push(entry);
+    bucket.count += 1;
+    bucket.amount_cents += Math.abs(entry.amount_cents);
+  }
+
+  return Array.from(bucketMap.values());
+}
+
+function buildReconciliationInsights(params: {
+  pendingCount: number;
+  withSuggestionCount: number;
+  withoutSuggestionCount: number;
+  staleCount: number;
+}): FinanceReconciliationInsightDto[] {
+  const coverage = params.pendingCount > 0
+    ? Math.round((params.withSuggestionCount / params.pendingCount) * 100)
+    : 100;
+
+  return [
+    {
+      id: 'coverage',
+      label: 'Cobertura de sugestão',
+      value: `${coverage}%`,
+      tone: coverage >= 70 ? 'neutral' : 'warning'
+    },
+    {
+      id: 'manual-review',
+      label: 'Sem sugestão',
+      value: `${params.withoutSuggestionCount}`,
+      tone: params.withoutSuggestionCount > 0 ? 'warning' : 'neutral'
+    },
+    {
+      id: 'stale',
+      label: 'Aging crítico',
+      value: `${params.staleCount}`,
+      tone: params.staleCount > 0 ? 'critical' : 'neutral'
+    }
+  ];
+}
+
+export function getFinanceReconciliationInbox(
+  organizationId: string,
+  companyId?: string | null
+): FinanceReconciliationInboxDto {
+  const normalizedOrganizationId = resolveOrganizationId(organizationId);
+  const organization = readOrganizationRow(normalizedOrganizationId);
+  const entries = listFinanceStatementEntries(normalizedOrganizationId, companyId).entries;
+  const jobs = listFinanceImportJobs(normalizedOrganizationId, companyId).jobs;
+  const matches = listFinanceReconciliationMatches(normalizedOrganizationId, companyId).matches;
+  const transactions = listFinanceTransactions(normalizedOrganizationId, {}).transactions;
+  const todayIso = getOperationalTodayIso();
+  const staleCutoff = getDateOffsetIso(todayIso, -3);
+
+  const matchedEntries = new Map<string, FinanceReconciliationMatchDto>();
+  const matchedTransactionIds = new Set<string>();
+  for (const match of matches) {
+    if (match.match_status !== 'matched') {
+      continue;
+    }
+    if (!matchedEntries.has(match.financial_bank_statement_entry_id)) {
+      matchedEntries.set(match.financial_bank_statement_entry_id, match);
+    }
+    if (match.financial_transaction_id) {
+      matchedTransactionIds.add(match.financial_transaction_id);
+    }
+  }
+
+  const inbox = entries
+    .filter((entry) => !matchedEntries.has(entry.id))
+    .map((entry) => {
+      const entryDate = entry.posted_at ?? entry.statement_date;
+      const ageDays = Math.max(0, getDateDifferenceInDays(todayIso, entryDate));
+      const suggestedMatches = buildReconciliationSuggestions({
+        entry,
+        transactions,
+        matchedTransactionIds
+      });
+      return {
+        ...entry,
+        matched_transaction_id: null,
+        matched_at: null,
+        queue_bucket: classifyReconciliationBucket({
+          entryDate,
+          ageDays,
+          suggestionCount: suggestedMatches.length
+        }),
+        age_days: ageDays,
+        suggestion_count: suggestedMatches.length,
+        suggested_matches: suggestedMatches
+      };
+    })
+    .sort((left, right) => {
+      const bucketRank: Record<FinanceReconciliationBucketKey, number> = {
+        urgent: 0,
+        today: 1,
+        review: 2
+      };
+      const bucketCompare = bucketRank[left.queue_bucket] - bucketRank[right.queue_bucket];
+      if (bucketCompare !== 0) {
+        return bucketCompare;
+      }
+      const dateCompare = right.statement_date.localeCompare(left.statement_date);
+      if (dateCompare !== 0) {
+        return dateCompare;
+      }
+      return Math.abs(right.amount_cents) - Math.abs(left.amount_cents);
+    });
+
+  const recentMatches = matches
+    .filter((match) => match.match_status === 'matched')
+    .slice(0, 5);
+
+  const withSuggestionCount = inbox.filter((entry) => entry.suggestion_count > 0).length;
+  const withoutSuggestionCount = inbox.length - withSuggestionCount;
+
+  return {
+    organization_id: normalizedOrganizationId,
+    organization_name: organization.name,
+    generated_at: new Date().toISOString(),
+    summary: {
+      pending_count: inbox.length,
+      pending_amount_cents: inbox.reduce((total, entry) => total + Math.abs(entry.amount_cents), 0),
+      matched_today_count: recentMatches.filter((match) => match.reviewed_at?.slice(0, 10) === todayIso).length,
+      imported_jobs_count: jobs.length,
+      stale_count: inbox.filter((entry) => entry.statement_date < staleCutoff).length,
+      with_suggestion_count: withSuggestionCount,
+      without_suggestion_count: withoutSuggestionCount
+    },
+    buckets: buildReconciliationBucketDtos(inbox),
+    insights: buildReconciliationInsights({
+      pendingCount: inbox.length,
+      withSuggestionCount,
+      withoutSuggestionCount,
+      staleCount: inbox.filter((entry) => entry.statement_date < staleCutoff).length
+    }),
+    inbox,
+    recent_matches: recentMatches,
+    imported_jobs: jobs.slice(0, 5)
   };
 }
 
@@ -1021,7 +1398,7 @@ export function listFinanceImportJobs(organizationId: string, companyId?: string
   `).all(normalizedOrganizationId, companyFilter, companyFilter) as Array<{
     id: string;
     organization_id: string;
-    company_id: string;
+    company_id: string | null;
     import_type: string;
     source_file_name: string;
     source_file_mime_type: string | null;
@@ -1048,10 +1425,9 @@ export function createFinanceImportJob(input: CreateFinanceImportJobInput): Fina
   const normalizedOrganizationId = resolveOrganizationId(input.organization_id);
   readOrganizationRow(normalizedOrganizationId);
   const companyId = input.company_id?.trim() || null;
-  if (!companyId) {
-    throw new Error('Informe company_id para registrar a contraparte.');
+  if (companyId) {
+    readCompanyRow(companyId);
   }
-  readCompanyRow(companyId);
   const nowIso = new Date().toISOString();
   const id = uuid('fimp');
 
@@ -1117,7 +1493,7 @@ export function createFinanceImportJob(input: CreateFinanceImportJobInput): Fina
   `).get(id) as {
     id: string;
     organization_id: string;
-    company_id: string;
+    company_id: string | null;
     import_type: string;
     source_file_name: string;
     source_file_mime_type: string | null;
@@ -1170,7 +1546,6 @@ export function listFinanceStatementEntries(organizationId: string, companyId?: 
     from financial_bank_statement_entry fbe
     left join financial_account fa
       on fa.organization_id = fbe.organization_id
-      and fa.company_id = fbe.company_id
       and fa.id = fbe.financial_account_id
     where fbe.organization_id = ?
       and (? is null or fbe.company_id = ?)
@@ -1178,7 +1553,7 @@ export function listFinanceStatementEntries(organizationId: string, companyId?: 
   `).all(normalizedOrganizationId, companyFilter, companyFilter) as Array<{
     id: string;
     organization_id: string;
-    company_id: string;
+    company_id: string | null;
     financial_account_id: string;
     financial_account_name: string | null;
     financial_import_job_id: string | null;
@@ -1205,18 +1580,13 @@ export function createFinanceStatementEntry(input: CreateFinanceStatementEntryIn
   const normalizedOrganizationId = resolveOrganizationId(input.organization_id);
   readOrganizationRow(normalizedOrganizationId);
   const companyId = input.company_id?.trim() || null;
-  if (!companyId) {
-    throw new Error('Informe company_id para registrar a contraparte.');
-  }
-  readCompanyRow(companyId);
   const account = db.prepare(`
     select id
     from financial_account
     where id = ?
       and organization_id = ?
-      and company_id = ?
     limit 1
-  `).get(input.financial_account_id, normalizedOrganizationId, companyId) as { id: string } | undefined;
+  `).get(input.financial_account_id, normalizedOrganizationId) as { id: string } | undefined;
   if (!account) {
     throw new Error('Conta financeira não encontrada.');
   }
@@ -1228,9 +1598,8 @@ export function createFinanceStatementEntry(input: CreateFinanceStatementEntryIn
       from financial_import_job
       where id = ?
         and organization_id = ?
-        and company_id = ?
       limit 1
-    `).get(importJobId, normalizedOrganizationId, companyId) as { id: string } | undefined;
+    `).get(importJobId, normalizedOrganizationId) as { id: string } | undefined;
     if (!importJob) {
       throw new Error('Job de importação não encontrado.');
     }
@@ -1295,14 +1664,13 @@ export function createFinanceStatementEntry(input: CreateFinanceStatementEntryIn
     from financial_bank_statement_entry fbe
     left join financial_account fa
       on fa.organization_id = fbe.organization_id
-      and fa.company_id = fbe.company_id
       and fa.id = fbe.financial_account_id
     where fbe.id = ?
     limit 1
   `).get(id) as {
     id: string;
     organization_id: string;
-    company_id: string;
+    company_id: string | null;
     financial_account_id: string;
     financial_account_name: string | null;
     financial_import_job_id: string | null;
@@ -1355,7 +1723,7 @@ export function listFinanceReconciliationMatches(organizationId: string, company
   `).all(normalizedOrganizationId, companyFilter, companyFilter) as Array<{
     id: string;
     organization_id: string;
-    company_id: string;
+    company_id: string | null;
     financial_bank_statement_entry_id: string;
     financial_transaction_id: string;
     match_status: string;
@@ -1378,19 +1746,14 @@ export function createFinanceReconciliationMatch(input: CreateFinanceReconciliat
   const normalizedOrganizationId = resolveOrganizationId(input.organization_id);
   readOrganizationRow(normalizedOrganizationId);
   const companyId = input.company_id?.trim() || null;
-  if (!companyId) {
-    throw new Error('Informe company_id para registrar a contraparte.');
-  }
-  readCompanyRow(companyId);
 
   const statementEntry = db.prepare(`
     select id
     from financial_bank_statement_entry
     where id = ?
       and organization_id = ?
-      and company_id = ?
     limit 1
-  `).get(input.financial_bank_statement_entry_id, normalizedOrganizationId, companyId) as { id: string } | undefined;
+  `).get(input.financial_bank_statement_entry_id, normalizedOrganizationId) as { id: string } | undefined;
   if (!statementEntry) {
     throw new Error('Lançamento de extrato não encontrado.');
   }
@@ -1413,9 +1776,8 @@ export function createFinanceReconciliationMatch(input: CreateFinanceReconciliat
     from financial_bank_statement_entry
     where id = ?
       and organization_id = ?
-      and company_id = ?
     limit 1
-  `).get(input.financial_bank_statement_entry_id, normalizedOrganizationId, companyId) as { amount_cents: number } | undefined;
+  `).get(input.financial_bank_statement_entry_id, normalizedOrganizationId) as { amount_cents: number } | undefined;
   const matchedAmountCents = Math.abs(statementAmount?.amount_cents ?? 0);
   const matchedAt = input.reviewed_at ?? new Date().toISOString();
 
@@ -1473,7 +1835,7 @@ export function createFinanceReconciliationMatch(input: CreateFinanceReconciliat
   `).get(id) as {
     id: string;
     organization_id: string;
-    company_id: string;
+    company_id: string | null;
     financial_bank_statement_entry_id: string;
     financial_transaction_id: string;
     match_status: string;
@@ -1494,7 +1856,7 @@ export function createFinanceReconciliationMatch(input: CreateFinanceReconciliat
 function mapDebtRow(row: {
   id: string;
   organization_id: string;
-  company_id: string;
+  company_id: string | null;
   financial_payable_id: string | null;
   financial_receivable_id: string | null;
   financial_transaction_id: string | null;
@@ -1561,7 +1923,7 @@ export function listFinanceDebts(organizationId: string, companyId?: string | nu
   `).all(normalizedOrganizationId, companyFilter, companyFilter) as Array<{
     id: string;
     organization_id: string;
-    company_id: string;
+    company_id: string | null;
     financial_payable_id: string | null;
     financial_receivable_id: string | null;
     financial_transaction_id: string | null;
@@ -1587,10 +1949,6 @@ export function createFinanceDebt(input: CreateFinanceDebtInput): FinanceDebtDto
   const normalizedOrganizationId = resolveOrganizationId(input.organization_id);
   readOrganizationRow(normalizedOrganizationId);
   const companyId = input.company_id?.trim() || null;
-  if (!companyId) {
-    throw new Error('Informe company_id para registrar a contraparte.');
-  }
-  readCompanyRow(companyId);
   const nowIso = new Date().toISOString();
   const id = uuid('fdeb');
 
@@ -1601,18 +1959,18 @@ export function createFinanceDebt(input: CreateFinanceDebtInput): FinanceDebtDto
   if (payableId) {
     const payable = db.prepare(`
       select id from financial_payable
-      where id = ? and organization_id = ? and company_id = ?
+      where id = ? and organization_id = ?
       limit 1
-    `).get(payableId, normalizedOrganizationId, companyId) as { id: string } | undefined;
+    `).get(payableId, normalizedOrganizationId) as { id: string } | undefined;
     if (!payable) throw new Error('Conta a pagar não encontrada.');
   }
 
   if (receivableId) {
     const receivable = db.prepare(`
       select id from financial_receivable
-      where id = ? and organization_id = ? and company_id = ?
+      where id = ? and organization_id = ?
       limit 1
-    `).get(receivableId, normalizedOrganizationId, companyId) as { id: string } | undefined;
+    `).get(receivableId, normalizedOrganizationId) as { id: string } | undefined;
     if (!receivable) throw new Error('Conta a receber não encontrada.');
   }
 
@@ -1684,7 +2042,7 @@ export function createFinanceDebt(input: CreateFinanceDebtInput): FinanceDebtDto
   `).get(id) as {
     id: string;
     organization_id: string;
-    company_id: string;
+    company_id: string | null;
     financial_payable_id: string | null;
     financial_receivable_id: string | null;
     financial_transaction_id: string | null;

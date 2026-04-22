@@ -11,6 +11,7 @@ import {
   createFinanceCategory,
   createFinanceDebt,
   createFinanceImportJob,
+  getFinanceReconciliationInbox,
   createFinancePayable,
   createFinanceReconciliationMatch,
   createFinanceReceivable,
@@ -30,8 +31,10 @@ import {
   softDeleteFinanceTransaction,
   updateFinanceTransaction
 } from './service.js';
+import { getFinanceCashflow } from './cashflow.js';
 import { getFinanceExecutiveOverview } from './context.js';
 import { createFinanceEntity, listFinanceEntities } from './entities.js';
+import { getFinanceReports } from './reports.js';
 import {
   createFinanceCostCenter,
   createFinancePaymentMethod,
@@ -84,8 +87,6 @@ const paymentMethodCreateSchema = z.object({
 });
 
 const accountCreateSchema = z.object({
-  company_id: z.string().trim().min(1).nullable().optional(),
-  counterparty_company_id: z.string().trim().min(1).nullable().optional(),
   name: z.string().trim().min(2).max(120),
   kind: z.enum(financeAccountKindValues),
   currency: z.string().trim().min(3).max(8).optional(),
@@ -95,8 +96,6 @@ const accountCreateSchema = z.object({
 });
 
 const categoryCreateSchema = z.object({
-  company_id: z.string().trim().min(1).nullable().optional(),
-  counterparty_company_id: z.string().trim().min(1).nullable().optional(),
   name: z.string().trim().min(2).max(120),
   kind: z.enum(financeCategoryKindValues),
   parent_category_id: z.string().trim().min(1).nullable().optional(),
@@ -104,10 +103,9 @@ const categoryCreateSchema = z.object({
 });
 
 const payableCreateSchema = z.object({
-  company_id: z.string().trim().min(1).nullable().optional(),
-  counterparty_company_id: z.string().trim().min(1).nullable().optional(),
   financial_account_id: z.string().trim().min(1).nullable().optional(),
   financial_category_id: z.string().trim().min(1).nullable().optional(),
+  financial_entity_id: z.string().trim().min(1).nullable().optional(),
   supplier_name: z.string().trim().max(120).nullable().optional(),
   description: z.string().trim().min(2).max(240),
   amount_cents: z.number().int().positive(),
@@ -127,10 +125,9 @@ const payableCreateSchema = z.object({
 });
 
 const receivableCreateSchema = z.object({
-  company_id: z.string().trim().min(1).nullable().optional(),
-  counterparty_company_id: z.string().trim().min(1).nullable().optional(),
   financial_account_id: z.string().trim().min(1).nullable().optional(),
   financial_category_id: z.string().trim().min(1).nullable().optional(),
+  financial_entity_id: z.string().trim().min(1).nullable().optional(),
   customer_name: z.string().trim().max(120).nullable().optional(),
   description: z.string().trim().min(2).max(240),
   amount_cents: z.number().int().positive(),
@@ -150,8 +147,6 @@ const receivableCreateSchema = z.object({
 });
 
 const importJobCreateSchema = z.object({
-  company_id: z.string().trim().min(1).nullable().optional(),
-  counterparty_company_id: z.string().trim().min(1).nullable().optional(),
   import_type: z.string().trim().min(2).max(64),
   source_file_name: z.string().trim().min(2).max(255),
   source_file_mime_type: z.string().trim().max(120).nullable().optional(),
@@ -165,8 +160,6 @@ const importJobCreateSchema = z.object({
 });
 
 const statementEntryCreateSchema = z.object({
-  company_id: z.string().trim().min(1).nullable().optional(),
-  counterparty_company_id: z.string().trim().min(1).nullable().optional(),
   financial_account_id: z.string().trim().min(1),
   financial_import_job_id: z.string().trim().min(1).nullable().optional(),
   statement_date: isoDateSchema,
@@ -180,8 +173,6 @@ const statementEntryCreateSchema = z.object({
 });
 
 const reconciliationCreateSchema = z.object({
-  company_id: z.string().trim().min(1).nullable().optional(),
-  counterparty_company_id: z.string().trim().min(1).nullable().optional(),
   financial_bank_statement_entry_id: z.string().trim().min(1),
   financial_transaction_id: z.string().trim().min(1),
   confidence_score: z.number().min(0).max(1).nullable().optional(),
@@ -191,8 +182,6 @@ const reconciliationCreateSchema = z.object({
 });
 
 const debtCreateSchema = z.object({
-  company_id: z.string().trim().min(1).nullable().optional(),
-  counterparty_company_id: z.string().trim().min(1).nullable().optional(),
   financial_payable_id: z.string().trim().min(1).nullable().optional(),
   financial_receivable_id: z.string().trim().min(1).nullable().optional(),
   financial_transaction_id: z.string().trim().min(1).nullable().optional(),
@@ -266,29 +255,12 @@ function requireFinancePermission(permissions: InternalPermissionKey[]) {
   };
 }
 
-function parseCounterpartyCompanyId(req: Request) {
-  const rawCompany = typeof req.query.company_id === 'string' ? req.query.company_id.trim() : '';
-  const rawCounterparty = typeof req.query.counterparty_company_id === 'string'
-    ? req.query.counterparty_company_id.trim()
-    : '';
-  const raw = rawCounterparty || rawCompany;
-  return raw || null;
-}
-
 function readFinanceOrganizationId(res: Response) {
   const context = readInternalAuthContext(res);
   if (!context) {
     throw new Error('Token de autenticação obrigatório.');
   }
   return context.organization_id ?? 'org-holand';
-}
-
-function resolveCounterpartyCompanyId(payload: {
-  company_id?: string | null;
-  counterparty_company_id?: string | null;
-}) {
-  const normalized = payload.counterparty_company_id?.trim() || payload.company_id?.trim() || '';
-  return normalized || null;
 }
 
 function resolveFinancialEntityId(payload: {
@@ -333,6 +305,23 @@ function readQueryBoolean(value: unknown): boolean | null {
     return false;
   }
   return null;
+}
+
+function readCashflowHorizon(value: unknown) {
+  if (typeof value !== 'string') {
+    return 90;
+  }
+  const parsed = Number.parseInt(value.trim(), 10);
+  if (Number.isNaN(parsed)) {
+    return 90;
+  }
+  if (parsed <= 30) {
+    return 30;
+  }
+  if (parsed <= 60) {
+    return 60;
+  }
+  return 90;
 }
 
 function readTransactionLedgerFilters(req: Request) {
@@ -470,7 +459,7 @@ export function registerFinanceRoutes(app: Express) {
 
   router.get('/overview', requireFinancePermission(['finance.read']), (req, res) => {
     try {
-      return res.json(getFinanceOverview(readFinanceOrganizationId(res), parseCounterpartyCompanyId(req)));
+      return res.json(getFinanceOverview(readFinanceOrganizationId(res)));
     } catch (error) {
       return respondFinanceError(res, error);
     }
@@ -494,7 +483,7 @@ export function registerFinanceRoutes(app: Express) {
 
   router.get('/accounts', requireFinancePermission(['finance.read']), (req, res) => {
     try {
-      return res.json(listFinanceAccounts(readFinanceOrganizationId(res), parseCounterpartyCompanyId(req)));
+      return res.json(listFinanceAccounts(readFinanceOrganizationId(res)));
     } catch (error) {
       return respondFinanceError(res, error);
     }
@@ -509,8 +498,7 @@ export function registerFinanceRoutes(app: Express) {
     try {
       return res.status(201).json(createFinanceAccount({
         ...parsed.data,
-        organization_id: readFinanceOrganizationId(res),
-        company_id: resolveCounterpartyCompanyId(parsed.data)
+        organization_id: readFinanceOrganizationId(res)
       }));
     } catch (error) {
       return respondFinanceError(res, error);
@@ -519,7 +507,7 @@ export function registerFinanceRoutes(app: Express) {
 
   router.get('/categories', requireFinancePermission(['finance.read']), (req, res) => {
     try {
-      return res.json(listFinanceCategories(readFinanceOrganizationId(res), parseCounterpartyCompanyId(req)));
+      return res.json(listFinanceCategories(readFinanceOrganizationId(res)));
     } catch (error) {
       return respondFinanceError(res, error);
     }
@@ -534,8 +522,7 @@ export function registerFinanceRoutes(app: Express) {
     try {
       return res.status(201).json(createFinanceCategory({
         ...parsed.data,
-        organization_id: readFinanceOrganizationId(res),
-        company_id: resolveCounterpartyCompanyId(parsed.data)
+        organization_id: readFinanceOrganizationId(res)
       }));
     } catch (error) {
       return respondFinanceError(res, error);
@@ -544,7 +531,7 @@ export function registerFinanceRoutes(app: Express) {
 
   router.get('/payables', requireFinancePermission(['finance.read']), (req, res) => {
     try {
-      return res.json(listFinancePayables(readFinanceOrganizationId(res), parseCounterpartyCompanyId(req)));
+      return res.json(listFinancePayables(readFinanceOrganizationId(res)));
     } catch (error) {
       return respondFinanceError(res, error);
     }
@@ -559,7 +546,7 @@ export function registerFinanceRoutes(app: Express) {
       return res.status(201).json(createFinancePayable({
         ...parsed.data,
         organization_id: readFinanceOrganizationId(res),
-        company_id: resolveCounterpartyCompanyId(parsed.data)
+        financial_entity_id: resolveFinancialEntityId(parsed.data)
       }));
     } catch (error) {
       return respondFinanceError(res, error);
@@ -568,7 +555,7 @@ export function registerFinanceRoutes(app: Express) {
 
   router.get('/receivables', requireFinancePermission(['finance.read']), (req, res) => {
     try {
-      return res.json(listFinanceReceivables(readFinanceOrganizationId(res), parseCounterpartyCompanyId(req)));
+      return res.json(listFinanceReceivables(readFinanceOrganizationId(res)));
     } catch (error) {
       return respondFinanceError(res, error);
     }
@@ -583,7 +570,7 @@ export function registerFinanceRoutes(app: Express) {
       return res.status(201).json(createFinanceReceivable({
         ...parsed.data,
         organization_id: readFinanceOrganizationId(res),
-        company_id: resolveCounterpartyCompanyId(parsed.data)
+        financial_entity_id: resolveFinancialEntityId(parsed.data)
       }));
     } catch (error) {
       return respondFinanceError(res, error);
@@ -592,7 +579,7 @@ export function registerFinanceRoutes(app: Express) {
 
   router.get('/import-jobs', requireFinancePermission(['finance.read']), (req, res) => {
     try {
-      return res.json(listFinanceImportJobs(readFinanceOrganizationId(res), parseCounterpartyCompanyId(req)));
+      return res.json(listFinanceImportJobs(readFinanceOrganizationId(res)));
     } catch (error) {
       return respondFinanceError(res, error);
     }
@@ -608,7 +595,6 @@ export function registerFinanceRoutes(app: Express) {
       return res.status(201).json(createFinanceImportJob({
         ...parsed.data,
         organization_id: readFinanceOrganizationId(res),
-        company_id: resolveCounterpartyCompanyId(parsed.data),
         created_by: context?.username ?? null
       }));
     } catch (error) {
@@ -618,7 +604,7 @@ export function registerFinanceRoutes(app: Express) {
 
   router.get('/statement-entries', requireFinancePermission(['finance.read']), (req, res) => {
     try {
-      return res.json(listFinanceStatementEntries(readFinanceOrganizationId(res), parseCounterpartyCompanyId(req)));
+      return res.json(listFinanceStatementEntries(readFinanceOrganizationId(res)));
     } catch (error) {
       return respondFinanceError(res, error);
     }
@@ -632,8 +618,7 @@ export function registerFinanceRoutes(app: Express) {
     try {
       return res.status(201).json(createFinanceStatementEntry({
         ...parsed.data,
-        organization_id: readFinanceOrganizationId(res),
-        company_id: resolveCounterpartyCompanyId(parsed.data)
+        organization_id: readFinanceOrganizationId(res)
       }));
     } catch (error) {
       return respondFinanceError(res, error);
@@ -642,7 +627,7 @@ export function registerFinanceRoutes(app: Express) {
 
   router.get('/reconciliations', requireFinancePermission(['finance.read']), (req, res) => {
     try {
-      return res.json(listFinanceReconciliationMatches(readFinanceOrganizationId(res), parseCounterpartyCompanyId(req)));
+      return res.json(listFinanceReconciliationMatches(readFinanceOrganizationId(res)));
     } catch (error) {
       return respondFinanceError(res, error);
     }
@@ -658,7 +643,6 @@ export function registerFinanceRoutes(app: Express) {
       return res.status(201).json(createFinanceReconciliationMatch({
         ...parsed.data,
         organization_id: readFinanceOrganizationId(res),
-        company_id: resolveCounterpartyCompanyId(parsed.data),
         reviewed_by: context?.username ?? null
       }));
     } catch (error) {
@@ -666,9 +650,33 @@ export function registerFinanceRoutes(app: Express) {
     }
   });
 
+  router.get('/reconciliation/inbox', requireFinancePermission(['finance.read']), (req, res) => {
+    try {
+      return res.json(getFinanceReconciliationInbox(readFinanceOrganizationId(res)));
+    } catch (error) {
+      return respondFinanceError(res, error);
+    }
+  });
+
+  router.get('/cashflow', requireFinancePermission(['finance.read']), (req, res) => {
+    try {
+      return res.json(getFinanceCashflow(readFinanceOrganizationId(res), readCashflowHorizon(req.query.horizon)));
+    } catch (error) {
+      return respondFinanceError(res, error);
+    }
+  });
+
+  router.get('/reports', requireFinancePermission(['finance.read']), (_req, res) => {
+    try {
+      return res.json(getFinanceReports(readFinanceOrganizationId(res)));
+    } catch (error) {
+      return respondFinanceError(res, error);
+    }
+  });
+
   router.get('/debts', requireFinancePermission(['finance.read']), (req, res) => {
     try {
-      return res.json(listFinanceDebts(readFinanceOrganizationId(res), parseCounterpartyCompanyId(req)));
+      return res.json(listFinanceDebts(readFinanceOrganizationId(res)));
     } catch (error) {
       return respondFinanceError(res, error);
     }
@@ -682,8 +690,7 @@ export function registerFinanceRoutes(app: Express) {
     try {
       return res.status(201).json(createFinanceDebt({
         ...parsed.data,
-        organization_id: readFinanceOrganizationId(res),
-        company_id: resolveCounterpartyCompanyId(parsed.data)
+        organization_id: readFinanceOrganizationId(res)
       }));
     } catch (error) {
       return respondFinanceError(res, error);

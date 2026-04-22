@@ -203,6 +203,30 @@ function seedFinanceAccountAndCategory() {
   );
 }
 
+function seedFinanceIncomeCategory() {
+  db.prepare(`
+    insert into financial_category (
+      id,
+      organization_id,
+      company_id,
+      name,
+      kind,
+      is_active,
+      created_at,
+      updated_at
+    ) values (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    'financial-category-income',
+    'org-holand',
+    'company-a',
+    'Receita de Serviços',
+    'income',
+    1,
+    '2026-04-21T12:00:00.000Z',
+    '2026-04-21T12:00:00.000Z'
+  );
+}
+
 test('initDb cria organization foundation e vincula auth interna ao org default', async () => {
   const dbPath = assignTestDbPath('finance-organization-foundation');
   cleanupDbFiles(dbPath);
@@ -357,19 +381,27 @@ test('initDb cria schema financeiro v1', () => {
       { from: 'financial_entity_id', to: 'id' }
     ]);
     assertCompositeForeignKey('financial_payable', 'financial_transaction', [
-      { from: 'company_id', to: 'company_id' },
+      { from: 'organization_id', to: 'organization_id' },
       { from: 'financial_transaction_id', to: 'id' }
+    ]);
+    assertCompositeForeignKey('financial_payable', 'financial_entity', [
+      { from: 'organization_id', to: 'organization_id' },
+      { from: 'financial_entity_id', to: 'id' }
     ]);
     assertCompositeForeignKey('financial_receivable', 'financial_transaction', [
-      { from: 'company_id', to: 'company_id' },
+      { from: 'organization_id', to: 'organization_id' },
       { from: 'financial_transaction_id', to: 'id' }
     ]);
+    assertCompositeForeignKey('financial_receivable', 'financial_entity', [
+      { from: 'organization_id', to: 'organization_id' },
+      { from: 'financial_entity_id', to: 'id' }
+    ]);
     assertCompositeForeignKey('financial_bank_statement_entry', 'financial_account', [
-      { from: 'company_id', to: 'company_id' },
+      { from: 'organization_id', to: 'organization_id' },
       { from: 'financial_account_id', to: 'id' }
     ]);
     assertCompositeForeignKey('financial_reconciliation_match', 'financial_bank_statement_entry', [
-      { from: 'company_id', to: 'company_id' },
+      { from: 'organization_id', to: 'organization_id' },
       { from: 'financial_bank_statement_entry_id', to: 'id' }
     ]);
     assertCompositeForeignKey('financial_reconciliation_match', 'financial_transaction', [
@@ -1131,19 +1163,17 @@ test('CRUD base de contas/categorias respeita tenant e vínculos', async () => {
       .post('/finance/accounts')
       .set('Authorization', `Bearer ${token}`)
       .send({
-        company_id: 'company-a',
         name: 'Banco Operacional',
         kind: 'bank'
       });
     assert.equal(accountRes.status, 201);
-    assert.equal(accountRes.body.company_id, 'company-a');
+    assert.equal(accountRes.body.company_id, null);
     assert.equal(accountRes.body.name, 'Banco Operacional');
 
     const parentCategoryRes = await request(app)
       .post('/finance/categories')
       .set('Authorization', `Bearer ${token}`)
       .send({
-        company_id: 'company-a',
         name: 'Receita',
         kind: 'income'
       });
@@ -1153,7 +1183,6 @@ test('CRUD base de contas/categorias respeita tenant e vínculos', async () => {
       .post('/finance/categories')
       .set('Authorization', `Bearer ${token}`)
       .send({
-        company_id: 'company-a',
         name: 'Serviços',
         kind: 'income',
         parent_category_id: parentCategoryRes.body.id
@@ -1162,19 +1191,13 @@ test('CRUD base de contas/categorias respeita tenant e vínculos', async () => {
     assert.equal(childCategoryRes.body.parent_category_id, parentCategoryRes.body.id);
 
     const listAccountsA = await request(app)
-      .get('/finance/accounts?company_id=company-a')
+      .get('/finance/accounts')
       .set('Authorization', `Bearer ${token}`);
     assert.equal(listAccountsA.status, 200);
     assert.equal(listAccountsA.body.accounts.length, 1);
 
-    const listAccountsB = await request(app)
-      .get('/finance/accounts?company_id=company-b')
-      .set('Authorization', `Bearer ${token}`);
-    assert.equal(listAccountsB.status, 200);
-    assert.equal(listAccountsB.body.accounts.length, 0);
-
     const listCategoriesA = await request(app)
-      .get('/finance/categories?company_id=company-a')
+      .get('/finance/categories')
       .set('Authorization', `Bearer ${token}`);
     assert.equal(listCategoriesA.status, 200);
     assert.equal(listCategoriesA.body.categories.length, 2);
@@ -1210,45 +1233,196 @@ test('POST/GET de payables e receivables funciona com tenant correto', async () 
       .post('/finance/payables')
       .set('Authorization', `Bearer ${token}`)
       .send({
-        company_id: 'company-a',
         description: 'Hospedagem mensal',
         amount_cents: 8900,
         status: 'open',
         due_date: '2026-07-10'
       });
     assert.equal(payableRes.status, 201);
-    assert.equal(payableRes.body.company_id, 'company-a');
+    assert.equal(payableRes.body.company_id, null);
 
     const receivableRes = await request(app)
       .post('/finance/receivables')
       .set('Authorization', `Bearer ${token}`)
       .send({
-        company_id: 'company-a',
         description: 'Parcela contrato implantação',
         amount_cents: 15900,
         status: 'open',
         due_date: '2026-07-12'
       });
     assert.equal(receivableRes.status, 201);
-    assert.equal(receivableRes.body.company_id, 'company-a');
+    assert.equal(receivableRes.body.company_id, null);
 
     const listPayablesA = await request(app)
-      .get('/finance/payables?company_id=company-a')
+      .get('/finance/payables')
       .set('Authorization', `Bearer ${token}`);
     assert.equal(listPayablesA.status, 200);
     assert.equal(listPayablesA.body.payables.length, 1);
 
     const listReceivablesA = await request(app)
-      .get('/finance/receivables?company_id=company-a')
+      .get('/finance/receivables')
       .set('Authorization', `Bearer ${token}`);
     assert.equal(listReceivablesA.status, 200);
     assert.equal(listReceivablesA.body.receivables.length, 1);
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
 
-    const listPayablesB = await request(app)
-      .get('/finance/payables?company_id=company-b')
-      .set('Authorization', `Bearer ${token}`);
-    assert.equal(listPayablesB.status, 200);
-    assert.equal(listPayablesB.body.payables.length, 0);
+test('finance receivables and payables expose overdue and due-today groupings', async () => {
+  const dbPath = assignTestDbPath('finance-payable-receivable-groupings');
+  cleanupDbFiles(dbPath);
+
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+  const today = new Date();
+  const formatOffsetDate = (offsetDays: number) => {
+    const value = new Date(today);
+    value.setDate(value.getDate() + offsetDays);
+    return value.toISOString().slice(0, 10);
+  };
+
+  try {
+    seedFinanceCompanies();
+    createInternalUser({
+      username: 'finance.arap.ops',
+      display_name: 'Finance AR/AP Ops',
+      password: 'Senha#123',
+      role: 'custom',
+      permissions: ['finance.read', 'finance.write']
+    });
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.arap.ops', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+    const token = loginRes.body.token as string;
+
+    const authHeader = { Authorization: `Bearer ${token}` };
+
+    const operationalDates = {
+      overdue: formatOffsetDate(-2),
+      dueToday: formatOffsetDate(0),
+      upcoming: formatOffsetDate(5),
+      settled: formatOffsetDate(-1)
+    };
+
+    const createPayable = (payload: Record<string, unknown>) =>
+      request(app)
+        .post('/finance/payables')
+        .set(authHeader)
+        .send({
+          company_id: 'company-a',
+          issue_date: operationalDates.overdue,
+          ...payload
+        });
+
+    const createReceivable = (payload: Record<string, unknown>) =>
+      request(app)
+        .post('/finance/receivables')
+        .set(authHeader)
+        .send({
+          company_id: 'company-a',
+          issue_date: operationalDates.overdue,
+          ...payload
+        });
+
+    const createResponses = await Promise.all([
+      createPayable({
+        description: 'Fornecedor atrasado',
+        amount_cents: 15000,
+        status: 'open',
+        due_date: operationalDates.overdue
+      }),
+      createPayable({
+        description: 'Fornecedor vence hoje',
+        amount_cents: 9000,
+        status: 'partial',
+        due_date: operationalDates.dueToday
+      }),
+      createPayable({
+        description: 'Fornecedor próximo vencimento',
+        amount_cents: 12000,
+        status: 'planned',
+        due_date: operationalDates.upcoming
+      }),
+      createPayable({
+        description: 'Fornecedor liquidado',
+        amount_cents: 7000,
+        status: 'paid',
+        due_date: operationalDates.settled,
+        paid_at: operationalDates.settled
+      }),
+      createReceivable({
+        description: 'Cliente atrasado',
+        amount_cents: 21000,
+        status: 'open',
+        due_date: operationalDates.overdue
+      }),
+      createReceivable({
+        description: 'Cliente vence hoje',
+        amount_cents: 11000,
+        status: 'partial',
+        due_date: operationalDates.dueToday
+      }),
+      createReceivable({
+        description: 'Cliente próximo vencimento',
+        amount_cents: 17000,
+        status: 'planned',
+        due_date: operationalDates.upcoming
+      }),
+      createReceivable({
+        description: 'Cliente liquidado',
+        amount_cents: 8000,
+        status: 'received',
+        due_date: operationalDates.settled,
+        received_at: operationalDates.settled
+      })
+    ]);
+
+    createResponses.forEach((response) => assert.equal(response.status, 201));
+
+    const [receivablesRes, payablesRes] = await Promise.all([
+      request(app)
+        .get('/finance/receivables?company_id=company-a')
+        .set(authHeader),
+      request(app)
+        .get('/finance/payables?company_id=company-a')
+        .set(authHeader)
+    ]);
+
+    assert.equal(receivablesRes.status, 200);
+    assert.equal(payablesRes.status, 200);
+
+    assert.deepEqual(receivablesRes.body.summary, {
+      open_cents: 49000,
+      overdue_cents: 21000,
+      due_today_cents: 11000
+    });
+    assert.deepEqual(payablesRes.body.summary, {
+      open_cents: 36000,
+      overdue_cents: 15000,
+      due_today_cents: 9000
+    });
+
+    assert.equal(receivablesRes.body.groups.overdue.length, 1);
+    assert.equal(receivablesRes.body.groups.due_today.length, 1);
+    assert.equal(receivablesRes.body.groups.upcoming.length, 1);
+    assert.equal(receivablesRes.body.groups.settled.length, 1);
+    assert.equal(payablesRes.body.groups.overdue.length, 1);
+    assert.equal(payablesRes.body.groups.due_today.length, 1);
+    assert.equal(payablesRes.body.groups.upcoming.length, 1);
+    assert.equal(payablesRes.body.groups.settled.length, 1);
+
+    assert.equal(receivablesRes.body.groups.overdue[0].description, 'Cliente atrasado');
+    assert.equal(receivablesRes.body.groups.due_today[0].description, 'Cliente vence hoje');
+    assert.equal(receivablesRes.body.groups.upcoming[0].description, 'Cliente próximo vencimento');
+    assert.equal(receivablesRes.body.groups.settled[0].description, 'Cliente liquidado');
+    assert.equal(payablesRes.body.groups.overdue[0].description, 'Fornecedor atrasado');
+    assert.equal(payablesRes.body.groups.due_today[0].description, 'Fornecedor vence hoje');
+    assert.equal(payablesRes.body.groups.upcoming[0].description, 'Fornecedor próximo vencimento');
+    assert.equal(payablesRes.body.groups.settled[0].description, 'Fornecedor liquidado');
   } finally {
     db.close();
     cleanupDbFiles(dbPath);
@@ -1292,7 +1466,6 @@ test('POST/GET de debts funciona com vínculos opcionais e isolamento de tenant'
       .post('/finance/debts')
       .set('Authorization', `Bearer ${token}`)
       .send({
-        company_id: 'company-a',
         financial_transaction_id: transactionRes.body.id,
         debt_type: 'parcelamento',
         status: 'open',
@@ -1302,23 +1475,17 @@ test('POST/GET de debts funciona com vínculos opcionais e isolamento de tenant'
         note: 'Parcelas em andamento'
       });
     assert.equal(debtRes.status, 201);
-    assert.equal(debtRes.body.company_id, 'company-a');
+    assert.equal(debtRes.body.company_id, null);
     assert.equal(debtRes.body.financial_transaction_id, transactionRes.body.id);
     assert.equal(debtRes.body.status, 'open');
     assert.equal(debtRes.body.principal_amount_cents, 150000);
     assert.equal(debtRes.body.outstanding_amount_cents, 120000);
 
     const listA = await request(app)
-      .get('/finance/debts?company_id=company-a')
+      .get('/finance/debts')
       .set('Authorization', `Bearer ${token}`);
     assert.equal(listA.status, 200);
     assert.equal(listA.body.debts.length, 1);
-
-    const listB = await request(app)
-      .get('/finance/debts?company_id=company-b')
-      .set('Authorization', `Bearer ${token}`);
-    assert.equal(listB.status, 200);
-    assert.equal(listB.body.debts.length, 0);
   } finally {
     db.close();
     cleanupDbFiles(dbPath);
@@ -1514,6 +1681,169 @@ test('DELETE /finance/transactions/:id faz soft-delete auditável', async () => 
     });
 
     assert.ok(auditLog, 'esperava auditoria para o soft-delete financeiro');
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('GET /finance/reports consolida DRE, aging e fluxo a partir do ledger financeiro', async () => {
+  const dbPath = assignTestDbPath('finance-reports-overview');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+
+    const app = createApp({ forceDbRefresh: true, seedDb: false });
+    const now = new Date();
+    const formatDate = (year: number, monthIndex: number, day: number) => (
+      `${year}-${String(monthIndex + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    );
+    const currentYear = now.getUTCFullYear();
+    const currentMonth = now.getUTCMonth();
+    const nextMonthDate = new Date(Date.UTC(currentYear, currentMonth + 1, 5));
+    const currentPeriod = formatDate(currentYear, currentMonth, 1).slice(0, 7);
+    const nextPeriod = nextMonthDate.toISOString().slice(0, 7);
+    const yesterdayDate = new Date(now);
+    yesterdayDate.setUTCDate(yesterdayDate.getUTCDate() - 1);
+    const yesterdayIso = yesterdayDate.toISOString().slice(0, 10);
+
+  try {
+    seedFinanceCompanies();
+    seedFinanceEntity();
+    seedFinanceEntityPartner();
+    seedFinanceAccountAndCategory();
+    seedFinanceIncomeCategory();
+
+    createInternalUser({
+      username: 'finance.reports',
+      display_name: 'Finance Reports',
+      password: 'Senha#123',
+      role: 'custom',
+      permissions: ['finance.read', 'finance.write']
+    });
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.reports', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+    const token = loginRes.body.token as string;
+    const authHeader = { Authorization: `Bearer ${token}` };
+
+    const createdTransactions = await Promise.all([
+      request(app)
+        .post('/finance/transactions')
+        .set(authHeader)
+        .send({
+          financial_entity_id: 'entity-holand-client',
+          financial_account_id: 'financial-account-holand',
+          financial_category_id: 'financial-category-income',
+          kind: 'income',
+          status: 'settled',
+          amount_cents: 100000,
+          issue_date: formatDate(currentYear, currentMonth, 10),
+          competence_date: formatDate(currentYear, currentMonth, 10),
+          settlement_date: formatDate(currentYear, currentMonth, 12),
+          note: 'Receita do mês'
+        }),
+      request(app)
+        .post('/finance/transactions')
+        .set(authHeader)
+        .send({
+          financial_entity_id: 'entity-holand-supplier',
+          financial_account_id: 'financial-account-holand',
+          financial_category_id: 'financial-category-holand',
+          kind: 'expense',
+          status: 'settled',
+          amount_cents: 40000,
+          issue_date: formatDate(currentYear, currentMonth, 11),
+          competence_date: formatDate(currentYear, currentMonth, 11),
+          settlement_date: formatDate(currentYear, currentMonth, 13),
+          note: 'Despesa operacional do mês'
+        }),
+      request(app)
+        .post('/finance/transactions')
+        .set(authHeader)
+        .send({
+          financial_entity_id: 'entity-holand-client',
+          financial_account_id: 'financial-account-holand',
+          financial_category_id: 'financial-category-income',
+          kind: 'income',
+          status: 'open',
+          amount_cents: 30000,
+          issue_date: nextMonthDate.toISOString().slice(0, 10),
+          due_date: nextMonthDate.toISOString().slice(0, 10),
+          note: 'Receita projetada'
+        })
+    ]);
+
+    createdTransactions.forEach((response) => assert.equal(response.status, 201));
+
+    const [receivableRes, payableRes] = await Promise.all([
+      request(app)
+        .post('/finance/receivables')
+        .set(authHeader)
+        .send({
+          company_id: 'company-a',
+          customer_name: 'Cliente Holand',
+          description: 'Recebível em atraso',
+          amount_cents: 15000,
+          status: 'open',
+          issue_date: yesterdayIso,
+          due_date: yesterdayIso
+        }),
+      request(app)
+        .post('/finance/payables')
+        .set(authHeader)
+        .send({
+          company_id: 'company-a',
+          supplier_name: 'Fornecedor Holand',
+          description: 'Pagamento em atraso',
+          amount_cents: 9000,
+          status: 'open',
+          issue_date: yesterdayIso,
+          due_date: yesterdayIso
+        })
+    ]);
+
+    assert.equal(receivableRes.status, 201);
+    assert.equal(payableRes.status, 201);
+
+    const reportsRes = await request(app)
+      .get('/finance/reports')
+      .set(authHeader);
+
+    assert.equal(reportsRes.status, 200);
+    assert.equal(reportsRes.body.organization_id, 'org-holand');
+    assert.equal(reportsRes.body.dre.gross_revenue_cents, 130000);
+    assert.equal(reportsRes.body.dre.operating_expenses_cents, 40000);
+    assert.equal(reportsRes.body.dre.operating_result_cents, 90000);
+
+    assert.equal(reportsRes.body.income_by_category[0].category_name, 'Receita de Serviços');
+    assert.equal(reportsRes.body.income_by_category[0].amount_cents, 130000);
+    assert.equal(reportsRes.body.income_by_category[0].transaction_count, 2);
+    assert.equal(reportsRes.body.expense_by_category[0].category_name, 'Despesas Operacionais');
+    assert.equal(reportsRes.body.expense_by_category[0].amount_cents, 40000);
+    assert.equal(reportsRes.body.expense_by_category[0].transaction_count, 1);
+
+    assert.equal(reportsRes.body.overdue_receivables.length, 1);
+    assert.equal(reportsRes.body.overdue_receivables[0].description, 'Recebível em atraso');
+    assert.equal(reportsRes.body.overdue_payables.length, 1);
+    assert.equal(reportsRes.body.overdue_payables[0].description, 'Pagamento em atraso');
+
+    assert.deepEqual(reportsRes.body.realized_vs_projected, [
+      {
+        period: currentPeriod,
+        realized_cents: 60000,
+        projected_cents: 0,
+        variance_cents: 60000
+      },
+      {
+        period: nextPeriod,
+        realized_cents: 0,
+        projected_cents: 30000,
+        variance_cents: -30000
+      }
+    ]);
+    assert.ok(reportsRes.body.consolidated_cashflow.length >= 1);
   } finally {
     db.close();
     cleanupDbFiles(dbPath);
