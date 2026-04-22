@@ -53,6 +53,36 @@ function assertCompositeForeignKey(
   );
 }
 
+function assertCompositeUniqueIndex(table: string, expectedColumns: string[]) {
+  const indexes = db.prepare(`pragma index_list(${table})`).all() as Array<{
+    name: string;
+    unique: number;
+  }>;
+
+  const hasMatch = indexes.some((index) => {
+    if (index.unique !== 1) {
+      return false;
+    }
+
+    const columns = db.prepare(`pragma index_info(${index.name})`).all() as Array<{
+      seqno: number;
+      name: string;
+    }>;
+
+    const orderedColumns = columns
+      .sort((left, right) => left.seqno - right.seqno)
+      .map((column) => column.name);
+
+    return orderedColumns.length === expectedColumns.length
+      && orderedColumns.every((column, position) => column === expectedColumns[position]);
+  });
+
+  assert.ok(
+    hasMatch,
+    `índice único composto ausente em ${table}: ${expectedColumns.join(', ')}`
+  );
+}
+
 function seedFinanceCompanies() {
   db.prepare(`
     insert into company (id, name)
@@ -682,6 +712,196 @@ test('initDb migra financial_transaction legado para company_id nullable', () =>
   }
 });
 
+test('initDb reconstroi financial_account e financial_category legados para chaves compostas por organization', () => {
+  const dbPath = assignTestDbPath('finance-account-category-org-rebuild');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+
+  try {
+    initDb();
+    seedFinanceCompanies();
+
+    db.exec('pragma foreign_keys = off');
+    db.exec('drop table financial_transaction');
+    db.exec('drop table financial_category');
+    db.exec('drop table financial_account');
+
+    db.exec(`
+      create table financial_account (
+        id text primary key,
+        company_id text not null,
+        name text not null,
+        kind text not null,
+        currency text not null default 'BRL',
+        account_number text,
+        branch_number text,
+        is_active integer not null default 1,
+        created_at text not null,
+        updated_at text not null,
+        organization_id text references organization(id) on delete cascade,
+        unique(company_id, id),
+        foreign key(company_id) references company(id) on delete cascade
+      );
+    `);
+
+    db.exec(`
+      create table financial_category (
+        id text primary key,
+        company_id text not null,
+        name text not null,
+        kind text not null,
+        parent_category_id text,
+        is_active integer not null default 1,
+        created_at text not null,
+        updated_at text not null,
+        organization_id text references organization(id) on delete cascade,
+        unique(company_id, id),
+        foreign key(company_id) references company(id) on delete cascade,
+        foreign key(company_id, parent_category_id) references financial_category(company_id, id) on delete restrict
+      );
+    `);
+
+    db.exec(`
+      create table financial_transaction (
+        id text primary key,
+        organization_id text not null,
+        company_id text,
+        financial_entity_id text,
+        financial_account_id text,
+        financial_category_id text,
+        kind text not null,
+        status text not null,
+        amount_cents integer not null,
+        issue_date text,
+        due_date text,
+        settlement_date text,
+        competence_date text,
+        source text not null default 'manual',
+        source_ref text,
+        note text,
+        created_by text,
+        created_at text not null,
+        updated_at text not null,
+        is_deleted integer not null default 0,
+        unique(organization_id, id),
+        unique(company_id, id),
+        foreign key(organization_id) references organization(id) on delete cascade,
+        foreign key(company_id) references company(id) on delete cascade,
+        foreign key(organization_id, financial_account_id) references financial_account(organization_id, id) on delete restrict,
+        foreign key(organization_id, financial_category_id) references financial_category(organization_id, id) on delete restrict
+      );
+    `);
+    db.exec('pragma foreign_keys = on');
+
+    db.prepare(`
+      insert into financial_account (
+        id,
+        company_id,
+        name,
+        kind,
+        currency,
+        is_active,
+        created_at,
+        updated_at,
+        organization_id
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'legacy-fin-account',
+      'company-a',
+      'Conta Legada',
+      'bank',
+      'BRL',
+      1,
+      '2026-04-22T10:00:00.000Z',
+      '2026-04-22T10:00:00.000Z',
+      'org-holand'
+    );
+
+    db.prepare(`
+      insert into financial_category (
+        id,
+        company_id,
+        name,
+        kind,
+        is_active,
+        created_at,
+        updated_at,
+        organization_id
+      ) values (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'legacy-fin-category',
+      'company-a',
+      'Categoria Legada',
+      'expense',
+      1,
+      '2026-04-22T10:00:00.000Z',
+      '2026-04-22T10:00:00.000Z',
+      'org-holand'
+    );
+
+    initDb();
+
+    assertCompositeUniqueIndex('financial_account', ['organization_id', 'id']);
+    assertCompositeUniqueIndex('financial_category', ['organization_id', 'id']);
+
+    db.prepare(`
+      insert into financial_transaction (
+        id,
+        organization_id,
+        company_id,
+        financial_account_id,
+        financial_category_id,
+        kind,
+        status,
+        amount_cents,
+        issue_date,
+        due_date,
+        competence_date,
+        source,
+        created_at,
+        updated_at,
+        is_deleted
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'legacy-org-txn',
+      'org-holand',
+      null,
+      'legacy-fin-account',
+      'legacy-fin-category',
+      'expense',
+      'open',
+      2500,
+      '2026-04-22',
+      '2026-04-23',
+      '2026-04-22',
+      'manual',
+      '2026-04-22T10:00:00.000Z',
+      '2026-04-22T10:00:00.000Z',
+      0
+    );
+
+    const inserted = db.prepare(`
+      select financial_account_id, financial_category_id, company_id
+      from financial_transaction
+      where id = ?
+    `).get('legacy-org-txn') as {
+      financial_account_id: string | null;
+      financial_category_id: string | null;
+      company_id: string | null;
+    } | undefined;
+
+    assert.deepEqual(inserted, {
+      financial_account_id: 'legacy-fin-account',
+      financial_category_id: 'legacy-fin-category',
+      company_id: null
+    });
+  } finally {
+    db.exec('pragma foreign_keys = on');
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
 test('GET /finance/overview bloqueia usuário sem finance.read', async () => {
   const dbPath = assignTestDbPath('finance-route-auth-403');
   cleanupDbFiles(dbPath);
@@ -803,7 +1023,6 @@ test('POST /finance/transactions cria lançamento manual e persiste', async () =
 
     assert.equal(createRes.status, 201);
     assert.equal(createRes.body.organization_id, 'org-holand');
-    assert.equal(createRes.body.company_id, null);
     assert.equal(createRes.body.financial_entity_id, 'entity-holand-supplier');
     assert.equal(createRes.body.financial_account_id, 'financial-account-holand');
     assert.equal(createRes.body.financial_category_id, 'financial-category-holand');
@@ -862,7 +1081,6 @@ test('POST /finance/transactions cria lançamento manual e persiste', async () =
 
     assert.equal(patchRes.status, 200);
     assert.equal(patchRes.body.financial_entity_id, 'entity-holand-client');
-    assert.equal(patchRes.body.company_id, null);
 
     const clearedRes = await request(app)
       .patch(`/finance/transactions/${createRes.body.id}`)
@@ -1259,6 +1477,14 @@ test('DELETE /finance/transactions/:id faz soft-delete auditável', async () => 
     assert.equal(deleteRes.body.ok, true);
     assert.equal(deleteRes.body.transaction.id, createRes.body.id);
     assert.equal(deleteRes.body.transaction.is_deleted, true);
+
+    const ledgerRes = await request(app)
+      .get('/finance/transactions?include_deleted=1')
+      .set('Authorization', `Bearer ${token}`);
+    assert.equal(ledgerRes.status, 200);
+    assert.equal(ledgerRes.body.transactions.length, 1);
+    assert.equal(ledgerRes.body.transactions[0].id, createRes.body.id);
+    assert.equal(ledgerRes.body.transactions[0].is_deleted, true);
 
     const persisted = db.prepare(`
       select coalesce(is_deleted, 0) as is_deleted

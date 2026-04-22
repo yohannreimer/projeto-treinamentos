@@ -1,47 +1,110 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { hasAnyPermission, internalSessionStore } from '../../auth/session';
-import { api } from '../../services/api';
 import {
   financeApi,
-  type CreateFinanceAccountPayload,
-  type CreateFinanceCategoryPayload,
   type CreateFinanceTransactionPayload,
   type FinanceAccount,
   type FinanceCategory,
-  type FinanceOverview,
+  type FinanceEntity,
   type FinanceTransaction,
   type FinanceTransactionKind,
+  type FinanceTransactionLedgerFilters,
   type FinanceTransactionStatus
 } from '../api';
+import { FinanceLedgerTable } from '../components/FinanceLedgerTable';
 
-type CompanyOption = {
-  id: string;
-  name: string;
+type LedgerPeriod = '30d' | '90d' | 'all';
+type TransactionEditorMode = 'create' | 'edit';
+
+type LedgerFilterState = {
+  period: LedgerPeriod;
+  status: '' | FinanceTransactionStatus;
+  kind: '' | FinanceTransactionKind;
+  financial_account_id: string;
+  financial_category_id: string;
+  financial_entity_id: string;
+  search: string;
+  include_deleted: boolean;
 };
 
 type TransactionFormState = {
+  financial_entity_id: string;
   financial_account_id: string;
   financial_category_id: string;
   kind: FinanceTransactionKind;
   status: FinanceTransactionStatus;
   amount: string;
+  issue_date: string;
   due_date: string;
   competence_date: string;
   settlement_date: string;
   note: string;
 };
 
-const initialFormState: TransactionFormState = {
+const initialFilters: LedgerFilterState = {
+  period: '30d',
+  status: '',
+  kind: '',
+  financial_account_id: '',
+  financial_category_id: '',
+  financial_entity_id: '',
+  search: '',
+  include_deleted: false
+};
+
+const initialTransactionForm: TransactionFormState = {
+  financial_entity_id: '',
   financial_account_id: '',
   financial_category_id: '',
   kind: 'expense',
   status: 'open',
   amount: '',
+  issue_date: '',
   due_date: '',
   competence_date: '',
   settlement_date: '',
   note: ''
 };
+
+const statusOptions: Array<{ value: LedgerFilterState['status']; label: string }> = [
+  { value: '', label: 'Todos' },
+  { value: 'planned', label: 'Planejado' },
+  { value: 'open', label: 'Em aberto' },
+  { value: 'partial', label: 'Parcial' },
+  { value: 'settled', label: 'Liquidado' },
+  { value: 'overdue', label: 'Atrasado' },
+  { value: 'canceled', label: 'Cancelado' }
+];
+
+const transactionStatusOptions: Array<{ value: FinanceTransactionStatus; label: string }> = [
+  { value: 'planned', label: 'Planejado' },
+  { value: 'open', label: 'Em aberto' },
+  { value: 'partial', label: 'Parcial' },
+  { value: 'settled', label: 'Liquidado' },
+  { value: 'overdue', label: 'Atrasado' },
+  { value: 'canceled', label: 'Cancelado' }
+];
+
+const kindOptions: Array<{ value: LedgerFilterState['kind']; label: string }> = [
+  { value: '', label: 'Todos' },
+  { value: 'income', label: 'Entrada' },
+  { value: 'expense', label: 'Saída' },
+  { value: 'transfer', label: 'Transferência' },
+  { value: 'adjustment', label: 'Ajuste' }
+];
+
+const transactionKindOptions: Array<{ value: FinanceTransactionKind; label: string }> = [
+  { value: 'income', label: 'Entrada' },
+  { value: 'expense', label: 'Saída' },
+  { value: 'transfer', label: 'Transferência' },
+  { value: 'adjustment', label: 'Ajuste' }
+];
+
+const periodOptions: Array<{ value: LedgerPeriod; label: string }> = [
+  { value: '30d', label: 'Últimos 30 dias' },
+  { value: '90d', label: 'Últimos 90 dias' },
+  { value: 'all', label: 'Todo o histórico' }
+];
 
 function formatCurrency(cents: number): string {
   return new Intl.NumberFormat('pt-BR', {
@@ -52,7 +115,7 @@ function formatCurrency(cents: number): string {
 
 function formatDate(dateIso?: string | null): string {
   if (!dateIso) {
-    return '-';
+    return '—';
   }
 
   const [year, month, day] = dateIso.split('-').map(Number);
@@ -61,15 +124,6 @@ function formatDate(dateIso?: string | null): string {
   }
 
   return new Date(year, month - 1, day).toLocaleDateString('pt-BR');
-}
-
-function parseAmountToCents(value: string): number {
-  const normalized = value.trim().replace(/\./g, '').replace(',', '.');
-  const parsed = Number(normalized);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return 0;
-  }
-  return Math.round(parsed * 100);
 }
 
 function kindLabel(kind: FinanceTransactionKind): string {
@@ -96,47 +150,113 @@ function todayIso(): string {
   return `${year}-${month}-${day}`;
 }
 
+function shiftDaysIso(days: number): string {
+  const date = new Date();
+  date.setDate(date.getDate() - days);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function resolveLedgerPeriod(period: LedgerPeriod): { from: string | null; to: string | null } {
+  if (period === 'all') {
+    return { from: null, to: null };
+  }
+
+  const range = period === '90d' ? 89 : 29;
+  return {
+    from: shiftDaysIso(range),
+    to: todayIso()
+  };
+}
+
+function buildLedgerFilters(filters: LedgerFilterState): FinanceTransactionLedgerFilters {
+  const period = resolveLedgerPeriod(filters.period);
+  return {
+    status: filters.status || null,
+    kind: filters.kind || null,
+    financial_account_id: filters.financial_account_id || null,
+    financial_category_id: filters.financial_category_id || null,
+    financial_entity_id: filters.financial_entity_id || null,
+    from: period.from,
+    to: period.to,
+    search: filters.search.trim() || null,
+    include_deleted: filters.include_deleted
+  };
+}
+
+function parseAmountToCents(value: string): number {
+  const normalized = value.trim().replace(/\./g, '').replace(',', '.');
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 0;
+  }
+  return Math.round(parsed * 100);
+}
+
+function formatAmountInput(cents: number): string {
+  return (cents / 100).toFixed(2).replace('.', ',');
+}
+
+function buildTransactionForm(transaction: FinanceTransaction): TransactionFormState {
+  return {
+    financial_entity_id: transaction.financial_entity_id ?? '',
+    financial_account_id: transaction.financial_account_id ?? '',
+    financial_category_id: transaction.financial_category_id ?? '',
+    kind: transaction.kind,
+    status: transaction.status,
+    amount: formatAmountInput(transaction.amount_cents),
+    issue_date: transaction.issue_date ?? '',
+    due_date: transaction.due_date ?? '',
+    competence_date: transaction.competence_date ?? '',
+    settlement_date: transaction.settlement_date ?? '',
+    note: transaction.note ?? ''
+  };
+}
+
 export function FinanceTransactionsPage() {
-  const [companies, setCompanies] = useState<CompanyOption[]>([]);
-  const [selectedCompanyId, setSelectedCompanyId] = useState('');
-  const [overview, setOverview] = useState<FinanceOverview | null>(null);
+  const session = internalSessionStore.read();
+  const canWrite = hasAnyPermission(session?.user, ['finance.write']);
+  const canApprove = hasAnyPermission(session?.user, ['finance.approve']);
   const [transactions, setTransactions] = useState<FinanceTransaction[]>([]);
   const [accounts, setAccounts] = useState<FinanceAccount[]>([]);
   const [categories, setCategories] = useState<FinanceCategory[]>([]);
-  const [form, setForm] = useState<TransactionFormState>(initialFormState);
-  const [accountForm, setAccountForm] = useState<{ name: string; kind: CreateFinanceAccountPayload['kind'] }>({
-    name: '',
-    kind: 'bank'
-  });
-  const [categoryForm, setCategoryForm] = useState<{ name: string; kind: CreateFinanceCategoryPayload['kind']; parent_category_id: string }>({
-    name: '',
-    kind: 'expense',
-    parent_category_id: ''
-  });
+  const [entities, setEntities] = useState<FinanceEntity[]>([]);
+  const [filters, setFilters] = useState<LedgerFilterState>(initialFilters);
+  const [editorMode, setEditorMode] = useState<TransactionEditorMode>('create');
+  const [form, setForm] = useState<TransactionFormState>(initialTransactionForm);
   const [loading, setLoading] = useState(true);
+  const [catalogLoading, setCatalogLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [catalogSubmitting, setCatalogSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
-
-  const session = internalSessionStore.read();
-  const canWrite = hasAnyPermission(session?.user, ['finance.write']);
+  const [selectedTransactionId, setSelectedTransactionId] = useState<string | null>(null);
+  const [reloadNonce, setReloadNonce] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
 
-    api.companies()
-      .then((rows) => {
+    setCatalogLoading(true);
+    Promise.all([
+      financeApi.listAccounts(),
+      financeApi.listCategories(),
+      financeApi.listEntities()
+    ])
+      .then(([accountsResponse, categoriesResponse, entitiesResponse]) => {
         if (cancelled) return;
-        const normalized = (rows as CompanyOption[]).map((row) => ({ id: row.id, name: row.name }));
-        setCompanies(normalized);
-        if (normalized.length > 0) {
-          setSelectedCompanyId((current) => current || normalized[0]!.id);
-        }
+        setAccounts(accountsResponse.accounts);
+        setCategories(categoriesResponse.categories);
+        setEntities(entitiesResponse);
       })
       .catch((loadError) => {
         if (cancelled) return;
-        setError((loadError as Error).message || 'Falha ao carregar empresas.');
+        setError(loadError instanceof Error ? loadError.message : 'Falha ao carregar os catálogos financeiros.');
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setCatalogLoading(false);
+        }
       });
 
     return () => {
@@ -144,469 +264,606 @@ export function FinanceTransactionsPage() {
     };
   }, []);
 
-  async function reload(companyId: string) {
+  useEffect(() => {
+    let cancelled = false;
+    const ledgerFilters = buildLedgerFilters(filters);
+
     setLoading(true);
     setError('');
 
-    try {
-      const [overviewResponse, transactionsResponse, accountsResponse, categoriesResponse] = await Promise.all([
-        financeApi.getOverview(companyId),
-        financeApi.listTransactions(companyId),
-        financeApi.listAccounts(companyId),
-        financeApi.listCategories(companyId)
-      ]);
-      setOverview(overviewResponse);
-      setTransactions(transactionsResponse.transactions);
-      setAccounts(accountsResponse.accounts);
-      setCategories(categoriesResponse.categories);
-    } catch (loadError) {
-      setError((loadError as Error).message || 'Falha ao carregar movimentações.');
-      setOverview(null);
-      setTransactions([]);
-      setAccounts([]);
-      setCategories([]);
-    } finally {
-      setLoading(false);
-    }
-  }
+    financeApi.listTransactions(undefined, ledgerFilters)
+      .then((response) => {
+        if (cancelled) return;
+        setTransactions(response.transactions);
+      })
+      .catch((loadError) => {
+        if (cancelled) return;
+        setTransactions([]);
+        setError(loadError instanceof Error ? loadError.message : 'Falha ao carregar o ledger financeiro.');
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [filters, reloadNonce]);
 
   useEffect(() => {
-    if (!selectedCompanyId) {
-      setLoading(false);
+    if (transactions.length === 0) {
+      setSelectedTransactionId(null);
       return;
     }
 
-    reload(selectedCompanyId).catch(() => undefined);
-  }, [selectedCompanyId]);
+    const stillVisible = selectedTransactionId
+      ? transactions.some((transaction) => transaction.id === selectedTransactionId)
+      : false;
 
-  const selectedCompanyName = useMemo(
-    () => companies.find((company) => company.id === selectedCompanyId)?.name ?? overview?.company_name ?? 'Empresa',
-    [companies, overview?.company_name, selectedCompanyId]
+    if (!stillVisible) {
+      setSelectedTransactionId(transactions[0].id);
+    }
+  }, [selectedTransactionId, transactions]);
+
+  const selectedTransaction = useMemo(
+    () => transactions.find((transaction) => transaction.id === selectedTransactionId) ?? null,
+    [selectedTransactionId, transactions]
   );
+
+  const summary = useMemo(() => {
+    return transactions.reduce(
+      (accumulator, transaction) => {
+        accumulator.count += 1;
+        accumulator.net += transaction.views.signed_amount_cents;
+        accumulator.cash += transaction.views.cash_amount_cents;
+        accumulator.competence += transaction.views.competence_amount_cents;
+        accumulator.projected += transaction.views.projected_amount_cents;
+        accumulator.confirmed += transaction.views.confirmed_amount_cents;
+        if (transaction.is_deleted) {
+          accumulator.deleted += 1;
+        }
+        if (transaction.views.signed_amount_cents >= 0) {
+          accumulator.inflow += transaction.views.signed_amount_cents;
+        } else {
+          accumulator.outflow += Math.abs(transaction.views.signed_amount_cents);
+        }
+        return accumulator;
+      },
+      {
+        count: 0,
+        inflow: 0,
+        outflow: 0,
+        net: 0,
+        cash: 0,
+        competence: 0,
+        projected: 0,
+        confirmed: 0,
+        deleted: 0
+      }
+    );
+  }, [transactions]);
+
+  const accountOptions = useMemo(
+    () => [...accounts].sort((left, right) => left.name.localeCompare(right.name, 'pt-BR')),
+    [accounts]
+  );
+
+  const categoryOptions = useMemo(
+    () => [...categories].sort((left, right) => left.name.localeCompare(right.name, 'pt-BR')),
+    [categories]
+  );
+
+  const entityOptions = useMemo(
+    () => [...entities].sort((left, right) => {
+      const leftName = left.trade_name || left.legal_name;
+      const rightName = right.trade_name || right.legal_name;
+      return leftName.localeCompare(rightName, 'pt-BR');
+    }),
+    [entities]
+  );
+
+  const selectedTransactionDetails = selectedTransaction
+    ? [
+        { label: 'Entidade', value: selectedTransaction.financial_entity_name || '—' },
+        { label: 'Conta', value: selectedTransaction.financial_account_name || '—' },
+        { label: 'Categoria', value: selectedTransaction.financial_category_name || '—' },
+        { label: 'Tipo', value: kindLabel(selectedTransaction.kind) },
+        { label: 'Status', value: statusLabel(selectedTransaction.status) },
+        { label: 'Data de emissão', value: formatDate(selectedTransaction.issue_date) },
+        { label: 'Data de vencimento', value: formatDate(selectedTransaction.due_date) },
+        { label: 'Data de competência', value: formatDate(selectedTransaction.competence_date) },
+        { label: 'Liquidação', value: formatDate(selectedTransaction.settlement_date) },
+        { label: 'Fonte', value: selectedTransaction.source },
+        { label: 'Referência', value: selectedTransaction.source_ref || '—' },
+        { label: 'Criado por', value: selectedTransaction.created_by || 'sistema' }
+      ]
+    : [];
+
+  const editorDisabled = submitting || catalogLoading || (editorMode === 'edit' && Boolean(selectedTransaction?.is_deleted));
+
+  function updateFilter<K extends keyof LedgerFilterState>(key: K, value: LedgerFilterState[K]) {
+    setFilters((current) => ({ ...current, [key]: value }));
+  }
+
+  function updateForm<K extends keyof TransactionFormState>(key: K, value: TransactionFormState[K]) {
+    setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  function startCreateMode() {
+    setEditorMode('create');
+    setForm(initialTransactionForm);
+    setMessage('');
+  }
+
+  function startEditMode() {
+    if (!selectedTransaction) {
+      return;
+    }
+    setEditorMode('edit');
+    setForm(buildTransactionForm(selectedTransaction));
+    setMessage('');
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!selectedCompanyId) {
-      setError('Selecione uma empresa antes de lançar a movimentação.');
+    if (!canWrite) {
+      setError('Você não tem permissão para alterar movimentações.');
       return;
     }
-
-    const amountCents = parseAmountToCents(form.amount);
-    if (amountCents <= 0) {
-      setError('Informe um valor monetário válido.');
-      return;
-    }
-
-    setSubmitting(true);
-    setError('');
-    setMessage('');
-
-    const settlementDate = form.settlement_date || (form.status === 'settled' ? todayIso() : '');
 
     const payload: CreateFinanceTransactionPayload = {
-      company_id: selectedCompanyId,
+      financial_entity_id: form.financial_entity_id || null,
       financial_account_id: form.financial_account_id || null,
       financial_category_id: form.financial_category_id || null,
       kind: form.kind,
-      status: settlementDate ? 'settled' : form.status,
-      amount_cents: amountCents,
-      issue_date: todayIso(),
+      status: form.status,
+      amount_cents: parseAmountToCents(form.amount),
+      issue_date: form.issue_date || null,
       due_date: form.due_date || null,
+      settlement_date: form.settlement_date || null,
       competence_date: form.competence_date || null,
-      settlement_date: settlementDate || null,
       note: form.note.trim() || null
     };
 
+    if (payload.amount_cents <= 0) {
+      setError('Informe um valor maior que zero para o lançamento.');
+      return;
+    }
+
     try {
-      await financeApi.createTransaction(payload);
-      setForm((current) => ({
-        ...initialFormState,
-        kind: current.kind,
-        status: current.status
-      }));
-      setMessage('Lançamento criado com sucesso. Lista recarregada.');
-      await reload(selectedCompanyId);
+      setSubmitting(true);
+      setError('');
+      setMessage('');
+
+      if (editorMode === 'edit' && selectedTransaction) {
+        const updated = await financeApi.updateTransaction(selectedTransaction.id, payload);
+        setSelectedTransactionId(updated.id);
+        setMessage('Lançamento atualizado no ledger central.');
+      } else {
+        const created = await financeApi.createTransaction(payload);
+        setSelectedTransactionId(created.id);
+        setEditorMode('edit');
+        setForm(buildTransactionForm(created));
+        setMessage('Novo lançamento manual registrado com sucesso.');
+      }
+
+      setReloadNonce((current) => current + 1);
     } catch (submitError) {
-      setError((submitError as Error).message || 'Falha ao criar lançamento.');
+      setError(submitError instanceof Error ? submitError.message : 'Falha ao salvar movimentação.');
     } finally {
       setSubmitting(false);
     }
   }
 
-  async function handleCreateAccount(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!selectedCompanyId) {
-      setError('Selecione uma empresa antes de cadastrar conta.');
-      return;
-    }
-    if (!accountForm.name.trim()) {
-      setError('Informe o nome da conta.');
+  async function handleDelete() {
+    if (!selectedTransaction || !canApprove || selectedTransaction.is_deleted) {
       return;
     }
 
-    setCatalogSubmitting(true);
-    setError('');
-    setMessage('');
+    const confirmed = typeof window === 'undefined'
+      ? true
+      : window.confirm('Excluir esta movimentação do ledger ativo? Ela continuará visível no histórico de excluídos.');
+
+    if (!confirmed) {
+      return;
+    }
+
     try {
-      await financeApi.createAccount({
-        company_id: selectedCompanyId,
-        name: accountForm.name.trim(),
-        kind: accountForm.kind
-      });
-      setAccountForm({ name: '', kind: accountForm.kind });
-      setMessage('Conta financeira cadastrada com sucesso.');
-      await reload(selectedCompanyId);
-    } catch (submitError) {
-      setError((submitError as Error).message || 'Falha ao cadastrar conta financeira.');
+      setSubmitting(true);
+      setError('');
+      setMessage('');
+      const deleted = await financeApi.deleteTransaction(selectedTransaction.id);
+      setFilters((current) => current.include_deleted ? current : { ...current, include_deleted: true });
+      setSelectedTransactionId(deleted.transaction.id);
+      setEditorMode('create');
+      setForm(initialTransactionForm);
+      setReloadNonce((current) => current + 1);
+      setMessage('Lançamento removido do ledger ativo. O histórico auditável agora inclui itens excluídos.');
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : 'Falha ao excluir movimentação.');
     } finally {
-      setCatalogSubmitting(false);
-    }
-  }
-
-  async function handleCreateCategory(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!selectedCompanyId) {
-      setError('Selecione uma empresa antes de cadastrar categoria.');
-      return;
-    }
-    if (!categoryForm.name.trim()) {
-      setError('Informe o nome da categoria.');
-      return;
-    }
-
-    setCatalogSubmitting(true);
-    setError('');
-    setMessage('');
-    try {
-      await financeApi.createCategory({
-        company_id: selectedCompanyId,
-        name: categoryForm.name.trim(),
-        kind: categoryForm.kind,
-        parent_category_id: categoryForm.parent_category_id || null
-      });
-      setCategoryForm((current) => ({ ...current, name: '', parent_category_id: '' }));
-      setMessage('Categoria financeira cadastrada com sucesso.');
-      await reload(selectedCompanyId);
-    } catch (submitError) {
-      setError((submitError as Error).message || 'Falha ao cadastrar categoria financeira.');
-    } finally {
-      setCatalogSubmitting(false);
+      setSubmitting(false);
     }
   }
 
   return (
-    <section className="page finance-page">
-      <header className="page-header">
+    <section className="page finance-page finance-ledger-page">
+      <header className="page-header finance-ledger-header">
         <div className="page-header-copy">
           <small style={{ color: 'var(--ink-soft)', fontSize: '0.76rem', fontWeight: 700, letterSpacing: '0.03em', textTransform: 'uppercase' }}>
             Movimentações
           </small>
-          <h1>Lançamentos manuais</h1>
-          <p>Registre entradas e saídas com visão híbrida de caixa, competência, projetado e confirmado.</p>
+          <h1>Ledger financeiro</h1>
+          <p>Base única para leitura auditável, operação manual e drill-down por linha do ERP financeiro.</p>
+        </div>
+        <div className="finance-ledger-header__meta">
+          <span>{catalogLoading ? 'Carregando catálogos...' : `${accounts.length} contas · ${categories.length} categorias · ${entities.length} entidades`}</span>
+          <span>
+            {loading
+              ? 'Atualizando ledger...'
+              : `${summary.count} lançamentos${filters.include_deleted ? ` · ${summary.deleted} excluídos visíveis` : ''}`}
+          </span>
         </div>
       </header>
 
-      <div style={{ display: 'grid', gap: '16px' }}>
-        <div className="panel">
-          <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
-            <div>
-              <h2>{selectedCompanyName}</h2>
-              <p style={{ margin: '4px 0 0', color: 'var(--ink-soft)' }}>Escolha a empresa e acompanhe os saldos do ledger híbrido.</p>
-            </div>
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-              <label style={{ display: 'grid', gap: '4px' }}>
-                <span style={{ fontSize: '0.82rem', color: 'var(--ink-soft)' }}>Empresa</span>
-                <select value={selectedCompanyId} onChange={(event) => setSelectedCompanyId(event.target.value)}>
-                  {companies.map((company) => (
-                    <option key={company.id} value={company.id}>{company.name}</option>
-                  ))}
-                </select>
-              </label>
-              <button type="button" onClick={() => selectedCompanyId && reload(selectedCompanyId)} disabled={!selectedCompanyId || loading}>
-                Recarregar
-              </button>
-            </div>
-          </div>
-          <div className="panel-content" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '12px' }}>
-            <div className="panel" style={{ padding: '12px' }}>
-              <small style={{ color: 'var(--ink-soft)' }}>Caixa</small>
-              <strong style={{ display: 'block', fontSize: '1.15rem', marginTop: '4px' }}>{formatCurrency(overview?.totals.cash_cents ?? 0)}</strong>
-            </div>
-            <div className="panel" style={{ padding: '12px' }}>
-              <small style={{ color: 'var(--ink-soft)' }}>Competência</small>
-              <strong style={{ display: 'block', fontSize: '1.15rem', marginTop: '4px' }}>{formatCurrency(overview?.totals.competence_cents ?? 0)}</strong>
-            </div>
-            <div className="panel" style={{ padding: '12px' }}>
-              <small style={{ color: 'var(--ink-soft)' }}>Projetado</small>
-              <strong style={{ display: 'block', fontSize: '1.15rem', marginTop: '4px' }}>{formatCurrency(overview?.totals.projected_cents ?? 0)}</strong>
-            </div>
-            <div className="panel" style={{ padding: '12px' }}>
-              <small style={{ color: 'var(--ink-soft)' }}>Confirmado</small>
-              <strong style={{ display: 'block', fontSize: '1.15rem', marginTop: '4px' }}>{formatCurrency(overview?.totals.confirmed_cents ?? 0)}</strong>
-            </div>
-          </div>
-        </div>
-
-        <div className="panel">
-          <div className="panel-header">
-            <h2>Catálogo financeiro base</h2>
-            <p style={{ margin: '4px 0 0', color: 'var(--ink-soft)' }}>
-              Cadastre contas e categorias para padronizar os lançamentos manuais por empresa.
-            </p>
-          </div>
-          <div className="panel-content" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '12px' }}>
-            <form className="form" onSubmit={handleCreateAccount} style={{ display: 'grid', gap: '8px' }}>
-              <h3 style={{ margin: 0 }}>Nova conta</h3>
-              <label style={{ display: 'grid', gap: '4px' }}>
-                <span>Nome da conta</span>
-                <input
-                  value={accountForm.name}
-                  onChange={(event) => setAccountForm((current) => ({ ...current, name: event.target.value }))}
-                  placeholder="Ex.: Itaú operacional"
-                  disabled={!canWrite || catalogSubmitting}
-                />
-              </label>
-              <label style={{ display: 'grid', gap: '4px' }}>
-                <span>Tipo</span>
-                <select
-                  value={accountForm.kind}
-                  onChange={(event) => setAccountForm((current) => ({ ...current, kind: event.target.value as CreateFinanceAccountPayload['kind'] }))}
-                  disabled={!canWrite || catalogSubmitting}
-                >
-                  <option value="bank">Banco</option>
-                  <option value="cash">Caixa</option>
-                  <option value="wallet">Carteira</option>
-                  <option value="other">Outro</option>
-                </select>
-              </label>
-              <button type="submit" disabled={!canWrite || catalogSubmitting || !selectedCompanyId}>
-                {catalogSubmitting ? 'Salvando...' : 'Criar conta'}
-              </button>
-            </form>
-
-            <form className="form" onSubmit={handleCreateCategory} style={{ display: 'grid', gap: '8px' }}>
-              <h3 style={{ margin: 0 }}>Nova categoria</h3>
-              <label style={{ display: 'grid', gap: '4px' }}>
-                <span>Nome da categoria</span>
-                <input
-                  value={categoryForm.name}
-                  onChange={(event) => setCategoryForm((current) => ({ ...current, name: event.target.value }))}
-                  placeholder="Ex.: Serviços técnicos"
-                  disabled={!canWrite || catalogSubmitting}
-                />
-              </label>
-              <label style={{ display: 'grid', gap: '4px' }}>
-                <span>Tipo</span>
-                <select
-                  value={categoryForm.kind}
-                  onChange={(event) => setCategoryForm((current) => ({ ...current, kind: event.target.value as CreateFinanceCategoryPayload['kind'] }))}
-                  disabled={!canWrite || catalogSubmitting}
-                >
-                  <option value="expense">Despesa</option>
-                  <option value="income">Receita</option>
-                  <option value="neutral">Neutro</option>
-                </select>
-              </label>
-              <label style={{ display: 'grid', gap: '4px' }}>
-                <span>Categoria pai (opcional)</span>
-                <select
-                  value={categoryForm.parent_category_id}
-                  onChange={(event) => setCategoryForm((current) => ({ ...current, parent_category_id: event.target.value }))}
-                  disabled={!canWrite || catalogSubmitting}
-                >
-                  <option value="">Sem categoria pai</option>
-                  {categories.map((item) => (
-                    <option key={item.id} value={item.id}>{item.name}</option>
-                  ))}
-                </select>
-              </label>
-              <button type="submit" disabled={!canWrite || catalogSubmitting || !selectedCompanyId}>
-                {catalogSubmitting ? 'Salvando...' : 'Criar categoria'}
-              </button>
-            </form>
-          </div>
-          <div className="panel-content" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '12px', borderTop: '1px solid var(--line)' }}>
-            <div>
-              <h3 style={{ marginTop: 0 }}>Contas cadastradas ({accounts.length})</h3>
-              <ul style={{ margin: 0, paddingLeft: '18px', color: 'var(--ink-soft)' }}>
-                {accounts.slice(0, 8).map((item) => (
-                  <li key={item.id}>
-                    <strong style={{ color: 'var(--ink)' }}>{item.name}</strong> • {item.kind.toUpperCase()}
-                  </li>
-                ))}
-                {accounts.length === 0 ? <li>Nenhuma conta cadastrada.</li> : null}
-              </ul>
-            </div>
-            <div>
-              <h3 style={{ marginTop: 0 }}>Categorias cadastradas ({categories.length})</h3>
-              <ul style={{ margin: 0, paddingLeft: '18px', color: 'var(--ink-soft)' }}>
-                {categories.slice(0, 8).map((item) => (
-                  <li key={item.id}>
-                    <strong style={{ color: 'var(--ink)' }}>{item.name}</strong> • {item.kind.toUpperCase()}
-                  </li>
-                ))}
-                {categories.length === 0 ? <li>Nenhuma categoria cadastrada.</li> : null}
-              </ul>
-            </div>
-          </div>
-        </div>
-
-        <div className="panel">
-          <div className="panel-header">
-            <h2>Novo lançamento manual</h2>
-          </div>
+      {error ? (
+        <div className="panel" aria-live="polite">
           <div className="panel-content">
-            <form className="form form-spacious" onSubmit={handleSubmit} style={{ display: 'grid', gap: '12px' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
-                <label style={{ display: 'grid', gap: '6px' }}>
-                  <span>Conta (opcional)</span>
-                  <select
-                    value={form.financial_account_id}
-                    onChange={(event) => setForm((current) => ({ ...current, financial_account_id: event.target.value }))}
-                    disabled={!canWrite || submitting}
-                  >
-                    <option value="">Sem conta vinculada</option>
-                    {accounts.map((account) => (
-                      <option key={account.id} value={account.id}>{account.name}</option>
-                    ))}
-                  </select>
-                </label>
-                <label style={{ display: 'grid', gap: '6px' }}>
-                  <span>Categoria (opcional)</span>
-                  <select
-                    value={form.financial_category_id}
-                    onChange={(event) => setForm((current) => ({ ...current, financial_category_id: event.target.value }))}
-                    disabled={!canWrite || submitting}
-                  >
-                    <option value="">Sem categoria vinculada</option>
-                    {categories.map((category) => (
-                      <option key={category.id} value={category.id}>{category.name}</option>
-                    ))}
-                  </select>
-                </label>
-                <label style={{ display: 'grid', gap: '6px' }}>
-                  <span>Tipo</span>
-                  <select value={form.kind} onChange={(event) => setForm((current) => ({ ...current, kind: event.target.value as FinanceTransactionKind }))} disabled={!canWrite || submitting}>
-                    <option value="expense">Saída</option>
-                    <option value="income">Entrada</option>
-                    <option value="adjustment">Ajuste</option>
-                    <option value="transfer">Transferência</option>
-                  </select>
-                </label>
-                <label style={{ display: 'grid', gap: '6px' }}>
-                  <span>Status</span>
-                  <select value={form.status} onChange={(event) => setForm((current) => ({ ...current, status: event.target.value as FinanceTransactionStatus }))} disabled={!canWrite || submitting}>
-                    <option value="planned">Planejado</option>
-                    <option value="open">Em aberto</option>
-                    <option value="partial">Parcial</option>
-                    <option value="settled">Liquidado</option>
-                    <option value="overdue">Atrasado</option>
-                  </select>
-                </label>
-                <label style={{ display: 'grid', gap: '6px' }}>
-                  <span>Valor (R$)</span>
-                  <input value={form.amount} onChange={(event) => setForm((current) => ({ ...current, amount: event.target.value }))} placeholder="0,00" disabled={!canWrite || submitting} />
-                </label>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
-                <label style={{ display: 'grid', gap: '6px' }}>
-                  <span>Vencimento</span>
-                  <input type="date" value={form.due_date} onChange={(event) => setForm((current) => ({ ...current, due_date: event.target.value }))} disabled={!canWrite || submitting} />
-                </label>
-                <label style={{ display: 'grid', gap: '6px' }}>
-                  <span>Competência</span>
-                  <input type="date" value={form.competence_date} onChange={(event) => setForm((current) => ({ ...current, competence_date: event.target.value }))} disabled={!canWrite || submitting} />
-                </label>
-                <label style={{ display: 'grid', gap: '6px' }}>
-                  <span>Liquidação</span>
-                  <input type="date" value={form.settlement_date} onChange={(event) => setForm((current) => ({ ...current, settlement_date: event.target.value }))} disabled={!canWrite || submitting} />
-                </label>
-              </div>
-              <label style={{ display: 'grid', gap: '6px' }}>
-                <span>Descrição operacional</span>
-                <textarea value={form.note} onChange={(event) => setForm((current) => ({ ...current, note: event.target.value }))} rows={3} placeholder="Ex.: mensalidade, taxa bancária, recebimento recorrente..." disabled={!canWrite || submitting} />
-              </label>
-              {!canWrite ? (
-                <p className="form-hint" style={{ margin: 0 }}>Sua sessão tem acesso de leitura. Peça a permissão `finance.write` para lançar manualmente.</p>
-              ) : null}
-              <div className="actions" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                <button type="submit" disabled={!canWrite || submitting || !selectedCompanyId}>
-                  {submitting ? 'Salvando...' : 'Criar lançamento'}
-                </button>
-                <button type="button" onClick={() => setForm(initialFormState)} disabled={submitting}>
-                  Limpar
-                </button>
-              </div>
-            </form>
+            <p role="alert">{error}</p>
           </div>
         </div>
+      ) : null}
 
-        <div className="panel">
-          <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+      {message ? (
+        <div className="panel" aria-live="polite">
+          <div className="panel-content">
+            <p>{message}</p>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="finance-ledger-layout">
+        <section className="panel finance-ledger-filters" aria-label="Filtros do ledger">
+          <div className="panel-header">
             <div>
-              <h2>Ledger operacional</h2>
-              <p style={{ margin: '4px 0 0', color: 'var(--ink-soft)' }}>
-                {overview ? `${overview.transaction_count} lançamentos • ${overview.open_count} abertos • ${overview.settled_count} liquidados` : 'Sem visão consolidada ainda.'}
-              </p>
+              <small className="finance-panel-eyebrow">Recorte analítico</small>
+              <h2>Filtros</h2>
             </div>
           </div>
-          <div className="panel-content" style={{ overflowX: 'auto' }}>
-            {error ? <p style={{ marginTop: 0, color: '#9f3a38' }}>{error}</p> : null}
-            {message ? <p style={{ marginTop: 0, color: '#1c8b61' }}>{message}</p> : null}
-            {loading ? (
-              <p style={{ margin: 0, color: 'var(--ink-soft)' }}>Carregando movimentações...</p>
-            ) : transactions.length === 0 ? (
-              <p style={{ margin: 0, color: 'var(--ink-soft)' }}>Nenhum lançamento ativo para a empresa selecionada.</p>
-            ) : (
-              <table>
-                <thead>
-                  <tr>
-                    <th>Descrição</th>
-                    <th>Tipo</th>
-                    <th>Status</th>
-                    <th>Vencimento</th>
-                    <th>Competência</th>
-                    <th>Liquidação</th>
-                    <th>Valor</th>
-                    <th>Visão híbrida</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {transactions.map((transaction) => (
-                    <tr key={transaction.id}>
-                      <td>
-                        <strong>{transaction.note?.trim() || 'Lançamento manual'}</strong>
-                        <div style={{ color: 'var(--ink-soft)', fontSize: '0.82rem', marginTop: '4px' }}>
-                          Criado por {transaction.created_by ?? 'sistema'} em {formatDate(transaction.issue_date ?? transaction.created_at.slice(0, 10))}
-                        </div>
-                        {transaction.financial_account_name || transaction.financial_category_name ? (
-                          <div style={{ color: 'var(--ink-soft)', fontSize: '0.8rem', marginTop: '4px' }}>
-                            {transaction.financial_account_name ? `Conta: ${transaction.financial_account_name}` : 'Conta: —'}
-                            {' • '}
-                            {transaction.financial_category_name ? `Categoria: ${transaction.financial_category_name}` : 'Categoria: —'}
-                          </div>
-                        ) : null}
-                      </td>
-                      <td>{kindLabel(transaction.kind)}</td>
-                      <td>{statusLabel(transaction.status)}</td>
-                      <td>{formatDate(transaction.due_date)}</td>
-                      <td>{formatDate(transaction.competence_date)}</td>
-                      <td>{formatDate(transaction.settlement_date)}</td>
-                      <td>{formatCurrency(transaction.amount_cents)}</td>
-                      <td>
-                        <div style={{ display: 'grid', gap: '4px', color: 'var(--ink-soft)', fontSize: '0.82rem' }}>
-                          <span>Caixa: {formatCurrency(transaction.views.cash_amount_cents)}</span>
-                          <span>Competência: {formatCurrency(transaction.views.competence_amount_cents)}</span>
-                          <span>Projetado: {formatCurrency(transaction.views.projected_amount_cents)}</span>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
+          <div className="panel-content finance-ledger-filters__grid">
+            <label className="finance-ledger-field" htmlFor="ledger-period">
+              <span>Período</span>
+              <select id="ledger-period" value={filters.period} onChange={(event) => updateFilter('period', event.target.value as LedgerPeriod)}>
+                {periodOptions.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+
+            <label className="finance-ledger-field" htmlFor="ledger-status">
+              <span>Status</span>
+              <select id="ledger-status" value={filters.status} onChange={(event) => updateFilter('status', event.target.value as LedgerFilterState['status'])}>
+                {statusOptions.map((option) => (
+                  <option key={option.value || 'all'} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+
+            <label className="finance-ledger-field" htmlFor="ledger-kind">
+              <span>Tipo</span>
+              <select id="ledger-kind" value={filters.kind} onChange={(event) => updateFilter('kind', event.target.value as LedgerFilterState['kind'])}>
+                {kindOptions.map((option) => (
+                  <option key={option.value || 'all'} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+
+            <label className="finance-ledger-field" htmlFor="ledger-account">
+              <span>Conta</span>
+              <select id="ledger-account" value={filters.financial_account_id} onChange={(event) => updateFilter('financial_account_id', event.target.value)}>
+                <option value="">Todas</option>
+                {accountOptions.map((account) => (
+                  <option key={account.id} value={account.id}>{account.name}</option>
+                ))}
+              </select>
+            </label>
+
+            <label className="finance-ledger-field" htmlFor="ledger-category">
+              <span>Categoria</span>
+              <select id="ledger-category" value={filters.financial_category_id} onChange={(event) => updateFilter('financial_category_id', event.target.value)}>
+                <option value="">Todas</option>
+                {categoryOptions.map((category) => (
+                  <option key={category.id} value={category.id}>{category.name}</option>
+                ))}
+              </select>
+            </label>
+
+            <label className="finance-ledger-field" htmlFor="ledger-entity">
+              <span>Entidade</span>
+              <select id="ledger-entity" value={filters.financial_entity_id} onChange={(event) => updateFilter('financial_entity_id', event.target.value)}>
+                <option value="">Todas</option>
+                {entityOptions.map((entity) => (
+                  <option key={entity.id} value={entity.id}>{entity.trade_name || entity.legal_name}</option>
+                ))}
+              </select>
+            </label>
+
+            <label className="finance-ledger-field finance-ledger-field--wide" htmlFor="ledger-search">
+              <span>Busca</span>
+              <input
+                id="ledger-search"
+                value={filters.search}
+                onChange={(event) => updateFilter('search', event.target.value)}
+                placeholder="Descrição, conta, categoria ou fonte"
+              />
+            </label>
+
+            <label className="finance-ledger-toggle">
+              <input
+                type="checkbox"
+                checked={filters.include_deleted}
+                onChange={(event) => updateFilter('include_deleted', event.target.checked)}
+              />
+              <span>Incluir lançamentos excluídos no histórico</span>
+            </label>
           </div>
-        </div>
+        </section>
+
+        <section className="finance-ledger-main">
+          <div className="finance-ledger-summary" aria-label="Resumo do ledger">
+            <article className="panel finance-ledger-summary-card">
+              <small>Lançamentos</small>
+              <strong>{summary.count}</strong>
+              <span>no recorte atual</span>
+            </article>
+            <article className="panel finance-ledger-summary-card">
+              <small>Entradas</small>
+              <strong>{formatCurrency(summary.inflow)}</strong>
+              <span>valor bruto acumulado</span>
+            </article>
+            <article className="panel finance-ledger-summary-card">
+              <small>Saídas</small>
+              <strong>{formatCurrency(summary.outflow)}</strong>
+              <span>valor bruto acumulado</span>
+            </article>
+            <article className="panel finance-ledger-summary-card">
+              <small>Saldo líquido</small>
+              <strong>{formatCurrency(summary.net)}</strong>
+              <span>visão contábil do recorte</span>
+            </article>
+          </div>
+
+          <div className="finance-ledger-split">
+            <div className="panel finance-ledger-table-panel">
+              <div className="panel-header finance-ledger-table-panel__header">
+                <div>
+                  <small className="finance-panel-eyebrow">Leitura central</small>
+                  <h2>Ledger financeiro</h2>
+                </div>
+                <p>
+                  {loading
+                    ? 'Carregando movimentações...'
+                    : `${formatCurrency(summary.cash)} em caixa · ${formatCurrency(summary.competence)} em competência · ${formatCurrency(summary.projected)} projetado · ${formatCurrency(summary.confirmed)} confirmado`}
+                </p>
+              </div>
+              <div className="panel-content finance-ledger-table-panel__content">
+                <FinanceLedgerTable
+                  rows={transactions}
+                  selectedTransactionId={selectedTransactionId}
+                  onSelectTransaction={setSelectedTransactionId}
+                />
+              </div>
+            </div>
+
+            <aside className="panel finance-ledger-detail" role="region" aria-label="Detalhes do lançamento">
+              <div className="panel-header">
+                <div>
+                  <small className="finance-panel-eyebrow">Drill-down</small>
+                  <h2>Detalhes da linha</h2>
+                </div>
+              </div>
+              <div className="panel-content">
+                {!selectedTransaction ? (
+                  <p className="finance-ledger-detail__empty">
+                    Selecione uma movimentação para ver a rastreabilidade completa aqui.
+                  </p>
+                ) : (
+                  <div className="finance-ledger-detail__body">
+                    <div className="finance-ledger-detail__headline">
+                      <strong>{selectedTransaction.note || 'Movimentação financeira'}</strong>
+                      <span>{formatCurrency(selectedTransaction.amount_cents)}</span>
+                    </div>
+                    <div className="finance-ledger-detail__actions">
+                      <button type="button" className="secondary-button" onClick={startCreateMode}>
+                        Novo lançamento
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={startEditMode}
+                        disabled={!canWrite || selectedTransaction.is_deleted}
+                      >
+                        Editar linha
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={handleDelete}
+                        disabled={!canApprove || selectedTransaction.is_deleted || submitting}
+                      >
+                        Excluir
+                      </button>
+                    </div>
+                    {selectedTransaction.is_deleted ? (
+                      <p className="finance-ledger-detail__audit-note">
+                        Este lançamento já foi excluído do ledger ativo e permanece visível aqui apenas para rastreabilidade.
+                      </p>
+                    ) : null}
+                    <dl className="finance-ledger-detail__list">
+                      {selectedTransactionDetails.map((item) => (
+                        <div key={item.label}>
+                          <dt>{item.label}</dt>
+                          <dd>{item.value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                    <div className="finance-ledger-detail__views">
+                      <div>
+                        <small>Caixa</small>
+                        <strong>{formatCurrency(selectedTransaction.views.cash_amount_cents)}</strong>
+                      </div>
+                      <div>
+                        <small>Competência</small>
+                        <strong>{formatCurrency(selectedTransaction.views.competence_amount_cents)}</strong>
+                      </div>
+                      <div>
+                        <small>Projetado</small>
+                        <strong>{formatCurrency(selectedTransaction.views.projected_amount_cents)}</strong>
+                      </div>
+                      <div>
+                        <small>Confirmado</small>
+                        <strong>{formatCurrency(selectedTransaction.views.confirmed_amount_cents)}</strong>
+                      </div>
+                    </div>
+                    <p className="finance-ledger-detail__note">
+                      {selectedTransaction.source === 'manual'
+                        ? 'Lançamento manual registrado no ledger central.'
+                        : 'Lançamento originado por processo operacional do ERP.'}
+                    </p>
+                  </div>
+                )}
+
+                <form className="finance-ledger-editor" onSubmit={handleSubmit}>
+                  <div className="finance-ledger-editor__header">
+                    <div>
+                      <small className="finance-panel-eyebrow">Operação manual</small>
+                      <h3>{editorMode === 'edit' ? 'Editar lançamento' : 'Novo lançamento'}</h3>
+                    </div>
+                    {editorMode === 'edit' ? (
+                      <button type="button" className="secondary-button" onClick={startCreateMode}>
+                        Limpar editor
+                      </button>
+                    ) : null}
+                  </div>
+
+                  <div className="finance-ledger-editor__grid">
+                    <label className="finance-ledger-field">
+                      <span>Entidade</span>
+                      <select
+                        value={form.financial_entity_id}
+                        onChange={(event) => updateForm('financial_entity_id', event.target.value)}
+                        disabled={editorDisabled}
+                      >
+                        <option value="">Sem vínculo</option>
+                        {entityOptions.map((entity) => (
+                          <option key={entity.id} value={entity.id}>
+                            {entity.trade_name || entity.legal_name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="finance-ledger-field">
+                      <span>Conta</span>
+                      <select
+                        value={form.financial_account_id}
+                        onChange={(event) => updateForm('financial_account_id', event.target.value)}
+                        disabled={editorDisabled}
+                      >
+                        <option value="">Sem vínculo</option>
+                        {accountOptions.map((account) => (
+                          <option key={account.id} value={account.id}>{account.name}</option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="finance-ledger-field">
+                      <span>Categoria</span>
+                      <select
+                        value={form.financial_category_id}
+                        onChange={(event) => updateForm('financial_category_id', event.target.value)}
+                        disabled={editorDisabled}
+                      >
+                        <option value="">Sem vínculo</option>
+                        {categoryOptions.map((category) => (
+                          <option key={category.id} value={category.id}>{category.name}</option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="finance-ledger-field">
+                      <span>Tipo</span>
+                      <select value={form.kind} onChange={(event) => updateForm('kind', event.target.value as FinanceTransactionKind)} disabled={editorDisabled}>
+                        {transactionKindOptions.map((option) => (
+                          <option key={option.value} value={option.value}>{option.label}</option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="finance-ledger-field">
+                      <span>Status</span>
+                      <select value={form.status} onChange={(event) => updateForm('status', event.target.value as FinanceTransactionStatus)} disabled={editorDisabled}>
+                        {transactionStatusOptions.map((option) => (
+                          <option key={option.value} value={option.value}>{option.label}</option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="finance-ledger-field">
+                      <span>Valor</span>
+                      <input
+                        value={form.amount}
+                        onChange={(event) => updateForm('amount', event.target.value)}
+                        placeholder="0,00"
+                        disabled={editorDisabled}
+                      />
+                    </label>
+
+                    <label className="finance-ledger-field">
+                      <span>Emissão</span>
+                      <input type="date" value={form.issue_date} onChange={(event) => updateForm('issue_date', event.target.value)} disabled={editorDisabled} />
+                    </label>
+
+                    <label className="finance-ledger-field">
+                      <span>Vencimento</span>
+                      <input type="date" value={form.due_date} onChange={(event) => updateForm('due_date', event.target.value)} disabled={editorDisabled} />
+                    </label>
+
+                    <label className="finance-ledger-field">
+                      <span>Competência</span>
+                      <input type="date" value={form.competence_date} onChange={(event) => updateForm('competence_date', event.target.value)} disabled={editorDisabled} />
+                    </label>
+
+                    <label className="finance-ledger-field">
+                      <span>Liquidação</span>
+                      <input type="date" value={form.settlement_date} onChange={(event) => updateForm('settlement_date', event.target.value)} disabled={editorDisabled} />
+                    </label>
+
+                    <label className="finance-ledger-field finance-ledger-field--wide">
+                      <span>Observação</span>
+                      <textarea
+                        value={form.note}
+                        onChange={(event) => updateForm('note', event.target.value)}
+                        placeholder="Descreva o contexto financeiro desta movimentação."
+                        disabled={editorDisabled}
+                        rows={4}
+                      />
+                    </label>
+                  </div>
+
+                  <div className="finance-ledger-editor__footer">
+                    <button type="submit" className="primary-button" disabled={editorDisabled}>
+                      {submitting ? 'Salvando...' : editorMode === 'edit' ? 'Salvar alteração' : 'Registrar lançamento'}
+                    </button>
+                    {!canWrite ? <span>Seu perfil atual pode ler, mas não alterar lançamentos.</span> : null}
+                  </div>
+                </form>
+              </div>
+            </aside>
+          </div>
+        </section>
       </div>
     </section>
   );

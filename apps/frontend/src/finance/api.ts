@@ -161,8 +161,8 @@ export type FinanceDebt = {
 export type FinanceTransaction = {
   id: string;
   organization_id: string;
-  company_id: string;
-  company_name: string | null;
+  financial_entity_id: string | null;
+  financial_entity_name: string | null;
   financial_account_id: string | null;
   financial_account_name: string | null;
   financial_category_id: string | null;
@@ -191,6 +191,18 @@ export type FinanceTransaction = {
     cash_anchor_date: string | null;
     projected_anchor_date: string | null;
   };
+};
+
+export type FinanceTransactionLedgerFilters = {
+  status?: FinanceTransactionStatus | null;
+  kind?: FinanceTransactionKind | null;
+  financial_account_id?: string | null;
+  financial_category_id?: string | null;
+  financial_entity_id?: string | null;
+  from?: string | null;
+  to?: string | null;
+  search?: string | null;
+  include_deleted?: boolean | null;
 };
 
 export type FinanceOverview = {
@@ -337,8 +349,7 @@ export type FinanceExecutiveOverview = {
 };
 
 export type CreateFinanceTransactionPayload = {
-  company_id?: string | null;
-  counterparty_company_id?: string | null;
+  financial_entity_id?: string | null;
   financial_account_id?: string | null;
   financial_category_id?: string | null;
   kind: FinanceTransactionKind;
@@ -530,10 +541,41 @@ export const financeApi = {
     req<FinanceExecutiveOverview>('/finance/overview/executive'),
   getOverview: (companyId?: string | null) =>
     req<FinanceOverview>(withCompanyId('/finance/overview', companyId)),
-  listTransactions: (companyId?: string | null) =>
-    req<{ company_id: string | null; company_name: string | null; transactions: FinanceTransaction[] }>(
-      withCompanyId('/finance/transactions', companyId)
-    ),
+  listTransactions: (_companyId?: string | null, filters?: FinanceTransactionLedgerFilters) => {
+    const params = new URLSearchParams();
+    if (filters?.status) {
+      params.set('status', filters.status);
+    }
+    if (filters?.kind) {
+      params.set('kind', filters.kind);
+    }
+    if (filters?.financial_account_id) {
+      params.set('financial_account_id', filters.financial_account_id);
+    }
+    if (filters?.financial_category_id) {
+      params.set('financial_category_id', filters.financial_category_id);
+    }
+    if (filters?.financial_entity_id) {
+      params.set('financial_entity_id', filters.financial_entity_id);
+    }
+    if (filters?.from) {
+      params.set('from', filters.from);
+    }
+    if (filters?.to) {
+      params.set('to', filters.to);
+    }
+    if (filters?.search) {
+      params.set('search', filters.search);
+    }
+    if (filters?.include_deleted) {
+      params.set('include_deleted', '1');
+    }
+
+    const queryString = params.toString();
+    return req<{ transactions: FinanceTransaction[] }>(
+      queryString.length > 0 ? `/finance/transactions?${queryString}` : '/finance/transactions'
+    );
+  },
   listAccounts: (companyId?: string | null) =>
     req<{ company_id: string | null; company_name: string | null; accounts: FinanceAccount[] }>(
       withCompanyId('/finance/accounts', companyId)

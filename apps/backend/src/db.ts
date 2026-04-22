@@ -66,6 +66,31 @@ function ensureColumn(table: string, column: string, definition: string) {
   }
 }
 
+function hasCompositeUniqueIndex(table: string, columns: string[]) {
+  const indexes = db.prepare(`pragma index_list(${table})`).all() as Array<{
+    name: string;
+    unique: number;
+  }>;
+
+  return indexes.some((index) => {
+    if (index.unique !== 1) {
+      return false;
+    }
+
+    const indexColumns = db.prepare(`pragma index_info(${index.name})`).all() as Array<{
+      seqno: number;
+      name: string;
+    }>;
+
+    const orderedColumns = indexColumns
+      .sort((left, right) => left.seqno - right.seqno)
+      .map((column) => column.name);
+
+    return orderedColumns.length === columns.length
+      && orderedColumns.every((column, position) => column === columns[position]);
+  });
+}
+
 function uniqueSortedIsoDates(values: string[]): string[] {
   return Array.from(new Set(values
     .map((item) => item.trim())
@@ -1081,6 +1106,115 @@ export function initDb() {
   );
   ensureColumn('internal_user', 'is_active', 'is_active integer not null default 1');
   ensureColumn('internal_user', 'last_login_at', 'last_login_at text');
+
+  const financialAccountNeedsRebuild = !hasCompositeUniqueIndex('financial_account', ['organization_id', 'id']);
+  const financialCategoryNeedsRebuild = !hasCompositeUniqueIndex('financial_category', ['organization_id', 'id']);
+
+  if (financialAccountNeedsRebuild || financialCategoryNeedsRebuild) {
+    db.exec('pragma foreign_keys = off');
+    try {
+      if (financialAccountNeedsRebuild) {
+        db.exec(`
+          create table financial_account_new (
+            id text primary key,
+            organization_id text not null,
+            company_id text not null,
+            name text not null,
+            kind text not null,
+            currency text not null default 'BRL',
+            account_number text,
+            branch_number text,
+            is_active integer not null default 1,
+            created_at text not null,
+            updated_at text not null,
+            unique(organization_id, id),
+            unique(company_id, id),
+            foreign key(company_id) references company(id) on delete cascade,
+            foreign key(organization_id) references organization(id) on delete cascade
+          );
+        `);
+        db.exec(`
+          insert into financial_account_new (
+            id,
+            organization_id,
+            company_id,
+            name,
+            kind,
+            currency,
+            account_number,
+            branch_number,
+            is_active,
+            created_at,
+            updated_at
+          )
+          select
+            id,
+            coalesce(organization_id, '${DEFAULT_ORGANIZATION_ID}'),
+            company_id,
+            name,
+            kind,
+            coalesce(currency, 'BRL'),
+            account_number,
+            branch_number,
+            coalesce(is_active, 1),
+            created_at,
+            updated_at
+          from financial_account;
+        `);
+        db.exec('drop table financial_account;');
+        db.exec('alter table financial_account_new rename to financial_account;');
+      }
+
+      if (financialCategoryNeedsRebuild) {
+        db.exec(`
+          create table financial_category_new (
+            id text primary key,
+            organization_id text not null,
+            company_id text not null,
+            name text not null,
+            kind text not null,
+            parent_category_id text,
+            is_active integer not null default 1,
+            created_at text not null,
+            updated_at text not null,
+            unique(organization_id, id),
+            unique(company_id, id),
+            foreign key(company_id) references company(id) on delete cascade,
+            foreign key(organization_id) references organization(id) on delete cascade,
+            foreign key(company_id, parent_category_id) references financial_category_new(company_id, id) on delete restrict
+          );
+        `);
+        db.exec(`
+          insert into financial_category_new (
+            id,
+            organization_id,
+            company_id,
+            name,
+            kind,
+            parent_category_id,
+            is_active,
+            created_at,
+            updated_at
+          )
+          select
+            id,
+            coalesce(organization_id, '${DEFAULT_ORGANIZATION_ID}'),
+            company_id,
+            name,
+            kind,
+            parent_category_id,
+            coalesce(is_active, 1),
+            created_at,
+            updated_at
+          from financial_category;
+        `);
+        db.exec('drop table financial_category;');
+        db.exec('alter table financial_category_new rename to financial_category;');
+      }
+    } finally {
+      db.exec('pragma foreign_keys = on');
+    }
+  }
 
   const transactionColumns = db.prepare('pragma table_info(financial_transaction)').all() as Array<{
     name: string;

@@ -22,6 +22,7 @@ import type {
   FinanceOverviewDto,
   FinanceTransactionDto,
   FinanceTransactionRow,
+  FinanceTransactionListFilters,
   FinanceTransactionStatus,
   UpdateFinanceTransactionInput
 } from './types.js';
@@ -1718,9 +1719,8 @@ function mapTransactionRow(row: FinanceTransactionRow): FinanceTransactionDto {
   return {
     id: row.id,
     organization_id: row.organization_id,
-    company_id: row.company_id,
-    company_name: row.company_name ?? null,
     financial_entity_id: row.financial_entity_id,
+    financial_entity_name: row.financial_entity_name ?? null,
     financial_account_id: row.financial_account_id,
     financial_account_name: row.financial_account_name ?? null,
     financial_category_id: row.financial_category_id,
@@ -1775,11 +1775,10 @@ function readTransactionRow(
       ft.created_at,
       ft.updated_at,
       ft.is_deleted,
-      coalesce(c.name, fe.legal_name, fe.trade_name) as company_name,
+      coalesce(fe.trade_name, fe.legal_name) as financial_entity_name,
       fa.name as financial_account_name,
       fc.name as financial_category_name
     from financial_transaction ft
-    left join company c on c.id = ft.company_id
     left join financial_entity fe
       on fe.organization_id = ft.organization_id
       and fe.id = ft.financial_entity_id
@@ -1798,15 +1797,77 @@ function readTransactionRow(
   return row ?? null;
 }
 
-export function listFinanceTransactions(organizationId: string, companyId?: string | null): {
-  company_id: string | null;
-  company_name: string | null;
-  transactions: FinanceTransactionDto[];
-} {
+function buildTransactionLedgerConditions(
+  filters?: FinanceTransactionListFilters
+): { sql: string; params: unknown[] } {
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+
+  if (filters?.status) {
+    conditions.push('ft.status = ?');
+    params.push(filters.status);
+  }
+
+  if (filters?.kind) {
+    conditions.push('ft.kind = ?');
+    params.push(filters.kind);
+  }
+
+  if (filters?.financial_account_id) {
+    conditions.push('ft.financial_account_id = ?');
+    params.push(filters.financial_account_id);
+  }
+
+  if (filters?.financial_category_id) {
+    conditions.push('ft.financial_category_id = ?');
+    params.push(filters.financial_category_id);
+  }
+
+  if (filters?.financial_entity_id) {
+    conditions.push('ft.financial_entity_id = ?');
+    params.push(filters.financial_entity_id);
+  }
+
+  const ledgerDateExpr = 'coalesce(ft.competence_date, ft.due_date, ft.issue_date, substr(ft.created_at, 1, 10))';
+  if (filters?.from) {
+    conditions.push(`${ledgerDateExpr} >= ?`);
+    params.push(filters.from);
+  }
+
+  if (filters?.to) {
+    conditions.push(`${ledgerDateExpr} <= ?`);
+    params.push(filters.to);
+  }
+
+  if (filters?.search) {
+    conditions.push(`
+      lower(
+        coalesce(ft.note, '') || ' ' ||
+        coalesce(ft.source, '') || ' ' ||
+        coalesce(ft.source_ref, '') || ' ' ||
+        coalesce(fe.trade_name, '') || ' ' ||
+        coalesce(fe.legal_name, '') || ' ' ||
+        coalesce(fa.name, '') || ' ' ||
+        coalesce(fc.name, '')
+      ) like ?
+    `);
+    params.push(`%${filters.search.toLowerCase()}%`);
+  }
+
+  return {
+    sql: conditions.length > 0 ? `and ${conditions.map((condition) => `(${condition.trim()})`).join(' and ')}` : '',
+    params
+  };
+}
+
+export function listFinanceTransactions(
+  organizationId: string,
+  filters?: FinanceTransactionListFilters
+): { transactions: FinanceTransactionDto[] } {
   const normalizedOrganizationId = resolveOrganizationId(organizationId);
   readOrganizationRow(normalizedOrganizationId);
-  const company = resolveCompanyRow(companyId);
-  const companyFilter = company?.id ?? null;
+  const ledgerConditions = buildTransactionLedgerConditions(filters);
+  const whereDeleted = filters?.include_deleted ? '' : 'and coalesce(ft.is_deleted, 0) = 0';
 
   const rows = db.prepare(`
     select
@@ -1830,11 +1891,10 @@ export function listFinanceTransactions(organizationId: string, companyId?: stri
       ft.created_at,
       ft.updated_at,
       ft.is_deleted,
-      coalesce(c.name, fe.legal_name, fe.trade_name) as company_name,
+      coalesce(fe.trade_name, fe.legal_name) as financial_entity_name,
       fa.name as financial_account_name,
       fc.name as financial_category_name
     from financial_transaction ft
-    left join company c on c.id = ft.company_id
     left join financial_entity fe
       on fe.organization_id = ft.organization_id
       and fe.id = ft.financial_entity_id
@@ -1845,16 +1905,14 @@ export function listFinanceTransactions(organizationId: string, companyId?: stri
       on fc.organization_id = ft.organization_id
       and fc.id = ft.financial_category_id
     where ft.organization_id = ?
-      and (? is null or ft.company_id = ?)
-      and coalesce(ft.is_deleted, 0) = 0
+      ${whereDeleted}
+      ${ledgerConditions.sql}
     order by coalesce(ft.due_date, ft.competence_date, ft.issue_date, substr(ft.created_at, 1, 10)) desc,
       ft.created_at desc,
       ft.id desc
-  `).all(normalizedOrganizationId, companyFilter, companyFilter) as FinanceTransactionRow[];
+  `).all(normalizedOrganizationId, ...ledgerConditions.params) as FinanceTransactionRow[];
 
   return {
-    company_id: company?.id ?? null,
-    company_name: company?.name ?? null,
     transactions: rows.map(mapTransactionRow)
   };
 }
@@ -1862,16 +1920,14 @@ export function listFinanceTransactions(organizationId: string, companyId?: stri
 export function getFinanceOverview(organizationId: string, companyId?: string | null): FinanceOverviewDto {
   const normalizedOrganizationId = resolveOrganizationId(organizationId);
   const organization = readOrganizationRow(normalizedOrganizationId);
-  const { company_id, company_name, transactions } = listFinanceTransactions(
-    normalizedOrganizationId,
-    companyId
-  );
+  const company = resolveCompanyRow(companyId);
+  const { transactions } = listFinanceTransactions(normalizedOrganizationId);
 
   return {
     organization_id: normalizedOrganizationId,
     organization_name: organization.name,
-    company_id,
-    company_name,
+    company_id: company?.id ?? null,
+    company_name: company?.name ?? null,
     transaction_count: transactions.length,
     open_count: transactions.filter((transaction) => !transaction.settlement_date && transaction.status !== 'canceled').length,
     settled_count: transactions.filter((transaction) => Boolean(transaction.settlement_date) || transaction.status === 'settled').length,

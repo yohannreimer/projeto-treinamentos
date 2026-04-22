@@ -59,7 +59,7 @@ export type FinanceTransactionRow = {
   created_at: string;
   updated_at: string;
   is_deleted: number;
-  company_name?: string | null;
+  financial_entity_name?: string | null;
   financial_account_name?: string | null;
   financial_category_name?: string | null;
 };
@@ -67,9 +67,8 @@ export type FinanceTransactionRow = {
 export type FinanceTransactionDto = {
   id: string;
   organization_id: string;
-  company_id: string | null;
-  company_name: string | null;
   financial_entity_id: string | null;
+  financial_entity_name: string | null;
   financial_account_id: string | null;
   financial_account_name: string | null;
   financial_category_id: string | null;
@@ -89,6 +88,18 @@ export type FinanceTransactionDto = {
   updated_at: string;
   is_deleted: boolean;
   views: FinanceLedgerViews;
+};
+
+export type FinanceTransactionListFilters = {
+  status?: FinanceTransactionStatus | null;
+  kind?: FinanceTransactionKind | null;
+  financial_account_id?: string | null;
+  financial_category_id?: string | null;
+  financial_entity_id?: string | null;
+  from?: string | null;
+  to?: string | null;
+  search?: string | null;
+  include_deleted?: boolean | null;
 };
 
 export type FinanceOverviewDto = {

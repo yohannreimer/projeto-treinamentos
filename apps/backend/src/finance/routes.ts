@@ -297,6 +297,58 @@ function resolveFinancialEntityId(payload: {
   return payload.financial_entity_id?.trim() || null;
 }
 
+function readQueryText(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function readQueryEnum<T extends readonly string[]>(value: unknown, allowed: T): T[number] | null {
+  const normalized = readQueryText(value);
+  if (!normalized) {
+    return null;
+  }
+  return (allowed as readonly string[]).includes(normalized) ? (normalized as T[number]) : null;
+}
+
+function readQueryDate(value: unknown): string | null {
+  const normalized = readQueryText(value);
+  if (!normalized) {
+    return null;
+  }
+  return isoDateSchema.safeParse(normalized).success ? normalized : null;
+}
+
+function readQueryBoolean(value: unknown): boolean | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (['1', 'true', 'yes', 'sim'].includes(normalized)) {
+    return true;
+  }
+  if (['0', 'false', 'no', 'nao', 'não'].includes(normalized)) {
+    return false;
+  }
+  return null;
+}
+
+function readTransactionLedgerFilters(req: Request) {
+  return {
+    status: readQueryEnum(req.query.status, FINANCE_TRANSACTION_STATUS_VALUES),
+    kind: readQueryEnum(req.query.kind, FINANCE_TRANSACTION_KIND_VALUES),
+    financial_account_id: readQueryText(req.query.financial_account_id),
+    financial_category_id: readQueryText(req.query.financial_category_id),
+    financial_entity_id: readQueryText(req.query.financial_entity_id),
+    from: readQueryDate(req.query.from),
+    to: readQueryDate(req.query.to),
+    search: readQueryText(req.query.search),
+    include_deleted: readQueryBoolean(req.query.include_deleted)
+  };
+}
+
 function respondFinanceError(res: Response, error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
   const status = message.includes('não encontrado') ? 404 : 400;
@@ -434,7 +486,7 @@ export function registerFinanceRoutes(app: Express) {
 
   router.get('/transactions', requireFinancePermission(['finance.read']), (req, res) => {
     try {
-      return res.json(listFinanceTransactions(readFinanceOrganizationId(res), parseCounterpartyCompanyId(req)));
+      return res.json(listFinanceTransactions(readFinanceOrganizationId(res), readTransactionLedgerFilters(req)));
     } catch (error) {
       return respondFinanceError(res, error);
     }
