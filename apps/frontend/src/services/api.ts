@@ -44,15 +44,24 @@ function withConfirmation(path: string, confirmationPhrase?: string): string {
   return `${path}${separator}confirmation_phrase=${encodeURIComponent(normalized)}`;
 }
 
+export function createInternalAuthHeaders(init?: HeadersInit): Headers {
+  const currentSession = internalSessionStore.read();
+  const authToken = currentSession?.token ?? null;
+  const headers = new Headers(init ?? {});
+
+  if (authToken && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${authToken}`);
+  }
+
+  return headers;
+}
+
 async function req<T = any>(path: string, init?: RequestInit): Promise<T> {
   const currentSession = internalSessionStore.read();
   const authToken = currentSession?.token ?? null;
-  const headers = new Headers(init?.headers ?? {});
+  const headers = createInternalAuthHeaders(init?.headers);
   if (!headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
-  }
-  if (authToken && !headers.has('Authorization')) {
-    headers.set('Authorization', `Bearer ${authToken}`);
   }
 
   const controller = new AbortController();

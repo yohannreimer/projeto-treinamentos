@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { api } from '../services/api';
+import { api, createInternalAuthHeaders } from '../services/api';
 import type { Cohort, Module } from '../types';
 import { Section } from '../components/Section';
 import { StatusChip } from '../components/StatusChip';
@@ -873,7 +873,9 @@ export function CohortsPage() {
     emittingCertificateLockRef.current.add(certKey);
     setEmittingCertificateKeys((prev) => (prev.includes(certKey) ? prev : [...prev, certKey]));
     try {
-      const response = await fetch(url);
+      const response = await fetch(url, {
+        headers: createInternalAuthHeaders()
+      });
       if (!response.ok) {
         const body = await response.text();
         throw new Error(body || 'Erro ao gerar certificado.');
