@@ -103,7 +103,8 @@ vi.mock('../api', () => ({
     toggleAutomationRule: vi.fn().mockResolvedValue({ id: 'rule-1', is_active: false }),
     approvePayable: vi.fn().mockResolvedValue({ id: 'audit-approve', action: 'approve_payment' }),
     createAttachment: vi.fn().mockResolvedValue({ id: 'att-1' }),
-    createBankIntegration: vi.fn().mockResolvedValue({ id: 'bank-1' })
+    createBankIntegration: vi.fn().mockResolvedValue({ id: 'bank-1' }),
+    resetOperationalData: vi.fn().mockResolvedValue({ ok: true, deleted: { transactions: 1 } })
   }
 }));
 

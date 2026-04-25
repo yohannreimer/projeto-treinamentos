@@ -24,6 +24,7 @@ import { formatDate } from '../utils/financeFormatters';
 
 type EntityFilter = 'todos' | 'clientes' | 'fornecedores';
 type CadastroArea = 'entidades' | 'contas' | 'categorias' | 'centros' | 'formas' | 'combinacoes' | 'recorrencias' | 'duplicidades';
+type ManageableCadastroArea = Exclude<CadastroArea, 'duplicidades'>;
 
 const inputStyle: CSSProperties = {
   width: '100%',
@@ -603,23 +604,97 @@ export function FinanceCadastrosPage() {
     }
   }
 
-  async function deactivate(kind: CadastroArea, id: string) {
+  async function setCadastroActive(kind: ManageableCadastroArea, id: string, isActive: boolean) {
     setSaving(true);
     setError('');
     try {
-      if (kind === 'contas') await financeApi.deleteAccount(id);
-      if (kind === 'categorias') await financeApi.deleteCategory(id);
-      if (kind === 'centros') await financeApi.deleteCostCenter(id);
-      if (kind === 'formas') await financeApi.deletePaymentMethod(id);
-      if (kind === 'combinacoes') {
-        const updated = await financeApi.deleteFavoriteCombination(id);
-        setFavoriteCombinations((current) => current.map((item) => (item.id === id ? updated : item)));
-      } else {
+      if (kind === 'entidades') {
+        const updated = isActive
+          ? await financeApi.updateEntity(id, { is_active: true })
+          : await financeApi.deleteEntity(id);
+        setEntities((current) => current.map((entity) => (entity.id === id ? updated : entity)));
+      }
+      if (kind === 'contas') {
+        if (isActive) await financeApi.updateAccount(id, { is_active: true });
+        else await financeApi.deleteAccount(id);
         await refreshCatalog();
       }
-      setSuccessMessage('Cadastro inativado.');
+      if (kind === 'categorias') {
+        if (isActive) await financeApi.updateCategory(id, { is_active: true });
+        else await financeApi.deleteCategory(id);
+        await refreshCatalog();
+      }
+      if (kind === 'centros') {
+        if (isActive) await financeApi.updateCostCenter(id, { is_active: true });
+        else await financeApi.deleteCostCenter(id);
+        await refreshCatalog();
+      }
+      if (kind === 'formas') {
+        if (isActive) await financeApi.updatePaymentMethod(id, { is_active: true });
+        else await financeApi.deletePaymentMethod(id);
+        await refreshCatalog();
+      }
+      if (kind === 'combinacoes') {
+        const updated = isActive
+          ? await financeApi.updateFavoriteCombination(id, { is_active: true })
+          : await financeApi.deleteFavoriteCombination(id);
+        setFavoriteCombinations((current) => current.map((item) => (item.id === id ? updated : item)));
+      }
+      setSuccessMessage(isActive ? 'Cadastro reativado.' : 'Cadastro inativado.');
     } catch (unknownError) {
-      setError(unknownError instanceof Error ? unknownError.message : 'Falha ao inativar cadastro.');
+      setError(unknownError instanceof Error ? unknownError.message : 'Falha ao atualizar cadastro.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function hardDelete(kind: ManageableCadastroArea, id: string) {
+    const labels: Record<ManageableCadastroArea, string> = {
+      entidades: 'entidade',
+      contas: 'conta',
+      categorias: 'categoria',
+      centros: 'centro de custo',
+      formas: 'forma de pagamento',
+      combinacoes: 'combinação',
+      recorrencias: 'recorrência'
+    };
+    const confirmed = window.confirm(`Excluir ${labels[kind]} de forma definitiva? Essa ação não volta. Se houver lançamentos usando este cadastro, o sistema vai bloquear a exclusão.`);
+    if (!confirmed) return;
+
+    setSaving(true);
+    setError('');
+    try {
+      if (kind === 'entidades') {
+        await financeApi.hardDeleteEntity(id);
+        setEntities((current) => current.filter((entity) => entity.id !== id));
+      }
+      if (kind === 'contas') {
+        await financeApi.hardDeleteAccount(id);
+        await refreshCatalog();
+      }
+      if (kind === 'categorias') {
+        await financeApi.hardDeleteCategory(id);
+        await refreshCatalog();
+      }
+      if (kind === 'centros') {
+        await financeApi.hardDeleteCostCenter(id);
+        await refreshCatalog();
+      }
+      if (kind === 'formas') {
+        await financeApi.hardDeletePaymentMethod(id);
+        await refreshCatalog();
+      }
+      if (kind === 'combinacoes') {
+        await financeApi.hardDeleteFavoriteCombination(id);
+        setFavoriteCombinations((current) => current.filter((item) => item.id !== id));
+      }
+      if (kind === 'recorrencias') {
+        await financeApi.deleteRecurringRule(id);
+        setRecurringRules((current) => current.filter((item) => item.id !== id));
+      }
+      setSuccessMessage('Cadastro excluído definitivamente.');
+    } catch (unknownError) {
+      setError(unknownError instanceof Error ? unknownError.message : 'Falha ao excluir cadastro.');
     } finally {
       setSaving(false);
     }
@@ -1015,7 +1090,15 @@ export function FinanceCadastrosPage() {
                 </td>
                 <td style={{ padding: '10px 14px', fontSize: 11, fontFamily: "'DM Mono', monospace", color: '#64748b' }}>{entity.document_number || '—'}</td>
                 <td style={{ padding: '10px 14px' }}><Badge color={entity.is_active ? '#059669' : '#94a3b8'} bg={entity.is_active ? '#d1fae5' : '#f1f5f9'}>{entity.is_active ? 'Ativo' : 'Inativo'}</Badge></td>
-                <td style={{ padding: '10px 14px' }}><ActionButton onClick={() => editEntity(entity)}>Editar</ActionButton></td>
+                <td style={{ padding: '10px 14px' }}>
+                  <InlineActions
+                    onEdit={() => editEntity(entity)}
+                    onToggleActive={() => void setCadastroActive('entidades', entity.id, !entity.is_active)}
+                    onDelete={() => void hardDelete('entidades', entity.id)}
+                    isActive={entity.is_active}
+                    disabled={saving}
+                  />
+                </td>
               </tr>
             ))}
           </CatalogTable>
@@ -1056,7 +1139,15 @@ export function FinanceCadastrosPage() {
               <td style={{ padding: '10px 14px', fontSize: 11, fontFamily: "'DM Mono', monospace", color: '#64748b' }}>{account.currency}</td>
               <td style={{ padding: '10px 14px', fontSize: 12, color: '#64748b' }}>{[account.branch_number, account.account_number].filter(Boolean).join(' / ') || '—'}</td>
               <td style={{ padding: '10px 14px' }}><StatusBadge active={account.is_active} /></td>
-              <td style={{ padding: '10px 14px' }}><InlineActions onEdit={() => setAccountFormFrom(account)} onDeactivate={() => void deactivate('contas', account.id)} disabled={!account.is_active} /></td>
+              <td style={{ padding: '10px 14px' }}>
+                <InlineActions
+                  onEdit={() => setAccountFormFrom(account)}
+                  onToggleActive={() => void setCadastroActive('contas', account.id, !account.is_active)}
+                  onDelete={() => void hardDelete('contas', account.id)}
+                  isActive={account.is_active}
+                  disabled={saving}
+                />
+              </td>
             </tr>
           ))}
         </CatalogTable>
@@ -1076,7 +1167,15 @@ export function FinanceCadastrosPage() {
               <td style={{ padding: '10px 14px', fontSize: 12, color: '#475569' }}>{category.kind}</td>
               <td style={{ padding: '10px 14px', fontSize: 12, color: '#64748b' }}>{category.parent_category_id ? categoriesById.get(category.parent_category_id) ?? '—' : '—'}</td>
               <td style={{ padding: '10px 14px' }}><StatusBadge active={category.is_active} /></td>
-              <td style={{ padding: '10px 14px' }}><InlineActions onEdit={() => setCategoryFormFrom(category)} onDeactivate={() => void deactivate('categorias', category.id)} disabled={!category.is_active} /></td>
+              <td style={{ padding: '10px 14px' }}>
+                <InlineActions
+                  onEdit={() => setCategoryFormFrom(category)}
+                  onToggleActive={() => void setCadastroActive('categorias', category.id, !category.is_active)}
+                  onDelete={() => void hardDelete('categorias', category.id)}
+                  isActive={category.is_active}
+                  disabled={saving}
+                />
+              </td>
             </tr>
           ))}
         </CatalogTable>
@@ -1094,7 +1193,15 @@ export function FinanceCadastrosPage() {
               <td style={{ padding: '10px 14px', fontSize: 12, fontWeight: 650, color: '#0f172a' }}>{center.name}</td>
               <td style={{ padding: '10px 14px', fontSize: 11, fontFamily: "'DM Mono', monospace", color: '#64748b' }}>{center.code || '—'}</td>
               <td style={{ padding: '10px 14px' }}><StatusBadge active={center.is_active} /></td>
-              <td style={{ padding: '10px 14px' }}><InlineActions onEdit={() => setCostCenterFormFrom(center)} onDeactivate={() => void deactivate('centros', center.id)} disabled={!center.is_active} /></td>
+              <td style={{ padding: '10px 14px' }}>
+                <InlineActions
+                  onEdit={() => setCostCenterFormFrom(center)}
+                  onToggleActive={() => void setCadastroActive('centros', center.id, !center.is_active)}
+                  onDelete={() => void hardDelete('centros', center.id)}
+                  isActive={center.is_active}
+                  disabled={saving}
+                />
+              </td>
             </tr>
           ))}
         </CatalogTable>
@@ -1112,7 +1219,15 @@ export function FinanceCadastrosPage() {
               <td style={{ padding: '10px 14px', fontSize: 12, fontWeight: 650, color: '#0f172a' }}>{method.name}</td>
               <td style={{ padding: '10px 14px', fontSize: 12, color: '#475569' }}>{method.kind}</td>
               <td style={{ padding: '10px 14px' }}><StatusBadge active={method.is_active} /></td>
-              <td style={{ padding: '10px 14px' }}><InlineActions onEdit={() => setPaymentFormFrom(method)} onDeactivate={() => void deactivate('formas', method.id)} disabled={!method.is_active} /></td>
+              <td style={{ padding: '10px 14px' }}>
+                <InlineActions
+                  onEdit={() => setPaymentFormFrom(method)}
+                  onToggleActive={() => void setCadastroActive('formas', method.id, !method.is_active)}
+                  onDelete={() => void hardDelete('formas', method.id)}
+                  isActive={method.is_active}
+                  disabled={saving}
+                />
+              </td>
             </tr>
           ))}
         </CatalogTable>
@@ -1132,7 +1247,15 @@ export function FinanceCadastrosPage() {
               <td style={{ padding: '10px 14px', fontSize: 12, color: '#64748b' }}>{[combination.financial_category_name, combination.financial_cost_center_name].filter(Boolean).join(' · ') || '—'}</td>
               <td style={{ padding: '10px 14px', fontSize: 12, color: '#64748b' }}>{[combination.financial_account_name, combination.financial_payment_method_name].filter(Boolean).join(' · ') || '—'}</td>
               <td style={{ padding: '10px 14px' }}><StatusBadge active={combination.is_active} /></td>
-              <td style={{ padding: '10px 14px' }}><InlineActions onEdit={() => setCombinationFormFrom(combination)} onDeactivate={() => void deactivate('combinacoes', combination.id)} disabled={!combination.is_active} /></td>
+              <td style={{ padding: '10px 14px' }}>
+                <InlineActions
+                  onEdit={() => setCombinationFormFrom(combination)}
+                  onToggleActive={() => void setCadastroActive('combinacoes', combination.id, !combination.is_active)}
+                  onDelete={() => void hardDelete('combinacoes', combination.id)}
+                  isActive={combination.is_active}
+                  disabled={saving}
+                />
+              </td>
             </tr>
           ))}
         </CatalogTable>
@@ -1184,6 +1307,7 @@ export function FinanceCadastrosPage() {
                   ) : (
                     <ActionButton onClick={() => void updateRecurringRuleStatus(rule, 'active')} disabled={saving}>Reativar</ActionButton>
                   )}
+                  <ActionButton onClick={() => void hardDelete('recorrencias', rule.id)} tone="danger" disabled={saving}>Excluir</ActionButton>
                 </div>
               </td>
             </tr>
@@ -1311,17 +1435,22 @@ function StatusBadge({ active }: { active: boolean }) {
 
 function InlineActions({
   onEdit,
-  onDeactivate,
+  onToggleActive,
+  onDelete,
+  isActive,
   disabled
 }: {
   onEdit: () => void;
-  onDeactivate: () => void;
+  onToggleActive: () => void;
+  onDelete: () => void;
+  isActive: boolean;
   disabled?: boolean;
 }) {
   return (
-    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+    <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
       <ActionButton onClick={onEdit}>Editar</ActionButton>
-      <ActionButton onClick={onDeactivate} tone="danger" disabled={disabled}>Inativar</ActionButton>
+      <ActionButton onClick={onToggleActive} disabled={disabled}>{isActive ? 'Inativar' : 'Reativar'}</ActionButton>
+      <ActionButton onClick={onDelete} tone="danger" disabled={disabled}>Excluir</ActionButton>
     </div>
   );
 }

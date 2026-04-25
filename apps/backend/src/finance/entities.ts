@@ -316,6 +316,50 @@ export function updateFinanceEntity(input: UpdateFinanceEntityInput): FinanceEnt
   };
 }
 
+function countEntityReferences(organizationId: string, table: string, column: string, id: string): number {
+  const row = db.prepare(`
+    select count(*) as count
+    from ${table}
+    where organization_id = ? and ${column} = ?
+  `).get(organizationId, id) as { count: number } | undefined;
+  return Number(row?.count ?? 0);
+}
+
+export function hardDeleteFinanceEntity(organizationId: string, entityId: string): { ok: true; id: string } {
+  const normalizedOrganizationId = resolveOrganizationId(organizationId);
+  const current = db.prepare(`
+    select id
+    from financial_entity
+    where organization_id = ? and id = ?
+    limit 1
+  `).get(normalizedOrganizationId, entityId) as { id: string } | undefined;
+
+  if (!current) {
+    throw new Error('Entidade financeira não encontrada.');
+  }
+
+  const references = [
+    { table: 'financial_transaction', column: 'financial_entity_id', label: 'movimentações' },
+    { table: 'financial_payable', column: 'financial_entity_id', label: 'contas a pagar' },
+    { table: 'financial_receivable', column: 'financial_entity_id', label: 'contas a receber' }
+  ].map((reference) => ({
+    ...reference,
+    count: countEntityReferences(normalizedOrganizationId, reference.table, reference.column, entityId)
+  })).filter((reference) => reference.count > 0);
+
+  if (references.length > 0) {
+    throw new Error(`Não é possível excluir: existem vínculos em ${references.map((reference) => reference.label).join(', ')}. Inative ou limpe os lançamentos primeiro.`);
+  }
+
+  const run = db.transaction(() => {
+    db.prepare('delete from financial_entity_default_profile where organization_id = ? and financial_entity_id = ?').run(normalizedOrganizationId, entityId);
+    db.prepare('delete from financial_entity_tag_map where organization_id = ? and financial_entity_id = ?').run(normalizedOrganizationId, entityId);
+    db.prepare('delete from financial_entity where organization_id = ? and id = ?').run(normalizedOrganizationId, entityId);
+  });
+  run();
+  return { ok: true, id: entityId };
+}
+
 export function listFinanceEntityDuplicateGroups(organizationId: string): FinanceEntityDuplicateGroupDto[] {
   const normalizedOrganizationId = resolveOrganizationId(organizationId);
   const entities = listFinanceEntities(normalizedOrganizationId);

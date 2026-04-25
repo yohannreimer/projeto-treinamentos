@@ -257,6 +257,50 @@ export function deactivateFinanceCostCenter(organizationId: string, costCenterId
   });
 }
 
+function countCatalogReferences(organizationId: string, table: string, column: string, id: string): number {
+  const row = db.prepare(`
+    select count(*) as count
+    from ${table}
+    where organization_id = ? and ${column} = ?
+  `).get(organizationId, id) as { count: number } | undefined;
+  return Number(row?.count ?? 0);
+}
+
+function assertNoCatalogReferences(
+  organizationId: string,
+  id: string,
+  references: Array<{ table: string; column: string; label: string }>
+) {
+  const usedBy = references
+    .map((reference) => ({
+      ...reference,
+      count: countCatalogReferences(organizationId, reference.table, reference.column, id)
+    }))
+    .filter((reference) => reference.count > 0);
+
+  if (usedBy.length > 0) {
+    throw new Error(`Não é possível excluir: existem vínculos em ${usedBy.map((reference) => reference.label).join(', ')}. Inative ou limpe os lançamentos primeiro.`);
+  }
+}
+
+export function hardDeleteFinanceCostCenter(organizationId: string, costCenterId: string): { ok: true; id: string } {
+  const normalizedOrganizationId = resolveOrganizationId(organizationId);
+  readFinanceCostCenterRow(normalizedOrganizationId, costCenterId);
+  assertNoCatalogReferences(normalizedOrganizationId, costCenterId, [
+    { table: 'financial_transaction', column: 'financial_cost_center_id', label: 'movimentações' },
+    { table: 'financial_payable', column: 'financial_cost_center_id', label: 'contas a pagar' },
+    { table: 'financial_receivable', column: 'financial_cost_center_id', label: 'contas a receber' }
+  ]);
+
+  const run = db.transaction(() => {
+    db.prepare('update financial_entity_default_profile set financial_cost_center_id = null where organization_id = ? and financial_cost_center_id = ?').run(normalizedOrganizationId, costCenterId);
+    db.prepare('update financial_favorite_combination set financial_cost_center_id = null where organization_id = ? and financial_cost_center_id = ?').run(normalizedOrganizationId, costCenterId);
+    db.prepare('delete from financial_cost_center where organization_id = ? and id = ?').run(normalizedOrganizationId, costCenterId);
+  });
+  run();
+  return { ok: true, id: costCenterId };
+}
+
 export function listFinancePaymentMethods(organizationId: string): FinancePaymentMethodDto[] {
   const normalizedOrganizationId = resolveOrganizationId(organizationId);
   readOrganizationRow(normalizedOrganizationId);
@@ -389,6 +433,24 @@ export function deactivateFinancePaymentMethod(organizationId: string, paymentMe
     financial_payment_method_id: paymentMethodId,
     is_active: false
   });
+}
+
+export function hardDeleteFinancePaymentMethod(organizationId: string, paymentMethodId: string): { ok: true; id: string } {
+  const normalizedOrganizationId = resolveOrganizationId(organizationId);
+  readFinancePaymentMethodRow(normalizedOrganizationId, paymentMethodId);
+  assertNoCatalogReferences(normalizedOrganizationId, paymentMethodId, [
+    { table: 'financial_transaction', column: 'financial_payment_method_id', label: 'movimentações' },
+    { table: 'financial_payable', column: 'financial_payment_method_id', label: 'contas a pagar' },
+    { table: 'financial_receivable', column: 'financial_payment_method_id', label: 'contas a receber' }
+  ]);
+
+  const run = db.transaction(() => {
+    db.prepare('update financial_entity_default_profile set financial_payment_method_id = null where organization_id = ? and financial_payment_method_id = ?').run(normalizedOrganizationId, paymentMethodId);
+    db.prepare('update financial_favorite_combination set financial_payment_method_id = null where organization_id = ? and financial_payment_method_id = ?').run(normalizedOrganizationId, paymentMethodId);
+    db.prepare('delete from financial_payment_method where organization_id = ? and id = ?').run(normalizedOrganizationId, paymentMethodId);
+  });
+  run();
+  return { ok: true, id: paymentMethodId };
 }
 
 function readFinanceFavoriteCombinationRow(organizationId: string, combinationId: string) {
@@ -546,6 +608,13 @@ export function deactivateFinanceFavoriteCombination(organizationId: string, com
     financial_favorite_combination_id: combinationId,
     is_active: false
   });
+}
+
+export function hardDeleteFinanceFavoriteCombination(organizationId: string, combinationId: string): { ok: true; id: string } {
+  const normalizedOrganizationId = resolveOrganizationId(organizationId);
+  readFinanceFavoriteCombinationRow(normalizedOrganizationId, combinationId);
+  db.prepare('delete from financial_favorite_combination where organization_id = ? and id = ?').run(normalizedOrganizationId, combinationId);
+  return { ok: true, id: combinationId };
 }
 
 export function getFinanceCatalogSnapshot(organizationId: string): FinanceCatalogSnapshotDto {

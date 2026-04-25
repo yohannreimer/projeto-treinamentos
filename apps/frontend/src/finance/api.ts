@@ -7,6 +7,8 @@ export type FinanceTransactionKind = 'income' | 'expense' | 'transfer' | 'adjust
 export type FinanceTransactionStatus = 'planned' | 'open' | 'partial' | 'settled' | 'overdue' | 'canceled';
 export type FinanceAccountKind = 'bank' | 'cash' | 'wallet' | 'other';
 export type FinanceCategoryKind = 'income' | 'expense' | 'neutral';
+export type FinanceDeleteResult = { ok: true; id: string };
+export type FinanceOperationalResetResult = { ok: true; deleted: Record<string, number> };
 
 export type FinanceAccount = {
   id: string;
@@ -1256,6 +1258,10 @@ export const financeApi = {
       method: 'POST',
       body: JSON.stringify(payload)
     }),
+  resetOperationalData: () =>
+    req<FinanceOperationalResetResult>('/finance/advanced/operational-data', {
+      method: 'DELETE'
+    }),
   listSimulations: () =>
     req<FinanceSimulationList>('/finance/simulations'),
   listSimulationSources: (scenarioId?: string | null) =>
@@ -1308,6 +1314,14 @@ export const financeApi = {
       method: 'PATCH',
       body: JSON.stringify(payload)
     }),
+  deleteEntity: (entityId: string) =>
+    req<FinanceEntity>(`/finance/entities/${entityId}`, {
+      method: 'DELETE'
+    }),
+  hardDeleteEntity: (entityId: string) =>
+    req<FinanceDeleteResult>(`/finance/entities/${entityId}?mode=hard`, {
+      method: 'DELETE'
+    }),
   listEntityDuplicates: () =>
     req<FinanceEntityDuplicateGroup[]>('/finance/entities/duplicates'),
   listEntityTags: () =>
@@ -1355,6 +1369,10 @@ export const financeApi = {
     req<FinanceCostCenter>(`/finance/catalog/cost-centers/${costCenterId}`, {
       method: 'DELETE'
     }),
+  hardDeleteCostCenter: (costCenterId: string) =>
+    req<FinanceDeleteResult>(`/finance/catalog/cost-centers/${costCenterId}?mode=hard`, {
+      method: 'DELETE'
+    }),
   listPaymentMethods: () =>
     req<FinancePaymentMethod[]>('/finance/catalog/payment-methods'),
   createPaymentMethod: (payload: { name: string; kind: FinancePaymentMethodKind; is_active?: boolean }) =>
@@ -1371,6 +1389,10 @@ export const financeApi = {
     req<FinancePaymentMethod>(`/finance/catalog/payment-methods/${paymentMethodId}`, {
       method: 'DELETE'
     }),
+  hardDeletePaymentMethod: (paymentMethodId: string) =>
+    req<FinanceDeleteResult>(`/finance/catalog/payment-methods/${paymentMethodId}?mode=hard`, {
+      method: 'DELETE'
+    }),
   listFavoriteCombinations: () =>
     req<FinanceFavoriteCombination[]>('/finance/catalog/favorite-combinations'),
   createFavoriteCombination: (payload: CreateFinanceFavoriteCombinationPayload) =>
@@ -1385,6 +1407,10 @@ export const financeApi = {
     }),
   deleteFavoriteCombination: (combinationId: string) =>
     req<FinanceFavoriteCombination>(`/finance/catalog/favorite-combinations/${combinationId}`, {
+      method: 'DELETE'
+    }),
+  hardDeleteFavoriteCombination: (combinationId: string) =>
+    req<FinanceDeleteResult>(`/finance/catalog/favorite-combinations/${combinationId}?mode=hard`, {
       method: 'DELETE'
     }),
   getExecutiveOverview: (filters?: { preset?: string; from?: string | null; to?: string | null }) => {
@@ -1456,6 +1482,10 @@ export const financeApi = {
     req<FinanceAccount>(`/finance/accounts/${accountId}`, {
       method: 'DELETE'
     }),
+  hardDeleteAccount: (accountId: string) =>
+    req<FinanceDeleteResult>(`/finance/accounts/${accountId}?mode=hard`, {
+      method: 'DELETE'
+    }),
   listCategories: () =>
     req<{ company_id: string | null; company_name: string | null; categories: FinanceCategory[] }>('/finance/categories'),
   createCategory: (payload: CreateFinanceCategoryPayload) =>
@@ -1470,6 +1500,10 @@ export const financeApi = {
     }),
   deleteCategory: (categoryId: string) =>
     req<FinanceCategory>(`/finance/categories/${categoryId}`, {
+      method: 'DELETE'
+    }),
+  hardDeleteCategory: (categoryId: string) =>
+    req<FinanceDeleteResult>(`/finance/categories/${categoryId}?mode=hard`, {
       method: 'DELETE'
     }),
   listPayables: () =>
@@ -1520,6 +1554,10 @@ export const financeApi = {
     req<FinanceRecurringRule>(`/finance/recurring-rules/${encodeURIComponent(ruleId)}`, {
       method: 'PATCH',
       body: JSON.stringify(payload)
+    }),
+  deleteRecurringRule: (ruleId: string) =>
+    req<FinanceDeleteResult>(`/finance/recurring-rules/${encodeURIComponent(ruleId)}`, {
+      method: 'DELETE'
     }),
   listReceivables: () =>
     req<FinanceReceivablesList>('/finance/receivables'),

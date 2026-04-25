@@ -440,6 +440,51 @@ export function deactivateFinanceAccount(organizationId: string, accountId: stri
   });
 }
 
+function countFinanceReferences(organizationId: string, table: string, column: string, id: string): number {
+  const row = db.prepare(`
+    select count(*) as count
+    from ${table}
+    where organization_id = ? and ${column} = ?
+  `).get(organizationId, id) as { count: number } | undefined;
+  return Number(row?.count ?? 0);
+}
+
+function assertNoFinanceReferences(
+  organizationId: string,
+  id: string,
+  references: Array<{ table: string; column: string; label: string }>
+) {
+  const usedBy = references
+    .map((reference) => ({
+      ...reference,
+      count: countFinanceReferences(organizationId, reference.table, reference.column, id)
+    }))
+    .filter((reference) => reference.count > 0);
+
+  if (usedBy.length > 0) {
+    throw new Error(`Não é possível excluir: existem vínculos em ${usedBy.map((reference) => reference.label).join(', ')}. Inative ou limpe os lançamentos primeiro.`);
+  }
+}
+
+export function hardDeleteFinanceAccount(organizationId: string, accountId: string): { ok: true; id: string } {
+  const normalizedOrganizationId = resolveOrganizationId(organizationId);
+  readFinanceAccountRow(normalizedOrganizationId, accountId);
+  assertNoFinanceReferences(normalizedOrganizationId, accountId, [
+    { table: 'financial_transaction', column: 'financial_account_id', label: 'movimentações' },
+    { table: 'financial_payable', column: 'financial_account_id', label: 'contas a pagar' },
+    { table: 'financial_receivable', column: 'financial_account_id', label: 'contas a receber' },
+    { table: 'financial_bank_statement_entry', column: 'financial_account_id', label: 'extratos importados' }
+  ]);
+
+  const run = db.transaction(() => {
+    db.prepare('update financial_entity_default_profile set financial_account_id = null where organization_id = ? and financial_account_id = ?').run(normalizedOrganizationId, accountId);
+    db.prepare('update financial_favorite_combination set financial_account_id = null where organization_id = ? and financial_account_id = ?').run(normalizedOrganizationId, accountId);
+    db.prepare('delete from financial_account where organization_id = ? and id = ?').run(normalizedOrganizationId, accountId);
+  });
+  run();
+  return { ok: true, id: accountId };
+}
+
 export function createFinanceCategory(input: CreateFinanceCategoryInput): FinanceCategoryDto {
   const normalizedOrganizationId = resolveOrganizationId(input.organization_id);
   readOrganizationRow(normalizedOrganizationId);
@@ -602,6 +647,25 @@ export function deactivateFinanceCategory(organizationId: string, categoryId: st
     financial_category_id: categoryId,
     is_active: false
   });
+}
+
+export function hardDeleteFinanceCategory(organizationId: string, categoryId: string): { ok: true; id: string } {
+  const normalizedOrganizationId = resolveOrganizationId(organizationId);
+  readFinanceCategoryRow(normalizedOrganizationId, categoryId);
+  assertNoFinanceReferences(normalizedOrganizationId, categoryId, [
+    { table: 'financial_transaction', column: 'financial_category_id', label: 'movimentações' },
+    { table: 'financial_payable', column: 'financial_category_id', label: 'contas a pagar' },
+    { table: 'financial_receivable', column: 'financial_category_id', label: 'contas a receber' }
+  ]);
+
+  const run = db.transaction(() => {
+    db.prepare('update financial_category set parent_category_id = null where organization_id = ? and parent_category_id = ?').run(normalizedOrganizationId, categoryId);
+    db.prepare('update financial_entity_default_profile set financial_category_id = null where organization_id = ? and financial_category_id = ?').run(normalizedOrganizationId, categoryId);
+    db.prepare('update financial_favorite_combination set financial_category_id = null where organization_id = ? and financial_category_id = ?').run(normalizedOrganizationId, categoryId);
+    db.prepare('delete from financial_category where organization_id = ? and id = ?').run(normalizedOrganizationId, categoryId);
+  });
+  run();
+  return { ok: true, id: categoryId };
 }
 
 function mapPayableRow(row: {
@@ -5229,4 +5293,38 @@ export function softDeleteFinanceTransaction(organizationId: string, transaction
     throw new Error('Lançamento financeiro não encontrado.');
   }
   return mapTransactionRow(deleted);
+}
+
+export function deleteFinanceRecurringRule(organizationId: string, ruleId: string): { ok: true; id: string } {
+  const normalizedOrganizationId = resolveOrganizationId(organizationId);
+  readFinanceRecurringRule(normalizedOrganizationId, ruleId);
+  db.prepare('delete from financial_recurring_rule where organization_id = ? and id = ?').run(normalizedOrganizationId, ruleId);
+  return { ok: true, id: ruleId };
+}
+
+export function resetFinanceOperationalData(organizationId: string): { ok: true; deleted: Record<string, number> } {
+  const normalizedOrganizationId = resolveOrganizationId(organizationId);
+  readOrganizationRow(normalizedOrganizationId);
+  const deleted: Record<string, number> = {};
+  const deleteFrom = (label: string, table: string) => {
+    const result = db.prepare(`delete from ${table} where organization_id = ?`).run(normalizedOrganizationId);
+    deleted[label] = Number(result.changes ?? 0);
+  };
+
+  const run = db.transaction(() => {
+    deleteFrom('reconciliations', 'financial_reconciliation_match');
+    deleteFrom('debts', 'financial_debt');
+    deleteFrom('operation_audit', 'financial_operation_audit');
+    deleteFrom('attachments', 'financial_attachment');
+    deleteFrom('simulation_items', 'financial_simulation_item');
+    deleteFrom('simulations', 'financial_simulation_scenario');
+    deleteFrom('recurring_rules', 'financial_recurring_rule');
+    deleteFrom('statement_entries', 'financial_bank_statement_entry');
+    deleteFrom('import_jobs', 'financial_import_job');
+    deleteFrom('payables', 'financial_payable');
+    deleteFrom('receivables', 'financial_receivable');
+    deleteFrom('transactions', 'financial_transaction');
+  });
+  run();
+  return { ok: true, deleted };
 }

@@ -196,6 +196,12 @@ export function FinanceAdvancedPage() {
     }), 'Integração sandbox registrada.');
   }
 
+  function resetOperationalData() {
+    const confirmed = window.confirm('Limpar todos os lançamentos, contas a pagar/receber, recorrências, simulações, extratos e conciliações? Cadastros, contas, categorias, centros de custo e formas serão preservados.');
+    if (!confirmed) return Promise.resolve();
+    return runAction('reset-operational-data', () => financeApi.resetOperationalData(), 'Dados operacionais limpos. Seus cadastros foram preservados.');
+  }
+
   function renderToolPanel() {
     if (!dashboard) return null;
 
@@ -478,6 +484,19 @@ export function FinanceAdvancedPage() {
                 ))}
               </div>
               {renderToolPanel()}
+            </div>
+          </section>
+
+          <section className="finance-panel finance-advanced-panel finance-advanced-maintenance">
+            <div className="finance-panel__header">
+              <div className="finance-panel__header-copy">
+                <small>Manutenção</small>
+                <h2>Limpar dados operacionais</h2>
+                <p>Use quando quiser sair da base de teste e começar com seus próprios lançamentos. Cadastros, contas, categorias, centros de custo e formas continuam salvos.</p>
+              </div>
+              <button type="button" className="finance-advanced-button finance-advanced-button--danger" onClick={() => { void resetOperationalData(); }} disabled={busyKey === 'reset-operational-data'}>
+                {busyKey === 'reset-operational-data' ? 'Limpando...' : 'Limpar lançamentos'}
+              </button>
             </div>
           </section>
         </div>

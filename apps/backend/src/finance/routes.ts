@@ -20,6 +20,7 @@ import {
   cancelFinanceReceivable,
   deactivateFinanceAccount,
   deactivateFinanceCategory,
+  deleteFinanceRecurringRule,
   duplicateFinancePayable,
   duplicateFinanceReceivable,
   ensureFinanceRecurringWindow,
@@ -44,6 +45,8 @@ import {
   getFinanceContext,
   getFinanceOverview,
   getFinanceSimulationScenario,
+  hardDeleteFinanceAccount,
+  hardDeleteFinanceCategory,
   listFinanceSimulationSources,
   listFinanceAccounts,
   listFinanceDebts,
@@ -58,6 +61,7 @@ import {
   listFinanceTransactions,
   partiallySettleFinancePayable,
   partiallySettleFinanceReceivable,
+  resetFinanceOperationalData,
   settleFinancePayable,
   settleFinanceReceivable,
   softDeleteFinanceTransaction,
@@ -75,6 +79,7 @@ import {
   createFinanceEntity,
   createFinanceEntityTag,
   getFinanceEntityDefaultProfile,
+  hardDeleteFinanceEntity,
   listFinanceEntityDuplicateGroups,
   listFinanceEntities,
   listFinanceEntityTags,
@@ -90,6 +95,9 @@ import {
   deactivateFinanceCostCenter,
   deactivateFinanceFavoriteCombination,
   deactivateFinancePaymentMethod,
+  hardDeleteFinanceCostCenter,
+  hardDeleteFinanceFavoriteCombination,
+  hardDeleteFinancePaymentMethod,
   getFinanceCatalogSnapshot,
   listFinanceFavoriteCombinations,
   listFinanceCatalogAccounts,
@@ -695,6 +703,22 @@ export function registerFinanceRoutes(app: Express) {
     }
   });
 
+  router.delete('/entities/:entityId', requireFinancePermission(['finance.write']), (req, res) => {
+    try {
+      if (req.query.mode === 'hard') {
+        return res.json(hardDeleteFinanceEntity(readFinanceOrganizationId(res), req.params.entityId));
+      }
+
+      return res.json(updateFinanceEntity({
+        organization_id: readFinanceOrganizationId(res),
+        financial_entity_id: req.params.entityId,
+        is_active: false
+      }));
+    } catch (error) {
+      return respondFinanceError(res, error);
+    }
+  });
+
   router.get('/entities/tags', requireFinancePermission(['finance.read']), (_req, res) => {
     try {
       return res.json(listFinanceEntityTags(readFinanceOrganizationId(res)));
@@ -823,6 +847,10 @@ export function registerFinanceRoutes(app: Express) {
 
   router.delete('/catalog/favorite-combinations/:id', requireFinancePermission(['finance.write']), (req, res) => {
     try {
+      if (req.query.mode === 'hard') {
+        return res.json(hardDeleteFinanceFavoriteCombination(readFinanceOrganizationId(res), req.params.id));
+      }
+
       return res.json(deactivateFinanceFavoriteCombination(readFinanceOrganizationId(res), req.params.id));
     } catch (error) {
       return respondFinanceError(res, error);
@@ -888,6 +916,10 @@ export function registerFinanceRoutes(app: Express) {
 
   router.delete('/catalog/cost-centers/:id', requireFinancePermission(['finance.write']), (req, res) => {
     try {
+      if (req.query.mode === 'hard') {
+        return res.json(hardDeleteFinanceCostCenter(readFinanceOrganizationId(res), req.params.id));
+      }
+
       return res.json(deactivateFinanceCostCenter(readFinanceOrganizationId(res), req.params.id));
     } catch (error) {
       return respondFinanceError(res, error);
@@ -937,6 +969,10 @@ export function registerFinanceRoutes(app: Express) {
 
   router.delete('/catalog/payment-methods/:id', requireFinancePermission(['finance.write']), (req, res) => {
     try {
+      if (req.query.mode === 'hard') {
+        return res.json(hardDeleteFinancePaymentMethod(readFinanceOrganizationId(res), req.params.id));
+      }
+
       return res.json(deactivateFinancePaymentMethod(readFinanceOrganizationId(res), req.params.id));
     } catch (error) {
       return respondFinanceError(res, error);
@@ -1046,6 +1082,14 @@ export function registerFinanceRoutes(app: Express) {
         organization_id: readFinanceOrganizationId(res),
         created_by: context?.username ?? null
       }));
+    } catch (error) {
+      return respondFinanceError(res, error);
+    }
+  });
+
+  router.delete('/advanced/operational-data', requireFinancePermission(['finance.approve']), (_req, res) => {
+    try {
+      return res.json(resetFinanceOperationalData(readFinanceOrganizationId(res)));
     } catch (error) {
       return respondFinanceError(res, error);
     }
@@ -1234,6 +1278,10 @@ export function registerFinanceRoutes(app: Express) {
 
   router.delete('/accounts/:id', requireFinancePermission(['finance.write']), (req, res) => {
     try {
+      if (req.query.mode === 'hard') {
+        return res.json(hardDeleteFinanceAccount(readFinanceOrganizationId(res), req.params.id));
+      }
+
       return res.json(deactivateFinanceAccount(readFinanceOrganizationId(res), req.params.id));
     } catch (error) {
       return respondFinanceError(res, error);
@@ -1283,6 +1331,10 @@ export function registerFinanceRoutes(app: Express) {
 
   router.delete('/categories/:id', requireFinancePermission(['finance.write']), (req, res) => {
     try {
+      if (req.query.mode === 'hard') {
+        return res.json(hardDeleteFinanceCategory(readFinanceOrganizationId(res), req.params.id));
+      }
+
       return res.json(deactivateFinanceCategory(readFinanceOrganizationId(res), req.params.id));
     } catch (error) {
       return respondFinanceError(res, error);
@@ -1337,6 +1389,14 @@ export function registerFinanceRoutes(app: Express) {
         recurring_rule_id: req.params.id,
         created_by: context?.username ?? null
       }));
+    } catch (error) {
+      return respondFinanceError(res, error);
+    }
+  });
+
+  router.delete('/recurring-rules/:id', requireFinancePermission(['finance.write']), (req, res) => {
+    try {
+      return res.json(deleteFinanceRecurringRule(readFinanceOrganizationId(res), req.params.id));
     } catch (error) {
       return respondFinanceError(res, error);
     }

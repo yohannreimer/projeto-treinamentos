@@ -6848,6 +6848,15 @@
   gap: 12px;
 }
 
+.finance-advanced-maintenance {
+  border-color: #fecdd3;
+  background: #fffafa;
+}
+
+.finance-advanced-maintenance .finance-panel__header {
+  align-items: center;
+}
+
 .finance-advanced-tool-tabs {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
