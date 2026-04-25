@@ -210,6 +210,7 @@ export function getFinanceQualityInbox(organizationId: string): FinanceQualityIn
       on fe.organization_id = ft.organization_id and fe.id = ft.financial_entity_id
     where ft.organization_id = ?
       and ft.status <> 'canceled'
+      and ft.kind <> 'adjustment'
       and coalesce(ft.is_deleted, 0) = 0
   `).all(normalizedOrganizationId) as Array<{
     id: string;

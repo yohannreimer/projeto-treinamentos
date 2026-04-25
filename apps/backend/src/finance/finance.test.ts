@@ -3070,6 +3070,19 @@ test('GET /finance/reports consolida DRE, aging e fluxo a partir do ledger finan
 
     createdTransactions.forEach((response) => assert.equal(response.status, 201));
 
+    const balanceAdjustmentRes = await request(app)
+      .post('/finance/accounts/financial-account-holand/balance-adjustments')
+      .set(authHeader)
+      .send({
+        amount_cents: 250000,
+        settlement_date: formatDate(currentYear, currentMonth, 2),
+        note: 'Saldo inicial da conta'
+      });
+
+    assert.equal(balanceAdjustmentRes.status, 201);
+    assert.equal(balanceAdjustmentRes.body.kind, 'adjustment');
+    assert.equal(balanceAdjustmentRes.body.views.cash_amount_cents, 250000);
+
     const [receivableRes, payableRes] = await Promise.all([
       request(app)
         .post('/finance/receivables')
@@ -3154,6 +3167,13 @@ test('GET /finance/reports consolida DRE, aging e fluxo a partir do ledger finan
       }
     ]);
     assert.ok(reportsRes.body.consolidated_cashflow.length >= 1);
+
+    const overviewRes = await request(app)
+      .get('/finance/overview')
+      .set(authHeader);
+
+    assert.equal(overviewRes.status, 200);
+    assert.equal(overviewRes.body.totals.cash_cents, 310000);
 
     const filteredReportsRes = await request(app)
       .get(`/finance/reports?preset=custom&from=${formatDate(currentYear, currentMonth, 1)}&to=${formatDate(currentYear, currentMonth, 28)}`)

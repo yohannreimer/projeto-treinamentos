@@ -10,6 +10,7 @@ import {
   approveFinancePayable,
   buildFinanceExport,
   createFinanceAccount,
+  createFinanceAccountBalanceAdjustment,
   createFinanceAttachment,
   createFinanceAutomationRule,
   createFinanceBankIntegration,
@@ -459,6 +460,14 @@ const transactionCreateSchema = z.object({
       message: 'Informe settlement_date para status settled.'
     });
   }
+});
+
+const accountBalanceAdjustmentSchema = z.object({
+  amount_cents: z.number().int().refine((value) => value !== 0, {
+    message: 'Informe um saldo diferente de zero.'
+  }),
+  settlement_date: isoDateSchema,
+  note: z.string().trim().max(2_000).nullable().optional()
 });
 
 const transactionUpdateSchema = z.object({
@@ -1270,6 +1279,25 @@ export function registerFinanceRoutes(app: Express) {
         ...parsed.data,
         organization_id: readFinanceOrganizationId(res),
         financial_account_id: req.params.id
+      }));
+    } catch (error) {
+      return respondFinanceError(res, error);
+    }
+  });
+
+  router.post('/accounts/:id/balance-adjustments', requireFinancePermission(['finance.write']), (req, res) => {
+    const parsed = accountBalanceAdjustmentSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+
+    try {
+      const context = readInternalAuthContext(res);
+      return res.status(201).json(createFinanceAccountBalanceAdjustment({
+        ...parsed.data,
+        organization_id: readFinanceOrganizationId(res),
+        financial_account_id: req.params.id,
+        created_by: context?.username ?? null
       }));
     } catch (error) {
       return respondFinanceError(res, error);

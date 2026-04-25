@@ -200,6 +200,7 @@ vi.mock('../api', () => ({
     })),
     deleteAccount: vi.fn(),
     hardDeleteAccount: vi.fn().mockResolvedValue({ ok: true, id: 'acc-1' }),
+    createAccountBalanceAdjustment: vi.fn().mockResolvedValue({ id: 'tx-adjustment' }),
     createCategory: vi.fn(),
     updateCategory: vi.fn(),
     deleteCategory: vi.fn(),

@@ -1394,6 +1394,15 @@ export type CreateFinanceTransactionInput = {
   created_by?: string | null;
 };
 
+export type CreateFinanceAccountBalanceAdjustmentInput = {
+  organization_id: string;
+  financial_account_id: string;
+  amount_cents: number;
+  settlement_date: string;
+  note?: string | null;
+  created_by?: string | null;
+};
+
 export type UpdateFinanceTransactionInput = {
   financial_entity_id?: string | null;
   financial_account_id?: string | null;

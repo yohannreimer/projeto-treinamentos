@@ -1007,6 +1007,12 @@ export type CreateFinanceTransactionPayload = {
   note?: string | null;
 };
 
+export type CreateFinanceAccountBalanceAdjustmentPayload = {
+  amount_cents: number;
+  settlement_date: string;
+  note?: string | null;
+};
+
 export type CreateFinanceAutomationRulePayload = {
   name: string;
   trigger_type: string;
@@ -1485,6 +1491,11 @@ export const financeApi = {
   hardDeleteAccount: (accountId: string) =>
     req<FinanceDeleteResult>(`/finance/accounts/${accountId}?mode=hard`, {
       method: 'DELETE'
+    }),
+  createAccountBalanceAdjustment: (accountId: string, payload: CreateFinanceAccountBalanceAdjustmentPayload) =>
+    req<FinanceTransaction>(`/finance/accounts/${accountId}/balance-adjustments`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
     }),
   listCategories: () =>
     req<{ company_id: string | null; company_name: string | null; categories: FinanceCategory[] }>('/finance/categories'),

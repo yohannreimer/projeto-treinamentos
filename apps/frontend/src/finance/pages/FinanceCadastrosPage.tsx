@@ -20,7 +20,7 @@ import {
   type FinanceRecurringRule
 } from '../api';
 import { FinanceErrorState, FinancePageHeader } from '../components/FinancePrimitives';
-import { formatDate } from '../utils/financeFormatters';
+import { formatDate, todayIso } from '../utils/financeFormatters';
 
 type EntityFilter = 'todos' | 'clientes' | 'fornecedores';
 type CadastroArea = 'entidades' | 'contas' | 'categorias' | 'centros' | 'formas' | 'combinacoes' | 'recorrencias' | 'duplicidades';
@@ -176,6 +176,14 @@ function rowStyle(): CSSProperties {
   return { borderBottom: '1px solid #f1f5f9' };
 }
 
+function parseSignedAmountToCents(value: string): number {
+  const trimmed = value.trim();
+  const sign = trimmed.startsWith('-') ? -1 : 1;
+  const normalized = trimmed.replace(/\./g, '').replace(',', '.').replace(/[^\d.]/g, '');
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? sign * Math.round(parsed * 100) : 0;
+}
+
 export function FinanceCadastrosPage() {
   const [area, setArea] = useState<CadastroArea>('entidades');
   const [tab, setTab] = useState<EntityFilter>('todos');
@@ -219,6 +227,11 @@ export function FinanceCadastrosPage() {
     account_number: '',
     branch_number: '',
     is_active: true
+  });
+  const [accountBalanceForm, setAccountBalanceForm] = useState({
+    amount: '',
+    date: todayIso(),
+    note: ''
   });
   const [categoryForm, setCategoryForm] = useState({
     id: '',
@@ -492,6 +505,35 @@ export function FinanceCadastrosPage() {
       setSuccessMessage('Conta financeira salva.');
     } catch (unknownError) {
       setError(unknownError instanceof Error ? unknownError.message : 'Falha ao salvar conta.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleCreateAccountBalanceAdjustment() {
+    if (!accountForm.id) {
+      setError('Escolha uma conta existente para informar o saldo inicial.');
+      return;
+    }
+
+    const amountCents = parseSignedAmountToCents(accountBalanceForm.amount);
+    if (amountCents === 0) {
+      setError('Informe um saldo diferente de zero.');
+      return;
+    }
+
+    setSaving(true);
+    setError('');
+    try {
+      await financeApi.createAccountBalanceAdjustment(accountForm.id, {
+        amount_cents: amountCents,
+        settlement_date: accountBalanceForm.date || todayIso(),
+        note: accountBalanceForm.note.trim() || null
+      });
+      setAccountBalanceForm({ amount: '', date: todayIso(), note: '' });
+      setSuccessMessage('Saldo inicial registrado sem afetar o DRE.');
+    } catch (unknownError) {
+      setError(unknownError instanceof Error ? unknownError.message : 'Falha ao registrar saldo inicial.');
     } finally {
       setSaving(false);
     }
@@ -960,8 +1002,55 @@ export function FinanceCadastrosPage() {
                     <Field label="Conta"><input aria-label="Número da conta" style={inputStyle} value={accountForm.account_number} onChange={(event) => setAccountForm((current) => ({ ...current, account_number: event.target.value }))} /></Field>
                   </div>
                   <ActiveToggle checked={accountForm.is_active} onChange={(value) => setAccountForm((current) => ({ ...current, is_active: value }))} />
-                  <FormActions saving={saving} editing={Boolean(accountForm.id)} onClear={() => setAccountForm({ id: '', name: '', kind: 'bank', currency: 'BRL', account_number: '', branch_number: '', is_active: true })} />
+                  <FormActions
+                    saving={saving}
+                    editing={Boolean(accountForm.id)}
+                    onClear={() => {
+                      setAccountForm({ id: '', name: '', kind: 'bank', currency: 'BRL', account_number: '', branch_number: '', is_active: true });
+                      setAccountBalanceForm({ amount: '', date: todayIso(), note: '' });
+                    }}
+                  />
                 </form>
+                {accountForm.id ? (
+                  <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid #e2e8f0' }}>
+                    <SectionTitle>Saldo inicial da conta</SectionTitle>
+                    <p style={{ margin: '0 0 12px', color: '#64748b', fontSize: 12, lineHeight: 1.45 }}>
+                      Use uma vez para informar o saldo real da conta. Isso ajusta caixa e não entra no DRE.
+                    </p>
+                    <div style={{ display: 'grid', gap: 10 }}>
+                      <Field label="Saldo atual">
+                        <input
+                          aria-label="Saldo inicial da conta"
+                          style={inputStyle}
+                          value={accountBalanceForm.amount}
+                          onChange={(event) => setAccountBalanceForm((current) => ({ ...current, amount: event.target.value }))}
+                          placeholder="Ex.: 10.000,00"
+                        />
+                      </Field>
+                      <Field label="Data do saldo">
+                        <input
+                          aria-label="Data do saldo inicial"
+                          type="date"
+                          style={inputStyle}
+                          value={accountBalanceForm.date}
+                          onChange={(event) => setAccountBalanceForm((current) => ({ ...current, date: event.target.value }))}
+                        />
+                      </Field>
+                      <Field label="Observação">
+                        <input
+                          aria-label="Observação do saldo inicial"
+                          style={inputStyle}
+                          value={accountBalanceForm.note}
+                          onChange={(event) => setAccountBalanceForm((current) => ({ ...current, note: event.target.value }))}
+                          placeholder="Saldo inicial importado"
+                        />
+                      </Field>
+                      <ActionButton onClick={() => void handleCreateAccountBalanceAdjustment()} disabled={saving || !accountBalanceForm.amount.trim()}>
+                        Registrar saldo inicial
+                      </ActionButton>
+                    </div>
+                  </div>
+                ) : null}
               </Card>
             ) : null}
 
@@ -1367,6 +1456,7 @@ export function FinanceCadastrosPage() {
       branch_number: account.branch_number ?? '',
       is_active: account.is_active
     });
+    setAccountBalanceForm({ amount: '', date: todayIso(), note: '' });
   }
 
   function setCategoryFormFrom(category: FinanceCategory) {

@@ -18,6 +18,7 @@ import type {
   CreateFinanceTransactionFromStatementInput,
   CreateFinanceCategoryInput,
   CreateFinanceTransactionInput,
+  CreateFinanceAccountBalanceAdjustmentInput,
   FinanceAccountDto,
   FinanceAdvancedDashboardDto,
   FinanceAdvancedApprovalDto,
@@ -5176,6 +5177,32 @@ export function createFinanceTransaction(input: CreateFinanceTransactionInput): 
     throw new Error('Falha ao criar lançamento financeiro.');
   }
   return mapTransactionRow(created);
+}
+
+export function createFinanceAccountBalanceAdjustment(input: CreateFinanceAccountBalanceAdjustmentInput): FinanceTransactionDto {
+  const normalizedOrganizationId = resolveOrganizationId(input.organization_id);
+  const account = readFinanceAccountRow(normalizedOrganizationId, input.financial_account_id);
+  const amountCents = Math.trunc(input.amount_cents);
+
+  if (amountCents === 0) {
+    throw new Error('Informe um saldo diferente de zero para ajustar a conta.');
+  }
+
+  return createFinanceTransaction({
+    organization_id: normalizedOrganizationId,
+    company_id: account.company_id,
+    financial_account_id: account.id,
+    kind: 'adjustment',
+    status: 'settled',
+    amount_cents: amountCents,
+    issue_date: input.settlement_date,
+    settlement_date: input.settlement_date,
+    competence_date: null,
+    source: 'initial_balance_adjustment',
+    source_ref: account.id,
+    note: input.note?.trim() || `Ajuste de saldo da conta ${account.name}`,
+    created_by: input.created_by ?? null
+  });
 }
 
 export function updateFinanceTransaction(

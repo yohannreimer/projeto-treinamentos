@@ -33,10 +33,16 @@ function sortPeriodRows<T extends { period: string }>(rows: T[]) {
   return [...rows].sort((left, right) => left.period.localeCompare(right.period));
 }
 
+function isDreTransaction(transaction: FinanceTransactionDto) {
+  return transaction.kind === 'income' || transaction.kind === 'expense';
+}
+
 function buildRealizedVsProjected(transactions: FinanceTransactionDto[]): FinanceReportComparisonRowDto[] {
   const buckets = new Map<string, FinanceReportComparisonRowDto>();
 
   for (const transaction of transactions) {
+    if (!isDreTransaction(transaction)) continue;
+
     const realizedPeriod = periodKeyFromDate(
       transaction.settlement_date
       ?? transaction.views.cash_anchor_date
@@ -81,6 +87,8 @@ function buildCategoryBreakdown(
   const buckets = new Map<string, FinanceCategoryBreakdownRowDto>();
 
   for (const transaction of transactions) {
+    if (!isDreTransaction(transaction)) continue;
+
     const amount = transaction.views.competence_amount_cents;
     const shouldInclude = mode === 'income' ? amount > 0 : amount < 0;
     if (!shouldInclude) {
@@ -194,6 +202,8 @@ function buildDreGerencial(
   let operatingExpensesCents = 0;
 
   for (const transaction of transactions) {
+    if (!isDreTransaction(transaction)) continue;
+
     const anchor = basis === 'cash'
       ? transaction.views.cash_anchor_date
       : transaction.views.competence_anchor_date ?? transaction.competence_date;
@@ -232,6 +242,8 @@ function buildDreByPeriod(
   const buckets = new Map<string, FinanceDrePeriodRowDto>();
 
   for (const transaction of transactions) {
+    if (!isDreTransaction(transaction)) continue;
+
     const anchor = basis === 'cash'
       ? transaction.views.cash_anchor_date
       : transaction.views.competence_anchor_date ?? transaction.competence_date;
@@ -272,6 +284,8 @@ function buildCostCenterResults(transactions: FinanceTransactionDto[]): FinanceC
   const buckets = new Map<string, FinanceCostCenterResultRowDto>();
 
   for (const transaction of transactions) {
+    if (!isDreTransaction(transaction)) continue;
+
     const name = transaction.financial_cost_center_name?.trim() || 'Sem centro de custo';
     const current = buckets.get(name) ?? {
       cost_center_name: name,
@@ -306,6 +320,8 @@ function buildCashflowBasisRows(
   const buckets = new Map<string, FinanceCashflowBasisRowDto>();
 
   for (const transaction of transactions) {
+    if (!isDreTransaction(transaction)) continue;
+
     const anchor = basis === 'due'
       ? transaction.due_date
       : (transaction.settlement_date ?? transaction.views.cash_anchor_date);

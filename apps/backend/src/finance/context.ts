@@ -557,6 +557,7 @@ export function getFinanceExecutiveOverview(
       from financial_transaction
       where organization_id = ?
         and coalesce(is_deleted, 0) = 0
+        and kind <> 'adjustment'
         and financial_category_id is null
     `,
     [normalizedOrganizationId]
@@ -568,6 +569,7 @@ export function getFinanceExecutiveOverview(
       from financial_transaction
       where organization_id = ?
         and coalesce(is_deleted, 0) = 0
+        and kind <> 'adjustment'
         and financial_category_id is null
     `,
     [normalizedOrganizationId]
