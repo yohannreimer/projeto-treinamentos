@@ -122,3 +122,8 @@ export function hasAnyPermission(user: InternalSessionUser | null | undefined, p
   if (!user) return false;
   return permissions.some((permission) => hasPermission(user, permission));
 }
+
+export function hasRole(user: InternalSessionUser | null | undefined, role: InternalRole): boolean {
+  if (!user) return false;
+  return user.role === role;
+}

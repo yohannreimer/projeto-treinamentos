@@ -24,7 +24,7 @@ vi.mock('../api', () => ({
           status: 'open',
           principal_amount_cents: 450000,
           outstanding_amount_cents: 450000,
-          due_date: '2026-05-10',
+          due_date: '2026-04-24',
           settled_at: null,
           note: 'Fornecedor estratégico'
         }
@@ -43,7 +43,7 @@ beforeEach(() => {
       id: 'user-finance',
       username: 'financeiro',
       display_name: 'Financeiro',
-      role: 'custom',
+      role: 'supremo',
       permissions: ['finance.read', 'finance.write']
     }
   });
@@ -72,4 +72,24 @@ test('debts page renders and submits a new debt', async () => {
       })
     );
   });
+});
+
+test('debts page clear button resets the draft form', async () => {
+  const user = userEvent.setup();
+  render(<FinanceDebtsPage />);
+
+  expect(await screen.findByRole('heading', { name: 'Passivos controlados' })).toBeInTheDocument();
+
+  await user.clear(screen.getByLabelText('Tipo da dívida'));
+  await user.type(screen.getByLabelText('Tipo da dívida'), 'temporária');
+  await user.type(screen.getByLabelText('Principal (R$)'), '99,00');
+  await user.type(screen.getByLabelText('Saldo pendente (R$)'), '98,00');
+  await user.type(screen.getByLabelText('Observação'), 'teste');
+  await user.click(screen.getByRole('button', { name: 'Limpar' }));
+
+  expect(screen.getByLabelText('Tipo da dívida')).toHaveValue('');
+  expect(screen.getByLabelText('Principal (R$)')).toHaveValue('');
+  expect(screen.getByLabelText('Saldo pendente (R$)')).toHaveValue('');
+  expect(screen.getByLabelText('Observação')).toHaveValue('');
+  expect(screen.getByLabelText('Status')).toHaveValue('open');
 });

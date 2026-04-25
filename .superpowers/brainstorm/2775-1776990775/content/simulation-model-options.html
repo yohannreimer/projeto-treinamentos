@@ -1,0 +1,69 @@
+<h2>Nova aba Simulação: qual modelo mental?</h2>
+<p class="subtitle">A ideia é simular entradas, pagamentos, percentuais, datas e lançamentos hipotéticos sem afetar o financeiro real.</p>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">A · Linha do tempo</div>
+        <div class="mockup-body">
+          <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px">
+            <div class="placeholder">Hoje<br>Saldo</div>
+            <div class="placeholder">24/04<br>Entrada</div>
+            <div class="placeholder">25/04<br>Pagamentos</div>
+            <div class="placeholder">30/04<br>Folha</div>
+            <div class="placeholder">Resultado<br>Caixa</div>
+          </div>
+          <div class="placeholder" style="height:58px;margin-top:10px">Gráfico de saldo projetado</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>Linha do tempo financeira</h3>
+      <p>O usuário simula por data: o que entra, o que sai e como o saldo muda. É ótimo para “vou conseguir pagar isso em tal dia?”.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">B · Blocos de cenário</div>
+        <div class="mockup-body">
+          <div style="display:grid;grid-template-columns:240px 1fr 220px;gap:10px">
+            <div class="placeholder" style="height:135px">Itens disponíveis</div>
+            <div class="placeholder" style="height:135px">Cenário: arrastar entradas/pagamentos</div>
+            <div class="placeholder" style="height:135px">Resultado</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>Blocos de cenário</h3>
+      <p>O usuário monta um cenário com blocos: saldo, entrada, conta, percentual, lançamento manual. É mais inventivo e mais “wow”.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">C · Comparador de cenários</div>
+        <div class="mockup-body">
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
+            <div class="placeholder" style="height:130px">Conservador</div>
+            <div class="placeholder" style="height:130px">Provável</div>
+            <div class="placeholder" style="height:130px">Agressivo</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>Comparador de cenários</h3>
+      <p>Permite comparar 2 ou 3 versões lado a lado. Bom para gestão, mas menos natural para o uso diário de “e se eu pagar isso agora?”.</p>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>Meu voto</h3>
+  <p>Eu iria de <strong>B como experiência principal</strong>, com uma linha do tempo dentro do resultado. Assim fica simples e visual: monta blocos, muda datas/percentuais, e vê o saldo por dia.</p>
+</div>

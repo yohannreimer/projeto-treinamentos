@@ -5,11 +5,13 @@ import type {
   FinanceExecutiveKpiDto,
   FinanceExecutiveOverviewDto,
   FinanceExecutiveQueueItemDto,
-  FinanceExecutiveQuickActionDto
+  FinanceExecutiveQuickActionDto,
+  FinancePeriodFilterInput
 } from './types.js';
+import { getFinanceQualityInbox } from './quality.js';
+import { FINANCE_TIMEZONE, financeDayWindow, resolveFinancePeriodWindow } from './period.js';
 
 const DEFAULT_ORGANIZATION_ID = 'org-holand';
-const FINANCE_TIMEZONE = 'America/Sao_Paulo';
 const OPEN_RECEIVABLE_STATUSES = ['planned', 'open', 'partial', 'overdue'] as const;
 const OPEN_PAYABLE_STATUSES = ['planned', 'open', 'partial', 'overdue'] as const;
 
@@ -47,46 +49,6 @@ function statusBindings(statuses: readonly string[]) {
   return statuses.map(() => '?').join(', ');
 }
 
-function formatDateOnly(date: Date) {
-  return date.toISOString().slice(0, 10);
-}
-
-function getZonedDateParts(date: Date, timeZone: string) {
-  const formatter = new Intl.DateTimeFormat('en-CA', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  });
-
-  const parts = formatter.formatToParts(date);
-  const year = Number(parts.find((part) => part.type === 'year')?.value ?? '0');
-  const month = Number(parts.find((part) => part.type === 'month')?.value ?? '0');
-  const day = Number(parts.find((part) => part.type === 'day')?.value ?? '0');
-
-  return { year, month, day };
-}
-
-function currentMonthRange() {
-  const { year, month } = getZonedDateParts(new Date(), FINANCE_TIMEZONE);
-  const start = new Date(Date.UTC(year, month - 1, 1));
-  const end = new Date(Date.UTC(year, month, 0));
-  return {
-    start: formatDateOnly(start),
-    end: formatDateOnly(end)
-  };
-}
-
-function dayWindow(days: number) {
-  const { year, month, day } = getZonedDateParts(new Date(), FINANCE_TIMEZONE);
-  const start = new Date(Date.UTC(year, month - 1, day));
-  const end = new Date(start.getTime() + days * 24 * 60 * 60 * 1000);
-  return {
-    start: formatDateOnly(start),
-    end: formatDateOnly(end)
-  };
-}
-
 type OpenTitleRow = {
   amount_cents: number | null;
   due_date: string | null;
@@ -107,6 +69,14 @@ function resolveRowDateKey(row: OpenTitleRow & { competence_date?: string | null
   if (row.due_date) return row.due_date;
   if (row.issue_date) return row.issue_date;
   if ('competence_date' in row && row.competence_date) return row.competence_date;
+  if (row.created_at) return toZonedDateKey(row.created_at);
+  return null;
+}
+
+function resolveTransactionDateKey(row: OpenTitleRow & { competence_date?: string | null }) {
+  if (row.competence_date) return row.competence_date;
+  if (row.due_date) return row.due_date;
+  if (row.issue_date) return row.issue_date;
   if (row.created_at) return toZonedDateKey(row.created_at);
   return null;
 }
@@ -157,7 +127,7 @@ function resolveCashflowBands(organizationId: string, cashBalanceCents: number):
   const windows = [30, 60, 90];
 
   return windows.map((days) => {
-    const { start, end } = dayWindow(days);
+    const { start, end } = financeDayWindow(days);
     const receivables = readOpenReceivables(organizationId, start, end);
     const payables = readOpenPayables(organizationId, start, end);
     const inflowCents = receivables.amount_cents;
@@ -188,15 +158,14 @@ function normalizeBandShares(bands: FinanceExecutiveCashflowBandDto[]) {
   }));
 }
 
-function monthIncomeExpense(organizationId: string) {
-  const { start, end } = currentMonthRange();
-
+function monthIncomeExpense(organizationId: string, start: string | null, end: string | null) {
   const incomeRows = db.prepare(
     `
       select amount_cents, issue_date, competence_date, due_date, created_at
       from financial_transaction
       where organization_id = ?
         and kind = 'income'
+        and status <> 'canceled'
         and coalesce(is_deleted, 0) = 0
     `
   ).all(organizationId) as Array<OpenTitleRow & { competence_date: string | null }>;
@@ -207,19 +176,70 @@ function monthIncomeExpense(organizationId: string) {
       from financial_transaction
       where organization_id = ?
         and kind = 'expense'
+        and status <> 'canceled'
         and coalesce(is_deleted, 0) = 0
     `
   ).all(organizationId) as Array<OpenTitleRow & { competence_date: string | null }>;
 
   const monthlyIncomeCents = incomeRows
-    .filter((row) => isWithinWindow(resolveRowDateKey(row), start, end))
+    .filter((row) => isWithinWindow(resolveTransactionDateKey(row), start ?? undefined, end ?? undefined))
     .reduce((sum, row) => sum + Number(row.amount_cents ?? 0), 0);
 
   const monthlyExpenseCents = expenseRows
-    .filter((row) => isWithinWindow(resolveRowDateKey(row), start, end))
+    .filter((row) => isWithinWindow(resolveTransactionDateKey(row), start ?? undefined, end ?? undefined))
     .reduce((sum, row) => sum + Number(row.amount_cents ?? 0), 0);
 
   return { monthlyIncomeCents, monthlyExpenseCents };
+}
+
+function transactionSeries(organizationId: string, kind: 'income' | 'expense', start: string | null, end: string | null) {
+  return db.prepare(`
+    select
+      coalesce(competence_date, due_date, issue_date, substr(created_at, 1, 10)) as period,
+      coalesce(sum(amount_cents), 0) as amount_cents
+    from financial_transaction
+    where organization_id = ?
+      and kind = ?
+      and status <> 'canceled'
+      and coalesce(is_deleted, 0) = 0
+      and (? is null or coalesce(competence_date, due_date, issue_date, substr(created_at, 1, 10)) >= ?)
+      and (? is null or coalesce(competence_date, due_date, issue_date, substr(created_at, 1, 10)) <= ?)
+    group by period
+    order by period asc
+  `).all(organizationId, kind, start, start, end, end) as Array<{ period: string; amount_cents: number }>;
+}
+
+function enrichKpisWithSeries(
+  kpis: FinanceExecutiveKpiDto[],
+  organizationId: string,
+  periodWindow: { start: string | null; end: string | null }
+): FinanceExecutiveKpiDto[] {
+  const incomeSeries = transactionSeries(organizationId, 'income', periodWindow.start, periodWindow.end);
+  const expenseSeries = transactionSeries(organizationId, 'expense', periodWindow.start, periodWindow.end);
+
+  return kpis.map((kpi) => {
+    if (kpi.id === 'revenue-month') {
+      return { ...kpi, scope: 'period', chart_kind: 'sparkline', series: incomeSeries };
+    }
+    if (kpi.id === 'expense-month') {
+      return { ...kpi, scope: 'period', chart_kind: 'sparkline', series: expenseSeries };
+    }
+    if (kpi.id === 'projection') {
+      return {
+        ...kpi,
+        scope: 'period',
+        chart_kind: 'progress',
+        series: [
+          { period: 'receita', amount_cents: Math.max(0, incomeSeries.reduce((sum, item) => sum + item.amount_cents, 0)) },
+          { period: 'despesa', amount_cents: Math.max(0, expenseSeries.reduce((sum, item) => sum + item.amount_cents, 0)) }
+        ]
+      };
+    }
+    if (kpi.id === 'receivables' || kpi.id === 'payables') {
+      return { ...kpi, scope: 'period', chart_kind: 'bars', series: [] };
+    }
+    return { ...kpi, scope: 'global' };
+  });
 }
 
 function buildKpis(input: {
@@ -254,7 +274,7 @@ function buildKpis(input: {
       id: 'payables',
       label: 'A pagar',
       amount_cents: input.payablesOpenCents,
-      hint: 'Obrigações abertas no período',
+      hint: 'Obrigações abertas e provisionadas',
       tone: 'warning',
       value_kind: 'currency'
     },
@@ -262,7 +282,7 @@ function buildKpis(input: {
       id: 'projection',
       label: 'Resultado projetado',
       amount_cents: input.projectedResultCents,
-      hint: `${input.monthlyIncomeCents > 0 ? 'Receita' : 'Saldo'} projetada do mês`,
+      hint: 'Receitas menos despesas do mês',
       tone: 'critical',
       value_kind: 'currency'
     },
@@ -312,6 +332,8 @@ function buildQueue(input: {
   overdueReceivablesAmountCents: number;
   overduePayablesCount: number;
   overduePayablesAmountCents: number;
+  qualityIssueCount: number;
+  qualityCriticalCount: number;
 }): FinanceExecutiveQueueItemDto[] {
   const items: FinanceExecutiveQueueItemDto[] = [
     {
@@ -345,6 +367,19 @@ function buildQueue(input: {
       cta: 'Classificar agora'
     }
   ];
+
+  if (input.qualityIssueCount > 0) {
+    items.splice(1, 0, {
+      id: 'quality-review',
+      status: input.qualityCriticalCount > 0 ? 'Crítico' : 'Atenção',
+      title: 'Dados incompletos',
+      detail: `${input.qualityIssueCount} lançamentos precisam de revisão operacional.`,
+      amount_cents: 0,
+      tone: input.qualityCriticalCount > 0 ? 'critical' : 'warning',
+      href: '/financeiro/reconciliation',
+      cta: 'Revisar dados'
+    });
+  }
 
   if (input.overdueReceivablesCount > 0) {
     items.push({
@@ -410,10 +445,14 @@ function buildQuickActions(): FinanceExecutiveQuickActionDto[] {
   ];
 }
 
-export function getFinanceExecutiveOverview(organizationId?: string | null): FinanceExecutiveOverviewDto {
+export function getFinanceExecutiveOverview(
+  organizationId?: string | null,
+  periodFilter?: FinancePeriodFilterInput | null
+): FinanceExecutiveOverviewDto {
   const normalizedOrganizationId = resolveOrganizationId(organizationId);
   const organization = readOrganizationRow(normalizedOrganizationId);
   const overview = getFinanceOverview(normalizedOrganizationId);
+  const periodWindow = resolveFinancePeriodWindow(periodFilter);
 
   const activeAccounts = countRows(
     `
@@ -425,27 +464,17 @@ export function getFinanceExecutiveOverview(organizationId?: string | null): Fin
     [normalizedOrganizationId]
   );
 
-  const receivablesOpenCents = sumCents(
-    `
-      select coalesce(sum(amount_cents), 0) as total_cents
-      from financial_receivable
-      where organization_id = ?
-        and status in (${OPEN_RECEIVABLE_STATUSES.map(() => '?').join(', ')})
-        and coalesce(received_at, '') = ''
-    `,
-    [normalizedOrganizationId, ...OPEN_RECEIVABLE_STATUSES]
-  );
+  const receivablesOpenCents = readOpenReceivables(
+    normalizedOrganizationId,
+    periodWindow.start ?? undefined,
+    periodWindow.end ?? undefined
+  ).amount_cents;
 
-  const payablesOpenCents = sumCents(
-    `
-      select coalesce(sum(amount_cents), 0) as total_cents
-      from financial_payable
-      where organization_id = ?
-        and status in (${OPEN_PAYABLE_STATUSES.map(() => '?').join(', ')})
-        and coalesce(paid_at, '') = ''
-    `,
-    [normalizedOrganizationId, ...OPEN_PAYABLE_STATUSES]
-  );
+  const payablesOpenCents = readOpenPayables(
+    normalizedOrganizationId,
+    periodWindow.start ?? undefined,
+    periodWindow.end ?? undefined
+  ).amount_cents;
 
   const overdueReceivables = countRows(
     `
@@ -491,7 +520,7 @@ export function getFinanceExecutiveOverview(organizationId?: string | null): Fin
     [normalizedOrganizationId]
   );
 
-  const dueToday = dayWindow(0);
+  const dueToday = financeDayWindow(0);
   const dueTodayReceivables = readOpenReceivables(normalizedOrganizationId, dueToday.start, dueToday.end);
   const dueTodayPayables = readOpenPayables(normalizedOrganizationId, dueToday.start, dueToday.end);
 
@@ -520,6 +549,7 @@ export function getFinanceExecutiveOverview(organizationId?: string | null): Fin
     `,
     [normalizedOrganizationId]
   );
+  const qualityInbox = getFinanceQualityInbox(normalizedOrganizationId);
 
   const uncategorizedCount = countRows(
     `
@@ -543,8 +573,12 @@ export function getFinanceExecutiveOverview(organizationId?: string | null): Fin
     [normalizedOrganizationId]
   );
 
-  const { monthlyIncomeCents, monthlyExpenseCents } = monthIncomeExpense(normalizedOrganizationId);
-  const projectedResultCents = overview.totals.projected_cents;
+  const { monthlyIncomeCents, monthlyExpenseCents } = monthIncomeExpense(
+    normalizedOrganizationId,
+    periodWindow.start,
+    periodWindow.end
+  );
+  const projectedResultCents = monthlyIncomeCents - monthlyExpenseCents;
   const cashBalanceCents = overview.totals.cash_cents;
 
   const bands = normalizeBandShares(resolveCashflowBands(normalizedOrganizationId, cashBalanceCents));
@@ -555,17 +589,21 @@ export function getFinanceExecutiveOverview(organizationId?: string | null): Fin
     currency: 'BRL',
     timezone: FINANCE_TIMEZONE,
     generated_at: new Date().toISOString(),
-    kpis: buildKpis({
-      cashBalanceCents,
-      receivablesOpenCents,
-      payablesOpenCents,
-      projectedResultCents,
-      activeAccounts,
-      monthlyIncomeCents,
-      monthlyExpenseCents,
-      overdueCount: overdueReceivables + overduePayables,
-      reconciliationPendingCount
-    }),
+    kpis: enrichKpisWithSeries(
+      buildKpis({
+        cashBalanceCents,
+        receivablesOpenCents,
+        payablesOpenCents,
+        projectedResultCents,
+        activeAccounts,
+        monthlyIncomeCents,
+        monthlyExpenseCents,
+        overdueCount: overdueReceivables + overduePayables,
+        reconciliationPendingCount
+      }),
+      normalizedOrganizationId,
+      periodWindow
+    ),
     queue: buildQueue({
       reconciliationPendingCount,
       reconciliationPendingAmountCents,
@@ -576,7 +614,9 @@ export function getFinanceExecutiveOverview(organizationId?: string | null): Fin
       overdueReceivablesCount: overdueReceivables,
       overdueReceivablesAmountCents,
       overduePayablesCount: overduePayables,
-      overduePayablesAmountCents
+      overduePayablesAmountCents,
+      qualityIssueCount: qualityInbox.summary.total_count,
+      qualityCriticalCount: qualityInbox.summary.critical_count
     }),
     cashflow_bands: bands,
     quick_actions: buildQuickActions(),
@@ -587,6 +627,9 @@ export function getFinanceExecutiveOverview(organizationId?: string | null): Fin
       projected_result_cents: projectedResultCents,
       reconciliation_pending_count: reconciliationPendingCount,
       uncategorized_count: uncategorizedCount,
+      quality_issue_count: qualityInbox.summary.total_count,
+      quality_critical_count: qualityInbox.summary.critical_count,
+      quality_warning_count: qualityInbox.summary.warning_count,
       overdue_count: overdueReceivables + overduePayables,
       monthly_income_cents: monthlyIncomeCents,
       monthly_expense_cents: monthlyExpenseCents

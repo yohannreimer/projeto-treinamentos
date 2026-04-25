@@ -98,6 +98,15 @@ function readTableColumns(table: string) {
   }>;
 }
 
+function normalizeFinanceText(value: string) {
+  return value
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+}
+
 function hasColumn(table: string, column: string) {
   return readTableColumns(table).some((item) => item.name === column);
 }
@@ -366,6 +375,8 @@ export function initDb() {
       financial_entity_id text,
       financial_account_id text,
       financial_category_id text,
+      financial_cost_center_id text,
+      financial_payment_method_id text,
       kind text not null,
       status text not null,
       amount_cents integer not null,
@@ -385,7 +396,9 @@ export function initDb() {
       foreign key(company_id) references company(id) on delete cascade,
       foreign key(organization_id, financial_entity_id) references financial_entity(organization_id, id) on delete restrict,
       foreign key(organization_id, financial_account_id) references financial_account(organization_id, id) on delete restrict,
-      foreign key(organization_id, financial_category_id) references financial_category(organization_id, id) on delete restrict
+      foreign key(organization_id, financial_category_id) references financial_category(organization_id, id) on delete restrict,
+      foreign key(organization_id, financial_cost_center_id) references financial_cost_center(organization_id, id) on delete restrict,
+      foreign key(organization_id, financial_payment_method_id) references financial_payment_method(organization_id, id) on delete restrict
     );
 
     create table if not exists financial_entity (
@@ -402,6 +415,30 @@ export function initDb() {
       updated_at text not null,
       unique(organization_id, id),
       foreign key(organization_id) references organization(id) on delete cascade
+    );
+
+    create table if not exists financial_entity_tag (
+      id text primary key,
+      organization_id text not null,
+      name text not null,
+      normalized_name text not null,
+      is_system integer not null default 0,
+      is_active integer not null default 1,
+      created_at text not null,
+      updated_at text not null,
+      unique(organization_id, normalized_name),
+      unique(organization_id, id),
+      foreign key(organization_id) references organization(id) on delete cascade
+    );
+
+    create table if not exists financial_entity_tag_map (
+      organization_id text not null,
+      financial_entity_id text not null,
+      financial_entity_tag_id text not null,
+      created_at text not null,
+      primary key(organization_id, financial_entity_id, financial_entity_tag_id),
+      foreign key(organization_id, financial_entity_id) references financial_entity(organization_id, id) on delete cascade,
+      foreign key(organization_id, financial_entity_tag_id) references financial_entity_tag(organization_id, id) on delete cascade
     );
 
     create table if not exists financial_cost_center (
@@ -428,6 +465,49 @@ export function initDb() {
       foreign key(organization_id) references organization(id) on delete cascade
     );
 
+    create table if not exists financial_entity_default_profile (
+      id text primary key,
+      organization_id text not null,
+      financial_entity_id text not null,
+      context text not null check(context in ('payable', 'receivable', 'transaction')),
+      financial_category_id text,
+      financial_cost_center_id text,
+      financial_account_id text,
+      financial_payment_method_id text,
+      due_rule text,
+      competence_rule text,
+      recurrence_rule text,
+      is_active integer not null default 1,
+      created_at text not null,
+      updated_at text not null,
+      unique(organization_id, financial_entity_id, context),
+      foreign key(organization_id, financial_entity_id) references financial_entity(organization_id, id) on delete cascade,
+      foreign key(organization_id, financial_category_id) references financial_category(organization_id, id) on delete restrict,
+      foreign key(organization_id, financial_cost_center_id) references financial_cost_center(organization_id, id) on delete restrict,
+      foreign key(organization_id, financial_account_id) references financial_account(organization_id, id) on delete restrict,
+      foreign key(organization_id, financial_payment_method_id) references financial_payment_method(organization_id, id) on delete restrict
+    );
+
+    create table if not exists financial_favorite_combination (
+      id text primary key,
+      organization_id text not null,
+      name text not null,
+      context text not null default 'any' check(context in ('any', 'payable', 'receivable', 'transaction')),
+      financial_category_id text,
+      financial_cost_center_id text,
+      financial_account_id text,
+      financial_payment_method_id text,
+      is_active integer not null default 1,
+      created_at text not null,
+      updated_at text not null,
+      unique(organization_id, id),
+      foreign key(organization_id) references organization(id) on delete cascade,
+      foreign key(organization_id, financial_category_id) references financial_category(organization_id, id) on delete restrict,
+      foreign key(organization_id, financial_cost_center_id) references financial_cost_center(organization_id, id) on delete restrict,
+      foreign key(organization_id, financial_account_id) references financial_account(organization_id, id) on delete restrict,
+      foreign key(organization_id, financial_payment_method_id) references financial_payment_method(organization_id, id) on delete restrict
+    );
+
     create table if not exists financial_payable (
       id text primary key,
       organization_id text not null,
@@ -436,9 +516,12 @@ export function initDb() {
       financial_entity_id text,
       financial_account_id text,
       financial_category_id text,
+      financial_cost_center_id text,
+      financial_payment_method_id text,
       supplier_name text,
       description text not null,
       amount_cents integer not null,
+      paid_amount_cents integer not null default 0,
       status text not null,
       issue_date text,
       due_date text,
@@ -455,7 +538,9 @@ export function initDb() {
       foreign key(organization_id, financial_transaction_id) references financial_transaction(organization_id, id) on delete restrict,
       foreign key(organization_id, financial_entity_id) references financial_entity(organization_id, id) on delete restrict,
       foreign key(organization_id, financial_account_id) references financial_account(organization_id, id) on delete restrict,
-      foreign key(organization_id, financial_category_id) references financial_category(organization_id, id) on delete restrict
+      foreign key(organization_id, financial_category_id) references financial_category(organization_id, id) on delete restrict,
+      foreign key(organization_id, financial_cost_center_id) references financial_cost_center(organization_id, id) on delete restrict,
+      foreign key(organization_id, financial_payment_method_id) references financial_payment_method(organization_id, id) on delete restrict
     );
 
     create table if not exists financial_receivable (
@@ -466,9 +551,12 @@ export function initDb() {
       financial_entity_id text,
       financial_account_id text,
       financial_category_id text,
+      financial_cost_center_id text,
+      financial_payment_method_id text,
       customer_name text,
       description text not null,
       amount_cents integer not null,
+      received_amount_cents integer not null default 0,
       status text not null,
       issue_date text,
       due_date text,
@@ -485,7 +573,9 @@ export function initDb() {
       foreign key(organization_id, financial_transaction_id) references financial_transaction(organization_id, id) on delete restrict,
       foreign key(organization_id, financial_entity_id) references financial_entity(organization_id, id) on delete restrict,
       foreign key(organization_id, financial_account_id) references financial_account(organization_id, id) on delete restrict,
-      foreign key(organization_id, financial_category_id) references financial_category(organization_id, id) on delete restrict
+      foreign key(organization_id, financial_category_id) references financial_category(organization_id, id) on delete restrict,
+      foreign key(organization_id, financial_cost_center_id) references financial_cost_center(organization_id, id) on delete restrict,
+      foreign key(organization_id, financial_payment_method_id) references financial_payment_method(organization_id, id) on delete restrict
     );
 
     create table if not exists financial_import_job (
@@ -580,6 +670,132 @@ export function initDb() {
       foreign key(organization_id, financial_payable_id) references financial_payable(organization_id, id) on delete restrict,
       foreign key(organization_id, financial_receivable_id) references financial_receivable(organization_id, id) on delete restrict,
       foreign key(organization_id, financial_transaction_id) references financial_transaction(organization_id, id) on delete restrict
+    );
+
+    create table if not exists financial_operation_audit (
+      id text primary key,
+      organization_id text not null,
+      company_id text,
+      resource_type text not null check(resource_type in ('payable', 'receivable')),
+      resource_id text not null,
+      action text not null,
+      amount_cents integer,
+      note text,
+      created_by text,
+      created_at text not null,
+      foreign key(organization_id) references organization(id) on delete cascade,
+      foreign key(company_id) references company(id) on delete set null
+    );
+
+    create table if not exists financial_recurring_rule (
+      id text primary key,
+      organization_id text not null,
+      company_id text,
+      resource_type text not null check(resource_type in ('payable', 'receivable')),
+      template_resource_id text not null,
+      name text not null,
+      frequency text not null default 'monthly' check(frequency in ('monthly')),
+      day_of_month integer not null check(day_of_month between 1 and 31),
+      start_date text not null,
+      end_date text,
+      materialization_months integer not null default 3,
+      status text not null default 'active' check(status in ('active', 'paused', 'ended')),
+      last_materialized_until text,
+      created_by text,
+      created_at text not null,
+      updated_at text not null,
+      unique(organization_id, id),
+      foreign key(organization_id) references organization(id) on delete cascade,
+      foreign key(company_id) references company(id) on delete cascade
+    );
+
+    create table if not exists financial_automation_rule (
+      id text primary key,
+      organization_id text not null,
+      company_id text,
+      name text not null,
+      trigger_type text not null,
+      conditions_json text not null default '{}',
+      action_type text not null,
+      action_payload_json text not null default '{}',
+      is_active integer not null default 1,
+      created_by text,
+      created_at text not null,
+      updated_at text not null,
+      unique(organization_id, id),
+      foreign key(organization_id) references organization(id) on delete cascade,
+      foreign key(company_id) references company(id) on delete cascade
+    );
+
+    create table if not exists financial_attachment (
+      id text primary key,
+      organization_id text not null,
+      company_id text,
+      resource_type text not null check(resource_type in ('payable', 'receivable', 'transaction', 'reconciliation')),
+      resource_id text not null,
+      file_name text not null,
+      mime_type text not null,
+      file_size_bytes integer not null default 0,
+      storage_ref text not null,
+      created_by text,
+      created_at text not null,
+      unique(organization_id, id),
+      foreign key(organization_id) references organization(id) on delete cascade,
+      foreign key(company_id) references company(id) on delete cascade
+    );
+
+    create table if not exists financial_bank_integration (
+      id text primary key,
+      organization_id text not null,
+      company_id text,
+      provider text not null,
+      status text not null,
+      account_name text,
+      last_sync_at text,
+      created_by text,
+      created_at text not null,
+      updated_at text not null,
+      unique(organization_id, id),
+      foreign key(organization_id) references organization(id) on delete cascade,
+      foreign key(company_id) references company(id) on delete cascade
+    );
+
+    create table if not exists financial_simulation_scenario (
+      id text primary key,
+      organization_id text not null,
+      company_id text,
+      name text not null,
+      description text,
+      start_date text not null,
+      end_date text not null,
+      starting_balance_cents integer not null default 0,
+      created_by text,
+      created_at text not null,
+      updated_at text not null,
+      unique(organization_id, id),
+      foreign key(organization_id) references organization(id) on delete cascade,
+      foreign key(company_id) references company(id) on delete cascade
+    );
+
+    create table if not exists financial_simulation_item (
+      id text primary key,
+      organization_id text not null,
+      company_id text,
+      financial_simulation_scenario_id text not null,
+      source_type text not null check(source_type in ('manual', 'payable', 'receivable', 'transaction')),
+      source_id text,
+      kind text not null check(kind in ('manual_inflow', 'manual_outflow', 'expected_inflow', 'scheduled_outflow', 'partial_payment')),
+      label text not null,
+      amount_cents integer not null,
+      event_date text not null,
+      probability_percent integer not null default 100,
+      note text,
+      created_at text not null,
+      updated_at text not null,
+      unique(organization_id, id),
+      foreign key(organization_id) references organization(id) on delete cascade,
+      foreign key(company_id) references company(id) on delete cascade,
+      foreign key(organization_id, financial_simulation_scenario_id) references financial_simulation_scenario(organization_id, id) on delete cascade
     );
 
     create table if not exists billing_plan (
@@ -1078,16 +1294,24 @@ export function initDb() {
     'financial_entity_id',
     'financial_entity_id text'
   );
+  ensureColumn('financial_transaction', 'financial_cost_center_id', 'financial_cost_center_id text');
+  ensureColumn('financial_transaction', 'financial_payment_method_id', 'financial_payment_method_id text');
   ensureColumn(
     'financial_payable',
     'organization_id',
     'organization_id text references organization(id) on delete cascade'
   );
+  ensureColumn('financial_payable', 'financial_cost_center_id', 'financial_cost_center_id text');
+  ensureColumn('financial_payable', 'financial_payment_method_id', 'financial_payment_method_id text');
+  ensureColumn('financial_payable', 'paid_amount_cents', 'paid_amount_cents integer not null default 0');
   ensureColumn(
     'financial_receivable',
     'organization_id',
     'organization_id text references organization(id) on delete cascade'
   );
+  ensureColumn('financial_receivable', 'financial_cost_center_id', 'financial_cost_center_id text');
+  ensureColumn('financial_receivable', 'financial_payment_method_id', 'financial_payment_method_id text');
+  ensureColumn('financial_receivable', 'received_amount_cents', 'received_amount_cents integer not null default 0');
   ensureColumn(
     'financial_import_job',
     'organization_id',
@@ -1288,6 +1512,8 @@ export function initDb() {
           financial_entity_id text,
           financial_account_id text,
           financial_category_id text,
+          financial_cost_center_id text,
+          financial_payment_method_id text,
           kind text not null,
           status text not null,
           amount_cents integer not null,
@@ -1308,7 +1534,9 @@ export function initDb() {
           foreign key(company_id) references company(id) on delete cascade,
           foreign key(organization_id, financial_entity_id) references financial_entity(organization_id, id) on delete restrict,
           foreign key(organization_id, financial_account_id) references financial_account(organization_id, id) on delete restrict,
-          foreign key(organization_id, financial_category_id) references financial_category(organization_id, id) on delete restrict
+          foreign key(organization_id, financial_category_id) references financial_category(organization_id, id) on delete restrict,
+          foreign key(organization_id, financial_cost_center_id) references financial_cost_center(organization_id, id) on delete restrict,
+          foreign key(organization_id, financial_payment_method_id) references financial_payment_method(organization_id, id) on delete restrict
         );
       `);
       db.exec(`
@@ -1319,6 +1547,8 @@ export function initDb() {
           financial_entity_id,
           financial_account_id,
           financial_category_id,
+          financial_cost_center_id,
+          financial_payment_method_id,
           kind,
           status,
           amount_cents,
@@ -1341,6 +1571,8 @@ export function initDb() {
           financial_entity_id,
           financial_account_id,
           financial_category_id,
+          financial_cost_center_id,
+          financial_payment_method_id,
           kind,
           status,
           amount_cents,
@@ -1433,6 +1665,8 @@ export function initDb() {
             financial_entity_id text,
             financial_account_id text,
             financial_category_id text,
+            financial_cost_center_id text,
+            financial_payment_method_id text,
             supplier_name text,
             description text not null,
             amount_cents integer not null,
@@ -1452,7 +1686,9 @@ export function initDb() {
             foreign key(organization_id, financial_transaction_id) references financial_transaction(organization_id, id) on delete restrict,
             foreign key(organization_id, financial_entity_id) references financial_entity(organization_id, id) on delete restrict,
             foreign key(organization_id, financial_account_id) references financial_account(organization_id, id) on delete restrict,
-            foreign key(organization_id, financial_category_id) references financial_category(organization_id, id) on delete restrict
+            foreign key(organization_id, financial_category_id) references financial_category(organization_id, id) on delete restrict,
+            foreign key(organization_id, financial_cost_center_id) references financial_cost_center(organization_id, id) on delete restrict,
+            foreign key(organization_id, financial_payment_method_id) references financial_payment_method(organization_id, id) on delete restrict
           );
         `);
         db.exec(`
@@ -1464,6 +1700,8 @@ export function initDb() {
             financial_entity_id,
             financial_account_id,
             financial_category_id,
+            financial_cost_center_id,
+            financial_payment_method_id,
             supplier_name,
             description,
             amount_cents,
@@ -1485,6 +1723,8 @@ export function initDb() {
             null,
             financial_account_id,
             financial_category_id,
+            financial_cost_center_id,
+            financial_payment_method_id,
             supplier_name,
             description,
             amount_cents,
@@ -1513,6 +1753,8 @@ export function initDb() {
             financial_entity_id text,
             financial_account_id text,
             financial_category_id text,
+            financial_cost_center_id text,
+            financial_payment_method_id text,
             customer_name text,
             description text not null,
             amount_cents integer not null,
@@ -1532,7 +1774,9 @@ export function initDb() {
             foreign key(organization_id, financial_transaction_id) references financial_transaction(organization_id, id) on delete restrict,
             foreign key(organization_id, financial_entity_id) references financial_entity(organization_id, id) on delete restrict,
             foreign key(organization_id, financial_account_id) references financial_account(organization_id, id) on delete restrict,
-            foreign key(organization_id, financial_category_id) references financial_category(organization_id, id) on delete restrict
+            foreign key(organization_id, financial_category_id) references financial_category(organization_id, id) on delete restrict,
+            foreign key(organization_id, financial_cost_center_id) references financial_cost_center(organization_id, id) on delete restrict,
+            foreign key(organization_id, financial_payment_method_id) references financial_payment_method(organization_id, id) on delete restrict
           );
         `);
         db.exec(`
@@ -1544,6 +1788,8 @@ export function initDb() {
             financial_entity_id,
             financial_account_id,
             financial_category_id,
+            financial_cost_center_id,
+            financial_payment_method_id,
             customer_name,
             description,
             amount_cents,
@@ -1565,6 +1811,8 @@ export function initDb() {
             null,
             financial_account_id,
             financial_category_id,
+            financial_cost_center_id,
+            financial_payment_method_id,
             customer_name,
             description,
             amount_cents,
@@ -1868,11 +2116,22 @@ export function initDb() {
     create index if not exists idx_financial_transaction_org_status_due on financial_transaction(organization_id, status, due_date);
     create index if not exists idx_financial_transaction_org_account on financial_transaction(organization_id, financial_account_id);
     create index if not exists idx_financial_transaction_org_category on financial_transaction(organization_id, financial_category_id);
+    create index if not exists idx_financial_transaction_org_cost_center on financial_transaction(organization_id, financial_cost_center_id);
     create index if not exists idx_financial_payable_org_status_due on financial_payable(organization_id, status, due_date);
     create index if not exists idx_financial_payable_org_transaction on financial_payable(organization_id, financial_transaction_id);
+    create index if not exists idx_financial_payable_org_cost_center on financial_payable(organization_id, financial_cost_center_id);
     create index if not exists idx_financial_receivable_org_status_due on financial_receivable(organization_id, status, due_date);
     create index if not exists idx_financial_receivable_org_transaction on financial_receivable(organization_id, financial_transaction_id);
+    create index if not exists idx_financial_receivable_org_cost_center on financial_receivable(organization_id, financial_cost_center_id);
     create index if not exists idx_financial_entity_org_kind on financial_entity(organization_id, kind, is_active);
+    create index if not exists idx_financial_entity_tag_org_active
+      on financial_entity_tag(organization_id, is_active, normalized_name);
+    create index if not exists idx_financial_entity_tag_map_entity
+      on financial_entity_tag_map(organization_id, financial_entity_id);
+    create index if not exists idx_financial_entity_default_profile_entity_context
+      on financial_entity_default_profile(organization_id, financial_entity_id, context, is_active);
+    create index if not exists idx_financial_favorite_combination_org_context
+      on financial_favorite_combination(organization_id, context, is_active, name collate nocase);
     create index if not exists idx_financial_cost_center_org_active on financial_cost_center(organization_id, is_active);
     create index if not exists idx_financial_payment_method_org_kind on financial_payment_method(organization_id, kind, is_active);
     create index if not exists idx_financial_import_job_org_status on financial_import_job(organization_id, status, created_at desc);
@@ -1883,6 +2142,22 @@ export function initDb() {
     create index if not exists idx_financial_debt_org_status_due on financial_debt(organization_id, status, due_date);
     create index if not exists idx_financial_debt_org_payable on financial_debt(organization_id, financial_payable_id);
     create index if not exists idx_financial_debt_org_receivable on financial_debt(organization_id, financial_receivable_id);
+    create index if not exists idx_financial_operation_audit_resource
+      on financial_operation_audit(organization_id, resource_type, resource_id, created_at desc);
+    create index if not exists idx_financial_recurring_rule_org_status
+      on financial_recurring_rule(organization_id, status, start_date);
+    create index if not exists idx_financial_recurring_rule_template
+      on financial_recurring_rule(organization_id, resource_type, template_resource_id);
+    create index if not exists idx_financial_automation_rule_org
+      on financial_automation_rule(organization_id, is_active, created_at desc);
+    create index if not exists idx_financial_attachment_resource
+      on financial_attachment(organization_id, resource_type, resource_id, created_at desc);
+    create index if not exists idx_financial_bank_integration_org
+      on financial_bank_integration(organization_id, status, created_at desc);
+    create index if not exists idx_financial_simulation_scenario_org
+      on financial_simulation_scenario(organization_id, created_at desc);
+    create index if not exists idx_financial_simulation_item_scenario
+      on financial_simulation_item(organization_id, financial_simulation_scenario_id, event_date);
     create index if not exists idx_billing_plan_org_active on billing_plan(organization_id, is_active);
     create index if not exists idx_billing_subscription_org_status on billing_subscription(organization_id, status, created_at desc);
     create index if not exists idx_billing_subscription_org_plan on billing_subscription(organization_id, billing_plan_id);
@@ -1917,6 +2192,27 @@ export function initDb() {
     insert or ignore into organization (id, name, slug, is_active, created_at, updated_at)
     values ('org-holand', 'Holand', 'holand', 1, ?, ?)
   `).run(organizationSeedNowIso, organizationSeedNowIso);
+
+  const insertEntityTag = db.prepare(`
+    insert or ignore into financial_entity_tag (
+      id, organization_id, name, normalized_name, is_system, is_active, created_at, updated_at
+    ) values (?, ?, ?, ?, 1, 1, ?, ?)
+  `);
+  [
+    ['fetag-funcionario', 'Funcionário'],
+    ['fetag-banco', 'Banco'],
+    ['fetag-imposto', 'Imposto'],
+    ['fetag-software', 'Software'],
+    ['fetag-aluguel', 'Aluguel'],
+    ['fetag-prestador', 'Prestador'],
+    ['fetag-cliente-recorrente', 'Cliente recorrente'],
+    ['fetag-fornecedor-critico', 'Fornecedor crítico'],
+    ['fetag-comissao', 'Comissão'],
+    ['fetag-marketing', 'Marketing'],
+    ['fetag-juridico', 'Jurídico']
+  ].forEach(([id, name]) => {
+    insertEntityTag.run(id, DEFAULT_ORGANIZATION_ID, name, normalizeFinanceText(name), organizationSeedNowIso, organizationSeedNowIso);
+  });
 
   const internalUserCount = db.prepare('select count(*) as count from internal_user').get() as { count: number };
   if (internalUserCount.count === 0) {
@@ -2218,100 +2514,342 @@ function hasSeed(): boolean {
   return row.count > 0;
 }
 
-export function seedDb() {
-  if (hasSeed()) return;
+function getDateOffsetIso(baseDate: string, offsetDays: number) {
+  const value = new Date(`${baseDate}T00:00:00.000Z`);
+  value.setUTCDate(value.getUTCDate() + offsetDays);
+  return value.toISOString().slice(0, 10);
+}
 
-  const modules: Array<[string, string, string, string, number, string, number]> = [
-    ['mod-01', 'MOD-01', 'Instalacao', 'Instalacao TopSolid', 1, 'Iniciante', 1],
-    ['mod-02', 'MOD-02', 'CAD', 'TopSolid Design Basico', 3, 'Iniciante', 1],
-    ['mod-03', 'MOD-03', 'CAD', 'TopSolid Montagem', 2, 'Intermediario', 1],
-    ['mod-04', 'MOD-04', 'CAD', 'Detalhamento 2D', 2, 'Intermediario', 0],
-    ['mod-05', 'MOD-05', 'CAM', 'TopSolid CAM Basico', 3, 'Intermediario', 1],
-    ['mod-06', 'MOD-06', 'CAM', 'TopSolid CAM Avancado', 2, 'Avancado', 0]
-  ];
+function seedFinanceDemoData() {
+  const organizationId = DEFAULT_ORGANIZATION_ID;
+  const companyId = 'comp-01';
+  const createdAt = new Date().toISOString();
+  const today = nowDateIso();
+  const yesterday = getDateOffsetIso(today, -1);
+  const twoDaysAgo = getDateOffsetIso(today, -2);
+  const threeDaysAgo = getDateOffsetIso(today, -3);
+  const nextWeek = getDateOffsetIso(today, 7);
+  const nextTwoWeeks = getDateOffsetIso(today, 14);
+  const nextMonth = getDateOffsetIso(today, 30);
+  const nextTwoMonths = getDateOffsetIso(today, 60);
 
-  const companies: Array<[string, string, string, string, number]> = [
-    ['comp-01', 'Metal Forte', 'Ativo', 'Cliente industrial', 0],
-    ['comp-02', 'Usinagem Alpha', 'Ativo', 'Entrou em 2025', 0],
-    ['comp-03', 'Mecanica Beta', 'Ativo', 'Pendencia de instalacao', 0],
-    ['comp-04', 'Projeto Gama', 'Inativo', 'Conta em pausa', 0]
-  ];
+  db.prepare(`
+    insert or ignore into company (id, name, status, notes, priority)
+    values (?, ?, ?, ?, ?)
+  `).run(companyId, 'Metal Forte', 'Ativo', 'Cliente base para massa demo do financeiro', 0);
 
-  const techs: Array<[string, string, string]> = [
-    ['tech-01', 'Carlos Lima', 'Disponivel no periodo da manha'],
-    ['tech-02', 'Ana Souza', 'Especialista em CAD/CAM'],
-    ['tech-03', 'Paulo Reis', 'Foco em implantacao e consultoria']
-  ];
-
-  const insertModule = db.prepare(
-    'insert into module_template (id, code, category, name, duration_days, profile, is_mandatory) values (?, ?, ?, ?, ?, ?, ?)'
-  );
-  modules.forEach((m) => insertModule.run(...m));
-
-  const insertCompany = db.prepare('insert into company (id, name, status, notes, priority) values (?, ?, ?, ?, ?)');
-  companies.forEach((c) => insertCompany.run(...c));
-
-  const insertTech = db.prepare('insert into technician (id, name, availability_notes) values (?, ?, ?)');
-  techs.forEach((t) => insertTech.run(...t));
-
-  const insertSkill = db.prepare('insert into technician_skill (technician_id, module_id) values (?, ?)');
-  insertSkill.run('tech-01', 'mod-01');
-  insertSkill.run('tech-01', 'mod-02');
-  insertSkill.run('tech-01', 'mod-03');
-  insertSkill.run('tech-02', 'mod-02');
-  insertSkill.run('tech-02', 'mod-03');
-  insertSkill.run('tech-02', 'mod-05');
-  insertSkill.run('tech-02', 'mod-06');
-  insertSkill.run('tech-03', 'mod-01');
-  insertSkill.run('tech-03', 'mod-04');
-
-  const progress = db.prepare(
-    'insert into company_module_progress (id, company_id, module_id, status, completed_at) values (?, ?, ?, ?, ?)'
-  );
-  progress.run('prog-01', 'comp-01', 'mod-01', 'Concluido', '2025-12-10');
-  progress.run('prog-02', 'comp-01', 'mod-02', 'Concluido', '2026-01-12');
-  progress.run('prog-03', 'comp-02', 'mod-01', 'Concluido', '2026-01-03');
-  progress.run('prog-04', 'comp-02', 'mod-02', 'Planejado', null);
-
-  const activation = db.prepare(
-    'insert or ignore into company_module_activation (company_id, module_id, is_enabled) values (?, ?, 1)'
-  );
-  companies.forEach((company) => {
-    modules.forEach((module) => {
-      activation.run(company[0], module[0]);
-    });
+  const insertAccount = db.prepare(`
+    insert or ignore into financial_account (
+      id, organization_id, company_id, name, kind, currency, account_number, branch_number, is_active, created_at, updated_at
+    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  [
+    ['facc-itau', 'Banco Itau Operacional', 'bank', '34123-4', '0001'],
+    ['facc-caixa', 'Caixa Operacional', 'cash', null, null]
+  ].forEach(([id, name, kind, accountNumber, branchNumber]) => {
+    insertAccount.run(id, organizationId, companyId, name, kind, 'BRL', accountNumber, branchNumber, 1, createdAt, createdAt);
   });
 
-  const cohorts = db.prepare(
-    'insert into cohort (id, code, name, start_date, technician_id, status, capacity_companies, notes) values (?, ?, ?, ?, ?, ?, ?, ?)'
-  );
-  cohorts.run('coh-01', 'TUR-001', 'CAD Basico + Montagem', '2026-02-20', 'tech-02', 'Confirmada', 8, null);
-  cohorts.run('coh-02', 'TUR-002', 'Instalacao + CAD Basico', '2026-02-27', 'tech-01', 'Planejada', 10, null);
+  const insertCategory = db.prepare(`
+    insert or ignore into financial_category (
+      id, organization_id, company_id, name, kind, parent_category_id, is_active, created_at, updated_at
+    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  [
+    ['fcat-servicos', 'Receita de Servicos', 'income'],
+    ['fcat-bilheteria', 'Bilheteria', 'income'],
+    ['fcat-patrocinio', 'Patrocinio', 'income'],
+    ['fcat-impostos', 'Impostos', 'expense'],
+    ['fcat-operacional', 'Despesas Operacionais', 'expense'],
+    ['fcat-cachê', 'Cache Artistico', 'expense'],
+    ['fcat-seguros', 'Seguros', 'expense']
+  ].forEach(([id, name, kind]) => {
+    insertCategory.run(id, organizationId, companyId, name, kind, null, 1, createdAt, createdAt);
+  });
 
-  const blocks = db.prepare(
-    'insert into cohort_module_block (id, cohort_id, module_id, order_in_cohort, start_day_offset, duration_days) values (?, ?, ?, ?, ?, ?)'
-  );
-  blocks.run('blk-01', 'coh-01', 'mod-02', 1, 1, 3);
-  blocks.run('blk-02', 'coh-01', 'mod-03', 2, 4, 2);
-  blocks.run('blk-03', 'coh-02', 'mod-01', 1, 1, 1);
-  blocks.run('blk-04', 'coh-02', 'mod-02', 2, 2, 3);
+  const insertEntity = db.prepare(`
+    insert or ignore into financial_entity (
+      id, organization_id, legal_name, trade_name, document_number, kind, email, phone, is_active, created_at, updated_at
+    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  [
+    ['fent-itau-bba', 'Itau BBA', 'Itau BBA', '12.345.678/0001-00', 'customer', 'contato@itaubba.com', '+55 11 3000-1000'],
+    ['fent-joao-silva', 'Joao Silva', 'Joao Silva', '123.456.789-00', 'supplier', 'joao@silva.com', '+55 11 98888-1111'],
+    ['fent-estudio-harmonia', 'Estudio Harmonia', 'Estudio Harmonia', '11.222.333/0001-55', 'supplier', 'adm@harmonia.com', '+55 11 98888-2222'],
+    ['fent-sympla', 'Sympla', 'Sympla', '19.999.999/0001-99', 'customer', 'financeiro@sympla.com', '+55 31 3000-2000'],
+    ['fent-bradesco', 'Bradesco', 'Bradesco Cultural', '60.746.948/0001-12', 'customer', 'cultural@bradesco.com', '+55 11 4000-3000'],
+    ['fent-sesc', 'SESC Sao Paulo', 'SESC', '03.791.430/0001-83', 'customer', 'agenda@sescsp.org.br', '+55 11 4000-4000'],
+    ['fent-porto', 'Porto Seguro', 'Porto Seguro', '61.198.164/0001-60', 'supplier', 'seguro@porto.com', '+55 11 4000-5000'],
+    ['fent-ecad', 'ECAD', 'ECAD', '00.474.973/0001-62', 'supplier', 'ecad@ecad.org.br', '+55 21 4000-6000']
+  ].forEach(([id, legalName, tradeName, documentNumber, kind, email, phone]) => {
+    insertEntity.run(id, organizationId, legalName, tradeName, documentNumber, kind, email, phone, 1, createdAt, createdAt);
+  });
 
-  const allocations = db.prepare(
-    'insert into cohort_allocation (id, cohort_id, company_id, module_id, entry_day, status, notes) values (?, ?, ?, ?, ?, ?, ?)'
-  );
-  allocations.run('all-01', 'coh-01', 'comp-01', 'mod-03', 4, 'Confirmado', 'Entrou no modulo de montagem');
-  allocations.run('all-02', 'coh-02', 'comp-03', 'mod-01', 1, 'Previsto', null);
+  const insertCostCenter = db.prepare(`
+    insert or ignore into financial_cost_center (id, organization_id, name, code, is_active, created_at, updated_at)
+    values (?, ?, ?, ?, ?, ?, ?)
+  `);
+  [
+    ['fcc-op', 'Operacao', 'OP'],
+    ['fcc-com', 'Comercial', 'COM'],
+    ['fcc-fin', 'Financeiro', 'FIN']
+  ].forEach(([id, name, code]) => {
+    insertCostCenter.run(id, organizationId, name, code, 1, createdAt, createdAt);
+  });
 
-  const prereq = db.prepare(
-    'insert or ignore into module_prerequisite (module_id, prerequisite_module_id) values (?, ?)'
-  );
-  modules
-    .filter((item) => item[1] !== 'MOD-01')
-    .forEach((item) => prereq.run(item[0], 'mod-01'));
+  const insertPaymentMethod = db.prepare(`
+    insert or ignore into financial_payment_method (id, organization_id, name, kind, is_active, created_at, updated_at)
+    values (?, ?, ?, ?, ?, ?, ?)
+  `);
+  [
+    ['fpm-pix', 'PIX', 'pix'],
+    ['fpm-boleto', 'Boleto', 'boleto'],
+    ['fpm-transfer', 'Transferencia', 'transfer']
+  ].forEach(([id, name, kind]) => {
+    insertPaymentMethod.run(id, organizationId, name, kind, 1, createdAt, createdAt);
+  });
+
+  const insertTransaction = db.prepare(`
+    insert or ignore into financial_transaction (
+      id, organization_id, company_id, financial_entity_id, financial_account_id, financial_category_id,
+      kind, status, amount_cents, issue_date, due_date, settlement_date, competence_date, note, created_at, updated_at, is_deleted
+    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+  `);
+  const transactions = [
+    ['ftxn-001', 'fent-itau-bba', 'facc-itau', 'fcat-patrocinio', 'income', 'settled', 15000000, threeDaysAgo, twoDaysAgo, twoDaysAgo, twoDaysAgo, 'Patrocinio Itau BBA'],
+    ['ftxn-002', 'fent-joao-silva', 'facc-itau', 'fcat-cachê', 'expense', 'settled', 2500000, threeDaysAgo, yesterday, yesterday, yesterday, 'Cache Maestro Silva'],
+    ['ftxn-003', 'fent-estudio-harmonia', 'facc-itau', 'fcat-operacional', 'expense', 'settled', 850000, twoDaysAgo, today, today, today, 'Aluguel Sala de Ensaio'],
+    ['ftxn-004', 'fent-sympla', 'facc-itau', 'fcat-bilheteria', 'income', 'open', 4280000, today, nextWeek, null, today, 'Venda de Ingressos — Temporada Verao'],
+    ['ftxn-005', 'fent-bradesco', 'facc-itau', 'fcat-patrocinio', 'income', 'planned', 8000000, today, nextMonth, null, nextMonth, 'Patrocinio Bradesco Cultural'],
+    ['ftxn-006', 'fent-sesc', 'facc-itau', 'fcat-servicos', 'income', 'settled', 2200000, yesterday, today, today, today, 'Apresentacao SESC Pompeia'],
+    ['ftxn-007', 'fent-porto', 'facc-itau', 'fcat-seguros', 'expense', 'open', 680000, today, nextTwoWeeks, null, today, 'Seguro de Instrumentos'],
+    ['ftxn-008', 'fent-ecad', 'facc-itau', 'fcat-impostos', 'expense', 'overdue', 420000, yesterday, yesterday, null, yesterday, 'ECAD — Direitos Autorais'],
+    ['ftxn-009', null, 'facc-caixa', null, 'expense', 'open', 195000, today, nextWeek, null, today, 'Despesa ainda sem categoria'],
+    ['ftxn-010', 'fent-itau-bba', 'facc-itau', 'fcat-servicos', 'income', 'settled', 3000000, twoDaysAgo, yesterday, yesterday, yesterday, 'Receita de consultoria']
+  ] as const;
+  transactions.forEach((row) => {
+    insertTransaction.run(
+      row[0],
+      organizationId,
+      companyId,
+      row[1],
+      row[2],
+      row[3],
+      row[4],
+      row[5],
+      row[6],
+      row[7],
+      row[8],
+      row[9],
+      row[10],
+      row[11],
+      createdAt,
+      createdAt
+    );
+  });
+
+  const insertReceivable = db.prepare(`
+    insert or ignore into financial_receivable (
+      id, organization_id, company_id, financial_transaction_id, financial_entity_id, financial_account_id, financial_category_id,
+      customer_name, description, amount_cents, status, issue_date, due_date, received_at, note, created_at, updated_at
+    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  [
+    ['frec-001', 'ftxn-004', 'fent-sympla', 'facc-itau', 'fcat-bilheteria', 'Sympla', 'Recebivel bilheteria aberto', 4280000, 'open', today, nextWeek, null, 'Bilheteria em aberto'],
+    ['frec-002', 'ftxn-005', 'fent-bradesco', 'facc-itau', 'fcat-patrocinio', 'Bradesco Cultural', 'Patrocinio futuro', 8000000, 'planned', today, nextMonth, null, 'Previsto para proximo mes'],
+    ['frec-003', 'ftxn-001', 'fent-itau-bba', 'facc-itau', 'fcat-patrocinio', 'Itau BBA', 'Patrocinio recebido', 15000000, 'received', threeDaysAgo, twoDaysAgo, twoDaysAgo, 'Ja liquidado'],
+    ['frec-004', null, 'fent-sesc', 'facc-itau', 'fcat-servicos', 'SESC', 'Recebivel em atraso', 3500000, 'overdue', threeDaysAgo, yesterday, null, 'Cobrar cliente'],
+    ['frec-005', null, 'fent-itau-bba', 'facc-itau', 'fcat-servicos', 'Itau BBA', 'Recebimento parcial', 1800000, 'partial', yesterday, nextTwoWeeks, null, 'Falta segunda parcela']
+  ].forEach((row) => {
+    insertReceivable.run(row[0], organizationId, companyId, row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8], row[9], row[10], row[11], row[12], createdAt, createdAt);
+  });
+
+  const insertPayable = db.prepare(`
+    insert or ignore into financial_payable (
+      id, organization_id, company_id, financial_transaction_id, financial_entity_id, financial_account_id, financial_category_id,
+      supplier_name, description, amount_cents, status, issue_date, due_date, paid_at, note, created_at, updated_at
+    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  [
+    ['fpay-001', 'ftxn-007', 'fent-porto', 'facc-itau', 'fcat-seguros', 'Porto Seguro', 'Seguro mensal', 680000, 'open', today, nextTwoWeeks, null, 'Seguro recorrente'],
+    ['fpay-002', 'ftxn-008', 'fent-ecad', 'facc-itau', 'fcat-impostos', 'ECAD', 'Direitos autorais', 420000, 'overdue', threeDaysAgo, yesterday, null, 'Pagamento atrasado'],
+    ['fpay-003', 'ftxn-003', 'fent-estudio-harmonia', 'facc-itau', 'fcat-operacional', 'Estudio Harmonia', 'Aluguel sala', 850000, 'paid', twoDaysAgo, today, today, 'Pago hoje'],
+    ['fpay-004', null, 'fent-joao-silva', 'facc-itau', 'fcat-cachê', 'Joao Silva', 'Cache vence hoje', 320000, 'open', yesterday, today, null, 'Urgente'],
+    ['fpay-005', null, 'fent-estudio-harmonia', 'facc-itau', 'fcat-operacional', 'Estudio Harmonia', 'Pagamento em breve', 8500000, 'planned', today, nextWeek, null, 'Planejado para a proxima semana']
+  ].forEach((row) => {
+    insertPayable.run(row[0], organizationId, companyId, row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8], row[9], row[10], row[11], row[12], createdAt, createdAt);
+  });
+
+  const insertImportJob = db.prepare(`
+    insert or ignore into financial_import_job (
+      id, organization_id, company_id, import_type, source_file_name, source_file_mime_type, source_file_size_bytes,
+      status, total_rows, processed_rows, error_rows, error_summary, created_by, finished_at, created_at, updated_at
+    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  [
+    ['fimp-001', 'OFX', 'extrato-abril.ofx', 'application/x-ofx', 48012, 'completed', 6, 6, 0, null, `${createdAt}`, `${createdAt}`],
+    ['fimp-002', 'CSV', 'extrato-recebiveis.csv', 'text/csv', 21012, 'completed', 3, 3, 0, null, `${createdAt}`, `${createdAt}`]
+  ].forEach((row) => {
+    insertImportJob.run(row[0], organizationId, companyId, row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8], row[9], 'seed', row[10], createdAt, createdAt);
+  });
+
+  const insertStatementEntry = db.prepare(`
+    insert or ignore into financial_bank_statement_entry (
+      id, organization_id, company_id, financial_account_id, financial_import_job_id, statement_date, posted_at,
+      amount_cents, description, reference_code, balance_cents, source, source_ref, created_at, updated_at
+    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  [
+    ['fstmt-001', 'facc-itau', 'fimp-001', twoDaysAgo, twoDaysAgo, 15000000, 'Credito patrocinio Itau', 'ITAU001', 15000000, 'ofx', 'linha-1'],
+    ['fstmt-002', 'facc-itau', 'fimp-001', yesterday, yesterday, -2500000, 'Pagamento cache Joao Silva', 'ITAU002', 12500000, 'ofx', 'linha-2'],
+    ['fstmt-003', 'facc-itau', 'fimp-001', today, today, -850000, 'Pagamento aluguel estudio', 'ITAU003', 11650000, 'ofx', 'linha-3'],
+    ['fstmt-004', 'facc-itau', 'fimp-001', today, today, -320000, 'Cache vence hoje', 'ITAU004', 11330000, 'ofx', 'linha-4'],
+    ['fstmt-005', 'facc-itau', 'fimp-002', nextWeek, nextWeek, 4280000, 'Recebimento Sympla', 'CSV001', 15610000, 'csv', 'linha-5'],
+    ['fstmt-006', 'facc-itau', 'fimp-002', nextWeek, nextWeek, -8500000, 'Pagamento Estudio', 'CSV002', 7110000, 'csv', 'linha-6']
+  ].forEach((row) => {
+    insertStatementEntry.run(row[0], organizationId, companyId, row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8], row[9], row[10], createdAt, createdAt);
+  });
+
+  const insertMatch = db.prepare(`
+    insert or ignore into financial_reconciliation_match (
+      id, organization_id, company_id, financial_bank_statement_entry_id, financial_transaction_id,
+      match_type, match_status, matched_amount_cents, matched_at, matched_by, note, created_at, updated_at
+    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  [
+    ['fmatch-001', 'fstmt-001', 'ftxn-001', 'seed', 'matched', 15000000, twoDaysAgo, 'seed', 'confidence=0.9800'],
+    ['fmatch-002', 'fstmt-002', 'ftxn-002', 'seed', 'matched', 2500000, yesterday, 'seed', 'confidence=0.9600'],
+    ['fmatch-003', 'fstmt-003', 'ftxn-003', 'seed', 'matched', 850000, today, 'seed', 'confidence=0.9500']
+  ].forEach((row) => {
+    insertMatch.run(row[0], organizationId, companyId, row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8], createdAt, createdAt);
+  });
+
+  const insertDebt = db.prepare(`
+    insert or ignore into financial_debt (
+      id, organization_id, company_id, financial_payable_id, financial_receivable_id, financial_transaction_id,
+      debt_type, status, principal_amount_cents, outstanding_amount_cents, due_date, settled_at, note, created_at, updated_at
+    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  [
+    ['fdeb-001', 'fpay-002', null, 'ftxn-008', 'tributaria', 'open', 420000, 420000, nextMonth, null, 'ECAD ainda em aberto'],
+    ['fdeb-002', null, 'frec-004', null, 'comercial', 'partial', 3500000, 1200000, nextTwoMonths, null, 'Recebivel renegociado']
+  ].forEach((row) => {
+    insertDebt.run(row[0], organizationId, companyId, row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8], row[9], row[10], createdAt, createdAt);
+  });
+}
+
+export function seedDb() {
+  if (!hasSeed()) {
+
+    const modules: Array<[string, string, string, string, number, string, number]> = [
+      ['mod-01', 'MOD-01', 'Instalacao', 'Instalacao TopSolid', 1, 'Iniciante', 1],
+      ['mod-02', 'MOD-02', 'CAD', 'TopSolid Design Basico', 3, 'Iniciante', 1],
+      ['mod-03', 'MOD-03', 'CAD', 'TopSolid Montagem', 2, 'Intermediario', 1],
+      ['mod-04', 'MOD-04', 'CAD', 'Detalhamento 2D', 2, 'Intermediario', 0],
+      ['mod-05', 'MOD-05', 'CAM', 'TopSolid CAM Basico', 3, 'Intermediario', 1],
+      ['mod-06', 'MOD-06', 'CAM', 'TopSolid CAM Avancado', 2, 'Avancado', 0]
+    ];
+
+    const companies: Array<[string, string, string, string, number]> = [
+      ['comp-01', 'Metal Forte', 'Ativo', 'Cliente industrial', 0],
+      ['comp-02', 'Usinagem Alpha', 'Ativo', 'Entrou em 2025', 0],
+      ['comp-03', 'Mecanica Beta', 'Ativo', 'Pendencia de instalacao', 0],
+      ['comp-04', 'Projeto Gama', 'Inativo', 'Conta em pausa', 0]
+    ];
+
+    const techs: Array<[string, string, string]> = [
+      ['tech-01', 'Carlos Lima', 'Disponivel no periodo da manha'],
+      ['tech-02', 'Ana Souza', 'Especialista em CAD/CAM'],
+      ['tech-03', 'Paulo Reis', 'Foco em implantacao e consultoria']
+    ];
+
+    const insertModule = db.prepare(
+      'insert into module_template (id, code, category, name, duration_days, profile, is_mandatory) values (?, ?, ?, ?, ?, ?, ?)'
+    );
+    modules.forEach((m) => insertModule.run(...m));
+
+    const insertCompany = db.prepare('insert into company (id, name, status, notes, priority) values (?, ?, ?, ?, ?)');
+    companies.forEach((c) => insertCompany.run(...c));
+
+    const insertTech = db.prepare('insert into technician (id, name, availability_notes) values (?, ?, ?)');
+    techs.forEach((t) => insertTech.run(...t));
+
+    const insertSkill = db.prepare('insert into technician_skill (technician_id, module_id) values (?, ?)');
+    insertSkill.run('tech-01', 'mod-01');
+    insertSkill.run('tech-01', 'mod-02');
+    insertSkill.run('tech-01', 'mod-03');
+    insertSkill.run('tech-02', 'mod-02');
+    insertSkill.run('tech-02', 'mod-03');
+    insertSkill.run('tech-02', 'mod-05');
+    insertSkill.run('tech-02', 'mod-06');
+    insertSkill.run('tech-03', 'mod-01');
+    insertSkill.run('tech-03', 'mod-04');
+
+    const progress = db.prepare(
+      'insert into company_module_progress (id, company_id, module_id, status, completed_at) values (?, ?, ?, ?, ?)'
+    );
+    progress.run('prog-01', 'comp-01', 'mod-01', 'Concluido', '2025-12-10');
+    progress.run('prog-02', 'comp-01', 'mod-02', 'Concluido', '2026-01-12');
+    progress.run('prog-03', 'comp-02', 'mod-01', 'Concluido', '2026-01-03');
+    progress.run('prog-04', 'comp-02', 'mod-02', 'Planejado', null);
+
+    const activation = db.prepare(
+      'insert or ignore into company_module_activation (company_id, module_id, is_enabled) values (?, ?, 1)'
+    );
+    companies.forEach((company) => {
+      modules.forEach((module) => {
+        activation.run(company[0], module[0]);
+      });
+    });
+
+    const cohorts = db.prepare(
+      'insert into cohort (id, code, name, start_date, technician_id, status, capacity_companies, notes) values (?, ?, ?, ?, ?, ?, ?, ?)'
+    );
+    cohorts.run('coh-01', 'TUR-001', 'CAD Basico + Montagem', '2026-02-20', 'tech-02', 'Confirmada', 8, null);
+    cohorts.run('coh-02', 'TUR-002', 'Instalacao + CAD Basico', '2026-02-27', 'tech-01', 'Planejada', 10, null);
+
+    const blocks = db.prepare(
+      'insert into cohort_module_block (id, cohort_id, module_id, order_in_cohort, start_day_offset, duration_days) values (?, ?, ?, ?, ?, ?)'
+    );
+    blocks.run('blk-01', 'coh-01', 'mod-02', 1, 1, 3);
+    blocks.run('blk-02', 'coh-01', 'mod-03', 2, 4, 2);
+    blocks.run('blk-03', 'coh-02', 'mod-01', 1, 1, 1);
+    blocks.run('blk-04', 'coh-02', 'mod-02', 2, 2, 3);
+
+    const allocations = db.prepare(
+      'insert into cohort_allocation (id, cohort_id, company_id, module_id, entry_day, status, notes) values (?, ?, ?, ?, ?, ?, ?)'
+    );
+    allocations.run('all-01', 'coh-01', 'comp-01', 'mod-03', 4, 'Confirmado', 'Entrou no modulo de montagem');
+    allocations.run('all-02', 'coh-02', 'comp-03', 'mod-01', 1, 'Previsto', null);
+
+    const prereq = db.prepare(
+      'insert or ignore into module_prerequisite (module_id, prerequisite_module_id) values (?, ?)'
+    );
+    modules
+      .filter((item) => item[1] !== 'MOD-01')
+      .forEach((item) => prereq.run(item[0], 'mod-01'));
+  }
+
+  seedFinanceDemoData();
 }
 
 export function clearAllData() {
   db.exec(`
+    delete from financial_reconciliation_match;
+    delete from financial_bank_statement_entry;
+    delete from financial_import_job;
+    delete from financial_debt;
+    delete from financial_receivable;
+    delete from financial_payable;
+    delete from financial_transaction;
+    delete from financial_entity_default_profile;
+    delete from financial_entity_tag_map;
+    delete from financial_entity_tag;
+    delete from financial_payment_method;
+    delete from financial_cost_center;
+    delete from financial_category;
+    delete from financial_account;
+    delete from financial_entity;
     delete from portal_ticket_webhook_queue;
     delete from portal_ticket;
     delete from portal_ticket_attachment;

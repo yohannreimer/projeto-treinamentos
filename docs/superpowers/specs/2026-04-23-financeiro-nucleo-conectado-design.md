@@ -1,5 +1,45 @@
 # Design: Financeiro Núcleo Conectado (Fase 1)
 
+## Status de Implementação
+Atualizado em 2026-04-23.
+
+A Fase 1 está implementada no workspace principal, ainda sem commit/push por decisão do usuário.
+
+Itens concluídos:
+
+- schema do núcleo conectado com tags, defaults por contexto, centro de custo e forma de pagamento nos lançamentos;
+- APIs de tags, perfis padrão, qualidade de dados, correção e filtros de período;
+- cadastro inteligente com classificações e defaults por contexto;
+- contas a pagar/receber com busca de entidade, criação assistida, defaults, campos de classificação e filtros locais compactos;
+- inbox `Conciliação & Revisão` com aba de dados incompletos e painel lateral de correção;
+- correção com opção de salvar padrão para a entidade;
+- Visão Geral com filtro de período, mini-gráficos reais e resumo de qualidade;
+- qualidade de dados computada para contas a pagar, contas a receber e movimentações;
+- testes principais de backend/frontend e build passando.
+
+Verificações executadas:
+
+```bash
+PATH="/opt/homebrew/opt/node@22/bin:$PATH" npm run test -w apps/backend -- finance
+PATH="/opt/homebrew/opt/node@22/bin:$PATH" npm run test -w apps/frontend -- FinanceCadastrosPage FinancePayablesPage FinanceReceivablesPage FinanceReconciliationPage FinanceOverviewPage
+PATH="/opt/homebrew/opt/node@22/bin:$PATH" npm run build
+git diff --check
+```
+
+Resultado:
+
+- backend: 69 testes passando;
+- frontend financeiro alvo: 18 testes passando;
+- build backend/frontend passando;
+- `git diff --check` limpo;
+- aviso restante apenas do Vite sobre chunk acima de 500 kB.
+
+Pendente antes de encerramento definitivo:
+
+- QA visual/manual em localhost pelo usuário;
+- ajustes finos após análise visual;
+- commit/push somente depois da validação.
+
 ## 1. Resumo Executivo
 Este design define a primeira fase funcional do módulo financeiro após a validação visual inicial.
 
@@ -683,4 +723,3 @@ A Fase 1 está pronta quando:
 - mini-gráficos usam dados reais agregados;
 - todos os fluxos principais têm testes;
 - a interface continua limpa e coerente com o visual atual.
-

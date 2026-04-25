@@ -1,6 +1,7 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { hasAnyPermission, internalSessionStore } from '../../auth/session';
 import { financeApi, type FinanceDebt, type FinanceDebtStatus } from '../api';
+import { FinancePeriodFilter } from '../components/FinancePeriodFilter';
 import {
   FinanceEmptyState,
   FinanceErrorState,
@@ -10,6 +11,7 @@ import {
   FinancePanel,
   FinanceTableShell
 } from '../components/FinancePrimitives';
+import { resolveFinancePeriodWindow, useFinancePeriod } from '../hooks/useFinancePeriod';
 import { formatCurrency, formatDate, parseAmountToCents } from '../utils/financeFormatters';
 
 type DebtForm = {
@@ -23,7 +25,7 @@ type DebtForm = {
 };
 
 const initialForm: DebtForm = {
-  debt_type: 'operacional',
+  debt_type: '',
   status: 'open',
   principal: '',
   outstanding: '',
@@ -40,6 +42,7 @@ function statusLabel(status: FinanceDebtStatus): string {
 }
 
 export function FinanceDebtsPage() {
+  const { period, setPeriod } = useFinancePeriod();
   const [debts, setDebts] = useState<FinanceDebt[]>([]);
   const [form, setForm] = useState<DebtForm>(initialForm);
   const [loading, setLoading] = useState(true);
@@ -49,6 +52,13 @@ export function FinanceDebtsPage() {
 
   const session = internalSessionStore.read();
   const canWrite = hasAnyPermission(session?.user, ['finance.write']);
+  const periodWindow = useMemo(() => resolveFinancePeriodWindow(period), [period]);
+  const visibleDebts = useMemo(() => debts.filter((debt) => {
+    if (!periodWindow.from || !periodWindow.to) return true;
+    const date = debt.due_date ?? debt.settled_at;
+    if (!date) return false;
+    return date >= periodWindow.from && date <= periodWindow.to;
+  }), [debts, periodWindow.from, periodWindow.to]);
 
   async function reload() {
     setLoading(true);
@@ -106,6 +116,7 @@ export function FinanceDebtsPage() {
         eyebrow="Dívidas e parcelamentos"
         title="Passivos controlados"
         description="Registro de obrigações financeiras para rastrear principal, saldo pendente e liquidação."
+        meta={<FinancePeriodFilter value={period} onChange={setPeriod} />}
       />
 
       <div className="finance-page-stack">
@@ -157,12 +168,12 @@ export function FinanceDebtsPage() {
           </form>
         </FinancePanel>
 
-        <FinanceTableShell title="Passivos registrados" description={`${debts.length} dívida(s) no controle.`}>
+        <FinanceTableShell title="Passivos registrados" description={`${visibleDebts.length} dívida(s) no filtro.`}>
           {error ? <FinanceErrorState title="Falha ao carregar dívidas." description={error} /> : null}
           {message ? <p className="finance-inline-message finance-inline-message--success">{message}</p> : null}
           {loading ? (
             <FinanceLoadingState title="Carregando dívidas..." />
-          ) : debts.length === 0 ? (
+          ) : visibleDebts.length === 0 ? (
             <FinanceEmptyState title="Nenhuma dívida cadastrada." />
           ) : (
             <table aria-label="Dívidas registradas">
@@ -177,7 +188,7 @@ export function FinanceDebtsPage() {
                 </tr>
               </thead>
               <tbody>
-                {debts.map((item) => (
+                {visibleDebts.map((item) => (
                   <tr key={item.id}>
                     <td>
                       <strong>{item.debt_type}</strong>

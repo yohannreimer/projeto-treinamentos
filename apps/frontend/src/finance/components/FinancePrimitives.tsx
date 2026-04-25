@@ -19,7 +19,7 @@ export function FinancePageHeader({
   meta?: ReactNode;
 }) {
   return (
-    <header className="finance-page-header">
+    <header className={`finance-page-header${meta ? ' finance-page-header--with-meta' : ''}`}>
       <div className="finance-page-header__copy">
         <small>{eyebrow}</small>
         <h1>{title}</h1>

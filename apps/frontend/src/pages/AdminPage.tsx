@@ -46,12 +46,23 @@ type InternalAuditRow = {
   duration_ms: number | null;
 };
 
+const FINANCE_PERMISSION_KEYS = new Set<InternalPermission>([
+  'finance.read',
+  'finance.write',
+  'finance.approve',
+  'finance.reconcile',
+  'finance.close',
+  'finance.billing'
+]);
+
 const ROLE_PRESETS: Record<InternalRole, InternalPermission[]> = {
   supremo: [...INTERNAL_PERMISSION_KEYS],
-  intermediario: INTERNAL_PERMISSION_KEYS.filter((item) => item !== 'admin'),
+  intermediario: INTERNAL_PERMISSION_KEYS.filter((item) => item !== 'admin' && !FINANCE_PERMISSION_KEYS.has(item)),
   junior: ['calendar', 'cohorts', 'implementation', 'support', 'licenses', 'docs'],
   custom: []
 };
+
+const CUSTOM_PERMISSION_KEYS = INTERNAL_PERMISSION_KEYS.filter((permission) => !FINANCE_PERMISSION_KEYS.has(permission));
 
 const CURRENT_CLIENTS = [
   'Krah do Brasil',
@@ -509,6 +520,10 @@ export function AdminPage() {
     ));
   }
 
+  function customPermissionsOnly(permissions: InternalPermission[]) {
+    return permissions.filter((permission) => !FINANCE_PERMISSION_KEYS.has(permission));
+  }
+
   async function createInternalUserAction() {
     if (!newInternalUsername.trim()) {
       setMessage('Informe o login do usuário interno.');
@@ -518,7 +533,7 @@ export function AdminPage() {
       setMessage('Informe a senha inicial do usuário interno.');
       return;
     }
-    const permissions = newInternalRole === 'custom' ? newInternalPermissions : ROLE_PRESETS[newInternalRole];
+    const permissions = newInternalRole === 'custom' ? customPermissionsOnly(newInternalPermissions) : ROLE_PRESETS[newInternalRole];
 
     setCreatingInternalUser(true);
     setMessage('');
@@ -546,7 +561,7 @@ export function AdminPage() {
 
   async function saveInternalUserAction() {
     if (!selectedInternalUser) return;
-    const permissions = editInternalRole === 'custom' ? editInternalPermissions : ROLE_PRESETS[editInternalRole];
+    const permissions = editInternalRole === 'custom' ? customPermissionsOnly(editInternalPermissions) : ROLE_PRESETS[editInternalRole];
 
     setSavingInternalUser(true);
     setMessage('');
@@ -726,7 +741,7 @@ export function AdminPage() {
               </label>
               {newInternalRole === 'custom' ? (
                 <div className="check-grid admin-permission-grid">
-                  {INTERNAL_PERMISSION_KEYS.map((permission) => (
+                  {CUSTOM_PERMISSION_KEYS.map((permission) => (
                     <label key={permission}>
                       <input
                         type="checkbox"
@@ -801,7 +816,7 @@ export function AdminPage() {
                   </label>
                   {editInternalRole === 'custom' ? (
                     <div className="check-grid admin-permission-grid">
-                      {INTERNAL_PERMISSION_KEYS.map((permission) => (
+                      {CUSTOM_PERMISSION_KEYS.map((permission) => (
                         <label key={permission}>
                           <input
                             type="checkbox"

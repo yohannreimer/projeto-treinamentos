@@ -27,6 +27,15 @@ export const INTERNAL_PERMISSION_KEYS = [
 ] as const;
 export type InternalPermissionKey = (typeof INTERNAL_PERMISSION_KEYS)[number];
 
+const FINANCE_PERMISSION_KEYS = new Set<InternalPermissionKey>([
+  'finance.read',
+  'finance.write',
+  'finance.approve',
+  'finance.reconcile',
+  'finance.close',
+  'finance.billing'
+]);
+
 export type InternalAuthContext = {
   internal_user_id: string;
   username: string;
@@ -105,7 +114,7 @@ const INTERNAL_AUDIT_RETENTION_DAYS = 30;
 
 const ROLE_PERMISSION_PRESETS: Record<InternalRole, InternalPermissionKey[]> = {
   supremo: [...INTERNAL_PERMISSION_KEYS],
-  intermediario: INTERNAL_PERMISSION_KEYS.filter((item) => item !== 'admin'),
+  intermediario: INTERNAL_PERMISSION_KEYS.filter((item) => item !== 'admin' && !FINANCE_PERMISSION_KEYS.has(item)),
   junior: ['calendar', 'cohorts', 'implementation', 'support', 'licenses', 'docs'],
   custom: []
 };
@@ -209,7 +218,7 @@ export function resolvePermissionsForRole(role: InternalRole, explicit?: unknown
 
   const normalizedExplicit = normalizePermissions(explicit);
   if (normalizedExplicit.length > 0) {
-    return normalizedExplicit;
+    return normalizedExplicit.filter((permission) => !FINANCE_PERMISSION_KEYS.has(permission));
   }
   return readRolePreset(role);
 }

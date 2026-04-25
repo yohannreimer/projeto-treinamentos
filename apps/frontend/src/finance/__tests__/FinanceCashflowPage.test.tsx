@@ -85,11 +85,33 @@ test('cashflow page renders the 30 60 90 day horizon controls', async () => {
   expect(screen.getAllByRole('button', { name: /60 dias/i }).length).toBeGreaterThan(0);
   expect(screen.getAllByRole('button', { name: /90 dias/i }).length).toBeGreaterThan(0);
   expect(screen.getByText('Fluxo de caixa projetado')).toBeInTheDocument();
-  expect(screen.getByText('Compressão de caixa')).toBeInTheDocument();
+  expect(await screen.findByText('Compressão de caixa')).toBeInTheDocument();
 
   await userEvent.click(screen.getAllByRole('button', { name: /30 dias/i })[0]);
 
   await waitFor(() => {
     expect(mocks.getCashflow).toHaveBeenCalledWith(30);
+  });
+});
+
+test('cashflow page allows switching across all horizon buttons', async () => {
+  const user = userEvent.setup();
+  render(<FinanceCashflowPage />);
+
+  expect(await screen.findByText('Resumo principal — 90 dias')).toBeInTheDocument();
+
+  await user.click(screen.getAllByRole('button', { name: /60 dias/i })[0]);
+  await waitFor(() => {
+    expect(mocks.getCashflow).toHaveBeenCalledWith(60);
+  });
+
+  await user.click(screen.getAllByRole('button', { name: /30 dias/i })[0]);
+  await waitFor(() => {
+    expect(mocks.getCashflow).toHaveBeenCalledWith(30);
+  });
+
+  await user.click(screen.getAllByRole('button', { name: /90 dias/i })[0]);
+  await waitFor(() => {
+    expect(mocks.getCashflow).toHaveBeenCalledWith(90);
   });
 });

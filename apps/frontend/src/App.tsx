@@ -25,12 +25,15 @@ import { FinancePayablesPage } from './finance/pages/FinancePayablesPage';
 import { FinanceReportsPage } from './finance/pages/FinanceReportsPage';
 import { FinanceReconciliationPage } from './finance/pages/FinanceReconciliationPage';
 import { FinanceTransactionsPage } from './finance/pages/FinanceTransactionsPage';
+import { FinanceAdvancedPage } from './finance/pages/FinanceAdvancedPage';
+import { FinanceSimulationPage } from './finance/pages/FinanceSimulationPage';
 import { api } from './services/api';
 import {
   INTERNAL_AUTH_CHANGED_EVENT,
   hasAnyPermission,
   internalSessionStore,
   type InternalPermission,
+  type InternalRole,
   type InternalSessionData,
   type InternalSessionUser
 } from './auth/session';
@@ -48,14 +51,19 @@ const FINANCE_PERMISSIONS: InternalPermission[] = [
 function ProtectedRoute({
   user,
   permissions,
+  requiredRole,
   fallback,
   children
 }: {
   user: InternalSessionUser;
   permissions: InternalPermission[];
+  requiredRole?: InternalRole;
   fallback: string;
   children: ReactNode;
 }) {
+  if (requiredRole && user.role !== requiredRole) {
+    return <Navigate to={fallback} replace />;
+  }
   if (!hasAnyPermission(user, permissions)) {
     return <Navigate to={fallback} replace />;
   }
@@ -68,7 +76,7 @@ function FinanceModuleRoutes({ user, defaultRoute }: { user: InternalSessionUser
       <Route
         path="/financeiro/*"
         element={(
-          <ProtectedRoute user={user} permissions={FINANCE_PERMISSIONS} fallback={defaultRoute}>
+          <ProtectedRoute user={user} permissions={FINANCE_PERMISSIONS} requiredRole="supremo" fallback={defaultRoute}>
             <FinanceWorkspace />
           </ProtectedRoute>
         )}
@@ -82,6 +90,8 @@ function FinanceModuleRoutes({ user, defaultRoute }: { user: InternalSessionUser
         <Route path="cashflow" element={<FinanceCashflowPage />} />
         <Route path="reports" element={<FinanceReportsPage />} />
         <Route path="cadastros" element={<FinanceCadastrosPage />} />
+        <Route path="simulation" element={<FinanceSimulationPage />} />
+        <Route path="advanced" element={<FinanceAdvancedPage />} />
         <Route path="*" element={<Navigate to="overview" replace />} />
       </Route>
       <Route path="*" element={<Navigate to={defaultRoute} replace />} />

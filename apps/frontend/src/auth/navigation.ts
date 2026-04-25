@@ -1,9 +1,10 @@
-import { hasAnyPermission, type InternalPermission, type InternalSessionUser } from './session';
+import { hasAnyPermission, type InternalPermission, type InternalRole, type InternalSessionUser } from './session';
 
 export type AppNavItem = {
   to: string;
   label: string;
   permissions: InternalPermission[];
+  roles?: InternalRole[];
 };
 
 export const APP_NAV_ITEMS: AppNavItem[] = [
@@ -19,6 +20,7 @@ export const APP_NAV_ITEMS: AppNavItem[] = [
   {
     to: '/financeiro',
     label: 'Financeiro',
+    roles: ['supremo'],
     permissions: [
       'finance.read',
       'finance.write',
@@ -50,15 +52,24 @@ export function canAccessPath(user: InternalSessionUser | null | undefined, path
   if (!route) {
     return false;
   }
+  if (route.roles && (!user || !route.roles.includes(user.role))) {
+    return false;
+  }
   return canAccessPermissions(user, route.permissions);
 }
 
 export function defaultRouteForUser(user: InternalSessionUser | null | undefined): string {
   if (!user) return '/calendario';
-  const visible = APP_NAV_ITEMS.find((item) => canAccessPermissions(user, item.permissions));
+  const visible = APP_NAV_ITEMS.find((item) => {
+    if (item.roles && !item.roles.includes(user.role)) return false;
+    return canAccessPermissions(user, item.permissions);
+  });
   return visible?.to ?? '/calendario';
 }
 
 export function visibleNavItemsForUser(user: InternalSessionUser | null | undefined): AppNavItem[] {
-  return APP_NAV_ITEMS.filter((item) => canAccessPermissions(user, item.permissions));
+  return APP_NAV_ITEMS.filter((item) => {
+    if (item.roles && (!user || !item.roles.includes(user.role))) return false;
+    return canAccessPermissions(user, item.permissions);
+  });
 }

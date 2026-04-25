@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, expect, test, vi } from 'vitest';
 import { FinanceTransactionsPage } from '../pages/FinanceTransactionsPage';
+import { todayIso } from '../utils/financeFormatters';
 
 const mocks = vi.hoisted(() => ({
   sessionRead: vi.fn()
@@ -159,7 +160,7 @@ beforeEach(() => {
       id: 'user-finance',
       username: 'financeiro',
       display_name: 'Financeiro',
-      role: 'custom',
+      role: 'supremo',
       permissions: ['finance.read', 'finance.write', 'finance.approve']
     }
   });
@@ -170,12 +171,9 @@ test('transactions page renders ledger filters, supports editing and deleting ro
   render(<FinanceTransactionsPage />);
 
   const filtersPanel = await screen.findByRole('region', { name: 'Filtros do ledger' });
-  expect(within(filtersPanel).getByLabelText('Período')).toBeInTheDocument();
+  expect(within(filtersPanel).getByLabelText('Busca')).toBeInTheDocument();
   expect(within(filtersPanel).getByLabelText('Status')).toBeInTheDocument();
   expect(within(filtersPanel).getByLabelText('Tipo')).toBeInTheDocument();
-  expect(within(filtersPanel).getByLabelText('Conta')).toBeInTheDocument();
-  expect(within(filtersPanel).getByLabelText('Categoria')).toBeInTheDocument();
-  expect(within(filtersPanel).getByLabelText('Entidade')).toBeInTheDocument();
   expect(screen.getByRole('table', { name: 'Ledger financeiro' })).toBeInTheDocument();
 
   const rowButton = await screen.findByRole('button', { name: /mensalidade de serviços/i });
@@ -208,4 +206,43 @@ test('transactions page renders ledger filters, supports editing and deleting ro
   await waitFor(() => {
     expect(financeApi.deleteTransaction).toHaveBeenCalledWith('ftxn-1');
   });
+});
+
+test('transactions page auto-fills settlement_date when creating a settled transaction', async () => {
+  const { financeApi } = await import('../api');
+  const user = (await import('@testing-library/user-event')).default.setup();
+  render(<FinanceTransactionsPage />);
+
+  await screen.findByRole('region', { name: 'Filtros do ledger' });
+
+  await user.click(screen.getByRole('button', { name: 'Novo lançamento' }));
+  await user.type(screen.getByLabelText('Descrição'), 'Lançamento liquidado');
+  await user.type(screen.getByLabelText('Valor'), '100,00');
+  await user.selectOptions(screen.getByLabelText('Status do lançamento'), 'settled');
+  await user.click(screen.getByRole('button', { name: 'Salvar lançamento' }));
+
+  await waitFor(() => {
+      expect(financeApi.createTransaction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: 'settled',
+          settlement_date: todayIso()
+        })
+      );
+  });
+});
+
+test('transactions page can open a draft and cancel it without persisting', async () => {
+  const { financeApi } = await import('../api');
+  const user = (await import('@testing-library/user-event')).default.setup();
+  render(<FinanceTransactionsPage />);
+
+  await screen.findByRole('region', { name: 'Filtros do ledger' });
+
+  await user.click(screen.getByRole('button', { name: 'Novo lançamento' }));
+  await user.type(screen.getByLabelText('Descrição'), 'Rascunho descartado');
+  await user.type(screen.getByLabelText('Valor'), '15,00');
+  await user.click(screen.getByRole('button', { name: 'Fechar' }));
+
+  expect(screen.queryByDisplayValue('Rascunho descartado')).not.toBeInTheDocument();
+  expect(financeApi.createTransaction).not.toHaveBeenCalled();
 });

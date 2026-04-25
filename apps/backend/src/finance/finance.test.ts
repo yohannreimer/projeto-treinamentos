@@ -7,6 +7,7 @@ import { createApp } from '../app.js';
 import { db, initDb, resetDbConnection } from '../db.js';
 import { createInternalUser } from '../internalAuth.js';
 import { assignTestDbPath } from '../test/testDb.js';
+import { currentFinanceMonthRange, financeOffsetDateKey } from './period.js';
 
 function cleanupDbFiles(dbPath: string) {
   for (const suffix of ['', '-shm', '-wal']) {
@@ -298,7 +299,7 @@ test('initDb cria organization foundation e vincula auth interna ao org default'
       username: 'finance.org.viewer',
       display_name: 'Finance Org Viewer',
       password: 'Senha#123',
-      role: 'custom',
+      role: 'supremo',
       permissions: ['finance.read']
     });
 
@@ -420,6 +421,52 @@ test('initDb cria schema financeiro v1', () => {
       { from: 'company_id', to: 'company_id' },
       { from: 'billing_subscription_id', to: 'id' }
     ]);
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('initDb cria schema do núcleo conectado financeiro', async () => {
+  const dbPath = assignTestDbPath('finance-connected-core-schema');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+
+  const app = createApp({ forceDbRefresh: true, seedDb: true });
+
+  try {
+    assert.ok(app);
+
+    const payableColumns = db.prepare('pragma table_info(financial_payable)').all() as Array<{ name: string }>;
+    const receivableColumns = db.prepare('pragma table_info(financial_receivable)').all() as Array<{ name: string }>;
+    const transactionColumns = db.prepare('pragma table_info(financial_transaction)').all() as Array<{ name: string }>;
+
+    for (const columns of [payableColumns, receivableColumns, transactionColumns]) {
+      assert.ok(columns.some((column) => column.name === 'financial_cost_center_id'));
+      assert.ok(columns.some((column) => column.name === 'financial_payment_method_id'));
+    }
+
+    const tagTable = db.prepare(`
+      select name from sqlite_master where type = 'table' and name = 'financial_entity_tag'
+    `).get();
+    const tagMapTable = db.prepare(`
+      select name from sqlite_master where type = 'table' and name = 'financial_entity_tag_map'
+    `).get();
+    const defaultTable = db.prepare(`
+      select name from sqlite_master where type = 'table' and name = 'financial_entity_default_profile'
+    `).get();
+
+    assert.ok(tagTable);
+    assert.ok(tagMapTable);
+    assert.ok(defaultTable);
+
+    const suggestedTags = db.prepare(`
+      select name from financial_entity_tag where organization_id = ? order by name collate nocase asc
+    `).all('org-holand') as Array<{ name: string }>;
+
+    assert.ok(suggestedTags.some((row) => row.name === 'Funcionário'));
+    assert.ok(suggestedTags.some((row) => row.name === 'Banco'));
+    assert.ok(suggestedTags.some((row) => row.name === 'Imposto'));
   } finally {
     db.close();
     cleanupDbFiles(dbPath);
@@ -934,7 +981,7 @@ test('initDb reconstroi financial_account e financial_category legados para chav
   }
 });
 
-test('GET /finance/overview bloqueia usuário sem finance.read', async () => {
+test('GET /finance/overview bloqueia usuário não supremo mesmo com permissão financeira', async () => {
   const dbPath = assignTestDbPath('finance-route-auth-403');
   cleanupDbFiles(dbPath);
 
@@ -946,7 +993,7 @@ test('GET /finance/overview bloqueia usuário sem finance.read', async () => {
       display_name: 'Finance Viewer',
       password: 'Senha#123',
       role: 'custom',
-      permissions: ['dashboard']
+      permissions: ['finance.read']
     });
 
     const loginRes = await request(app)
@@ -954,6 +1001,8 @@ test('GET /finance/overview bloqueia usuário sem finance.read', async () => {
       .send({ username: 'finance.viewer', password: 'Senha#123' });
 
     assert.equal(loginRes.status, 200);
+    assert.equal(loginRes.body.user.role, 'custom');
+    assert.equal(loginRes.body.user.permissions.includes('finance.read'), false);
     const token = loginRes.body.token as string;
     assert.equal(typeof token, 'string');
 
@@ -982,7 +1031,7 @@ test('GET /finance/context returns only tenant organization context without comp
       username: 'finance.context',
       display_name: 'Finance Context',
       password: 'Senha#123',
-      role: 'custom',
+      role: 'supremo',
       permissions: ['finance.read']
     });
 
@@ -1028,7 +1077,7 @@ test('POST /finance/transactions cria lançamento manual e persiste', async () =
       username: 'finance.writer',
       display_name: 'Finance Writer',
       password: 'Senha#123',
-      role: 'custom',
+      role: 'supremo',
       permissions: ['finance.write', 'finance.read']
     });
 
@@ -1149,7 +1198,7 @@ test('CRUD base de contas/categorias respeita tenant e vínculos', async () => {
       username: 'finance.catalog',
       display_name: 'Finance Catalog',
       password: 'Senha#123',
-      role: 'custom',
+      role: 'supremo',
       permissions: ['finance.read', 'finance.write']
     });
 
@@ -1207,6 +1256,866 @@ test('CRUD base de contas/categorias respeita tenant e vínculos', async () => {
   }
 });
 
+test('finance cadastros completos editam catálogos, favoritos e detectam duplicidades', async () => {
+  const dbPath = assignTestDbPath('finance-cadastros-completos');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+  try {
+    seedFinanceCompanies();
+    seedFinanceEntity();
+
+    createInternalUser({
+      username: 'finance.phase2',
+      display_name: 'Finance Phase 2',
+      password: 'Senha#123',
+      role: 'supremo',
+      permissions: ['finance.read', 'finance.write']
+    });
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.phase2', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+    const authHeader = { Authorization: `Bearer ${loginRes.body.token}` };
+
+    const accountRes = await request(app)
+      .post('/finance/accounts')
+      .set(authHeader)
+      .send({ name: 'Banco Antigo', kind: 'bank' });
+    assert.equal(accountRes.status, 201);
+
+    const editedAccountRes = await request(app)
+      .patch(`/finance/accounts/${accountRes.body.id}`)
+      .set(authHeader)
+      .send({ name: 'Banco Operacional', account_number: '12345' });
+    assert.equal(editedAccountRes.status, 200);
+    assert.equal(editedAccountRes.body.name, 'Banco Operacional');
+    assert.equal(editedAccountRes.body.account_number, '12345');
+
+    const categoryRes = await request(app)
+      .post('/finance/categories')
+      .set(authHeader)
+      .send({ name: 'Despesa antiga', kind: 'expense' });
+    assert.equal(categoryRes.status, 201);
+
+    const editedCategoryRes = await request(app)
+      .patch(`/finance/categories/${categoryRes.body.id}`)
+      .set(authHeader)
+      .send({ name: 'Folha', kind: 'expense' });
+    assert.equal(editedCategoryRes.status, 200);
+    assert.equal(editedCategoryRes.body.name, 'Folha');
+
+    const costCenterRes = await request(app)
+      .post('/finance/catalog/cost-centers')
+      .set(authHeader)
+      .send({ name: 'Comercial', code: 'COM' });
+    assert.equal(costCenterRes.status, 201);
+
+    const editedCostCenterRes = await request(app)
+      .patch(`/finance/catalog/cost-centers/${costCenterRes.body.id}`)
+      .set(authHeader)
+      .send({ code: 'VEN' });
+    assert.equal(editedCostCenterRes.status, 200);
+    assert.equal(editedCostCenterRes.body.code, 'VEN');
+
+    const paymentRes = await request(app)
+      .post('/finance/catalog/payment-methods')
+      .set(authHeader)
+      .send({ name: 'PIX antigo', kind: 'pix' });
+    assert.equal(paymentRes.status, 201);
+
+    const editedPaymentRes = await request(app)
+      .patch(`/finance/catalog/payment-methods/${paymentRes.body.id}`)
+      .set(authHeader)
+      .send({ name: 'PIX Principal' });
+    assert.equal(editedPaymentRes.status, 200);
+    assert.equal(editedPaymentRes.body.name, 'PIX Principal');
+
+    const favoriteRes = await request(app)
+      .post('/finance/catalog/favorite-combinations')
+      .set(authHeader)
+      .send({
+        name: 'Folha Comercial PIX',
+        context: 'payable',
+        financial_category_id: editedCategoryRes.body.id,
+        financial_cost_center_id: editedCostCenterRes.body.id,
+        financial_account_id: editedAccountRes.body.id,
+        financial_payment_method_id: editedPaymentRes.body.id
+      });
+    assert.equal(favoriteRes.status, 201);
+    assert.equal(favoriteRes.body.financial_category_name, 'Folha');
+    assert.equal(favoriteRes.body.financial_cost_center_name, 'Comercial');
+
+    const favoriteListRes = await request(app)
+      .get('/finance/catalog/favorite-combinations')
+      .set(authHeader);
+    assert.equal(favoriteListRes.status, 200);
+    assert.equal(favoriteListRes.body.length, 1);
+
+    const inactiveFavoriteRes = await request(app)
+      .delete(`/finance/catalog/favorite-combinations/${favoriteRes.body.id}`)
+      .set(authHeader);
+    assert.equal(inactiveFavoriteRes.status, 200);
+    assert.equal(inactiveFavoriteRes.body.is_active, false);
+
+    const editedEntityRes = await request(app)
+      .patch('/finance/entities/entity-holand-supplier')
+      .set(authHeader)
+      .send({ trade_name: 'Fornecedor Holand Editado', is_active: true });
+    assert.equal(editedEntityRes.status, 200);
+    assert.equal(editedEntityRes.body.trade_name, 'Fornecedor Holand Editado');
+
+    const duplicateEntityRes = await request(app)
+      .post('/finance/entities')
+      .set(authHeader)
+      .send({
+        legal_name: 'Fornecedor Holand',
+        trade_name: 'Fornecedor duplicado',
+        document_number: '12.345.678/0001-90',
+        kind: 'supplier'
+      });
+    assert.equal(duplicateEntityRes.status, 201);
+
+    const duplicatesRes = await request(app)
+      .get('/finance/entities/duplicates')
+      .set(authHeader);
+    assert.equal(duplicatesRes.status, 200);
+    assert.ok(duplicatesRes.body.some((group: { reason: string; entities: unknown[] }) =>
+      group.reason === 'document_number' && group.entities.length === 2
+    ));
+
+    const inactiveAccountRes = await request(app)
+      .delete(`/finance/accounts/${accountRes.body.id}`)
+      .set(authHeader);
+    assert.equal(inactiveAccountRes.status, 200);
+    assert.equal(inactiveAccountRes.body.is_active, false);
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('finance entity tags and default profiles can be managed', async () => {
+  const dbPath = assignTestDbPath('finance-entity-default-profiles');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+  try {
+    seedFinanceCompanies();
+    seedFinanceEntity();
+    seedFinanceAccountAndCategory();
+
+    createInternalUser({
+      username: 'finance.defaults',
+      display_name: 'Finance Defaults',
+      password: 'Senha#123',
+      role: 'supremo',
+      permissions: ['finance.read', 'finance.write']
+    });
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.defaults', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+    const authHeader = { Authorization: `Bearer ${loginRes.body.token}` };
+
+    const tagRes = await request(app)
+      .post('/finance/entities/tags')
+      .set(authHeader)
+      .send({ name: 'Funcionário' });
+    assert.equal(tagRes.status, 201);
+    assert.equal(tagRes.body.name, 'Funcionário');
+
+    const tagsRes = await request(app)
+      .get('/finance/entities/tags')
+      .set(authHeader);
+    assert.equal(tagsRes.status, 200);
+    assert.ok(tagsRes.body.some((tag: { name: string }) => tag.name === 'Funcionário'));
+
+    const linkRes = await request(app)
+      .put('/finance/entities/entity-holand-supplier/tags')
+      .set(authHeader)
+      .send({ tag_ids: [tagRes.body.id] });
+    assert.equal(linkRes.status, 200);
+    assert.equal(linkRes.body.tags.length, 1);
+    assert.equal(linkRes.body.tags[0].name, 'Funcionário');
+
+    const entityRes = await request(app)
+      .get('/finance/entities')
+      .set(authHeader);
+    assert.equal(entityRes.status, 200);
+    const supplier = entityRes.body.find((entity: { id: string }) => entity.id === 'entity-holand-supplier');
+    assert.equal(supplier.tags[0].name, 'Funcionário');
+
+    const profileRes = await request(app)
+      .put('/finance/entities/entity-holand-supplier/defaults/payable')
+      .set(authHeader)
+      .send({
+        financial_category_id: 'financial-category-holand',
+        financial_account_id: 'financial-account-holand',
+        due_rule: 'same_day',
+        competence_rule: 'issue_month',
+        recurrence_rule: 'monthly'
+      });
+
+    assert.equal(profileRes.status, 200);
+    assert.equal(profileRes.body.context, 'payable');
+    assert.equal(profileRes.body.financial_entity_id, 'entity-holand-supplier');
+    assert.equal(profileRes.body.financial_category_id, 'financial-category-holand');
+    assert.equal(profileRes.body.financial_account_id, 'financial-account-holand');
+    assert.equal(profileRes.body.recurrence_rule, 'monthly');
+
+    const resolveRes = await request(app)
+      .get('/finance/entities/entity-holand-supplier/defaults/payable')
+      .set(authHeader);
+    assert.equal(resolveRes.status, 200);
+    assert.equal(resolveRes.body.financial_category_name, 'Despesas Operacionais');
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('payables and receivables persist cost center and payment method dimensions', async () => {
+  const dbPath = assignTestDbPath('finance-ledger-extra-dimensions');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+  try {
+    seedFinanceCompanies();
+    seedFinanceEntity();
+    seedFinanceEntityPartner();
+    seedFinanceAccountAndCategory();
+    seedFinanceIncomeCategory();
+
+    createInternalUser({
+      username: 'finance.dimensions',
+      display_name: 'Finance Dimensions',
+      password: 'Senha#123',
+      role: 'supremo',
+      permissions: ['finance.read', 'finance.write']
+    });
+
+    const loginRes = await request(app).post('/auth/login').send({
+      username: 'finance.dimensions',
+      password: 'Senha#123'
+    });
+    assert.equal(loginRes.status, 200);
+    const authHeader = { Authorization: `Bearer ${loginRes.body.token}` };
+
+    const costCenterRes = await request(app)
+      .post('/finance/catalog/cost-centers')
+      .set(authHeader)
+      .send({ name: 'Comercial', code: 'COM' });
+    assert.equal(costCenterRes.status, 201);
+
+    const paymentRes = await request(app)
+      .post('/finance/catalog/payment-methods')
+      .set(authHeader)
+      .send({ name: 'PIX', kind: 'pix' });
+    assert.equal(paymentRes.status, 201);
+
+    const payableRes = await request(app)
+      .post('/finance/payables')
+      .set(authHeader)
+      .send({
+        financial_entity_id: 'entity-holand-supplier',
+        financial_account_id: 'financial-account-holand',
+        financial_category_id: 'financial-category-holand',
+        financial_cost_center_id: costCenterRes.body.id,
+        financial_payment_method_id: paymentRes.body.id,
+        description: 'Salário André',
+        amount_cents: 120000,
+        status: 'open',
+        issue_date: '2026-04-20',
+        due_date: '2026-04-30'
+      });
+    assert.equal(payableRes.status, 201);
+    assert.equal(payableRes.body.financial_cost_center_name, 'Comercial');
+    assert.equal(payableRes.body.financial_payment_method_name, 'PIX');
+
+    const receivableRes = await request(app)
+      .post('/finance/receivables')
+      .set(authHeader)
+      .send({
+        financial_entity_id: 'entity-holand-client',
+        financial_account_id: 'financial-account-holand',
+        financial_category_id: 'financial-category-income',
+        financial_cost_center_id: costCenterRes.body.id,
+        financial_payment_method_id: paymentRes.body.id,
+        description: 'Mensalidade',
+        amount_cents: 240000,
+        status: 'open',
+        issue_date: '2026-04-20',
+        due_date: '2026-04-30'
+      });
+    assert.equal(receivableRes.status, 201);
+    assert.equal(receivableRes.body.financial_cost_center_name, 'Comercial');
+    assert.equal(receivableRes.body.financial_payment_method_name, 'PIX');
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('payables and receivables apply entity defaults when fields are omitted', async () => {
+  const dbPath = assignTestDbPath('finance-apply-entity-defaults');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+  try {
+    seedFinanceCompanies();
+    seedFinanceEntity();
+    seedFinanceAccountAndCategory();
+    seedFinanceIncomeCategory();
+
+    createInternalUser({
+      username: 'finance.apply.defaults',
+      display_name: 'Finance Apply Defaults',
+      password: 'Senha#123',
+      role: 'supremo',
+      permissions: ['finance.read', 'finance.write']
+    });
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.apply.defaults', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+    const authHeader = { Authorization: `Bearer ${loginRes.body.token}` };
+
+    const costCenterRes = await request(app)
+      .post('/finance/catalog/cost-centers')
+      .set(authHeader)
+      .send({ name: 'Comercial', code: 'COM' });
+    assert.equal(costCenterRes.status, 201);
+
+    const paymentRes = await request(app)
+      .post('/finance/catalog/payment-methods')
+      .set(authHeader)
+      .send({ name: 'PIX', kind: 'pix' });
+    assert.equal(paymentRes.status, 201);
+
+    await request(app)
+      .put('/finance/entities/entity-holand-supplier/defaults/payable')
+      .set(authHeader)
+      .send({
+        financial_category_id: 'financial-category-holand',
+        financial_account_id: 'financial-account-holand',
+        financial_cost_center_id: costCenterRes.body.id,
+        financial_payment_method_id: paymentRes.body.id
+      })
+      .expect(200);
+
+    const payableRes = await request(app)
+      .post('/finance/payables')
+      .set(authHeader)
+      .send({
+        financial_entity_id: 'entity-holand-supplier',
+        description: 'Folha André',
+        amount_cents: 120000,
+        status: 'open',
+        issue_date: '2026-04-20',
+        due_date: '2026-04-30'
+      });
+
+    assert.equal(payableRes.status, 201);
+    assert.equal(payableRes.body.financial_category_id, 'financial-category-holand');
+    assert.equal(payableRes.body.financial_account_id, 'financial-account-holand');
+    assert.equal(payableRes.body.financial_cost_center_id, costCenterRes.body.id);
+    assert.equal(payableRes.body.financial_payment_method_id, paymentRes.body.id);
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('finance daily operations settle, duplicate, cancel, split and recur payables and receivables', async () => {
+  const dbPath = assignTestDbPath('finance-daily-operations');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+  try {
+    seedFinanceCompanies();
+    seedFinanceEntity();
+    seedFinanceEntityPartner();
+    seedFinanceAccountAndCategory();
+    seedFinanceIncomeCategory();
+
+    createInternalUser({
+      username: 'finance.ops',
+      display_name: 'Finance Ops',
+      password: 'Senha#123',
+      role: 'supremo',
+      permissions: ['finance.read', 'finance.write']
+    });
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.ops', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+    const authHeader = { Authorization: `Bearer ${loginRes.body.token}` };
+
+    const payableRes = await request(app)
+      .post('/finance/payables')
+      .set(authHeader)
+      .send({
+        financial_entity_id: 'entity-holand-supplier',
+        financial_account_id: 'financial-account-holand',
+        financial_category_id: 'financial-category-holand',
+        description: 'Fornecedor mensal',
+        amount_cents: 90000,
+        status: 'open',
+        issue_date: '2026-04-20',
+        due_date: '2026-04-30'
+      });
+    assert.equal(payableRes.status, 201);
+    assert.equal(payableRes.body.paid_amount_cents, 0);
+
+    const partialPayableRes = await request(app)
+      .post(`/finance/payables/${payableRes.body.id}/partial`)
+      .set(authHeader)
+      .send({ amount_cents: 30000, settled_at: '2026-04-23' });
+    assert.equal(partialPayableRes.status, 200);
+    assert.equal(partialPayableRes.body.status, 'partial');
+    assert.equal(partialPayableRes.body.paid_amount_cents, 30000);
+
+    const settlePayableRes = await request(app)
+      .post(`/finance/payables/${payableRes.body.id}/settle`)
+      .set(authHeader)
+      .send({ settled_at: '2026-04-24' });
+    assert.equal(settlePayableRes.status, 200);
+    assert.equal(settlePayableRes.body.status, 'paid');
+    assert.equal(settlePayableRes.body.paid_amount_cents, 90000);
+    assert.equal(settlePayableRes.body.paid_at, '2026-04-24');
+    assert.ok(settlePayableRes.body.financial_transaction_id);
+
+    const payableMovementRows = db.prepare(`
+      select kind, status, amount_cents, settlement_date, source, source_ref
+      from financial_transaction
+      where organization_id = ?
+        and source = 'payable_settlement'
+        and source_ref = ?
+      order by settlement_date asc, amount_cents asc
+    `).all('org-holand', payableRes.body.id) as Array<{
+      kind: string;
+      status: string;
+      amount_cents: number;
+      settlement_date: string | null;
+      source: string;
+      source_ref: string | null;
+    }>;
+    assert.equal(payableMovementRows.length, 2);
+    assert.deepEqual(
+      payableMovementRows.map((row) => ({
+        kind: row.kind,
+        status: row.status,
+        amount_cents: row.amount_cents,
+        settlement_date: row.settlement_date
+      })),
+      [
+        { kind: 'expense', status: 'settled', amount_cents: 30000, settlement_date: '2026-04-23' },
+        { kind: 'expense', status: 'settled', amount_cents: 60000, settlement_date: '2026-04-24' }
+      ]
+    );
+
+    const duplicatePayableRes = await request(app)
+      .post(`/finance/payables/${payableRes.body.id}/duplicate`)
+      .set(authHeader)
+      .send({});
+    assert.equal(duplicatePayableRes.status, 201);
+    assert.equal(duplicatePayableRes.body.status, 'open');
+    assert.equal(duplicatePayableRes.body.amount_cents, 90000);
+
+    const installmentsRes = await request(app)
+      .post(`/finance/payables/${payableRes.body.id}/installments`)
+      .set(authHeader)
+      .send({ count: 3, first_due_date: '2026-05-10' });
+    assert.equal(installmentsRes.status, 201);
+    assert.equal(installmentsRes.body.payables.length, 3);
+    assert.equal(
+      installmentsRes.body.payables.reduce((total: number, item: { amount_cents: number }) => total + item.amount_cents, 0),
+      90000
+    );
+
+    const recurrencesRes = await request(app)
+      .post(`/finance/payables/${payableRes.body.id}/recurrences`)
+      .set(authHeader)
+      .send({ count: 2, first_due_date: '2026-06-10' });
+    assert.equal(recurrencesRes.status, 201);
+    assert.equal(recurrencesRes.body.payables.length, 2);
+    assert.equal(recurrencesRes.body.payables[0].amount_cents, 90000);
+
+    const cancelPayableRes = await request(app)
+      .post(`/finance/payables/${duplicatePayableRes.body.id}/cancel`)
+      .set(authHeader)
+      .send({ note: 'Duplicado cancelado' });
+    assert.equal(cancelPayableRes.status, 200);
+    assert.equal(cancelPayableRes.body.status, 'canceled');
+
+    const receivableRes = await request(app)
+      .post('/finance/receivables')
+      .set(authHeader)
+      .send({
+        financial_entity_id: 'entity-holand-client',
+        financial_account_id: 'financial-account-holand',
+        financial_category_id: 'financial-category-income',
+        description: 'Cliente mensal',
+        amount_cents: 120000,
+        status: 'open',
+        issue_date: '2026-04-20',
+        due_date: '2026-04-30'
+      });
+    assert.equal(receivableRes.status, 201);
+
+    const partialReceivableRes = await request(app)
+      .post(`/finance/receivables/${receivableRes.body.id}/partial`)
+      .set(authHeader)
+      .send({ amount_cents: 50000, settled_at: '2026-04-23' });
+    assert.equal(partialReceivableRes.status, 200);
+    assert.equal(partialReceivableRes.body.status, 'partial');
+    assert.equal(partialReceivableRes.body.received_amount_cents, 50000);
+
+    const settleReceivableRes = await request(app)
+      .post(`/finance/receivables/${receivableRes.body.id}/settle`)
+      .set(authHeader)
+      .send({ settled_at: '2026-04-24' });
+    assert.equal(settleReceivableRes.status, 200);
+    assert.equal(settleReceivableRes.body.status, 'received');
+    assert.equal(settleReceivableRes.body.received_amount_cents, 120000);
+    assert.equal(settleReceivableRes.body.received_at, '2026-04-24');
+    assert.ok(settleReceivableRes.body.financial_transaction_id);
+
+    const receivableMovementRows = db.prepare(`
+      select kind, status, amount_cents, settlement_date, source, source_ref
+      from financial_transaction
+      where organization_id = ?
+        and source = 'receivable_settlement'
+        and source_ref = ?
+      order by settlement_date asc, amount_cents asc
+    `).all('org-holand', receivableRes.body.id) as Array<{
+      kind: string;
+      status: string;
+      amount_cents: number;
+      settlement_date: string | null;
+      source: string;
+      source_ref: string | null;
+    }>;
+    assert.equal(receivableMovementRows.length, 2);
+    assert.deepEqual(
+      receivableMovementRows.map((row) => ({
+        kind: row.kind,
+        status: row.status,
+        amount_cents: row.amount_cents,
+        settlement_date: row.settlement_date
+      })),
+      [
+        { kind: 'income', status: 'settled', amount_cents: 50000, settlement_date: '2026-04-23' },
+        { kind: 'income', status: 'settled', amount_cents: 70000, settlement_date: '2026-04-24' }
+      ]
+    );
+
+    const auditRows = db.prepare(`
+      select action, count(*) as total
+      from financial_operation_audit
+      where organization_id = ?
+      group by action
+    `).all('org-holand') as Array<{ action: string; total: number }>;
+    assert.ok(auditRows.some((row) => row.action === 'partial_settle' && row.total >= 2));
+    assert.ok(auditRows.some((row) => row.action === 'settle' && row.total >= 2));
+    assert.ok(auditRows.some((row) => row.action === 'installments' && row.total >= 1));
+    assert.ok(auditRows.some((row) => row.action === 'recurrence' && row.total >= 1));
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('finance recurring rules materialize monthly commitments and can be paused', async () => {
+  const dbPath = assignTestDbPath('finance-recurring-rules');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+  try {
+    seedFinanceCompanies();
+    seedFinanceEntity();
+    seedFinanceAccountAndCategory();
+
+    createInternalUser({
+      username: 'finance.recurring',
+      display_name: 'Finance Recurring',
+      password: 'Senha#123',
+      role: 'supremo',
+      permissions: ['finance.read', 'finance.write']
+    });
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.recurring', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+    const authHeader = { Authorization: `Bearer ${loginRes.body.token}` };
+
+    const templateRes = await request(app)
+      .post('/finance/payables')
+      .set(authHeader)
+      .send({
+        financial_entity_id: 'entity-holand-supplier',
+        financial_account_id: 'financial-account-holand',
+        financial_category_id: 'financial-category-holand',
+        description: 'Aluguel mensal',
+        amount_cents: 680000,
+        status: 'open',
+        issue_date: '2026-04-01',
+        due_date: '2026-04-15'
+      });
+    assert.equal(templateRes.status, 201);
+
+    const recurringRes = await request(app)
+      .post('/finance/recurring-rules/from-resource')
+      .set(authHeader)
+      .send({
+        resource_type: 'payable',
+        resource_id: templateRes.body.id,
+        day_of_month: 15,
+        start_date: '2026-04-15',
+        materialization_months: 3
+      });
+    assert.equal(recurringRes.status, 201);
+    assert.equal(recurringRes.body.rule.name, 'Aluguel mensal');
+    assert.equal(recurringRes.body.rule.status, 'active');
+    assert.equal(recurringRes.body.rule.last_materialized_until, '2026-06-15');
+    assert.equal(recurringRes.body.payables.length, 2);
+    assert.deepEqual(
+      recurringRes.body.payables.map((payable: { due_date: string; source: string; amount_cents: number }) => ({
+        due_date: payable.due_date,
+        source: payable.source,
+        amount_cents: payable.amount_cents
+      })),
+      [
+        { due_date: '2026-05-15', source: 'recurring_rule', amount_cents: 680000 },
+        { due_date: '2026-06-15', source: 'recurring_rule', amount_cents: 680000 }
+      ]
+    );
+
+    const rulesRes = await request(app)
+      .get('/finance/recurring-rules')
+      .set(authHeader);
+    assert.equal(rulesRes.status, 200);
+    assert.equal(rulesRes.body.rules.length, 1);
+    assert.equal(rulesRes.body.rules[0].next_due_date, '2026-07-15');
+
+    const reportsRes = await request(app)
+      .get('/finance/reports?preset=custom&from=2026-04-01&to=2026-06-30')
+      .set(authHeader);
+    assert.equal(reportsRes.status, 200);
+    assert.equal(reportsRes.body.dre.operating_expenses_cents, 2040000);
+    assert.equal(reportsRes.body.dre_by_period.length, 3);
+
+    db.prepare(`
+      update financial_payable
+      set due_date = ?
+      where organization_id = ?
+        and id = ?
+    `).run('2026-05-20', 'org-holand', templateRes.body.id);
+    await request(app)
+      .patch(`/finance/recurring-rules/${recurringRes.body.rule.id}`)
+      .set(authHeader)
+      .send({ materialization_months: 4 })
+      .expect(200);
+
+    const payablesAfterWindowRes = await request(app)
+      .get('/finance/payables')
+      .set(authHeader);
+    assert.equal(payablesAfterWindowRes.status, 200);
+    assert.equal(
+      payablesAfterWindowRes.body.payables.filter((payable: { description: string }) => payable.description === 'Aluguel mensal').length,
+      4
+    );
+    assert.equal(
+      payablesAfterWindowRes.body.payables.filter((payable: { due_date: string }) => payable.due_date === '2026-04-15').length,
+      0
+    );
+    assert.ok(payablesAfterWindowRes.body.payables.some((payable: { due_date: string }) => payable.due_date === '2026-07-15'));
+
+    const pausedRes = await request(app)
+      .patch(`/finance/recurring-rules/${recurringRes.body.rule.id}`)
+      .set(authHeader)
+      .send({ status: 'paused' });
+    assert.equal(pausedRes.status, 200);
+    assert.equal(pausedRes.body.status, 'paused');
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('finance quality inbox detects and corrects incomplete payables', async () => {
+  const dbPath = assignTestDbPath('finance-quality-inbox');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+  try {
+    seedFinanceCompanies();
+    seedFinanceEntity();
+    seedFinanceAccountAndCategory();
+
+    createInternalUser({
+      username: 'finance.quality',
+      display_name: 'Finance Quality',
+      password: 'Senha#123',
+      role: 'supremo',
+      permissions: ['finance.read', 'finance.write', 'finance.reconcile']
+    });
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.quality', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+    const authHeader = { Authorization: `Bearer ${loginRes.body.token}` };
+
+    const payableRes = await request(app)
+      .post('/finance/payables')
+      .set(authHeader)
+      .send({
+        supplier_name: 'Fornecedor sem cadastro',
+        description: 'Despesa sem classificação',
+        amount_cents: 50000,
+        status: 'open',
+        issue_date: '2026-04-20',
+        due_date: '2026-04-30'
+      });
+    assert.equal(payableRes.status, 201);
+
+    const inboxRes = await request(app)
+      .get('/finance/quality/inbox')
+      .set(authHeader);
+    assert.equal(inboxRes.status, 200);
+    assert.equal(inboxRes.body.summary.critical_count, 1);
+    assert.ok(inboxRes.body.issues[0].missing_fields.includes('financial_entity_id'));
+    assert.ok(inboxRes.body.issues[0].missing_fields.includes('financial_category_id'));
+    assert.ok(inboxRes.body.issues[0].missing_fields.includes('financial_cost_center_id'));
+
+    const costCenterRes = await request(app)
+      .post('/finance/catalog/cost-centers')
+      .set(authHeader)
+      .send({ name: 'Administrativo' });
+    assert.equal(costCenterRes.status, 201);
+
+    const correctionRes = await request(app)
+      .post('/finance/quality/issues/apply')
+      .set(authHeader)
+      .send({
+        resource_type: 'payable',
+        resource_id: payableRes.body.id,
+        financial_entity_id: 'entity-holand-supplier',
+        financial_category_id: 'financial-category-holand',
+        financial_cost_center_id: costCenterRes.body.id,
+        financial_account_id: 'financial-account-holand',
+        save_as_default: true
+      });
+    assert.equal(correctionRes.status, 200);
+    assert.equal(correctionRes.body.resource_id, payableRes.body.id);
+    assert.equal(correctionRes.body.remaining_issue_count, 0);
+
+    const defaultsRes = await request(app)
+      .get('/finance/entities/entity-holand-supplier/defaults/payable')
+      .set(authHeader);
+    assert.equal(defaultsRes.status, 200);
+    assert.equal(defaultsRes.body.financial_category_id, 'financial-category-holand');
+    assert.equal(defaultsRes.body.financial_cost_center_id, costCenterRes.body.id);
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('executive overview supports period filters and KPI series', async () => {
+  const dbPath = assignTestDbPath('finance-overview-period-series');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+  try {
+    seedFinanceCompanies();
+    seedFinanceEntity();
+    seedFinanceEntityPartner();
+    seedFinanceAccountAndCategory();
+    seedFinanceIncomeCategory();
+
+    createInternalUser({
+      username: 'finance.period',
+      display_name: 'Finance Period',
+      password: 'Senha#123',
+      role: 'supremo',
+      permissions: ['finance.read', 'finance.write']
+    });
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.period', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+    const authHeader = { Authorization: `Bearer ${loginRes.body.token}` };
+
+    await request(app).post('/finance/transactions').set(authHeader).send({
+      financial_entity_id: 'entity-holand-client',
+      financial_account_id: 'financial-account-holand',
+      financial_category_id: 'financial-category-income',
+      kind: 'income',
+      status: 'settled',
+      amount_cents: 100000,
+      issue_date: '2026-04-10',
+      competence_date: '2026-04-10',
+      settlement_date: '2026-04-10',
+      note: 'Receita Abril'
+    }).expect(201);
+
+    await request(app).post('/finance/transactions').set(authHeader).send({
+      financial_entity_id: 'entity-holand-supplier',
+      financial_account_id: 'financial-account-holand',
+      financial_category_id: 'financial-category-holand',
+      kind: 'expense',
+      status: 'open',
+      amount_cents: 25000,
+      issue_date: '2026-05-10',
+      competence_date: '2026-05-10',
+      due_date: '2026-05-10',
+      note: 'Despesa Maio'
+    }).expect(201);
+
+    const overviewRes = await request(app)
+      .get('/finance/overview/executive?preset=custom&from=2026-04-01&to=2026-04-30')
+      .set(authHeader);
+
+    assert.equal(overviewRes.status, 200);
+    const revenueKpi = overviewRes.body.kpis.find((kpi: { id: string }) => kpi.id === 'revenue-month');
+    const expenseKpi = overviewRes.body.kpis.find((kpi: { id: string }) => kpi.id === 'expense-month');
+    assert.equal(revenueKpi.amount_cents, 100000);
+    assert.equal(expenseKpi.amount_cents, 0);
+    assert.equal(revenueKpi.scope, 'period');
+    assert.equal(revenueKpi.chart_kind, 'sparkline');
+    assert.ok(Array.isArray(revenueKpi.series));
+    assert.deepEqual(revenueKpi.series, [{ period: '2026-04-10', amount_cents: 100000 }]);
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
 test('POST/GET de payables e receivables funciona com tenant correto', async () => {
   const dbPath = assignTestDbPath('finance-payable-receivable-core');
   cleanupDbFiles(dbPath);
@@ -1219,7 +2128,7 @@ test('POST/GET de payables e receivables funciona com tenant correto', async () 
       username: 'finance.cashflow',
       display_name: 'Finance Cashflow',
       password: 'Senha#123',
-      role: 'custom',
+      role: 'supremo',
       permissions: ['finance.read', 'finance.write']
     });
 
@@ -1276,20 +2185,13 @@ test('finance receivables and payables expose overdue and due-today groupings', 
 
   const app = createApp({ forceDbRefresh: true, seedDb: false });
 
-  const today = new Date();
-  const formatOffsetDate = (offsetDays: number) => {
-    const value = new Date(today);
-    value.setDate(value.getDate() + offsetDays);
-    return value.toISOString().slice(0, 10);
-  };
-
   try {
     seedFinanceCompanies();
     createInternalUser({
       username: 'finance.arap.ops',
       display_name: 'Finance AR/AP Ops',
       password: 'Senha#123',
-      role: 'custom',
+      role: 'supremo',
       permissions: ['finance.read', 'finance.write']
     });
 
@@ -1302,10 +2204,10 @@ test('finance receivables and payables expose overdue and due-today groupings', 
     const authHeader = { Authorization: `Bearer ${token}` };
 
     const operationalDates = {
-      overdue: formatOffsetDate(-2),
-      dueToday: formatOffsetDate(0),
-      upcoming: formatOffsetDate(5),
-      settled: formatOffsetDate(-1)
+      overdue: financeOffsetDateKey(-2),
+      dueToday: financeOffsetDateKey(0),
+      upcoming: financeOffsetDateKey(5),
+      settled: financeOffsetDateKey(-1)
     };
 
     const createPayable = (payload: Record<string, unknown>) =>
@@ -1441,7 +2343,7 @@ test('POST/GET de debts funciona com vínculos opcionais e isolamento de tenant'
       username: 'finance.debts',
       display_name: 'Finance Debts',
       password: 'Senha#123',
-      role: 'custom',
+      role: 'supremo',
       permissions: ['finance.read', 'finance.write']
     });
 
@@ -1504,7 +2406,7 @@ test('import jobs + extrato + conciliação inicial funcionam com rastreabilidad
       username: 'finance.reconcile',
       display_name: 'Finance Reconcile',
       password: 'Senha#123',
-      role: 'custom',
+      role: 'supremo',
       permissions: ['finance.read', 'finance.write', 'finance.reconcile']
     });
 
@@ -1594,6 +2496,383 @@ test('import jobs + extrato + conciliação inicial funcionam com rastreabilidad
       .set('Authorization', `Bearer ${token}`);
     assert.equal(listMatches.status, 200);
     assert.equal(listMatches.body.matches.length, 1);
+
+    const secondStatementRes = await request(app)
+      .post('/finance/statement-entries')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        company_id: 'company-a',
+        financial_account_id: accountRes.body.id,
+        financial_import_job_id: importJobRes.body.id,
+        statement_date: '2026-08-06',
+        amount_cents: -13000,
+        description: 'Pagamento fornecedor XPTO',
+        source: 'bank_import'
+      });
+    assert.equal(secondStatementRes.status, 201);
+
+    const secondTransactionRes = await request(app)
+      .post('/finance/transactions')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        kind: 'expense',
+        amount_cents: 13000,
+        due_date: '2026-08-06',
+        note: 'Fornecedor XPTO mensalidade'
+      });
+    assert.equal(secondTransactionRes.status, 201);
+
+    const secondReconciliationRes = await request(app)
+      .post('/finance/reconciliations')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        company_id: 'company-a',
+        financial_bank_statement_entry_id: secondStatementRes.body.id,
+        financial_transaction_id: secondTransactionRes.body.id,
+        confidence_score: 0.97,
+        match_status: 'matched',
+        source: 'manual'
+      });
+    assert.equal(secondReconciliationRes.status, 201);
+
+    const learnedStatementRes = await request(app)
+      .post('/finance/statement-entries')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        company_id: 'company-a',
+        financial_account_id: accountRes.body.id,
+        financial_import_job_id: importJobRes.body.id,
+        statement_date: '2026-08-07',
+        amount_cents: -14000,
+        description: 'Pagamento fornecedor XPTO',
+        source: 'bank_import'
+      });
+    assert.equal(learnedStatementRes.status, 201);
+
+    const learnedTransactionRes = await request(app)
+      .post('/finance/transactions')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        kind: 'expense',
+        amount_cents: 14000,
+        due_date: '2026-08-07',
+        note: 'Fornecedor XPTO mensalidade'
+      });
+    assert.equal(learnedTransactionRes.status, 201);
+
+    const inboxRes = await request(app)
+      .get('/finance/reconciliation/inbox')
+      .set('Authorization', `Bearer ${token}`);
+    assert.equal(inboxRes.status, 200, JSON.stringify(inboxRes.body));
+    assert.ok(inboxRes.body.learned_rules.length >= 1);
+    const learnedEntry = inboxRes.body.inbox.find((entry: { id: string }) => entry.id === learnedStatementRes.body.id);
+    assert.ok(learnedEntry, 'entrada nova deve estar na inbox');
+    assert.equal(learnedEntry.suggested_matches[0].financial_transaction_id, learnedTransactionRes.body.id);
+    assert.equal(learnedEntry.suggested_matches[0].source, 'learned_rule');
+    assert.ok(learnedEntry.suggested_matches[0].reasons.some((reason: { label: string }) => reason.label === 'Regra aprendida'));
+
+    const orphanStatementRes = await request(app)
+      .post('/finance/statement-entries')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        company_id: 'company-a',
+        financial_account_id: accountRes.body.id,
+        financial_import_job_id: importJobRes.body.id,
+        statement_date: '2026-08-08',
+        amount_cents: -4500,
+        description: 'Tarifa bancaria',
+        source: 'bank_import'
+      });
+    assert.equal(orphanStatementRes.status, 201);
+
+    const statementTransactionRes = await request(app)
+      .post(`/finance/reconciliation/statement-entries/${orphanStatementRes.body.id}/transaction`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ note: 'Tarifa bancaria' });
+    assert.equal(statementTransactionRes.status, 201, JSON.stringify(statementTransactionRes.body));
+    assert.equal(statementTransactionRes.body.transaction.kind, 'expense');
+    assert.equal(statementTransactionRes.body.transaction.status, 'settled');
+    assert.equal(statementTransactionRes.body.transaction.amount_cents, 4500);
+    assert.equal(statementTransactionRes.body.match.match_status, 'matched');
+    assert.equal(statementTransactionRes.body.match.source, 'statement_create');
+    assert.equal(statementTransactionRes.body.match.confidence_score, 1);
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('finance advanced controls expose rules, approvals, attachments, exports and integrations', async () => {
+  const dbPath = assignTestDbPath('finance-advanced-controls');
+  cleanupDbFiles(dbPath);
+
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+  try {
+    seedFinanceCompanies();
+    createInternalUser({
+      username: 'finance.advanced',
+      display_name: 'Finance Advanced',
+      password: 'Senha#123',
+      role: 'supremo',
+      permissions: ['finance.read', 'finance.write', 'finance.reconcile', 'finance.approve', 'finance.admin']
+    });
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.advanced', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+    const token = loginRes.body.token as string;
+
+    const payableRes = await request(app)
+      .post('/finance/payables')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        description: 'Pagamento avançado fornecedor',
+        amount_cents: 650000,
+        status: 'open',
+        due_date: '2026-09-10'
+      });
+    assert.equal(payableRes.status, 201, JSON.stringify(payableRes.body));
+
+    const initialAdvancedRes = await request(app)
+      .get('/finance/advanced')
+      .set('Authorization', `Bearer ${token}`);
+    assert.equal(initialAdvancedRes.status, 200, JSON.stringify(initialAdvancedRes.body));
+    assert.equal(initialAdvancedRes.body.summary.pending_approval_count, 1);
+    assert.equal(initialAdvancedRes.body.approval_queue[0].payable_id, payableRes.body.id);
+    assert.ok(initialAdvancedRes.body.permission_matrix.some((row: { permission: string; enabled_for_current_user: boolean }) =>
+      row.permission === 'finance.approve' && row.enabled_for_current_user
+    ));
+
+    const ruleRes = await request(app)
+      .post('/finance/advanced/automation-rules')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        name: 'Exigir aprovação acima de 5 mil',
+        trigger_type: 'payable.created',
+        conditions: { min_amount_cents: 500000 },
+        action_type: 'request_approval',
+        action_payload: { queue: 'finance.approval' }
+      });
+    assert.equal(ruleRes.status, 201, JSON.stringify(ruleRes.body));
+    assert.equal(ruleRes.body.is_active, true);
+
+    const attachmentRes = await request(app)
+      .post('/finance/advanced/attachments')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        resource_type: 'payable',
+        resource_id: payableRes.body.id,
+        file_name: 'comprovante.pdf',
+        mime_type: 'application/pdf',
+        file_size_bytes: 1024
+      });
+    assert.equal(attachmentRes.status, 201, JSON.stringify(attachmentRes.body));
+
+    const integrationRes = await request(app)
+      .post('/finance/advanced/bank-integrations')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        provider: 'Open Finance Sandbox',
+        status: 'sandbox',
+        account_name: 'Conta teste'
+      });
+    assert.equal(integrationRes.status, 201, JSON.stringify(integrationRes.body));
+
+    const approveRes = await request(app)
+      .post(`/finance/advanced/payables/${payableRes.body.id}/approve`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ note: 'Aprovado em teste' });
+    assert.equal(approveRes.status, 201, JSON.stringify(approveRes.body));
+    assert.equal(approveRes.body.action, 'approve_payment');
+
+    const finalAdvancedRes = await request(app)
+      .get('/finance/advanced')
+      .set('Authorization', `Bearer ${token}`);
+    assert.equal(finalAdvancedRes.status, 200);
+    assert.equal(finalAdvancedRes.body.summary.active_rule_count, 1);
+    assert.equal(finalAdvancedRes.body.summary.pending_approval_count, 0);
+    assert.equal(finalAdvancedRes.body.summary.attachment_count, 1);
+    assert.equal(finalAdvancedRes.body.summary.integration_count, 1);
+    assert.ok(finalAdvancedRes.body.cockpit, 'esperava cockpit no dashboard avancado');
+    assert.equal(finalAdvancedRes.body.cockpit.sections.decisions.label, 'Decisões pendentes');
+    assert.ok(finalAdvancedRes.body.automation_rules[0].human_trigger.includes('conta a pagar'));
+    assert.ok(finalAdvancedRes.body.automation_rules[0].human_action.includes('aprovação'));
+    assert.ok(finalAdvancedRes.body.assisted_rule_templates.some((template: { label: string }) =>
+      template.label === 'Pedir aprovação para pagamentos altos'
+    ));
+    assert.ok(finalAdvancedRes.body.audit_entries.some((entry: { action: string }) => entry.action === 'approve_payment'));
+
+    const csvRes = await request(app)
+      .get('/finance/exports?dataset=payables&format=csv')
+      .set('Authorization', `Bearer ${token}`);
+    assert.equal(csvRes.status, 200);
+    assert.match(csvRes.text, /Pagamento avançado fornecedor/);
+
+    const pdfRes = await request(app)
+      .get('/finance/exports?dataset=audit&format=pdf')
+      .set('Authorization', `Bearer ${token}`);
+    assert.equal(pdfRes.status, 200);
+    assert.equal(pdfRes.headers['content-type'], 'application/pdf');
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('finance simulations create scenarios, calculate impact and duplicate safely', async () => {
+  const dbPath = assignTestDbPath('finance-simulations-core');
+  cleanupDbFiles(dbPath);
+
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+  try {
+    seedFinanceCompanies();
+    createInternalUser({
+      username: 'finance.simulation',
+      display_name: 'Finance Simulation',
+      password: 'Senha#123',
+      role: 'supremo',
+      permissions: ['finance.read', 'finance.write']
+    });
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.simulation', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+    const token = loginRes.body.token as string;
+    const authHeader = { Authorization: `Bearer ${token}` };
+
+    const scenarioRes = await request(app)
+      .post('/finance/simulations')
+      .set(authHeader)
+      .send({
+        name: 'Semana crítica de caixa',
+        description: 'Simular entrada, pagamento integral e pagamento parcial.',
+        start_date: '2026-10-01',
+        end_date: '2026-10-05',
+        starting_balance_cents: 100000
+      });
+    assert.equal(scenarioRes.status, 201, JSON.stringify(scenarioRes.body));
+    assert.equal(scenarioRes.body.result.ending_balance_cents, 100000);
+
+    const inflowRes = await request(app)
+      .post(`/finance/simulations/${scenarioRes.body.id}/items`)
+      .set(authHeader)
+      .send({
+        kind: 'expected_inflow',
+        label: 'Cliente prometeu pagar',
+        amount_cents: 80000,
+        event_date: '2026-10-02',
+        probability_percent: 50
+      });
+    assert.equal(inflowRes.status, 201, JSON.stringify(inflowRes.body));
+    assert.equal(inflowRes.body.result.total_inflow_cents, 40000);
+    assert.equal(inflowRes.body.result.ending_balance_cents, 140000);
+
+    const outflowRes = await request(app)
+      .post(`/finance/simulations/${scenarioRes.body.id}/items`)
+      .set(authHeader)
+      .send({
+        kind: 'scheduled_outflow',
+        label: 'Fornecedor essencial',
+        amount_cents: 180000,
+        event_date: '2026-10-03',
+        note: 'Pagamento que pode quebrar o caixa'
+      });
+    assert.equal(outflowRes.status, 201, JSON.stringify(outflowRes.body));
+    assert.equal(outflowRes.body.result.total_outflow_cents, 180000);
+    assert.equal(outflowRes.body.result.ending_balance_cents, -40000);
+    assert.equal(outflowRes.body.result.first_negative_date, '2026-10-03');
+
+    const partialRes = await request(app)
+      .post(`/finance/simulations/${scenarioRes.body.id}/items`)
+      .set(authHeader)
+      .send({
+        kind: 'partial_payment',
+        label: 'Negociar 30% da conta',
+        amount_cents: 30000,
+        event_date: '2026-10-04'
+      });
+    assert.equal(partialRes.status, 201, JSON.stringify(partialRes.body));
+    assert.equal(partialRes.body.items.length, 3);
+    assert.equal(partialRes.body.result.ending_balance_cents, -70000);
+    assert.equal(partialRes.body.result.timeline.length, 5);
+
+    const updatedScenarioRes = await request(app)
+      .patch(`/finance/simulations/${scenarioRes.body.id}`)
+      .set(authHeader)
+      .send({ starting_balance_cents: 200000 });
+    assert.equal(updatedScenarioRes.status, 200, JSON.stringify(updatedScenarioRes.body));
+    assert.equal(updatedScenarioRes.body.result.ending_balance_cents, 30000);
+
+    const updatedItemRes = await request(app)
+      .patch(`/finance/simulations/${scenarioRes.body.id}/items/${partialRes.body.items[0].id}`)
+      .set(authHeader)
+      .send({ event_date: '2026-10-05', probability_percent: 100 });
+    assert.equal(updatedItemRes.status, 200, JSON.stringify(updatedItemRes.body));
+    assert.equal(updatedItemRes.body.items.find((item: { id: string }) => item.id === partialRes.body.items[0].id).event_date, '2026-10-05');
+
+    const recurringPayableRes = await request(app)
+      .post('/finance/payables')
+      .set(authHeader)
+      .send({
+        description: 'Aluguel recorrente',
+        amount_cents: 68000,
+        status: 'open',
+        issue_date: '2026-10-01',
+        due_date: '2026-10-02'
+      });
+    assert.equal(recurringPayableRes.status, 201, JSON.stringify(recurringPayableRes.body));
+
+    const recurringRuleRes = await request(app)
+      .post('/finance/recurring-rules/from-resource')
+      .set(authHeader)
+      .send({
+        resource_type: 'payable',
+        resource_id: recurringPayableRes.body.id,
+        day_of_month: 2,
+        start_date: '2026-10-02',
+        materialization_months: 3
+      });
+    assert.equal(recurringRuleRes.status, 201, JSON.stringify(recurringRuleRes.body));
+
+    const sourcesRes = await request(app)
+      .get(`/finance/simulations/sources?scenario_id=${scenarioRes.body.id}`)
+      .set(authHeader);
+    assert.equal(sourcesRes.status, 200, JSON.stringify(sourcesRes.body));
+    assert.equal(sourcesRes.body.balance.kind, 'starting_balance');
+    assert.ok(Array.isArray(sourcesRes.body.sources));
+    assert.ok(sourcesRes.body.sources.some((source: { cadence: string; label: string }) =>
+      source.cadence === 'recurring' && source.label === 'Aluguel recorrente'
+    ));
+
+    const deleteItemRes = await request(app)
+      .delete(`/finance/simulations/${scenarioRes.body.id}/items/${partialRes.body.items[2].id}`)
+      .set(authHeader);
+    assert.equal(deleteItemRes.status, 200, JSON.stringify(deleteItemRes.body));
+    assert.equal(deleteItemRes.body.items.length, 2);
+
+    const listRes = await request(app)
+      .get('/finance/simulations')
+      .set(authHeader);
+    assert.equal(listRes.status, 200, JSON.stringify(listRes.body));
+    assert.equal(listRes.body.scenarios.length, 1);
+    assert.equal(listRes.body.scenarios[0].result.item_count, 2);
+
+    const duplicateRes = await request(app)
+      .post(`/finance/simulations/${scenarioRes.body.id}/duplicate`)
+      .set(authHeader);
+    assert.equal(duplicateRes.status, 201, JSON.stringify(duplicateRes.body));
+    assert.notEqual(duplicateRes.body.id, scenarioRes.body.id);
+    assert.equal(duplicateRes.body.items.length, 2);
+
+    const deleteScenarioRes = await request(app)
+      .delete(`/finance/simulations/${duplicateRes.body.id}`)
+      .set(authHeader);
+    assert.equal(deleteScenarioRes.status, 200, JSON.stringify(deleteScenarioRes.body));
+    assert.equal(deleteScenarioRes.body.ok, true);
   } finally {
     db.close();
     cleanupDbFiles(dbPath);
@@ -1612,7 +2891,7 @@ test('DELETE /finance/transactions/:id faz soft-delete auditável', async () => 
       username: 'finance.approver',
       display_name: 'Finance Approver',
       password: 'Senha#123',
-      role: 'custom',
+      role: 'supremo',
       permissions: ['finance.read', 'finance.write', 'finance.approve']
     });
 
@@ -1693,18 +2972,17 @@ test('GET /finance/reports consolida DRE, aging e fluxo a partir do ledger finan
   resetDbConnection();
 
     const app = createApp({ forceDbRefresh: true, seedDb: false });
-    const now = new Date();
+    const currentMonthRange = currentFinanceMonthRange();
+    const currentMonthStart = new Date(`${currentMonthRange.start}T00:00:00.000Z`);
     const formatDate = (year: number, monthIndex: number, day: number) => (
       `${year}-${String(monthIndex + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
     );
-    const currentYear = now.getUTCFullYear();
-    const currentMonth = now.getUTCMonth();
+    const currentYear = currentMonthStart.getUTCFullYear();
+    const currentMonth = currentMonthStart.getUTCMonth();
     const nextMonthDate = new Date(Date.UTC(currentYear, currentMonth + 1, 5));
     const currentPeriod = formatDate(currentYear, currentMonth, 1).slice(0, 7);
     const nextPeriod = nextMonthDate.toISOString().slice(0, 7);
-    const yesterdayDate = new Date(now);
-    yesterdayDate.setUTCDate(yesterdayDate.getUTCDate() - 1);
-    const yesterdayIso = yesterdayDate.toISOString().slice(0, 10);
+    const yesterdayIso = financeOffsetDateKey(-1);
 
   try {
     seedFinanceCompanies();
@@ -1717,7 +2995,7 @@ test('GET /finance/reports consolida DRE, aging e fluxo a partir do ledger finan
       username: 'finance.reports',
       display_name: 'Finance Reports',
       password: 'Senha#123',
-      role: 'custom',
+      role: 'supremo',
       permissions: ['finance.read', 'finance.write']
     });
 
@@ -1772,6 +3050,21 @@ test('GET /finance/reports consolida DRE, aging e fluxo a partir do ledger finan
           issue_date: nextMonthDate.toISOString().slice(0, 10),
           due_date: nextMonthDate.toISOString().slice(0, 10),
           note: 'Receita projetada'
+        }),
+      request(app)
+        .post('/finance/transactions')
+        .set(authHeader)
+        .send({
+          financial_entity_id: 'entity-holand-supplier',
+          financial_account_id: 'financial-account-holand',
+          financial_category_id: 'financial-category-holand',
+          kind: 'expense',
+          status: 'open',
+          amount_cents: 5000,
+          issue_date: formatDate(currentYear, currentMonth, 20),
+          competence_date: formatDate(currentYear, currentMonth, 20),
+          due_date: nextMonthDate.toISOString().slice(0, 10),
+          note: 'Despesa provisionada por competência'
         })
     ]);
 
@@ -1814,15 +3107,32 @@ test('GET /finance/reports consolida DRE, aging e fluxo a partir do ledger finan
     assert.equal(reportsRes.status, 200);
     assert.equal(reportsRes.body.organization_id, 'org-holand');
     assert.equal(reportsRes.body.dre.gross_revenue_cents, 130000);
-    assert.equal(reportsRes.body.dre.operating_expenses_cents, 40000);
-    assert.equal(reportsRes.body.dre.operating_result_cents, 90000);
+    assert.equal(reportsRes.body.dre.operating_expenses_cents, 45000);
+    assert.equal(reportsRes.body.dre.operating_result_cents, 85000);
+    assert.equal(reportsRes.body.dre_cash.gross_revenue_cents, 100000);
+    assert.equal(reportsRes.body.dre_cash.operating_expenses_cents, 40000);
+    assert.equal(reportsRes.body.dre_cash.operating_result_cents, 60000);
 
     assert.equal(reportsRes.body.income_by_category[0].category_name, 'Receita de Serviços');
     assert.equal(reportsRes.body.income_by_category[0].amount_cents, 130000);
     assert.equal(reportsRes.body.income_by_category[0].transaction_count, 2);
     assert.equal(reportsRes.body.expense_by_category[0].category_name, 'Despesas Operacionais');
-    assert.equal(reportsRes.body.expense_by_category[0].amount_cents, 40000);
-    assert.equal(reportsRes.body.expense_by_category[0].transaction_count, 1);
+    assert.equal(reportsRes.body.expense_by_category[0].amount_cents, 45000);
+    assert.equal(reportsRes.body.expense_by_category[0].transaction_count, 2);
+    assert.equal(reportsRes.body.dre_by_period[0].period, currentPeriod);
+    assert.equal(reportsRes.body.dre_by_period[0].net_revenue_cents, 100000);
+    assert.equal(reportsRes.body.dre_by_period[0].operating_expenses_cents, 45000);
+    assert.equal(reportsRes.body.dre_by_period[0].operating_result_cents, 55000);
+    assert.equal(reportsRes.body.dre_cash_by_period[0].period, currentPeriod);
+    assert.equal(reportsRes.body.dre_cash_by_period[0].net_revenue_cents, 100000);
+    assert.equal(reportsRes.body.dre_cash_by_period[0].operating_expenses_cents, 40000);
+    assert.equal(reportsRes.body.dre_cash_by_period[0].operating_result_cents, 60000);
+    assert.equal(reportsRes.body.cost_center_results[0].cost_center_name, 'Sem centro de custo');
+    assert.equal(reportsRes.body.cost_center_results[0].result_cents, 85000);
+    assert.equal(reportsRes.body.cashflow_by_due[0].period, nextPeriod);
+    assert.equal(reportsRes.body.cashflow_by_due[0].net_cents, 25000);
+    assert.equal(reportsRes.body.cashflow_by_settlement[0].period, currentPeriod);
+    assert.equal(reportsRes.body.cashflow_by_settlement[0].net_cents, 60000);
 
     assert.equal(reportsRes.body.overdue_receivables.length, 1);
     assert.equal(reportsRes.body.overdue_receivables[0].description, 'Recebível em atraso');
@@ -1839,11 +3149,33 @@ test('GET /finance/reports consolida DRE, aging e fluxo a partir do ledger finan
       {
         period: nextPeriod,
         realized_cents: 0,
-        projected_cents: 30000,
-        variance_cents: -30000
+        projected_cents: 25000,
+        variance_cents: -25000
       }
     ]);
     assert.ok(reportsRes.body.consolidated_cashflow.length >= 1);
+
+    const filteredReportsRes = await request(app)
+      .get(`/finance/reports?preset=custom&from=${formatDate(currentYear, currentMonth, 1)}&to=${formatDate(currentYear, currentMonth, 28)}`)
+      .set(authHeader);
+
+    assert.equal(filteredReportsRes.status, 200);
+    assert.equal(filteredReportsRes.body.dre.gross_revenue_cents, 100000);
+    assert.equal(filteredReportsRes.body.dre.operating_expenses_cents, 45000);
+    assert.equal(filteredReportsRes.body.dre.operating_result_cents, 55000);
+    assert.equal(filteredReportsRes.body.dre_cash.gross_revenue_cents, 100000);
+    assert.equal(filteredReportsRes.body.dre_cash.operating_expenses_cents, 40000);
+    assert.equal(filteredReportsRes.body.dre_cash.operating_result_cents, 60000);
+    assert.equal(filteredReportsRes.body.income_by_category[0].transaction_count, 1);
+
+    const executiveRes = await request(app)
+      .get('/finance/overview/executive')
+      .set(authHeader);
+
+    assert.equal(executiveRes.status, 200);
+    assert.equal(executiveRes.body.summary.monthly_income_cents, 100000);
+    assert.equal(executiveRes.body.summary.monthly_expense_cents, 45000);
+    assert.equal(executiveRes.body.summary.projected_result_cents, 55000);
   } finally {
     db.close();
     cleanupDbFiles(dbPath);
@@ -1862,7 +3194,7 @@ test('POST /finance/transactions rejeita status settled sem settlement_date', as
       username: 'finance.validator',
       display_name: 'Finance Validator',
       password: 'Senha#123',
-      role: 'custom',
+      role: 'supremo',
       permissions: ['finance.read', 'finance.write']
     });
 
@@ -1901,7 +3233,7 @@ test('PATCH e DELETE bloqueiam transação já soft-deletada', async () => {
       username: 'finance.locked',
       display_name: 'Finance Locked',
       password: 'Senha#123',
-      role: 'custom',
+      role: 'supremo',
       permissions: ['finance.read', 'finance.write', 'finance.approve']
     });
 

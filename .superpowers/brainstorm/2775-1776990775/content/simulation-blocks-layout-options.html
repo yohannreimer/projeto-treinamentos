@@ -1,0 +1,69 @@
+<h2>Simulação por blocos: como a tela deve funcionar?</h2>
+<p class="subtitle">Agora que escolhemos blocos de cenário, a decisão é o formato da experiência. A tela precisa ser bonita, mas principalmente rápida para o financeiro pensar.</p>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">A · Mesa de simulação</div>
+        <div class="mockup-body">
+          <div style="display:grid;grid-template-columns:220px 1fr 240px;gap:10px">
+            <div class="placeholder" style="height:170px">Biblioteca<br>saldo, entradas, contas, manual</div>
+            <div class="placeholder" style="height:170px">Cenário<br>arrastar blocos, mudar data, %, valor</div>
+            <div class="placeholder" style="height:170px">Resultado<br>saldo final, menor saldo, linha do tempo</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>Mesa de simulação</h3>
+      <p>Três áreas fixas: biblioteca de blocos, cenário montado e resultado. É a mais visual e combina com drag and drop.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">B · Assistente guiado</div>
+        <div class="mockup-body">
+          <div class="placeholder" style="height:42px">1. Escolher saldo</div>
+          <div class="placeholder" style="height:42px">2. Selecionar entradas</div>
+          <div class="placeholder" style="height:42px">3. Escolher pagamentos</div>
+          <div class="placeholder" style="height:42px">4. Ver resultado</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>Assistente guiado</h3>
+      <p>Mais fácil para usuário iniciante, mas menos livre. Parece formulário por etapas e perde um pouco o “wow”.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">C · Linha do tempo editável</div>
+        <div class="mockup-body">
+          <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:7px">
+            <div class="placeholder">Hoje</div>
+            <div class="placeholder">24</div>
+            <div class="placeholder">25</div>
+            <div class="placeholder">26</div>
+            <div class="placeholder">30</div>
+            <div class="placeholder">Final</div>
+          </div>
+          <div class="placeholder" style="height:80px;margin-top:10px">Blocos posicionados por data</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>Linha do tempo editável</h3>
+      <p>Muito boa para visualizar caixa por dia, mas arrastar muitos itens pode ficar apertado e menos claro em telas menores.</p>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>Meu voto</h3>
+  <p>Eu iria de <strong>A · Mesa de simulação</strong>. Ela preserva o lado inventivo dos blocos, mas mantém uma estrutura clara: esquerda escolhe, centro monta, direita entende o impacto. A linha do tempo entra dentro do resultado.</p>
+</div>

@@ -1,0 +1,105 @@
+<h2>Qual home financeira parece mais certa para o nosso ERP SaaS?</h2>
+<p class="subtitle">As duas opções já assumem que o financeiro é da empresa logada. A diferença é o ponto de entrada da experiência.</p>
+
+<div class="cards">
+  <div class="card" data-choice="action-center" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">A. Action Center</div>
+        <div class="mockup-body" style="display:grid;gap:16px;background:#f6f7f8;padding:20px">
+          <div style="display:grid;gap:6px">
+            <div class="label">Hoje exige atenção</div>
+            <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px">
+              <div style="background:#fff;border:1px solid #e5d1cc;border-radius:16px;padding:14px">
+                <strong>12</strong>
+                <p style="margin:6px 0 0">vencendo hoje</p>
+              </div>
+              <div style="background:#fff;border:1px solid #d9e0e6;border-radius:16px;padding:14px">
+                <strong>7</strong>
+                <p style="margin:6px 0 0">sem conciliar</p>
+              </div>
+              <div style="background:#fff;border:1px solid #d9e0e6;border-radius:16px;padding:14px">
+                <strong>4</strong>
+                <p style="margin:6px 0 0">atrasados</p>
+              </div>
+              <div style="background:#fff;border:1px solid #d9e0e6;border-radius:16px;padding:14px">
+                <strong>3</strong>
+                <p style="margin:6px 0 0">sem categoria</p>
+              </div>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:12px">
+            <div style="background:#fff;border:1px solid #d8dee3;border-radius:18px;padding:16px">
+              <div class="label">Fila operacional</div>
+              <div style="display:grid;gap:10px;margin-top:10px">
+                <div style="display:flex;justify-content:space-between;border-bottom:1px solid #eef1f3;padding-bottom:10px"><span>Mensalidade AWS</span><strong>amanhã</strong></div>
+                <div style="display:flex;justify-content:space-between;border-bottom:1px solid #eef1f3;padding-bottom:10px"><span>Boleto cliente XPTO</span><strong>atrasado</strong></div>
+                <div style="display:flex;justify-content:space-between;padding-bottom:2px"><span>Extrato banco Itaú</span><strong>conciliar</strong></div>
+              </div>
+            </div>
+            <div style="background:#fff;border:1px solid #d8dee3;border-radius:18px;padding:16px">
+              <div class="label">Atalhos</div>
+              <div style="display:grid;gap:8px;margin-top:10px">
+                <button class="mock-button">Nova despesa</button>
+                <button class="mock-button">Nova receita</button>
+                <button class="mock-button">Importar extrato</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>Action Center</h3>
+      <p>Primeira tela orientada a trabalho: o que está vencendo, o que está atrasado, o que precisa ser conciliado e o que a equipe deve resolver agora.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="executive-overview" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">B. Executive Overview</div>
+        <div class="mockup-body" style="display:grid;gap:16px;background:#f6f7f8;padding:20px">
+          <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px">
+            <div style="background:#fff;border:1px solid #d8dee3;border-radius:16px;padding:14px">
+              <div class="label">Caixa</div>
+              <strong>R$ 182k</strong>
+            </div>
+            <div style="background:#fff;border:1px solid #d8dee3;border-radius:16px;padding:14px">
+              <div class="label">Receber</div>
+              <strong>R$ 94k</strong>
+            </div>
+            <div style="background:#fff;border:1px solid #d8dee3;border-radius:16px;padding:14px">
+              <div class="label">Pagar</div>
+              <strong>R$ 61k</strong>
+            </div>
+            <div style="background:#fff;border:1px solid #ead0c9;border-radius:16px;padding:14px">
+              <div class="label">Saldo projetado</div>
+              <strong>R$ 215k</strong>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1.3fr 1fr;gap:12px">
+            <div style="background:#fff;border:1px solid #d8dee3;border-radius:18px;padding:16px;min-height:220px">
+              <div class="label">Fluxo de caixa 90 dias</div>
+              <div class="placeholder" style="margin-top:12px;min-height:170px">gráfico principal</div>
+            </div>
+            <div style="display:grid;gap:12px">
+              <div style="background:#fff;border:1px solid #d8dee3;border-radius:18px;padding:16px">
+                <div class="label">Top contas</div>
+                <p style="margin:10px 0 0">Bancos, despesas e receitas mais relevantes.</p>
+              </div>
+              <div style="background:#fff;border:1px solid #d8dee3;border-radius:18px;padding:16px">
+                <div class="label">Resumo mensal</div>
+                <p style="margin:10px 0 0">Comparação rápido entre realizado e projetado.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>Executive Overview</h3>
+      <p>Primeira tela mais analítica, com saldos, gráficos, visão executiva e leitura gerencial antes de entrar na operação diária.</p>
+    </div>
+  </div>
+</div>

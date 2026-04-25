@@ -12,7 +12,7 @@ const mockAuth = vi.hoisted(() => ({
       id: 'user-finance',
       username: 'financeiro',
       display_name: 'Financeiro',
-      role: 'custom',
+      role: 'supremo',
       permissions: ['calendar', 'finance.read']
     }
   } satisfies InternalSessionData
@@ -154,10 +154,12 @@ test('finance workspace shows the approved ERP sitemap and no counterparty copy 
   expect(within(sidebar).getByRole('link', { name: 'Movimentações' })).toBeInTheDocument();
   expect(within(sidebar).getByRole('link', { name: 'Contas a Receber' })).toBeInTheDocument();
   expect(within(sidebar).getByRole('link', { name: 'Contas a Pagar' })).toBeInTheDocument();
-  expect(within(sidebar).getByRole('link', { name: 'Conciliação' })).toBeInTheDocument();
+  expect(within(sidebar).getByRole('link', { name: 'Conciliação & Revisão' })).toBeInTheDocument();
   expect(within(sidebar).getByRole('link', { name: 'Fluxo de Caixa' })).toBeInTheDocument();
   expect(within(sidebar).getByRole('link', { name: 'Relatórios' })).toBeInTheDocument();
   expect(within(sidebar).getByRole('link', { name: 'Cadastros' })).toBeInTheDocument();
+  expect(within(sidebar).getByRole('link', { name: 'Simulação' })).toBeInTheDocument();
+  expect(within(sidebar).getByRole('link', { name: 'Avançado' })).toBeInTheDocument();
   expect(within(sidebar).getByRole('link', { name: 'Voltar ao sistema' })).toBeInTheDocument();
   expect(within(sidebar).queryByText(/contraparte/i)).not.toBeInTheDocument();
   await waitFor(() => {

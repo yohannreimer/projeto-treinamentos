@@ -1,36 +1,69 @@
 import { db, uuid } from '../db.js';
+import { getFinanceEntityDefaultProfile } from './entities.js';
 import { computeViews } from './ledger.js';
 import type {
   CreateFinanceAccountInput,
+  CreateFinanceAttachmentInput,
+  CreateFinanceAutomationRuleInput,
+  CreateFinanceBankIntegrationInput,
   CreateFinanceDebtInput,
   CreateFinanceImportJobInput,
+  CreateFinanceSimulationItemInput,
+  CreateFinanceSimulationScenarioInput,
   CreateFinancePayableInput,
   CreateFinanceReconciliationMatchInput,
   CreateFinanceReceivableInput,
+  CreateFinanceRecurringRuleInput,
   CreateFinanceStatementEntryInput,
+  CreateFinanceTransactionFromStatementInput,
   CreateFinanceCategoryInput,
   CreateFinanceTransactionInput,
   FinanceAccountDto,
+  FinanceAdvancedDashboardDto,
+  FinanceAdvancedApprovalDto,
+  FinanceAttachmentDto,
+  FinanceAuditEntryDto,
+  FinanceAutomationRuleDto,
+  FinanceBankIntegrationDto,
   FinanceDebtDto,
   FinanceImportJobDto,
   FinancePayableDto,
   FinancePayablesListDto,
   FinanceReconciliationInboxDto,
   FinanceReconciliationInsightDto,
+  FinanceReconciliationLearnedRuleDto,
   FinanceReconciliationMatchDto,
   FinanceReconciliationBucketDto,
   FinanceReconciliationBucketKey,
+  FinanceReconciliationSuggestionReasonDto,
   FinanceReceivableDto,
   FinanceReceivablesListDto,
   FinanceReconciliationSuggestionDto,
+  FinanceSimulationDetailDto,
+  FinanceSimulationItemDto,
+  FinanceSimulationItemKind,
+  FinanceSimulationResultDto,
+  FinanceSimulationScenarioDto,
+  FinanceSimulationSourceDto,
+  FinanceRecurringRuleDto,
+  FinanceRecurringRuleResourceType,
+  FinanceStatementTransactionResultDto,
   FinanceStatementEntryDto,
   FinanceCategoryDto,
   FinanceContextDto,
   FinanceOverviewDto,
+  FinanceOperationInput,
+  FinancePartialSettlementInput,
+  FinanceScheduleOperationInput,
   FinanceTransactionDto,
   FinanceTransactionRow,
   FinanceTransactionListFilters,
   FinanceTransactionStatus,
+  UpdateFinanceAccountInput,
+  UpdateFinanceCategoryInput,
+  UpdateFinanceRecurringRuleInput,
+  UpdateFinanceSimulationItemInput,
+  UpdateFinanceSimulationScenarioInput,
   UpdateFinanceTransactionInput
 } from './types.js';
 
@@ -342,6 +375,71 @@ export function createFinanceAccount(input: CreateFinanceAccountInput): FinanceA
   return mapAccountRow(created);
 }
 
+function readFinanceAccountRow(organizationId: string, accountId: string) {
+  const row = db.prepare(`
+    select
+      id,
+      organization_id,
+      company_id,
+      name,
+      kind,
+      currency,
+      account_number,
+      branch_number,
+      is_active,
+      created_at,
+      updated_at
+    from financial_account
+    where organization_id = ? and id = ?
+    limit 1
+  `).get(organizationId, accountId) as Parameters<typeof mapAccountRow>[0] | undefined;
+
+  if (!row) {
+    throw new Error('Conta financeira não encontrada.');
+  }
+
+  return row;
+}
+
+export function updateFinanceAccount(input: UpdateFinanceAccountInput): FinanceAccountDto {
+  const normalizedOrganizationId = resolveOrganizationId(input.organization_id);
+  readOrganizationRow(normalizedOrganizationId);
+  const current = readFinanceAccountRow(normalizedOrganizationId, input.financial_account_id);
+  const nowIso = new Date().toISOString();
+
+  db.prepare(`
+    update financial_account
+    set name = ?,
+        kind = ?,
+        currency = ?,
+        account_number = ?,
+        branch_number = ?,
+        is_active = ?,
+        updated_at = ?
+    where organization_id = ? and id = ?
+  `).run(
+    input.name?.trim() || current.name,
+    input.kind ?? current.kind,
+    (input.currency?.trim().toUpperCase() || current.currency).slice(0, 8),
+    Object.prototype.hasOwnProperty.call(input, 'account_number') ? input.account_number?.trim() || null : current.account_number,
+    Object.prototype.hasOwnProperty.call(input, 'branch_number') ? input.branch_number?.trim() || null : current.branch_number,
+    typeof input.is_active === 'boolean' ? (input.is_active ? 1 : 0) : current.is_active,
+    nowIso,
+    normalizedOrganizationId,
+    input.financial_account_id
+  );
+
+  return mapAccountRow(readFinanceAccountRow(normalizedOrganizationId, input.financial_account_id));
+}
+
+export function deactivateFinanceAccount(organizationId: string, accountId: string): FinanceAccountDto {
+  return updateFinanceAccount({
+    organization_id: organizationId,
+    financial_account_id: accountId,
+    is_active: false
+  });
+}
+
 export function createFinanceCategory(input: CreateFinanceCategoryInput): FinanceCategoryDto {
   const normalizedOrganizationId = resolveOrganizationId(input.organization_id);
   readOrganizationRow(normalizedOrganizationId);
@@ -425,6 +523,87 @@ export function createFinanceCategory(input: CreateFinanceCategoryInput): Financ
   return mapCategoryRow(created);
 }
 
+function readFinanceCategoryRow(organizationId: string, categoryId: string) {
+  const row = db.prepare(`
+    select
+      id,
+      organization_id,
+      company_id,
+      name,
+      kind,
+      parent_category_id,
+      is_active,
+      created_at,
+      updated_at
+    from financial_category
+    where organization_id = ? and id = ?
+    limit 1
+  `).get(organizationId, categoryId) as Parameters<typeof mapCategoryRow>[0] | undefined;
+
+  if (!row) {
+    throw new Error('Categoria financeira não encontrada.');
+  }
+
+  return row;
+}
+
+export function updateFinanceCategory(input: UpdateFinanceCategoryInput): FinanceCategoryDto {
+  const normalizedOrganizationId = resolveOrganizationId(input.organization_id);
+  readOrganizationRow(normalizedOrganizationId);
+  const current = readFinanceCategoryRow(normalizedOrganizationId, input.financial_category_id);
+  const nowIso = new Date().toISOString();
+  const hasParent = Object.prototype.hasOwnProperty.call(input, 'parent_category_id');
+  const parentCategoryId = hasParent ? input.parent_category_id?.trim() || null : current.parent_category_id;
+
+  if (parentCategoryId) {
+    if (parentCategoryId === input.financial_category_id) {
+      throw new Error('Categoria pai não pode ser a própria categoria.');
+    }
+    const parent = db.prepare(`
+      select id
+      from financial_category
+      where id = ?
+        and organization_id = ?
+        and (
+          (? is null and company_id is null)
+          or company_id = ?
+        )
+      limit 1
+    `).get(parentCategoryId, normalizedOrganizationId, current.company_id, current.company_id) as { id: string } | undefined;
+    if (!parent) {
+      throw new Error('Categoria pai não encontrada.');
+    }
+  }
+
+  db.prepare(`
+    update financial_category
+    set name = ?,
+        kind = ?,
+        parent_category_id = ?,
+        is_active = ?,
+        updated_at = ?
+    where organization_id = ? and id = ?
+  `).run(
+    input.name?.trim() || current.name,
+    input.kind ?? current.kind,
+    parentCategoryId,
+    typeof input.is_active === 'boolean' ? (input.is_active ? 1 : 0) : current.is_active,
+    nowIso,
+    normalizedOrganizationId,
+    input.financial_category_id
+  );
+
+  return mapCategoryRow(readFinanceCategoryRow(normalizedOrganizationId, input.financial_category_id));
+}
+
+export function deactivateFinanceCategory(organizationId: string, categoryId: string): FinanceCategoryDto {
+  return updateFinanceCategory({
+    organization_id: organizationId,
+    financial_category_id: categoryId,
+    is_active: false
+  });
+}
+
 function mapPayableRow(row: {
   id: string;
   organization_id: string;
@@ -436,9 +615,14 @@ function mapPayableRow(row: {
   financial_account_name: string | null;
   financial_category_id: string | null;
   financial_category_name: string | null;
+  financial_cost_center_id: string | null;
+  financial_cost_center_name: string | null;
+  financial_payment_method_id: string | null;
+  financial_payment_method_name: string | null;
   supplier_name: string | null;
   description: string;
   amount_cents: number;
+  paid_amount_cents: number;
   status: string;
   issue_date: string | null;
   due_date: string | null;
@@ -460,9 +644,14 @@ function mapPayableRow(row: {
     financial_account_name: row.financial_account_name,
     financial_category_id: row.financial_category_id,
     financial_category_name: row.financial_category_name,
+    financial_cost_center_id: row.financial_cost_center_id,
+    financial_cost_center_name: row.financial_cost_center_name,
+    financial_payment_method_id: row.financial_payment_method_id,
+    financial_payment_method_name: row.financial_payment_method_name,
     supplier_name: row.supplier_name,
     description: row.description,
     amount_cents: row.amount_cents,
+    paid_amount_cents: Number(row.paid_amount_cents ?? 0),
     status: row.status as FinancePayableDto['status'],
     issue_date: row.issue_date,
     due_date: row.due_date,
@@ -486,9 +675,14 @@ function mapReceivableRow(row: {
   financial_account_name: string | null;
   financial_category_id: string | null;
   financial_category_name: string | null;
+  financial_cost_center_id: string | null;
+  financial_cost_center_name: string | null;
+  financial_payment_method_id: string | null;
+  financial_payment_method_name: string | null;
   customer_name: string | null;
   description: string;
   amount_cents: number;
+  received_amount_cents: number;
   status: string;
   issue_date: string | null;
   due_date: string | null;
@@ -510,9 +704,14 @@ function mapReceivableRow(row: {
     financial_account_name: row.financial_account_name,
     financial_category_id: row.financial_category_id,
     financial_category_name: row.financial_category_name,
+    financial_cost_center_id: row.financial_cost_center_id,
+    financial_cost_center_name: row.financial_cost_center_name,
+    financial_payment_method_id: row.financial_payment_method_id,
+    financial_payment_method_name: row.financial_payment_method_name,
     customer_name: row.customer_name,
     description: row.description,
     amount_cents: row.amount_cents,
+    received_amount_cents: Number(row.received_amount_cents ?? 0),
     status: row.status as FinanceReceivableDto['status'],
     issue_date: row.issue_date,
     due_date: row.due_date,
@@ -520,6 +719,45 @@ function mapReceivableRow(row: {
     source: row.source,
     source_ref: row.source_ref,
     note: row.note,
+    created_at: row.created_at,
+    updated_at: row.updated_at
+  };
+}
+
+function mapRecurringRuleRow(row: {
+  id: string;
+  organization_id: string;
+  company_id: string | null;
+  resource_type: string;
+  template_resource_id: string;
+  name: string;
+  frequency: string;
+  day_of_month: number;
+  start_date: string;
+  end_date: string | null;
+  materialization_months: number;
+  status: string;
+  last_materialized_until: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}): FinanceRecurringRuleDto {
+  return {
+    id: row.id,
+    organization_id: row.organization_id,
+    company_id: row.company_id,
+    resource_type: row.resource_type as FinanceRecurringRuleResourceType,
+    template_resource_id: row.template_resource_id,
+    name: row.name,
+    frequency: 'monthly',
+    day_of_month: Number(row.day_of_month),
+    start_date: row.start_date,
+    end_date: row.end_date,
+    materialization_months: Number(row.materialization_months),
+    status: row.status as FinanceRecurringRuleDto['status'],
+    last_materialized_until: row.last_materialized_until,
+    next_due_date: row.status === 'active' ? nextRuleDueDate(row.start_date, row.day_of_month, row.end_date, row.last_materialized_until) : null,
+    created_by: row.created_by,
     created_at: row.created_at,
     updated_at: row.updated_at
   };
@@ -612,9 +850,14 @@ export function listFinancePayables(organizationId: string, companyId?: string |
       fa.name as financial_account_name,
       fp.financial_category_id,
       fc.name as financial_category_name,
+      fp.financial_cost_center_id,
+      fcc.name as financial_cost_center_name,
+      fp.financial_payment_method_id,
+      fpm.name as financial_payment_method_name,
       fp.supplier_name,
       fp.description,
       fp.amount_cents,
+      fp.paid_amount_cents,
       fp.status,
       fp.issue_date,
       fp.due_date,
@@ -634,6 +877,12 @@ export function listFinancePayables(organizationId: string, companyId?: string |
     left join financial_category fc
       on fc.organization_id = fp.organization_id
       and fc.id = fp.financial_category_id
+    left join financial_cost_center fcc
+      on fcc.organization_id = fp.organization_id
+      and fcc.id = fp.financial_cost_center_id
+    left join financial_payment_method fpm
+      on fpm.organization_id = fp.organization_id
+      and fpm.id = fp.financial_payment_method_id
     where fp.organization_id = ?
       and (? is null or fp.company_id = ?)
     order by coalesce(fp.due_date, fp.issue_date, substr(fp.created_at, 1, 10)) asc, fp.created_at desc
@@ -648,9 +897,14 @@ export function listFinancePayables(organizationId: string, companyId?: string |
     financial_account_name: string | null;
     financial_category_id: string | null;
     financial_category_name: string | null;
+    financial_cost_center_id: string | null;
+    financial_cost_center_name: string | null;
+    financial_payment_method_id: string | null;
+    financial_payment_method_name: string | null;
     supplier_name: string | null;
     description: string;
     amount_cents: number;
+    paid_amount_cents: number;
     status: string;
     issue_date: string | null;
     due_date: string | null;
@@ -663,11 +917,11 @@ export function listFinancePayables(organizationId: string, companyId?: string |
   }>;
   const payables = rows.map(mapPayableRow);
   const operational = buildOperationalGroups(payables, {
-    getAmountCents: (row) => row.amount_cents,
+    getAmountCents: (row) => Math.max(0, row.amount_cents - row.paid_amount_cents),
     getDueDate: (row) => row.due_date,
     getStatus: (row) => row.status,
     isCanceled: (row) => row.status === 'canceled',
-    isSettled: (row) => row.status === 'paid' || Boolean(row.paid_at)
+    isSettled: (row) => row.status === 'paid' || row.paid_amount_cents >= row.amount_cents || Boolean(row.paid_at)
   });
 
   return {
@@ -697,9 +951,14 @@ export function listFinanceReceivables(organizationId: string, companyId?: strin
       fa.name as financial_account_name,
       fr.financial_category_id,
       fc.name as financial_category_name,
+      fr.financial_cost_center_id,
+      fcc.name as financial_cost_center_name,
+      fr.financial_payment_method_id,
+      fpm.name as financial_payment_method_name,
       fr.customer_name,
       fr.description,
       fr.amount_cents,
+      fr.received_amount_cents,
       fr.status,
       fr.issue_date,
       fr.due_date,
@@ -719,6 +978,12 @@ export function listFinanceReceivables(organizationId: string, companyId?: strin
     left join financial_category fc
       on fc.organization_id = fr.organization_id
       and fc.id = fr.financial_category_id
+    left join financial_cost_center fcc
+      on fcc.organization_id = fr.organization_id
+      and fcc.id = fr.financial_cost_center_id
+    left join financial_payment_method fpm
+      on fpm.organization_id = fr.organization_id
+      and fpm.id = fr.financial_payment_method_id
     where fr.organization_id = ?
       and (? is null or fr.company_id = ?)
     order by coalesce(fr.due_date, fr.issue_date, substr(fr.created_at, 1, 10)) asc, fr.created_at desc
@@ -733,9 +998,14 @@ export function listFinanceReceivables(organizationId: string, companyId?: strin
     financial_account_name: string | null;
     financial_category_id: string | null;
     financial_category_name: string | null;
+    financial_cost_center_id: string | null;
+    financial_cost_center_name: string | null;
+    financial_payment_method_id: string | null;
+    financial_payment_method_name: string | null;
     customer_name: string | null;
     description: string;
     amount_cents: number;
+    received_amount_cents: number;
     status: string;
     issue_date: string | null;
     due_date: string | null;
@@ -748,11 +1018,11 @@ export function listFinanceReceivables(organizationId: string, companyId?: strin
   }>;
   const receivables = rows.map(mapReceivableRow);
   const operational = buildOperationalGroups(receivables, {
-    getAmountCents: (row) => row.amount_cents,
+    getAmountCents: (row) => Math.max(0, row.amount_cents - row.received_amount_cents),
     getDueDate: (row) => row.due_date,
     getStatus: (row) => row.status,
     isCanceled: (row) => row.status === 'canceled',
-    isSettled: (row) => row.status === 'received' || Boolean(row.received_at)
+    isSettled: (row) => row.status === 'received' || row.received_amount_cents >= row.amount_cents || Boolean(row.received_at)
   });
 
   return {
@@ -764,11 +1034,48 @@ export function listFinanceReceivables(organizationId: string, companyId?: strin
   };
 }
 
+function applyEntityDefaultsToPayable(input: CreateFinancePayableInput): CreateFinancePayableInput {
+  if (!input.financial_entity_id) {
+    return input;
+  }
+  const defaults = getFinanceEntityDefaultProfile(input.organization_id, input.financial_entity_id, 'payable');
+  if (!defaults) {
+    return input;
+  }
+
+  return {
+    ...input,
+    financial_category_id: input.financial_category_id ?? defaults.financial_category_id,
+    financial_cost_center_id: input.financial_cost_center_id ?? defaults.financial_cost_center_id,
+    financial_account_id: input.financial_account_id ?? defaults.financial_account_id,
+    financial_payment_method_id: input.financial_payment_method_id ?? defaults.financial_payment_method_id
+  };
+}
+
+function applyEntityDefaultsToReceivable(input: CreateFinanceReceivableInput): CreateFinanceReceivableInput {
+  if (!input.financial_entity_id) {
+    return input;
+  }
+  const defaults = getFinanceEntityDefaultProfile(input.organization_id, input.financial_entity_id, 'receivable');
+  if (!defaults) {
+    return input;
+  }
+
+  return {
+    ...input,
+    financial_category_id: input.financial_category_id ?? defaults.financial_category_id,
+    financial_cost_center_id: input.financial_cost_center_id ?? defaults.financial_cost_center_id,
+    financial_account_id: input.financial_account_id ?? defaults.financial_account_id,
+    financial_payment_method_id: input.financial_payment_method_id ?? defaults.financial_payment_method_id
+  };
+}
+
 export function createFinancePayable(input: CreateFinancePayableInput): FinancePayableDto {
-  const normalizedOrganizationId = resolveOrganizationId(input.organization_id);
+  const payload = applyEntityDefaultsToPayable(input);
+  const normalizedOrganizationId = resolveOrganizationId(payload.organization_id);
   readOrganizationRow(normalizedOrganizationId);
-  const companyId = input.company_id?.trim() || null;
-  const financialEntityId = input.financial_entity_id?.trim() || null;
+  const companyId = payload.company_id?.trim() || null;
+  const financialEntityId = payload.financial_entity_id?.trim() || null;
   if (financialEntityId) {
     readFinanceEntityRow(normalizedOrganizationId, financialEntityId);
   }
@@ -784,9 +1091,12 @@ export function createFinancePayable(input: CreateFinancePayableInput): FinanceP
       financial_entity_id,
       financial_account_id,
       financial_category_id,
+      financial_cost_center_id,
+      financial_payment_method_id,
       supplier_name,
       description,
       amount_cents,
+      paid_amount_cents,
       status,
       issue_date,
       due_date,
@@ -796,22 +1106,27 @@ export function createFinancePayable(input: CreateFinancePayableInput): FinanceP
       note,
       created_at,
       updated_at
-    ) values (?, ?, ?, null, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', null, ?, ?, ?)
+    ) values (?, ?, ?, null, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     normalizedOrganizationId,
     companyId,
     financialEntityId,
-    input.financial_account_id ?? null,
-    input.financial_category_id ?? null,
-    input.supplier_name?.trim() || null,
-    input.description.trim(),
-    Math.trunc(input.amount_cents),
-    input.status,
-    input.issue_date ?? null,
-    input.due_date ?? null,
-    input.paid_at ?? null,
-    input.note?.trim() || null,
+    payload.financial_account_id ?? null,
+    payload.financial_category_id ?? null,
+    payload.financial_cost_center_id ?? null,
+    payload.financial_payment_method_id ?? null,
+    payload.supplier_name?.trim() || null,
+    payload.description.trim(),
+    Math.trunc(payload.amount_cents),
+    Math.min(Math.trunc(payload.paid_amount_cents ?? (payload.status === 'paid' ? payload.amount_cents : 0)), Math.trunc(payload.amount_cents)),
+    payload.status,
+    payload.issue_date ?? null,
+    payload.due_date ?? null,
+    payload.paid_at ?? null,
+    payload.source?.trim() || 'manual',
+    payload.source_ref?.trim() || null,
+    payload.note?.trim() || null,
     nowIso,
     nowIso
   );
@@ -828,9 +1143,14 @@ export function createFinancePayable(input: CreateFinancePayableInput): FinanceP
       fa.name as financial_account_name,
       fp.financial_category_id,
       fc.name as financial_category_name,
+      fp.financial_cost_center_id,
+      fcc.name as financial_cost_center_name,
+      fp.financial_payment_method_id,
+      fpm.name as financial_payment_method_name,
       fp.supplier_name,
       fp.description,
       fp.amount_cents,
+      fp.paid_amount_cents,
       fp.status,
       fp.issue_date,
       fp.due_date,
@@ -850,6 +1170,12 @@ export function createFinancePayable(input: CreateFinancePayableInput): FinanceP
     left join financial_category fc
       on fc.organization_id = fp.organization_id
       and fc.id = fp.financial_category_id
+    left join financial_cost_center fcc
+      on fcc.organization_id = fp.organization_id
+      and fcc.id = fp.financial_cost_center_id
+    left join financial_payment_method fpm
+      on fpm.organization_id = fp.organization_id
+      and fpm.id = fp.financial_payment_method_id
     where fp.id = ?
     limit 1
   `).get(id) as {
@@ -863,9 +1189,14 @@ export function createFinancePayable(input: CreateFinancePayableInput): FinanceP
     financial_account_name: string | null;
     financial_category_id: string | null;
     financial_category_name: string | null;
+    financial_cost_center_id: string | null;
+    financial_cost_center_name: string | null;
+    financial_payment_method_id: string | null;
+    financial_payment_method_name: string | null;
     supplier_name: string | null;
     description: string;
     amount_cents: number;
+    paid_amount_cents: number;
     status: string;
     issue_date: string | null;
     due_date: string | null;
@@ -880,14 +1211,27 @@ export function createFinancePayable(input: CreateFinancePayableInput): FinanceP
   if (!created) {
     throw new Error('Falha ao criar conta a pagar.');
   }
-  return mapPayableRow(created);
+  const payable = mapPayableRow(created);
+  if (payable.status === 'paid' && payable.paid_amount_cents > 0 && payable.paid_at) {
+    const movement = createPayableSettlementMovement(payable, payable.paid_amount_cents, payable.paid_at, null, payable.note);
+    db.prepare(`
+      update financial_payable
+      set financial_transaction_id = ?,
+          updated_at = ?
+      where organization_id = ?
+        and id = ?
+    `).run(movement.id, new Date().toISOString(), normalizedOrganizationId, payable.id);
+    return readFinancePayable(normalizedOrganizationId, payable.id);
+  }
+  return payable;
 }
 
 export function createFinanceReceivable(input: CreateFinanceReceivableInput): FinanceReceivableDto {
-  const normalizedOrganizationId = resolveOrganizationId(input.organization_id);
+  const payload = applyEntityDefaultsToReceivable(input);
+  const normalizedOrganizationId = resolveOrganizationId(payload.organization_id);
   readOrganizationRow(normalizedOrganizationId);
-  const companyId = input.company_id?.trim() || null;
-  const financialEntityId = input.financial_entity_id?.trim() || null;
+  const companyId = payload.company_id?.trim() || null;
+  const financialEntityId = payload.financial_entity_id?.trim() || null;
   if (financialEntityId) {
     readFinanceEntityRow(normalizedOrganizationId, financialEntityId);
   }
@@ -903,9 +1247,12 @@ export function createFinanceReceivable(input: CreateFinanceReceivableInput): Fi
       financial_entity_id,
       financial_account_id,
       financial_category_id,
+      financial_cost_center_id,
+      financial_payment_method_id,
       customer_name,
       description,
       amount_cents,
+      received_amount_cents,
       status,
       issue_date,
       due_date,
@@ -915,22 +1262,27 @@ export function createFinanceReceivable(input: CreateFinanceReceivableInput): Fi
       note,
       created_at,
       updated_at
-    ) values (?, ?, ?, null, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', null, ?, ?, ?)
+    ) values (?, ?, ?, null, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     normalizedOrganizationId,
     companyId,
     financialEntityId,
-    input.financial_account_id ?? null,
-    input.financial_category_id ?? null,
-    input.customer_name?.trim() || null,
-    input.description.trim(),
-    Math.trunc(input.amount_cents),
-    input.status,
-    input.issue_date ?? null,
-    input.due_date ?? null,
-    input.received_at ?? null,
-    input.note?.trim() || null,
+    payload.financial_account_id ?? null,
+    payload.financial_category_id ?? null,
+    payload.financial_cost_center_id ?? null,
+    payload.financial_payment_method_id ?? null,
+    payload.customer_name?.trim() || null,
+    payload.description.trim(),
+    Math.trunc(payload.amount_cents),
+    Math.min(Math.trunc(payload.received_amount_cents ?? (payload.status === 'received' ? payload.amount_cents : 0)), Math.trunc(payload.amount_cents)),
+    payload.status,
+    payload.issue_date ?? null,
+    payload.due_date ?? null,
+    payload.received_at ?? null,
+    payload.source?.trim() || 'manual',
+    payload.source_ref?.trim() || null,
+    payload.note?.trim() || null,
     nowIso,
     nowIso
   );
@@ -947,9 +1299,14 @@ export function createFinanceReceivable(input: CreateFinanceReceivableInput): Fi
       fa.name as financial_account_name,
       fr.financial_category_id,
       fc.name as financial_category_name,
+      fr.financial_cost_center_id,
+      fcc.name as financial_cost_center_name,
+      fr.financial_payment_method_id,
+      fpm.name as financial_payment_method_name,
       fr.customer_name,
       fr.description,
       fr.amount_cents,
+      fr.received_amount_cents,
       fr.status,
       fr.issue_date,
       fr.due_date,
@@ -969,6 +1326,12 @@ export function createFinanceReceivable(input: CreateFinanceReceivableInput): Fi
     left join financial_category fc
       on fc.organization_id = fr.organization_id
       and fc.id = fr.financial_category_id
+    left join financial_cost_center fcc
+      on fcc.organization_id = fr.organization_id
+      and fcc.id = fr.financial_cost_center_id
+    left join financial_payment_method fpm
+      on fpm.organization_id = fr.organization_id
+      and fpm.id = fr.financial_payment_method_id
     where fr.id = ?
     limit 1
   `).get(id) as {
@@ -982,9 +1345,14 @@ export function createFinanceReceivable(input: CreateFinanceReceivableInput): Fi
     financial_account_name: string | null;
     financial_category_id: string | null;
     financial_category_name: string | null;
+    financial_cost_center_id: string | null;
+    financial_cost_center_name: string | null;
+    financial_payment_method_id: string | null;
+    financial_payment_method_name: string | null;
     customer_name: string | null;
     description: string;
     amount_cents: number;
+    received_amount_cents: number;
     status: string;
     issue_date: string | null;
     due_date: string | null;
@@ -999,7 +1367,2051 @@ export function createFinanceReceivable(input: CreateFinanceReceivableInput): Fi
   if (!created) {
     throw new Error('Falha ao criar conta a receber.');
   }
-  return mapReceivableRow(created);
+  const receivable = mapReceivableRow(created);
+  if (receivable.status === 'received' && receivable.received_amount_cents > 0 && receivable.received_at) {
+    const movement = createReceivableSettlementMovement(receivable, receivable.received_amount_cents, receivable.received_at, null, receivable.note);
+    db.prepare(`
+      update financial_receivable
+      set financial_transaction_id = ?,
+          updated_at = ?
+      where organization_id = ?
+        and id = ?
+    `).run(movement.id, new Date().toISOString(), normalizedOrganizationId, receivable.id);
+    return readFinanceReceivable(normalizedOrganizationId, receivable.id);
+  }
+  return receivable;
+}
+
+function addMonthsIso(dateIso: string, months: number) {
+  const [year, month, day] = dateIso.split('-').map((part) => Number.parseInt(part, 10));
+  const date = new Date(Date.UTC(year, month - 1 + months, day));
+  return date.toISOString().slice(0, 10);
+}
+
+function daysInMonth(year: number, monthOneBased: number) {
+  return new Date(Date.UTC(year, monthOneBased, 0)).getUTCDate();
+}
+
+function monthlyRuleDate(startDate: string, dayOfMonth: number, monthOffset: number) {
+  const [startYear, startMonth] = startDate.split('-').map((part) => Number.parseInt(part, 10));
+  const anchor = new Date(Date.UTC(startYear, startMonth - 1 + monthOffset, 1));
+  const year = anchor.getUTCFullYear();
+  const month = anchor.getUTCMonth() + 1;
+  const day = Math.min(dayOfMonth, daysInMonth(year, month));
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function monthStartIso(dateIso: string) {
+  return `${dateIso.slice(0, 7)}-01`;
+}
+
+function monthOffsetFromStart(startDate: string, dateIso: string) {
+  const [startYear, startMonth] = startDate.split('-').map((part) => Number.parseInt(part, 10));
+  const [dateYear, dateMonth] = dateIso.split('-').map((part) => Number.parseInt(part, 10));
+  return ((dateYear - startYear) * 12) + (dateMonth - startMonth);
+}
+
+function recurringWindowOffsets(rule: Pick<FinanceRecurringRuleDto, 'start_date' | 'day_of_month' | 'materialization_months'>) {
+  const today = getOperationalTodayIso();
+  const anchorDate = today < rule.start_date ? rule.start_date : monthStartIso(today);
+  const startOffset = Math.max(0, monthOffsetFromStart(rule.start_date, anchorDate));
+  const endOffset = startOffset + Math.max(1, Math.min(24, rule.materialization_months)) - 1;
+  return { startOffset, endOffset };
+}
+
+function nextRuleDueDate(startDate: string, dayOfMonth: number, endDate?: string | null, lastMaterializedUntil?: string | null) {
+  const today = getOperationalTodayIso();
+  for (let index = 0; index < 60; index += 1) {
+    const dueDate = monthlyRuleDate(startDate, dayOfMonth, index);
+    if (dueDate < startDate) continue;
+    if (lastMaterializedUntil && dueDate <= lastMaterializedUntil) continue;
+    if (endDate && dueDate > endDate) return null;
+    if (dueDate >= today) return dueDate;
+  }
+  return null;
+}
+
+function writeFinanceOperationAudit(input: {
+  organization_id: string;
+  company_id?: string | null;
+  resource_type: 'payable' | 'receivable';
+  resource_id: string;
+  action: string;
+  amount_cents?: number | null;
+  note?: string | null;
+  created_by?: string | null;
+}) {
+  db.prepare(`
+    insert into financial_operation_audit (
+      id,
+      organization_id,
+      company_id,
+      resource_type,
+      resource_id,
+      action,
+      amount_cents,
+      note,
+      created_by,
+      created_at
+    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    uuid('foau'),
+    input.organization_id,
+    input.company_id ?? null,
+    input.resource_type,
+    input.resource_id,
+    input.action,
+    typeof input.amount_cents === 'number' ? Math.trunc(input.amount_cents) : null,
+    input.note?.trim() || null,
+    input.created_by?.trim() || null,
+    new Date().toISOString()
+  );
+}
+
+function parseJsonObject(value: string | null | undefined): Record<string, unknown> {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+}
+
+function formatFinanceCurrency(cents: number): string {
+  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(cents / 100);
+}
+
+function humanizeAutomationTrigger(triggerType: string): string {
+  if (triggerType === 'payable.created') return 'Quando uma conta a pagar for criada';
+  if (triggerType === 'receivable.overdue') return 'Quando uma conta a receber atrasar';
+  if (triggerType === 'reconciliation.pending') return 'Quando uma conciliação ficar pendente';
+  if (triggerType === 'transaction.incomplete') return 'Quando um lançamento estiver incompleto';
+  return 'Quando uma condição financeira acontecer';
+}
+
+function humanizeAutomationConditions(conditions: Record<string, unknown>): string[] {
+  const output: string[] = [];
+  const minAmount = typeof conditions.min_amount_cents === 'number' ? conditions.min_amount_cents : null;
+  if (minAmount !== null) output.push(`Valor mínimo de ${formatFinanceCurrency(minAmount)}`);
+  const dueInDays = typeof conditions.due_in_days === 'number' ? conditions.due_in_days : null;
+  if (dueInDays !== null) output.push(`Vencimento em até ${dueInDays} dias`);
+  const tagName = typeof conditions.entity_tag_name === 'string' ? conditions.entity_tag_name : '';
+  if (tagName) output.push(`Entidade classificada como ${tagName}`);
+  if (conditions.missing_classification === true) output.push('Categoria ou centro de custo ausente');
+  return output.length > 0 ? output : ['Sem condição adicional'];
+}
+
+function humanizeAutomationAction(actionType: string): string {
+  if (actionType === 'request_approval') return 'Pedir aprovação financeira';
+  if (actionType === 'flag_review') return 'Marcar para revisão';
+  if (actionType === 'classify_transaction') return 'Classificar lançamento';
+  return 'Executar ação financeira';
+}
+
+function mapAutomationRuleRow(row: {
+  id: string;
+  organization_id: string;
+  company_id: string | null;
+  name: string;
+  trigger_type: string;
+  conditions_json: string;
+  action_type: string;
+  action_payload_json: string;
+  is_active: number;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}): FinanceAutomationRuleDto {
+  return {
+    id: row.id,
+    organization_id: row.organization_id,
+    company_id: row.company_id,
+    name: row.name,
+    trigger_type: row.trigger_type,
+    conditions: parseJsonObject(row.conditions_json),
+    action_type: row.action_type,
+    action_payload: parseJsonObject(row.action_payload_json),
+    human_trigger: humanizeAutomationTrigger(row.trigger_type),
+    human_conditions: humanizeAutomationConditions(parseJsonObject(row.conditions_json)),
+    human_action: humanizeAutomationAction(row.action_type),
+    last_run_at: null,
+    execution_count: 0,
+    recommended_action: Number(row.is_active) === 1 ? null : 'Revise e ative se esta regra ainda fizer sentido.',
+    is_active: Number(row.is_active) === 1,
+    created_by: row.created_by,
+    created_at: row.created_at,
+    updated_at: row.updated_at
+  };
+}
+
+function mapAttachmentRow(row: {
+  id: string;
+  organization_id: string;
+  company_id: string | null;
+  resource_type: string;
+  resource_id: string;
+  file_name: string;
+  mime_type: string;
+  file_size_bytes: number;
+  storage_ref: string;
+  created_by: string | null;
+  created_at: string;
+}): FinanceAttachmentDto {
+  return {
+    id: row.id,
+    organization_id: row.organization_id,
+    company_id: row.company_id,
+    resource_type: row.resource_type as FinanceAttachmentDto['resource_type'],
+    resource_id: row.resource_id,
+    file_name: row.file_name,
+    mime_type: row.mime_type,
+    file_size_bytes: row.file_size_bytes,
+    storage_ref: row.storage_ref,
+    created_by: row.created_by,
+    created_at: row.created_at
+  };
+}
+
+function mapAuditRow(row: {
+  id: string;
+  organization_id: string;
+  company_id: string | null;
+  resource_type: string;
+  resource_id: string;
+  action: string;
+  amount_cents: number | null;
+  note: string | null;
+  created_by: string | null;
+  created_at: string;
+}): FinanceAuditEntryDto {
+  return row;
+}
+
+function mapBankIntegrationRow(row: {
+  id: string;
+  organization_id: string;
+  company_id: string | null;
+  provider: string;
+  status: string;
+  account_name: string | null;
+  last_sync_at: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}): FinanceBankIntegrationDto {
+  return {
+    ...row,
+    status: row.status as FinanceBankIntegrationDto['status']
+  };
+}
+
+function listFinanceAutomationRules(organizationId: string): FinanceAutomationRuleDto[] {
+  const rows = db.prepare(`
+    select *
+    from financial_automation_rule
+    where organization_id = ?
+    order by is_active desc, created_at desc
+  `).all(organizationId) as Parameters<typeof mapAutomationRuleRow>[0][];
+  return rows.map(mapAutomationRuleRow);
+}
+
+function listFinanceAttachments(organizationId: string): FinanceAttachmentDto[] {
+  const rows = db.prepare(`
+    select *
+    from financial_attachment
+    where organization_id = ?
+    order by created_at desc
+    limit 20
+  `).all(organizationId) as Parameters<typeof mapAttachmentRow>[0][];
+  return rows.map(mapAttachmentRow);
+}
+
+function listFinanceAuditEntries(organizationId: string): FinanceAuditEntryDto[] {
+  const rows = db.prepare(`
+    select *
+    from financial_operation_audit
+    where organization_id = ?
+    order by created_at desc
+    limit 30
+  `).all(organizationId) as Parameters<typeof mapAuditRow>[0][];
+  return rows.map(mapAuditRow);
+}
+
+function listFinanceBankIntegrations(organizationId: string): FinanceBankIntegrationDto[] {
+  const rows = db.prepare(`
+    select *
+    from financial_bank_integration
+    where organization_id = ?
+    order by created_at desc
+  `).all(organizationId) as Parameters<typeof mapBankIntegrationRow>[0][];
+  return rows.map(mapBankIntegrationRow);
+}
+
+function buildFinanceApprovalQueue(organizationId: string): FinanceAdvancedApprovalDto[] {
+  const approvedRows = db.prepare(`
+    select resource_id
+    from financial_operation_audit
+    where organization_id = ?
+      and resource_type = 'payable'
+      and action = 'approve_payment'
+  `).all(organizationId) as Array<{ resource_id: string }>;
+  const approvedIds = new Set(approvedRows.map((row) => row.resource_id));
+
+  return listFinancePayables(organizationId).payables
+    .filter((payable) => !approvedIds.has(payable.id))
+    .filter((payable) => ['planned', 'open', 'partial', 'overdue'].includes(payable.status))
+    .filter((payable) => payable.amount_cents >= 500_000)
+    .map((payable) => ({
+      id: `approval-${payable.id}`,
+      payable_id: payable.id,
+      description: payable.description,
+      amount_cents: payable.amount_cents,
+      due_date: payable.due_date,
+      supplier_name: payable.financial_entity_name ?? payable.supplier_name,
+      severity: payable.amount_cents >= 2_000_000 ? 'high' : 'normal'
+    }));
+}
+
+function buildFinancePermissionMatrix(currentPermissions: string[] = []) {
+  const permissionSet = new Set(currentPermissions);
+  return [
+    { permission: 'finance.read', label: 'Leitura financeira', scope: 'Visualizar dados e relatorios' },
+    { permission: 'finance.write', label: 'Operacao financeira', scope: 'Criar e editar lancamentos' },
+    { permission: 'finance.reconcile', label: 'Conciliacao', scope: 'Conciliar extratos e matches' },
+    { permission: 'finance.approve', label: 'Aprovacao', scope: 'Aprovar pagamentos e excecoes' },
+    { permission: 'finance.admin', label: 'Administracao', scope: 'Regras, integracoes e auditoria' }
+  ].map((row) => ({
+    ...row,
+    enabled_for_current_user: permissionSet.has(row.permission) || permissionSet.has('admin') || permissionSet.has('finance.admin')
+  }));
+}
+
+function financeExportOptions() {
+  return [
+    { dataset: 'transactions' as const, label: 'Movimentacoes' },
+    { dataset: 'payables' as const, label: 'Contas a pagar' },
+    { dataset: 'receivables' as const, label: 'Contas a receber' },
+    { dataset: 'audit' as const, label: 'Auditoria' }
+  ].map((option) => ({
+    ...option,
+    csv_url: `/finance/exports?dataset=${option.dataset}&format=csv`,
+    pdf_url: `/finance/exports?dataset=${option.dataset}&format=pdf`
+  }));
+}
+
+function financeAssistedRuleTemplates() {
+  return [
+    {
+      id: 'approval-high-payable',
+      label: 'Pedir aprovação para pagamentos altos',
+      description: 'Quando uma conta a pagar passar de um valor definido, ela entra na fila de aprovação.',
+      trigger_type: 'payable.created',
+      default_conditions: { min_amount_cents: 500000 },
+      action_type: 'request_approval',
+      action_payload: { queue: 'finance.approval' }
+    },
+    {
+      id: 'review-missing-classification',
+      label: 'Revisar lançamentos sem classificação',
+      description: 'Quando um lançamento estiver sem categoria ou centro de custo, ele entra na revisão.',
+      trigger_type: 'transaction.incomplete',
+      default_conditions: { missing_classification: true },
+      action_type: 'flag_review',
+      action_payload: { queue: 'finance.review' }
+    },
+    {
+      id: 'review-pending-reconciliation',
+      label: 'Acompanhar conciliações pendentes',
+      description: 'Quando uma conciliação ficar parada, o financeiro ganha uma pendência de revisão.',
+      trigger_type: 'reconciliation.pending',
+      default_conditions: { due_in_days: 2 },
+      action_type: 'flag_review',
+      action_payload: { queue: 'finance.reconciliation' }
+    }
+  ];
+}
+
+function buildFinanceAdvancedRecommendations(
+  approvalQueue: FinanceAdvancedApprovalDto[],
+  automationRules: FinanceAutomationRuleDto[]
+) {
+  const recommendations: Array<{ id: string; label: string; description: string; target: 'approvals' | 'rules' | 'audit' | 'attachments' | 'integrations' }> = [];
+  if (approvalQueue.length > 0) {
+    recommendations.push({
+      id: 'review-approvals',
+      label: 'Revisar aprovações pendentes',
+      description: `${approvalQueue.length} pagamento(s) aguardam decisão financeira.`,
+      target: 'approvals'
+    });
+  }
+  if (automationRules.length === 0) {
+    recommendations.push({
+      id: 'create-first-rule',
+      label: 'Criar primeira regra assistida',
+      description: 'Comece protegendo pagamentos altos ou lançamentos sem classificação.',
+      target: 'rules'
+    });
+  }
+  if (automationRules.some((rule) => !rule.is_active)) {
+    recommendations.push({
+      id: 'review-paused-rules',
+      label: 'Revisar regras pausadas',
+      description: 'Há regras paradas que podem voltar a proteger a rotina.',
+      target: 'rules'
+    });
+  }
+  return recommendations;
+}
+
+export function getFinanceAdvancedDashboard(
+  organizationId: string,
+  currentPermissions: string[] = []
+): FinanceAdvancedDashboardDto {
+  const normalizedOrganizationId = resolveOrganizationId(organizationId);
+  readOrganizationRow(normalizedOrganizationId);
+  const automationRules = listFinanceAutomationRules(normalizedOrganizationId);
+  const attachments = listFinanceAttachments(normalizedOrganizationId);
+  const bankIntegrations = listFinanceBankIntegrations(normalizedOrganizationId);
+  const approvalQueue = buildFinanceApprovalQueue(normalizedOrganizationId);
+  const auditEntries = listFinanceAuditEntries(normalizedOrganizationId);
+  const highRiskCount = approvalQueue.filter((item) => item.severity === 'high').length;
+
+  return {
+    organization_id: normalizedOrganizationId,
+    generated_at: new Date().toISOString(),
+    cockpit: {
+      sections: {
+        decisions: {
+          label: 'Decisões pendentes',
+          count: approvalQueue.length,
+          severity: approvalQueue.length > 0 ? 'warning' : 'neutral'
+        },
+        risks: {
+          label: 'Riscos operacionais',
+          count: highRiskCount,
+          severity: highRiskCount > 0 ? 'critical' : 'neutral'
+        },
+        rules: {
+          label: 'Regras em operação',
+          count: automationRules.filter((rule) => rule.is_active).length,
+          severity: 'neutral'
+        },
+        audit: {
+          label: 'Eventos auditados',
+          count: auditEntries.length,
+          severity: 'neutral'
+        }
+      },
+      recommended_actions: buildFinanceAdvancedRecommendations(approvalQueue, automationRules)
+    },
+    automation_rules: automationRules,
+    assisted_rule_templates: financeAssistedRuleTemplates(),
+    approval_queue: approvalQueue,
+    attachments,
+    audit_entries: auditEntries,
+    bank_integrations: bankIntegrations,
+    permission_matrix: buildFinancePermissionMatrix(currentPermissions),
+    export_options: financeExportOptions(),
+    summary: {
+      active_rule_count: automationRules.filter((rule) => rule.is_active).length,
+      pending_approval_count: approvalQueue.length,
+      attachment_count: attachments.length,
+      integration_count: bankIntegrations.length
+    }
+  };
+}
+
+export function createFinanceAutomationRule(input: CreateFinanceAutomationRuleInput): FinanceAutomationRuleDto {
+  const organizationId = resolveOrganizationId(input.organization_id);
+  readOrganizationRow(organizationId);
+  const nowIso = new Date().toISOString();
+  const id = uuid('farul');
+  db.prepare(`
+    insert into financial_automation_rule (
+      id, organization_id, company_id, name, trigger_type, conditions_json,
+      action_type, action_payload_json, is_active, created_by, created_at, updated_at
+    ) values (?, ?, null, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    organizationId,
+    input.name.trim(),
+    input.trigger_type.trim(),
+    JSON.stringify(input.conditions ?? {}),
+    input.action_type.trim(),
+    JSON.stringify(input.action_payload ?? {}),
+    input.is_active === false ? 0 : 1,
+    input.created_by?.trim() || null,
+    nowIso,
+    nowIso
+  );
+  const created = listFinanceAutomationRules(organizationId).find((rule) => rule.id === id);
+  if (!created) throw new Error('Falha ao criar regra financeira.');
+  return created;
+}
+
+export function toggleFinanceAutomationRule(
+  organizationId: string,
+  ruleId: string,
+  isActive: boolean
+): FinanceAutomationRuleDto {
+  const normalizedOrganizationId = resolveOrganizationId(organizationId);
+  const nowIso = new Date().toISOString();
+  db.prepare(`
+    update financial_automation_rule
+    set is_active = ?, updated_at = ?
+    where organization_id = ? and id = ?
+  `).run(isActive ? 1 : 0, nowIso, normalizedOrganizationId, ruleId);
+  const updated = listFinanceAutomationRules(normalizedOrganizationId).find((rule) => rule.id === ruleId);
+  if (!updated) throw new Error('Regra financeira nao encontrada.');
+  return updated;
+}
+
+export function approveFinancePayable(input: FinanceOperationInput): FinanceAuditEntryDto {
+  const organizationId = resolveOrganizationId(input.organization_id);
+  const payable = readFinancePayable(organizationId, input.resource_id);
+  writeFinanceOperationAudit({
+    organization_id: organizationId,
+    company_id: payable.company_id,
+    resource_type: 'payable',
+    resource_id: payable.id,
+    action: 'approve_payment',
+    amount_cents: payable.amount_cents,
+    note: input.note?.trim() || 'Pagamento aprovado na camada avancada.',
+    created_by: input.created_by
+  });
+  const latest = listFinanceAuditEntries(organizationId).find((entry) =>
+    entry.resource_type === 'payable'
+    && entry.resource_id === payable.id
+    && entry.action === 'approve_payment'
+  );
+  if (!latest) throw new Error('Falha ao aprovar pagamento.');
+  return latest;
+}
+
+export function createFinanceAttachment(input: CreateFinanceAttachmentInput): FinanceAttachmentDto {
+  const organizationId = resolveOrganizationId(input.organization_id);
+  readOrganizationRow(organizationId);
+  const nowIso = new Date().toISOString();
+  const id = uuid('fatt');
+  db.prepare(`
+    insert into financial_attachment (
+      id, organization_id, company_id, resource_type, resource_id, file_name,
+      mime_type, file_size_bytes, storage_ref, created_by, created_at
+    ) values (?, ?, null, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    organizationId,
+    input.resource_type,
+    input.resource_id.trim(),
+    input.file_name.trim(),
+    input.mime_type.trim(),
+    Math.max(0, Math.trunc(input.file_size_bytes ?? 0)),
+    input.storage_ref?.trim() || `finance://${organizationId}/${id}/${input.file_name.trim()}`,
+    input.created_by?.trim() || null,
+    nowIso
+  );
+  const created = listFinanceAttachments(organizationId).find((attachment) => attachment.id === id);
+  if (!created) throw new Error('Falha ao registrar anexo financeiro.');
+  return created;
+}
+
+export function createFinanceBankIntegration(input: CreateFinanceBankIntegrationInput): FinanceBankIntegrationDto {
+  const organizationId = resolveOrganizationId(input.organization_id);
+  readOrganizationRow(organizationId);
+  const nowIso = new Date().toISOString();
+  const id = uuid('fbank');
+  db.prepare(`
+    insert into financial_bank_integration (
+      id, organization_id, company_id, provider, status, account_name,
+      last_sync_at, created_by, created_at, updated_at
+    ) values (?, ?, null, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    organizationId,
+    input.provider.trim(),
+    input.status ?? 'sandbox',
+    input.account_name?.trim() || null,
+    null,
+    input.created_by?.trim() || null,
+    nowIso,
+    nowIso
+  );
+  const created = listFinanceBankIntegrations(organizationId).find((integration) => integration.id === id);
+  if (!created) throw new Error('Falha ao registrar integracao bancaria.');
+  return created;
+}
+
+function mapSimulationItemRow(row: {
+  id: string;
+  organization_id: string;
+  company_id: string | null;
+  financial_simulation_scenario_id: string;
+  source_type: string;
+  source_id: string | null;
+  kind: string;
+  label: string;
+  amount_cents: number;
+  event_date: string;
+  probability_percent: number;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+}): FinanceSimulationItemDto {
+  return {
+    ...row,
+    source_type: row.source_type as FinanceSimulationItemDto['source_type'],
+    kind: row.kind as FinanceSimulationItemKind,
+    amount_cents: Number(row.amount_cents),
+    probability_percent: Number(row.probability_percent)
+  };
+}
+
+function simulationItemDirection(kind: FinanceSimulationItemKind) {
+  return ['manual_outflow', 'scheduled_outflow', 'partial_payment'].includes(kind) ? 'outflow' : 'inflow';
+}
+
+function buildSimulationResult(
+  scenario: {
+    start_date: string;
+    end_date: string;
+    starting_balance_cents: number;
+  },
+  items: FinanceSimulationItemDto[]
+): FinanceSimulationResultDto {
+  let balance = Number(scenario.starting_balance_cents);
+  let minimumBalance = balance;
+  let firstNegativeDate: string | null = balance < 0 ? scenario.start_date : null;
+  let totalInflow = 0;
+  let totalOutflow = 0;
+  const timeline = [];
+  const dayCount = Math.max(0, getDateDifferenceInDays(scenario.end_date, scenario.start_date));
+
+  for (let offset = 0; offset <= dayCount; offset += 1) {
+    const date = getDateOffsetIso(scenario.start_date, offset);
+    const dayItems = items.filter((item) => item.event_date === date);
+    let inflow = 0;
+    let outflow = 0;
+
+    for (const item of dayItems) {
+      const weightedAmount = Math.round(Math.abs(item.amount_cents) * Math.min(100, Math.max(0, item.probability_percent)) / 100);
+      if (simulationItemDirection(item.kind) === 'inflow') {
+        inflow += weightedAmount;
+      } else {
+        outflow += weightedAmount;
+      }
+    }
+
+    totalInflow += inflow;
+    totalOutflow += outflow;
+    balance += inflow - outflow;
+    minimumBalance = Math.min(minimumBalance, balance);
+    if (!firstNegativeDate && balance < 0) {
+      firstNegativeDate = date;
+    }
+    timeline.push({
+      date,
+      inflow_cents: inflow,
+      outflow_cents: outflow,
+      net_cents: inflow - outflow,
+      balance_cents: balance
+    });
+  }
+
+  return {
+    starting_balance_cents: Number(scenario.starting_balance_cents),
+    total_inflow_cents: totalInflow,
+    total_outflow_cents: totalOutflow,
+    ending_balance_cents: balance,
+    minimum_balance_cents: minimumBalance,
+    first_negative_date: firstNegativeDate,
+    item_count: items.length,
+    timeline
+  };
+}
+
+function listFinanceSimulationItems(organizationId: string, scenarioId: string): FinanceSimulationItemDto[] {
+  const rows = db.prepare(`
+    select *
+    from financial_simulation_item
+    where organization_id = ? and financial_simulation_scenario_id = ?
+    order by event_date asc, created_at asc
+  `).all(organizationId, scenarioId) as Parameters<typeof mapSimulationItemRow>[0][];
+  return rows.map(mapSimulationItemRow);
+}
+
+function clampSimulationDate(dateIso: string | null | undefined, startDate: string, endDate: string) {
+  const candidate = dateIso || startDate;
+  if (candidate < startDate) return startDate;
+  if (candidate > endDate) return endDate;
+  return candidate;
+}
+
+function mapSimulationScenarioRow(row: {
+  id: string;
+  organization_id: string;
+  company_id: string | null;
+  name: string;
+  description: string | null;
+  start_date: string;
+  end_date: string;
+  starting_balance_cents: number;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}): FinanceSimulationScenarioDto {
+  const items = listFinanceSimulationItems(row.organization_id, row.id);
+  return {
+    ...row,
+    starting_balance_cents: Number(row.starting_balance_cents),
+    result: buildSimulationResult(row, items)
+  };
+}
+
+function readFinanceSimulationScenario(organizationId: string, scenarioId: string): FinanceSimulationDetailDto {
+  const row = db.prepare(`
+    select *
+    from financial_simulation_scenario
+    where organization_id = ? and id = ?
+    limit 1
+  `).get(organizationId, scenarioId) as Parameters<typeof mapSimulationScenarioRow>[0] | undefined;
+  if (!row) throw new Error('Cenário de simulação não encontrado.');
+  const scenario = mapSimulationScenarioRow(row);
+  return {
+    ...scenario,
+    items: listFinanceSimulationItems(organizationId, scenario.id)
+  };
+}
+
+export function listFinanceSimulationScenarios(organizationId: string): FinanceSimulationScenarioDto[] {
+  const normalizedOrganizationId = resolveOrganizationId(organizationId);
+  readOrganizationRow(normalizedOrganizationId);
+  const rows = db.prepare(`
+    select *
+    from financial_simulation_scenario
+    where organization_id = ?
+    order by updated_at desc
+  `).all(normalizedOrganizationId) as Parameters<typeof mapSimulationScenarioRow>[0][];
+  return rows.map(mapSimulationScenarioRow);
+}
+
+export function getFinanceSimulationScenario(organizationId: string, scenarioId: string): FinanceSimulationDetailDto {
+  const normalizedOrganizationId = resolveOrganizationId(organizationId);
+  readOrganizationRow(normalizedOrganizationId);
+  return readFinanceSimulationScenario(normalizedOrganizationId, scenarioId);
+}
+
+export function createFinanceSimulationScenario(input: CreateFinanceSimulationScenarioInput): FinanceSimulationDetailDto {
+  const organizationId = resolveOrganizationId(input.organization_id);
+  readOrganizationRow(organizationId);
+  const startDate = input.start_date?.trim() || getOperationalTodayIso();
+  const endDate = input.end_date?.trim() || getDateOffsetIso(startDate, 30);
+  if (endDate < startDate) {
+    throw new Error('A data final da simulação precisa ser depois da data inicial.');
+  }
+  const startingBalance = input.starting_balance_cents ?? getFinanceOverview(organizationId).totals.cash_cents;
+  const nowIso = new Date().toISOString();
+  const id = uuid('fsim');
+
+  db.prepare(`
+    insert into financial_simulation_scenario (
+      id, organization_id, company_id, name, description, start_date, end_date,
+      starting_balance_cents, created_by, created_at, updated_at
+    ) values (?, ?, null, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    organizationId,
+    input.name.trim(),
+    input.description?.trim() || null,
+    startDate,
+    endDate,
+    Math.trunc(startingBalance),
+    input.created_by?.trim() || null,
+    nowIso,
+    nowIso
+  );
+
+  return readFinanceSimulationScenario(organizationId, id);
+}
+
+export function updateFinanceSimulationScenario(input: UpdateFinanceSimulationScenarioInput): FinanceSimulationDetailDto {
+  const organizationId = resolveOrganizationId(input.organization_id);
+  const current = readFinanceSimulationScenario(organizationId, input.scenario_id);
+  const nextStart = input.start_date?.trim() || current.start_date;
+  const nextEnd = input.end_date?.trim() || current.end_date;
+  if (nextEnd < nextStart) {
+    throw new Error('A data final da simulação precisa ser depois da data inicial.');
+  }
+
+  const nowIso = new Date().toISOString();
+  db.prepare(`
+    update financial_simulation_scenario
+    set name = ?,
+        description = ?,
+        start_date = ?,
+        end_date = ?,
+        starting_balance_cents = ?,
+        updated_at = ?
+    where organization_id = ? and id = ?
+  `).run(
+    input.name?.trim() || current.name,
+    typeof input.description === 'undefined' ? current.description : input.description?.trim() || null,
+    nextStart,
+    nextEnd,
+    Math.trunc(input.starting_balance_cents ?? current.starting_balance_cents),
+    nowIso,
+    organizationId,
+    current.id
+  );
+
+  return readFinanceSimulationScenario(organizationId, current.id);
+}
+
+export function createFinanceSimulationItem(input: CreateFinanceSimulationItemInput): FinanceSimulationDetailDto {
+  const organizationId = resolveOrganizationId(input.organization_id);
+  const scenario = readFinanceSimulationScenario(organizationId, input.scenario_id);
+  const eventDate = input.event_date.trim();
+  if (eventDate < scenario.start_date || eventDate > scenario.end_date) {
+    throw new Error('O bloco precisa estar dentro do período da simulação.');
+  }
+  const nowIso = new Date().toISOString();
+  const id = uuid('fsimi');
+  db.prepare(`
+    insert into financial_simulation_item (
+      id, organization_id, company_id, financial_simulation_scenario_id, source_type, source_id,
+      kind, label, amount_cents, event_date, probability_percent, note, created_at, updated_at
+    ) values (?, ?, null, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    organizationId,
+    scenario.id,
+    input.source_type ?? 'manual',
+    input.source_id?.trim() || null,
+    input.kind,
+    input.label.trim(),
+    Math.trunc(Math.abs(input.amount_cents)),
+    eventDate,
+    Math.min(100, Math.max(0, Math.trunc(input.probability_percent ?? 100))),
+    input.note?.trim() || null,
+    nowIso,
+    nowIso
+  );
+
+  db.prepare(`
+    update financial_simulation_scenario
+    set updated_at = ?
+    where organization_id = ? and id = ?
+  `).run(nowIso, organizationId, scenario.id);
+
+  return readFinanceSimulationScenario(organizationId, scenario.id);
+}
+
+export function updateFinanceSimulationItem(input: UpdateFinanceSimulationItemInput): FinanceSimulationDetailDto {
+  const organizationId = resolveOrganizationId(input.organization_id);
+  const scenario = readFinanceSimulationScenario(organizationId, input.scenario_id);
+  const current = scenario.items.find((item) => item.id === input.item_id);
+  if (!current) {
+    throw new Error('Bloco de simulação não encontrado.');
+  }
+
+  const eventDate = input.event_date?.trim() || current.event_date;
+  if (eventDate < scenario.start_date || eventDate > scenario.end_date) {
+    throw new Error('O bloco precisa estar dentro do período da simulação.');
+  }
+
+  const nowIso = new Date().toISOString();
+  db.prepare(`
+    update financial_simulation_item
+    set source_type = ?,
+        source_id = ?,
+        kind = ?,
+        label = ?,
+        amount_cents = ?,
+        event_date = ?,
+        probability_percent = ?,
+        note = ?,
+        updated_at = ?
+    where organization_id = ? and financial_simulation_scenario_id = ? and id = ?
+  `).run(
+    input.source_type ?? current.source_type,
+    typeof input.source_id === 'undefined' ? current.source_id : input.source_id?.trim() || null,
+    input.kind ?? current.kind,
+    input.label?.trim() || current.label,
+    Math.trunc(Math.abs(input.amount_cents ?? current.amount_cents)),
+    eventDate,
+    Math.min(100, Math.max(0, Math.trunc(input.probability_percent ?? current.probability_percent))),
+    typeof input.note === 'undefined' ? current.note : input.note?.trim() || null,
+    nowIso,
+    organizationId,
+    scenario.id,
+    current.id
+  );
+
+  db.prepare(`
+    update financial_simulation_scenario
+    set updated_at = ?
+    where organization_id = ? and id = ?
+  `).run(nowIso, organizationId, scenario.id);
+
+  return readFinanceSimulationScenario(organizationId, scenario.id);
+}
+
+export function deleteFinanceSimulationItem(
+  organizationId: string,
+  scenarioId: string,
+  itemId: string
+): FinanceSimulationDetailDto {
+  const normalizedOrganizationId = resolveOrganizationId(organizationId);
+  readFinanceSimulationScenario(normalizedOrganizationId, scenarioId);
+  const result = db.prepare(`
+    delete from financial_simulation_item
+    where organization_id = ? and financial_simulation_scenario_id = ? and id = ?
+  `).run(normalizedOrganizationId, scenarioId, itemId);
+  if (result.changes === 0) {
+    throw new Error('Bloco de simulação não encontrado.');
+  }
+  db.prepare(`
+    update financial_simulation_scenario
+    set updated_at = ?
+    where organization_id = ? and id = ?
+  `).run(new Date().toISOString(), normalizedOrganizationId, scenarioId);
+  return readFinanceSimulationScenario(normalizedOrganizationId, scenarioId);
+}
+
+export function deleteFinanceSimulationScenario(
+  organizationId: string,
+  scenarioId: string
+): { ok: true; scenario_id: string } {
+  const normalizedOrganizationId = resolveOrganizationId(organizationId);
+  readFinanceSimulationScenario(normalizedOrganizationId, scenarioId);
+  db.prepare(`
+    delete from financial_simulation_scenario
+    where organization_id = ? and id = ?
+  `).run(normalizedOrganizationId, scenarioId);
+  return { ok: true, scenario_id: scenarioId };
+}
+
+export function listFinanceSimulationSources(
+  organizationId: string,
+  scenarioId?: string | null
+): { balance: FinanceSimulationSourceDto; sources: FinanceSimulationSourceDto[] } {
+  const normalizedOrganizationId = resolveOrganizationId(organizationId);
+  ensureFinanceRecurringWindow(normalizedOrganizationId);
+  const scenario = scenarioId ? readFinanceSimulationScenario(normalizedOrganizationId, scenarioId) : null;
+  const startDate = scenario?.start_date ?? getOperationalTodayIso();
+  const endDate = scenario?.end_date ?? getDateOffsetIso(startDate, 30);
+  const recurringEndDate = getDateOffsetIso(startDate, 92);
+  const recurringTemplateIds = new Set(
+    listFinanceRecurringRules(normalizedOrganizationId)
+      .filter((rule) => rule.status === 'active')
+      .map((rule) => rule.template_resource_id)
+  );
+  const balanceCents = getFinanceOverview(normalizedOrganizationId).totals.cash_cents;
+  const balance: FinanceSimulationSourceDto = {
+    id: 'current-balance',
+    label: 'Saldo atual em conta',
+    detail: 'Usar como saldo inicial da mesa',
+    amount_cents: balanceCents,
+    event_date: startDate,
+    kind: 'starting_balance',
+    source_type: 'balance',
+    source_id: null,
+    tone: 'balance',
+    cadence: 'one_time'
+  };
+
+  const receivableSources = listFinanceReceivables(normalizedOrganizationId).receivables
+    .filter((item) => ['planned', 'open', 'partial', 'overdue'].includes(item.status))
+    .map((item): FinanceSimulationSourceDto => ({
+      id: `receivable-${item.id}`,
+      label: item.description,
+      detail: `${item.source === 'recurring_rule' || recurringTemplateIds.has(item.id) ? 'Recorrente · ' : ''}${item.financial_entity_name ?? item.customer_name ?? 'Cliente'} · ${item.status}`,
+      amount_cents: Math.max(0, item.amount_cents - item.received_amount_cents),
+      event_date: clampSimulationDate(item.due_date, startDate, endDate),
+      kind: 'expected_inflow',
+      source_type: 'receivable',
+      source_id: item.id,
+      tone: 'inflow',
+      cadence: item.source === 'recurring_rule' || recurringTemplateIds.has(item.id) ? 'recurring' : 'one_time'
+    }));
+
+  const payableSources = listFinancePayables(normalizedOrganizationId).payables
+    .filter((item) => ['planned', 'open', 'partial', 'overdue'].includes(item.status))
+    .map((item): FinanceSimulationSourceDto => ({
+      id: `payable-${item.id}`,
+      label: item.description,
+      detail: `${item.source === 'recurring_rule' || recurringTemplateIds.has(item.id) ? 'Recorrente · ' : ''}${item.financial_entity_name ?? item.supplier_name ?? 'Fornecedor'} · ${item.status}`,
+      amount_cents: Math.max(0, item.amount_cents - item.paid_amount_cents),
+      event_date: clampSimulationDate(item.due_date, startDate, endDate),
+      kind: 'scheduled_outflow',
+      source_type: 'payable',
+      source_id: item.id,
+      tone: 'outflow',
+      cadence: item.source === 'recurring_rule' || recurringTemplateIds.has(item.id) ? 'recurring' : 'one_time'
+    }));
+
+  return {
+    balance,
+    sources: [...receivableSources, ...payableSources]
+      .filter((source) => source.amount_cents > 0)
+      .filter((source) => source.cadence !== 'recurring' || source.event_date <= recurringEndDate)
+      .sort((left, right) => left.event_date.localeCompare(right.event_date) || right.amount_cents - left.amount_cents)
+      .slice(0, 40)
+  };
+}
+
+export function duplicateFinanceSimulationScenario(
+  organizationId: string,
+  scenarioId: string,
+  createdBy?: string | null
+): FinanceSimulationDetailDto {
+  const normalizedOrganizationId = resolveOrganizationId(organizationId);
+  const source = readFinanceSimulationScenario(normalizedOrganizationId, scenarioId);
+  const copy = createFinanceSimulationScenario({
+    organization_id: normalizedOrganizationId,
+    name: `${source.name} - cópia`,
+    description: source.description,
+    start_date: source.start_date,
+    end_date: source.end_date,
+    starting_balance_cents: source.starting_balance_cents,
+    created_by: createdBy
+  });
+  source.items.forEach((item) => {
+    createFinanceSimulationItem({
+      organization_id: normalizedOrganizationId,
+      scenario_id: copy.id,
+      source_type: item.source_type,
+      source_id: item.source_id,
+      kind: item.kind,
+      label: item.label,
+      amount_cents: item.amount_cents,
+      event_date: item.event_date,
+      probability_percent: item.probability_percent,
+      note: item.note
+    });
+  });
+  return readFinanceSimulationScenario(normalizedOrganizationId, copy.id);
+}
+
+function csvEscape(value: unknown) {
+  const normalized = value == null ? '' : String(value);
+  return `"${normalized.replace(/"/g, '""')}"`;
+}
+
+function toCsv(headers: string[], rows: unknown[][]) {
+  return [
+    headers.map(csvEscape).join(','),
+    ...rows.map((row) => row.map(csvEscape).join(','))
+  ].join('\n');
+}
+
+function simplePdfBuffer(title: string, lines: string[]) {
+  const text = [title, ...lines].join(' | ').replace(/[()\\]/g, '');
+  const stream = `BT /F1 12 Tf 50 760 Td (${text.slice(0, 900)}) Tj ET`;
+  const objects = [
+    '1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj',
+    '2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj',
+    '3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >> endobj',
+    '4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj',
+    `5 0 obj << /Length ${stream.length} >> stream\n${stream}\nendstream endobj`
+  ];
+  const body = `%PDF-1.4\n${objects.join('\n')}\n%%EOF`;
+  return Buffer.from(body, 'utf8');
+}
+
+export function buildFinanceExport(
+  organizationId: string,
+  dataset: 'transactions' | 'payables' | 'receivables' | 'audit',
+  format: 'csv' | 'pdf'
+): { fileName: string; contentType: string; body: string | Buffer } {
+  const normalizedOrganizationId = resolveOrganizationId(organizationId);
+  const nowLabel = getOperationalTodayIso();
+  let title = 'Financeiro';
+  let csv = '';
+
+  if (dataset === 'transactions') {
+    title = 'Movimentacoes financeiras';
+    const rows = listFinanceTransactions(normalizedOrganizationId, {}).transactions;
+    csv = toCsv(['id', 'tipo', 'status', 'valor_centavos', 'competencia', 'entidade', 'categoria'], rows.map((row) => [
+      row.id, row.kind, row.status, row.amount_cents, row.competence_date, row.financial_entity_name, row.financial_category_name
+    ]));
+  } else if (dataset === 'payables') {
+    title = 'Contas a pagar';
+    const rows = listFinancePayables(normalizedOrganizationId).payables;
+    csv = toCsv(['id', 'descricao', 'status', 'valor_centavos', 'vencimento', 'fornecedor'], rows.map((row) => [
+      row.id, row.description, row.status, row.amount_cents, row.due_date, row.financial_entity_name ?? row.supplier_name
+    ]));
+  } else if (dataset === 'receivables') {
+    title = 'Contas a receber';
+    const rows = listFinanceReceivables(normalizedOrganizationId).receivables;
+    csv = toCsv(['id', 'descricao', 'status', 'valor_centavos', 'vencimento', 'cliente'], rows.map((row) => [
+      row.id, row.description, row.status, row.amount_cents, row.due_date, row.financial_entity_name ?? row.customer_name
+    ]));
+  } else {
+    title = 'Auditoria financeira';
+    const rows = listFinanceAuditEntries(normalizedOrganizationId);
+    csv = toCsv(['id', 'recurso', 'recurso_id', 'acao', 'valor_centavos', 'usuario', 'data'], rows.map((row) => [
+      row.id, row.resource_type, row.resource_id, row.action, row.amount_cents, row.created_by, row.created_at
+    ]));
+  }
+
+  if (format === 'csv') {
+    return {
+      fileName: `${dataset}-${nowLabel}.csv`,
+      contentType: 'text/csv; charset=utf-8',
+      body: csv
+    };
+  }
+
+  return {
+    fileName: `${dataset}-${nowLabel}.pdf`,
+    contentType: 'application/pdf',
+    body: simplePdfBuffer(title, csv.split('\n').slice(0, 12))
+  };
+}
+
+function readFinancePayable(organizationId: string, payableId: string) {
+  const payable = listFinancePayables(organizationId).payables.find((item) => item.id === payableId);
+  if (!payable) {
+    throw new Error('Conta a pagar não encontrada.');
+  }
+  return payable;
+}
+
+function readFinanceReceivable(organizationId: string, receivableId: string) {
+  const receivable = listFinanceReceivables(organizationId).receivables.find((item) => item.id === receivableId);
+  if (!receivable) {
+    throw new Error('Conta a receber não encontrada.');
+  }
+  return receivable;
+}
+
+function readFinanceRecurringRule(organizationId: string, ruleId: string) {
+  const row = db.prepare(`
+    select *
+    from financial_recurring_rule
+    where organization_id = ?
+      and id = ?
+    limit 1
+  `).get(organizationId, ruleId) as {
+    id: string;
+    organization_id: string;
+    company_id: string | null;
+    resource_type: string;
+    template_resource_id: string;
+    name: string;
+    frequency: string;
+    day_of_month: number;
+    start_date: string;
+    end_date: string | null;
+    materialization_months: number;
+    status: string;
+    last_materialized_until: string | null;
+    created_by: string | null;
+    created_at: string;
+    updated_at: string;
+  } | undefined;
+
+  if (!row) {
+    throw new Error('Recorrência não encontrada.');
+  }
+
+  return mapRecurringRuleRow(row);
+}
+
+export function listFinanceRecurringRules(organizationId: string): FinanceRecurringRuleDto[] {
+  const normalizedOrganizationId = resolveOrganizationId(organizationId);
+  readOrganizationRow(normalizedOrganizationId);
+  const rows = db.prepare(`
+    select *
+    from financial_recurring_rule
+    where organization_id = ?
+    order by status = 'active' desc, coalesce(last_materialized_until, start_date) asc, created_at desc
+  `).all(normalizedOrganizationId) as Parameters<typeof mapRecurringRuleRow>[0][];
+
+  return rows.map(mapRecurringRuleRow);
+}
+
+export function ensureFinanceRecurringWindow(organizationId: string): { payables: FinancePayableDto[]; receivables: FinanceReceivableDto[] } {
+  const normalizedOrganizationId = resolveOrganizationId(organizationId);
+  const createdPayables: FinancePayableDto[] = [];
+  const createdReceivables: FinanceReceivableDto[] = [];
+
+  for (const rule of listFinanceRecurringRules(normalizedOrganizationId).filter((item) => item.status === 'active')) {
+    const materialized = materializeFinanceRecurringRule(rule);
+    createdPayables.push(...materialized.payables);
+    createdReceivables.push(...materialized.receivables);
+  }
+
+  return { payables: createdPayables, receivables: createdReceivables };
+}
+
+function recurringSourceRef(ruleId: string, dueDate: string) {
+  return `${ruleId}:${dueDate.slice(0, 7)}`;
+}
+
+function recurringOccurrenceExists(organizationId: string, resourceType: FinanceRecurringRuleResourceType, sourceRef: string) {
+  const table = resourceType === 'payable' ? 'financial_payable' : 'financial_receivable';
+  const row = db.prepare(`
+    select id
+    from ${table}
+    where organization_id = ?
+      and source = 'recurring_rule'
+      and source_ref = ?
+    limit 1
+  `).get(organizationId, sourceRef);
+  return Boolean(row);
+}
+
+function materializeFinanceRecurringRule(rule: FinanceRecurringRuleDto): { payables: FinancePayableDto[]; receivables: FinanceReceivableDto[] } {
+  if (rule.status !== 'active') {
+    return { payables: [], receivables: [] };
+  }
+
+  const createdPayables: FinancePayableDto[] = [];
+  const createdReceivables: FinanceReceivableDto[] = [];
+  const { startOffset, endOffset } = recurringWindowOffsets(rule);
+  const nowIso = new Date().toISOString();
+  let lastMaterializedUntil: string | null = rule.last_materialized_until;
+
+  if (rule.resource_type === 'payable') {
+    const template = readFinancePayable(rule.organization_id, rule.template_resource_id);
+    for (let index = startOffset; index <= endOffset; index += 1) {
+      const dueDate = monthlyRuleDate(rule.start_date, rule.day_of_month, index);
+      if (dueDate < rule.start_date) continue;
+      if (rule.end_date && dueDate > rule.end_date) continue;
+      if (dueDate.slice(0, 7) === rule.start_date.slice(0, 7)) {
+        lastMaterializedUntil = dueDate;
+        continue;
+      }
+      const sourceRef = recurringSourceRef(rule.id, dueDate);
+      if (recurringOccurrenceExists(rule.organization_id, 'payable', sourceRef)) {
+        lastMaterializedUntil = dueDate;
+        continue;
+      }
+      createdPayables.push(createFinancePayable({
+        organization_id: rule.organization_id,
+        company_id: template.company_id,
+        financial_entity_id: template.financial_entity_id,
+        financial_account_id: template.financial_account_id,
+        financial_category_id: template.financial_category_id,
+        financial_cost_center_id: template.financial_cost_center_id,
+        financial_payment_method_id: template.financial_payment_method_id,
+        supplier_name: template.supplier_name,
+        description: template.description,
+        amount_cents: template.amount_cents,
+        status: 'open',
+        issue_date: getOperationalTodayIso(),
+        due_date: dueDate,
+        source: 'recurring_rule',
+        source_ref: sourceRef,
+        note: template.note
+      }));
+      lastMaterializedUntil = dueDate;
+    }
+  } else {
+    const template = readFinanceReceivable(rule.organization_id, rule.template_resource_id);
+    for (let index = startOffset; index <= endOffset; index += 1) {
+      const dueDate = monthlyRuleDate(rule.start_date, rule.day_of_month, index);
+      if (dueDate < rule.start_date) continue;
+      if (rule.end_date && dueDate > rule.end_date) continue;
+      if (dueDate.slice(0, 7) === rule.start_date.slice(0, 7)) {
+        lastMaterializedUntil = dueDate;
+        continue;
+      }
+      const sourceRef = recurringSourceRef(rule.id, dueDate);
+      if (recurringOccurrenceExists(rule.organization_id, 'receivable', sourceRef)) {
+        lastMaterializedUntil = dueDate;
+        continue;
+      }
+      createdReceivables.push(createFinanceReceivable({
+        organization_id: rule.organization_id,
+        company_id: template.company_id,
+        financial_entity_id: template.financial_entity_id,
+        financial_account_id: template.financial_account_id,
+        financial_category_id: template.financial_category_id,
+        financial_cost_center_id: template.financial_cost_center_id,
+        financial_payment_method_id: template.financial_payment_method_id,
+        customer_name: template.customer_name,
+        description: template.description,
+        amount_cents: template.amount_cents,
+        status: 'open',
+        issue_date: getOperationalTodayIso(),
+        due_date: dueDate,
+        source: 'recurring_rule',
+        source_ref: sourceRef,
+        note: template.note
+      }));
+      lastMaterializedUntil = dueDate;
+    }
+  }
+
+  if (lastMaterializedUntil !== rule.last_materialized_until) {
+    db.prepare(`
+      update financial_recurring_rule
+      set last_materialized_until = ?,
+          updated_at = ?
+      where organization_id = ?
+        and id = ?
+    `).run(lastMaterializedUntil, nowIso, rule.organization_id, rule.id);
+  }
+
+  return { payables: createdPayables, receivables: createdReceivables };
+}
+
+export function createFinanceRecurringRuleFromResource(input: CreateFinanceRecurringRuleInput): {
+  rule: FinanceRecurringRuleDto;
+  payables: FinancePayableDto[];
+  receivables: FinanceReceivableDto[];
+} {
+  const organizationId = resolveOrganizationId(input.organization_id);
+  readOrganizationRow(organizationId);
+  const dayOfMonth = Math.max(1, Math.min(31, Math.trunc(input.day_of_month)));
+  const materializationMonths = Math.max(1, Math.min(24, Math.trunc(input.materialization_months ?? 3)));
+  const template = input.resource_type === 'payable'
+    ? readFinancePayable(organizationId, input.resource_id)
+    : readFinanceReceivable(organizationId, input.resource_id);
+  const startDate = input.start_date || template.due_date || getOperationalTodayIso();
+  const nowIso = new Date().toISOString();
+  const id = uuid('frrule');
+
+  db.prepare(`
+    insert into financial_recurring_rule (
+      id,
+      organization_id,
+      company_id,
+      resource_type,
+      template_resource_id,
+      name,
+      frequency,
+      day_of_month,
+      start_date,
+      end_date,
+      materialization_months,
+      status,
+      last_materialized_until,
+      created_by,
+      created_at,
+      updated_at
+    ) values (?, ?, ?, ?, ?, ?, 'monthly', ?, ?, ?, ?, 'active', null, ?, ?, ?)
+  `).run(
+    id,
+    organizationId,
+    template.company_id,
+    input.resource_type,
+    template.id,
+    template.description,
+    dayOfMonth,
+    startDate,
+    input.end_date ?? null,
+    materializationMonths,
+    input.created_by ?? null,
+    nowIso,
+    nowIso
+  );
+
+  const rule = readFinanceRecurringRule(organizationId, id);
+  const materialized = materializeFinanceRecurringRule(rule);
+  writeFinanceOperationAudit({
+    organization_id: organizationId,
+    company_id: template.company_id,
+    resource_type: input.resource_type,
+    resource_id: template.id,
+    action: 'recurring_rule',
+    amount_cents: template.amount_cents,
+    note: `Recorrência mensal criada para o dia ${dayOfMonth}`,
+    created_by: input.created_by
+  });
+
+  return {
+    rule: readFinanceRecurringRule(organizationId, id),
+    ...materialized
+  };
+}
+
+export function updateFinanceRecurringRule(input: UpdateFinanceRecurringRuleInput): FinanceRecurringRuleDto {
+  const organizationId = resolveOrganizationId(input.organization_id);
+  const current = readFinanceRecurringRule(organizationId, input.recurring_rule_id);
+  const nextStatus = input.status ?? current.status;
+  const nowIso = new Date().toISOString();
+
+  db.prepare(`
+    update financial_recurring_rule
+    set status = ?,
+        end_date = ?,
+        materialization_months = ?,
+        updated_at = ?
+    where organization_id = ?
+      and id = ?
+  `).run(
+    nextStatus,
+    typeof input.end_date === 'undefined' ? current.end_date : input.end_date,
+    Math.max(1, Math.min(24, Math.trunc(input.materialization_months ?? current.materialization_months))),
+    nowIso,
+    organizationId,
+    input.recurring_rule_id
+  );
+
+  return readFinanceRecurringRule(organizationId, input.recurring_rule_id);
+}
+
+function recurringProjectionBounds(window: { start: string | null; end: string | null }) {
+  const start = window.start ?? monthStartIso(getOperationalTodayIso());
+  const end = window.end ?? addMonthsIso(start, 11);
+  return { start, end };
+}
+
+function payableProjectionStatus(payable: Pick<FinancePayableDto, 'status'>): FinanceTransactionStatus {
+  if (payable.status === 'paid') return 'settled';
+  if (payable.status === 'partial') return 'partial';
+  if (payable.status === 'canceled') return 'canceled';
+  if (payable.status === 'planned') return 'planned';
+  return 'open';
+}
+
+function receivableProjectionStatus(receivable: Pick<FinanceReceivableDto, 'status'>): FinanceTransactionStatus {
+  if (receivable.status === 'received') return 'settled';
+  if (receivable.status === 'partial') return 'partial';
+  if (receivable.status === 'canceled') return 'canceled';
+  if (receivable.status === 'planned') return 'planned';
+  return 'open';
+}
+
+function recurringPayableAsTransaction(rule: FinanceRecurringRuleDto, payable: FinancePayableDto, scheduledDate: string, anchorDate: string): FinanceTransactionDto {
+  const status = payableProjectionStatus(payable);
+  const settlementDate = payable.paid_at ?? null;
+  return {
+    id: `recurring-projection:${rule.id}:${scheduledDate.slice(0, 7)}`,
+    organization_id: payable.organization_id,
+    financial_entity_id: payable.financial_entity_id,
+    financial_entity_name: payable.financial_entity_name,
+    financial_account_id: payable.financial_account_id,
+    financial_account_name: payable.financial_account_name,
+    financial_category_id: payable.financial_category_id,
+    financial_category_name: payable.financial_category_name,
+    financial_cost_center_id: payable.financial_cost_center_id,
+    financial_cost_center_name: payable.financial_cost_center_name,
+    financial_payment_method_id: payable.financial_payment_method_id,
+    financial_payment_method_name: payable.financial_payment_method_name,
+    kind: 'expense',
+    status,
+    amount_cents: payable.amount_cents,
+    issue_date: payable.issue_date ?? anchorDate,
+    due_date: anchorDate,
+    settlement_date: settlementDate,
+    competence_date: anchorDate,
+    source: 'recurring_projection',
+    source_ref: recurringSourceRef(rule.id, scheduledDate),
+    note: payable.description,
+    created_by: null,
+    created_at: payable.created_at,
+    updated_at: payable.updated_at,
+    is_deleted: false,
+    views: computeViews({
+      kind: 'expense',
+      status,
+      amountCents: payable.amount_cents,
+      issueDate: payable.issue_date ?? anchorDate,
+      dueDate: anchorDate,
+      settlementDate,
+      competenceDate: anchorDate
+    })
+  };
+}
+
+function recurringReceivableAsTransaction(rule: FinanceRecurringRuleDto, receivable: FinanceReceivableDto, scheduledDate: string, anchorDate: string): FinanceTransactionDto {
+  const status = receivableProjectionStatus(receivable);
+  const settlementDate = receivable.received_at ?? null;
+  return {
+    id: `recurring-projection:${rule.id}:${scheduledDate.slice(0, 7)}`,
+    organization_id: receivable.organization_id,
+    financial_entity_id: receivable.financial_entity_id,
+    financial_entity_name: receivable.financial_entity_name,
+    financial_account_id: receivable.financial_account_id,
+    financial_account_name: receivable.financial_account_name,
+    financial_category_id: receivable.financial_category_id,
+    financial_category_name: receivable.financial_category_name,
+    financial_cost_center_id: receivable.financial_cost_center_id,
+    financial_cost_center_name: receivable.financial_cost_center_name,
+    financial_payment_method_id: receivable.financial_payment_method_id,
+    financial_payment_method_name: receivable.financial_payment_method_name,
+    kind: 'income',
+    status,
+    amount_cents: receivable.amount_cents,
+    issue_date: receivable.issue_date ?? anchorDate,
+    due_date: anchorDate,
+    settlement_date: settlementDate,
+    competence_date: anchorDate,
+    source: 'recurring_projection',
+    source_ref: recurringSourceRef(rule.id, scheduledDate),
+    note: receivable.description,
+    created_by: null,
+    created_at: receivable.created_at,
+    updated_at: receivable.updated_at,
+    is_deleted: false,
+    views: computeViews({
+      kind: 'income',
+      status,
+      amountCents: receivable.amount_cents,
+      issueDate: receivable.issue_date ?? anchorDate,
+      dueDate: anchorDate,
+      settlementDate,
+      competenceDate: anchorDate
+    })
+  };
+}
+
+export function listFinanceRecurringProjectionTransactions(
+  organizationId: string,
+  window: { start: string | null; end: string | null }
+): FinanceTransactionDto[] {
+  const normalizedOrganizationId = resolveOrganizationId(organizationId);
+  const { start, end } = recurringProjectionBounds(window);
+  const activeRules = listFinanceRecurringRules(normalizedOrganizationId).filter((rule) => rule.status === 'active');
+  if (activeRules.length === 0) return [];
+
+  const payables = listFinancePayables(normalizedOrganizationId).payables;
+  const receivables = listFinanceReceivables(normalizedOrganizationId).receivables;
+  const payablesById = new Map(payables.map((payable) => [payable.id, payable]));
+  const receivablesById = new Map(receivables.map((receivable) => [receivable.id, receivable]));
+  const payablesBySourceRef = new Map(payables.filter((payable) => payable.source_ref).map((payable) => [payable.source_ref, payable]));
+  const receivablesBySourceRef = new Map(receivables.filter((receivable) => receivable.source_ref).map((receivable) => [receivable.source_ref, receivable]));
+  const projections: FinanceTransactionDto[] = [];
+
+  for (const rule of activeRules) {
+    const startOffset = Math.max(0, monthOffsetFromStart(rule.start_date, start));
+    const endOffset = Math.max(startOffset, monthOffsetFromStart(rule.start_date, end));
+
+    for (let index = startOffset; index <= endOffset; index += 1) {
+      const scheduledDate = monthlyRuleDate(rule.start_date, rule.day_of_month, index);
+      if (scheduledDate < rule.start_date) continue;
+      if (rule.end_date && scheduledDate > rule.end_date) continue;
+
+      if (rule.resource_type === 'payable') {
+        const sourceRef = recurringSourceRef(rule.id, scheduledDate);
+        const actualPayable = scheduledDate.slice(0, 7) === rule.start_date.slice(0, 7)
+          ? payablesById.get(rule.template_resource_id)
+          : payablesBySourceRef.get(sourceRef);
+        const payable = actualPayable ?? payablesById.get(rule.template_resource_id);
+        if (!payable) continue;
+        const anchor = actualPayable ? payable.due_date ?? scheduledDate : scheduledDate;
+        if (anchor < start || anchor > end) continue;
+        projections.push(recurringPayableAsTransaction(rule, payable, scheduledDate, anchor));
+      } else {
+        const sourceRef = recurringSourceRef(rule.id, scheduledDate);
+        const actualReceivable = scheduledDate.slice(0, 7) === rule.start_date.slice(0, 7)
+          ? receivablesById.get(rule.template_resource_id)
+          : receivablesBySourceRef.get(sourceRef);
+        const receivable = actualReceivable ?? receivablesById.get(rule.template_resource_id);
+        if (!receivable) continue;
+        const anchor = actualReceivable ? receivable.due_date ?? scheduledDate : scheduledDate;
+        if (anchor < start || anchor > end) continue;
+        projections.push(recurringReceivableAsTransaction(rule, receivable, scheduledDate, anchor));
+      }
+    }
+  }
+
+  return projections;
+}
+
+function createPayableSettlementMovement(
+  payable: FinancePayableDto,
+  amountCents: number,
+  settledAt: string,
+  createdBy?: string | null,
+  note?: string | null
+) {
+  return createFinanceTransaction({
+    organization_id: payable.organization_id,
+    company_id: payable.company_id,
+    financial_entity_id: payable.financial_entity_id,
+    financial_account_id: payable.financial_account_id,
+    financial_category_id: payable.financial_category_id,
+    financial_cost_center_id: payable.financial_cost_center_id,
+    financial_payment_method_id: payable.financial_payment_method_id,
+    kind: 'expense',
+    status: 'settled',
+    amount_cents: amountCents,
+    issue_date: payable.issue_date ?? payable.due_date ?? settledAt,
+    due_date: payable.due_date,
+    settlement_date: settledAt,
+    competence_date: payable.due_date ?? payable.issue_date ?? settledAt,
+    source: 'payable_settlement',
+    source_ref: payable.id,
+    note: note?.trim() || `Baixa de conta a pagar: ${payable.description}`,
+    created_by: createdBy ?? null
+  });
+}
+
+function createReceivableSettlementMovement(
+  receivable: FinanceReceivableDto,
+  amountCents: number,
+  settledAt: string,
+  createdBy?: string | null,
+  note?: string | null
+) {
+  return createFinanceTransaction({
+    organization_id: receivable.organization_id,
+    company_id: receivable.company_id,
+    financial_entity_id: receivable.financial_entity_id,
+    financial_account_id: receivable.financial_account_id,
+    financial_category_id: receivable.financial_category_id,
+    financial_cost_center_id: receivable.financial_cost_center_id,
+    financial_payment_method_id: receivable.financial_payment_method_id,
+    kind: 'income',
+    status: 'settled',
+    amount_cents: amountCents,
+    issue_date: receivable.issue_date ?? receivable.due_date ?? settledAt,
+    due_date: receivable.due_date,
+    settlement_date: settledAt,
+    competence_date: receivable.due_date ?? receivable.issue_date ?? settledAt,
+    source: 'receivable_settlement',
+    source_ref: receivable.id,
+    note: note?.trim() || `Baixa de conta a receber: ${receivable.description}`,
+    created_by: createdBy ?? null
+  });
+}
+
+export function settleFinancePayable(input: FinanceOperationInput): FinancePayableDto {
+  const organizationId = resolveOrganizationId(input.organization_id);
+  const payable = readFinancePayable(organizationId, input.resource_id);
+  if (payable.status === 'canceled') {
+    throw new Error('Conta a pagar cancelada não pode ser baixada.');
+  }
+  const remainingAmount = Math.max(0, payable.amount_cents - payable.paid_amount_cents);
+  if (remainingAmount <= 0) {
+    throw new Error('Conta a pagar já está baixada.');
+  }
+  const settledAt = input.settled_at ?? getOperationalTodayIso();
+  const movement = createPayableSettlementMovement(payable, remainingAmount, settledAt, input.created_by, input.note);
+  const nowIso = new Date().toISOString();
+  db.prepare(`
+    update financial_payable
+    set status = 'paid',
+        paid_at = ?,
+        paid_amount_cents = amount_cents,
+        financial_transaction_id = ?,
+        note = coalesce(nullif(?, ''), note),
+        updated_at = ?
+    where organization_id = ? and id = ?
+  `).run(settledAt, movement.id, input.note?.trim() || null, nowIso, organizationId, input.resource_id);
+  writeFinanceOperationAudit({
+    organization_id: organizationId,
+    company_id: payable.company_id,
+    resource_type: 'payable',
+    resource_id: payable.id,
+    action: 'settle',
+    amount_cents: remainingAmount,
+    note: input.note,
+    created_by: input.created_by
+  });
+  return readFinancePayable(organizationId, input.resource_id);
+}
+
+export function partiallySettleFinancePayable(input: FinancePartialSettlementInput): FinancePayableDto {
+  const organizationId = resolveOrganizationId(input.organization_id);
+  const payable = readFinancePayable(organizationId, input.resource_id);
+  if (payable.status === 'canceled') {
+    throw new Error('Conta a pagar cancelada não pode receber baixa parcial.');
+  }
+  if (input.amount_cents <= 0) {
+    throw new Error('Informe um valor positivo para baixa parcial.');
+  }
+  const remainingAmount = Math.max(0, payable.amount_cents - payable.paid_amount_cents);
+  if (remainingAmount <= 0) {
+    throw new Error('Conta a pagar já está baixada.');
+  }
+  const settlementAmount = Math.min(remainingAmount, Math.trunc(input.amount_cents));
+  const nextPaidAmount = Math.min(payable.amount_cents, payable.paid_amount_cents + settlementAmount);
+  const isPaid = nextPaidAmount >= payable.amount_cents;
+  const settledAt = input.settled_at ?? getOperationalTodayIso();
+  const movement = createPayableSettlementMovement(payable, settlementAmount, settledAt, input.created_by, input.note);
+  const nowIso = new Date().toISOString();
+  db.prepare(`
+    update financial_payable
+    set status = ?,
+        paid_at = ?,
+        paid_amount_cents = ?,
+        financial_transaction_id = ?,
+        note = coalesce(nullif(?, ''), note),
+        updated_at = ?
+    where organization_id = ? and id = ?
+  `).run(
+    isPaid ? 'paid' : 'partial',
+    isPaid ? settledAt : null,
+    nextPaidAmount,
+    movement.id,
+    input.note?.trim() || null,
+    nowIso,
+    organizationId,
+    input.resource_id
+  );
+  writeFinanceOperationAudit({
+    organization_id: organizationId,
+    company_id: payable.company_id,
+    resource_type: 'payable',
+    resource_id: payable.id,
+    action: 'partial_settle',
+    amount_cents: settlementAmount,
+    note: input.note,
+    created_by: input.created_by
+  });
+  return readFinancePayable(organizationId, input.resource_id);
+}
+
+export function cancelFinancePayable(input: FinanceOperationInput): FinancePayableDto {
+  const organizationId = resolveOrganizationId(input.organization_id);
+  const payable = readFinancePayable(organizationId, input.resource_id);
+  const nowIso = new Date().toISOString();
+  db.prepare(`
+    update financial_payable
+    set status = 'canceled',
+        note = coalesce(nullif(?, ''), note),
+        updated_at = ?
+    where organization_id = ? and id = ?
+  `).run(input.note?.trim() || null, nowIso, organizationId, input.resource_id);
+  writeFinanceOperationAudit({
+    organization_id: organizationId,
+    company_id: payable.company_id,
+    resource_type: 'payable',
+    resource_id: payable.id,
+    action: 'cancel',
+    note: input.note,
+    created_by: input.created_by
+  });
+  return readFinancePayable(organizationId, input.resource_id);
+}
+
+export function duplicateFinancePayable(input: FinanceOperationInput): FinancePayableDto {
+  const organizationId = resolveOrganizationId(input.organization_id);
+  const payable = readFinancePayable(organizationId, input.resource_id);
+  const duplicated = createFinancePayable({
+    organization_id: organizationId,
+    company_id: payable.company_id,
+    financial_entity_id: payable.financial_entity_id,
+    financial_account_id: payable.financial_account_id,
+    financial_category_id: payable.financial_category_id,
+    financial_cost_center_id: payable.financial_cost_center_id,
+    financial_payment_method_id: payable.financial_payment_method_id,
+    supplier_name: payable.supplier_name,
+    description: `${payable.description} (cópia)`,
+    amount_cents: payable.amount_cents,
+    status: 'open',
+    issue_date: getOperationalTodayIso(),
+    due_date: payable.due_date,
+    note: input.note?.trim() || payable.note
+  });
+  writeFinanceOperationAudit({
+    organization_id: organizationId,
+    company_id: payable.company_id,
+    resource_type: 'payable',
+    resource_id: payable.id,
+    action: 'duplicate',
+    note: `Cópia criada: ${duplicated.id}`,
+    created_by: input.created_by
+  });
+  return duplicated;
+}
+
+export function createFinancePayableInstallments(input: FinanceScheduleOperationInput): FinancePayableDto[] {
+  const organizationId = resolveOrganizationId(input.organization_id);
+  const payable = readFinancePayable(organizationId, input.resource_id);
+  const count = Math.max(2, Math.min(36, Math.trunc(input.count)));
+  const baseAmount = Math.floor(payable.amount_cents / count);
+  const remainder = payable.amount_cents - (baseAmount * count);
+  const firstDueDate = input.first_due_date || payable.due_date || getOperationalTodayIso();
+  const created: FinancePayableDto[] = [];
+
+  for (let index = 0; index < count; index += 1) {
+    created.push(createFinancePayable({
+      organization_id: organizationId,
+      company_id: payable.company_id,
+      financial_entity_id: payable.financial_entity_id,
+      financial_account_id: payable.financial_account_id,
+      financial_category_id: payable.financial_category_id,
+      financial_cost_center_id: payable.financial_cost_center_id,
+      financial_payment_method_id: payable.financial_payment_method_id,
+      supplier_name: payable.supplier_name,
+      description: `${payable.description} ${index + 1}/${count}`,
+      amount_cents: baseAmount + (index === 0 ? remainder : 0),
+      status: 'open',
+      issue_date: getOperationalTodayIso(),
+      due_date: addMonthsIso(firstDueDate, index),
+      note: input.note?.trim() || payable.note
+    }));
+  }
+
+  writeFinanceOperationAudit({
+    organization_id: organizationId,
+    company_id: payable.company_id,
+    resource_type: 'payable',
+    resource_id: payable.id,
+    action: 'installments',
+    amount_cents: payable.amount_cents,
+    note: `${count} parcelas criadas`,
+    created_by: input.created_by
+  });
+  return created;
+}
+
+export function createFinancePayableRecurrences(input: FinanceScheduleOperationInput): FinancePayableDto[] {
+  const organizationId = resolveOrganizationId(input.organization_id);
+  const payable = readFinancePayable(organizationId, input.resource_id);
+  const count = Math.max(1, Math.min(36, Math.trunc(input.count)));
+  const firstDueDate = input.first_due_date || payable.due_date || getOperationalTodayIso();
+  const created: FinancePayableDto[] = [];
+
+  for (let index = 0; index < count; index += 1) {
+    created.push(createFinancePayable({
+      organization_id: organizationId,
+      company_id: payable.company_id,
+      financial_entity_id: payable.financial_entity_id,
+      financial_account_id: payable.financial_account_id,
+      financial_category_id: payable.financial_category_id,
+      financial_cost_center_id: payable.financial_cost_center_id,
+      financial_payment_method_id: payable.financial_payment_method_id,
+      supplier_name: payable.supplier_name,
+      description: `${payable.description} recorrente ${index + 1}/${count}`,
+      amount_cents: payable.amount_cents,
+      status: 'open',
+      issue_date: getOperationalTodayIso(),
+      due_date: addMonthsIso(firstDueDate, index),
+      note: input.note?.trim() || payable.note
+    }));
+  }
+
+  writeFinanceOperationAudit({
+    organization_id: organizationId,
+    company_id: payable.company_id,
+    resource_type: 'payable',
+    resource_id: payable.id,
+    action: 'recurrence',
+    amount_cents: payable.amount_cents,
+    note: `${count} recorrências criadas`,
+    created_by: input.created_by
+  });
+  return created;
+}
+
+export function settleFinanceReceivable(input: FinanceOperationInput): FinanceReceivableDto {
+  const organizationId = resolveOrganizationId(input.organization_id);
+  const receivable = readFinanceReceivable(organizationId, input.resource_id);
+  if (receivable.status === 'canceled') {
+    throw new Error('Conta a receber cancelada não pode ser baixada.');
+  }
+  const remainingAmount = Math.max(0, receivable.amount_cents - receivable.received_amount_cents);
+  if (remainingAmount <= 0) {
+    throw new Error('Conta a receber já está baixada.');
+  }
+  const settledAt = input.settled_at ?? getOperationalTodayIso();
+  const movement = createReceivableSettlementMovement(receivable, remainingAmount, settledAt, input.created_by, input.note);
+  const nowIso = new Date().toISOString();
+  db.prepare(`
+    update financial_receivable
+    set status = 'received',
+        received_at = ?,
+        received_amount_cents = amount_cents,
+        financial_transaction_id = ?,
+        note = coalesce(nullif(?, ''), note),
+        updated_at = ?
+    where organization_id = ? and id = ?
+  `).run(settledAt, movement.id, input.note?.trim() || null, nowIso, organizationId, input.resource_id);
+  writeFinanceOperationAudit({
+    organization_id: organizationId,
+    company_id: receivable.company_id,
+    resource_type: 'receivable',
+    resource_id: receivable.id,
+    action: 'settle',
+    amount_cents: remainingAmount,
+    note: input.note,
+    created_by: input.created_by
+  });
+  return readFinanceReceivable(organizationId, input.resource_id);
+}
+
+export function partiallySettleFinanceReceivable(input: FinancePartialSettlementInput): FinanceReceivableDto {
+  const organizationId = resolveOrganizationId(input.organization_id);
+  const receivable = readFinanceReceivable(organizationId, input.resource_id);
+  if (receivable.status === 'canceled') {
+    throw new Error('Conta a receber cancelada não pode receber baixa parcial.');
+  }
+  if (input.amount_cents <= 0) {
+    throw new Error('Informe um valor positivo para baixa parcial.');
+  }
+  const remainingAmount = Math.max(0, receivable.amount_cents - receivable.received_amount_cents);
+  if (remainingAmount <= 0) {
+    throw new Error('Conta a receber já está baixada.');
+  }
+  const settlementAmount = Math.min(remainingAmount, Math.trunc(input.amount_cents));
+  const nextReceivedAmount = Math.min(receivable.amount_cents, receivable.received_amount_cents + settlementAmount);
+  const isReceived = nextReceivedAmount >= receivable.amount_cents;
+  const settledAt = input.settled_at ?? getOperationalTodayIso();
+  const movement = createReceivableSettlementMovement(receivable, settlementAmount, settledAt, input.created_by, input.note);
+  const nowIso = new Date().toISOString();
+  db.prepare(`
+    update financial_receivable
+    set status = ?,
+        received_at = ?,
+        received_amount_cents = ?,
+        financial_transaction_id = ?,
+        note = coalesce(nullif(?, ''), note),
+        updated_at = ?
+    where organization_id = ? and id = ?
+  `).run(
+    isReceived ? 'received' : 'partial',
+    isReceived ? settledAt : null,
+    nextReceivedAmount,
+    movement.id,
+    input.note?.trim() || null,
+    nowIso,
+    organizationId,
+    input.resource_id
+  );
+  writeFinanceOperationAudit({
+    organization_id: organizationId,
+    company_id: receivable.company_id,
+    resource_type: 'receivable',
+    resource_id: receivable.id,
+    action: 'partial_settle',
+    amount_cents: settlementAmount,
+    note: input.note,
+    created_by: input.created_by
+  });
+  return readFinanceReceivable(organizationId, input.resource_id);
+}
+
+export function cancelFinanceReceivable(input: FinanceOperationInput): FinanceReceivableDto {
+  const organizationId = resolveOrganizationId(input.organization_id);
+  const receivable = readFinanceReceivable(organizationId, input.resource_id);
+  const nowIso = new Date().toISOString();
+  db.prepare(`
+    update financial_receivable
+    set status = 'canceled',
+        note = coalesce(nullif(?, ''), note),
+        updated_at = ?
+    where organization_id = ? and id = ?
+  `).run(input.note?.trim() || null, nowIso, organizationId, input.resource_id);
+  writeFinanceOperationAudit({
+    organization_id: organizationId,
+    company_id: receivable.company_id,
+    resource_type: 'receivable',
+    resource_id: receivable.id,
+    action: 'cancel',
+    note: input.note,
+    created_by: input.created_by
+  });
+  return readFinanceReceivable(organizationId, input.resource_id);
+}
+
+export function duplicateFinanceReceivable(input: FinanceOperationInput): FinanceReceivableDto {
+  const organizationId = resolveOrganizationId(input.organization_id);
+  const receivable = readFinanceReceivable(organizationId, input.resource_id);
+  const duplicated = createFinanceReceivable({
+    organization_id: organizationId,
+    company_id: receivable.company_id,
+    financial_entity_id: receivable.financial_entity_id,
+    financial_account_id: receivable.financial_account_id,
+    financial_category_id: receivable.financial_category_id,
+    financial_cost_center_id: receivable.financial_cost_center_id,
+    financial_payment_method_id: receivable.financial_payment_method_id,
+    customer_name: receivable.customer_name,
+    description: `${receivable.description} (cópia)`,
+    amount_cents: receivable.amount_cents,
+    status: 'open',
+    issue_date: getOperationalTodayIso(),
+    due_date: receivable.due_date,
+    note: input.note?.trim() || receivable.note
+  });
+  writeFinanceOperationAudit({
+    organization_id: organizationId,
+    company_id: receivable.company_id,
+    resource_type: 'receivable',
+    resource_id: receivable.id,
+    action: 'duplicate',
+    note: `Cópia criada: ${duplicated.id}`,
+    created_by: input.created_by
+  });
+  return duplicated;
+}
+
+export function createFinanceReceivableInstallments(input: FinanceScheduleOperationInput): FinanceReceivableDto[] {
+  const organizationId = resolveOrganizationId(input.organization_id);
+  const receivable = readFinanceReceivable(organizationId, input.resource_id);
+  const count = Math.max(2, Math.min(36, Math.trunc(input.count)));
+  const baseAmount = Math.floor(receivable.amount_cents / count);
+  const remainder = receivable.amount_cents - (baseAmount * count);
+  const firstDueDate = input.first_due_date || receivable.due_date || getOperationalTodayIso();
+  const created: FinanceReceivableDto[] = [];
+
+  for (let index = 0; index < count; index += 1) {
+    created.push(createFinanceReceivable({
+      organization_id: organizationId,
+      company_id: receivable.company_id,
+      financial_entity_id: receivable.financial_entity_id,
+      financial_account_id: receivable.financial_account_id,
+      financial_category_id: receivable.financial_category_id,
+      financial_cost_center_id: receivable.financial_cost_center_id,
+      financial_payment_method_id: receivable.financial_payment_method_id,
+      customer_name: receivable.customer_name,
+      description: `${receivable.description} ${index + 1}/${count}`,
+      amount_cents: baseAmount + (index === 0 ? remainder : 0),
+      status: 'open',
+      issue_date: getOperationalTodayIso(),
+      due_date: addMonthsIso(firstDueDate, index),
+      note: input.note?.trim() || receivable.note
+    }));
+  }
+
+  writeFinanceOperationAudit({
+    organization_id: organizationId,
+    company_id: receivable.company_id,
+    resource_type: 'receivable',
+    resource_id: receivable.id,
+    action: 'installments',
+    amount_cents: receivable.amount_cents,
+    note: `${count} parcelas criadas`,
+    created_by: input.created_by
+  });
+  return created;
+}
+
+export function createFinanceReceivableRecurrences(input: FinanceScheduleOperationInput): FinanceReceivableDto[] {
+  const organizationId = resolveOrganizationId(input.organization_id);
+  const receivable = readFinanceReceivable(organizationId, input.resource_id);
+  const count = Math.max(1, Math.min(36, Math.trunc(input.count)));
+  const firstDueDate = input.first_due_date || receivable.due_date || getOperationalTodayIso();
+  const created: FinanceReceivableDto[] = [];
+
+  for (let index = 0; index < count; index += 1) {
+    created.push(createFinanceReceivable({
+      organization_id: organizationId,
+      company_id: receivable.company_id,
+      financial_entity_id: receivable.financial_entity_id,
+      financial_account_id: receivable.financial_account_id,
+      financial_category_id: receivable.financial_category_id,
+      financial_cost_center_id: receivable.financial_cost_center_id,
+      financial_payment_method_id: receivable.financial_payment_method_id,
+      customer_name: receivable.customer_name,
+      description: `${receivable.description} recorrente ${index + 1}/${count}`,
+      amount_cents: receivable.amount_cents,
+      status: 'open',
+      issue_date: getOperationalTodayIso(),
+      due_date: addMonthsIso(firstDueDate, index),
+      note: input.note?.trim() || receivable.note
+    }));
+  }
+
+  writeFinanceOperationAudit({
+    organization_id: organizationId,
+    company_id: receivable.company_id,
+    resource_type: 'receivable',
+    resource_id: receivable.id,
+    action: 'recurrence',
+    amount_cents: receivable.amount_cents,
+    note: `${count} recorrências criadas`,
+    created_by: input.created_by
+  });
+  return created;
 }
 
 function mapImportJobRow(row: {
@@ -1092,13 +3504,15 @@ function mapReconciliationRow(row: {
   created_at: string;
   updated_at: string;
 }): FinanceReconciliationMatchDto {
+  const confidenceMatch = row.note?.match(/confidence=([0-9.]+)/);
+  const confidenceScore = confidenceMatch ? Number(confidenceMatch[1]) : null;
   return {
     id: row.id,
     organization_id: row.organization_id,
     company_id: row.company_id,
     financial_bank_statement_entry_id: row.financial_bank_statement_entry_id,
     financial_transaction_id: row.financial_transaction_id,
-    confidence_score: null,
+    confidence_score: Number.isFinite(confidenceScore) ? confidenceScore : null,
     match_status: row.match_status as FinanceReconciliationMatchDto['match_status'],
     source: row.match_type,
     reviewed_by: row.matched_by,
@@ -1128,9 +3542,166 @@ function getTransactionAnchorDate(transaction: FinanceTransactionDto) {
     ?? transaction.created_at.slice(0, 10);
 }
 
+const RECONCILIATION_STOPWORDS = new Set([
+  'a',
+  'ao',
+  'com',
+  'da',
+  'de',
+  'do',
+  'dos',
+  'em',
+  'e',
+  'para',
+  'pagamento',
+  'pago',
+  'recebimento',
+  'recebido',
+  'transferencia',
+  'pix',
+  'ted',
+  'doc'
+]);
+
+function normalizeReconciliationText(value: string | null | undefined) {
+  return (value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function reconciliationTokens(value: string | null | undefined) {
+  return normalizeReconciliationText(value)
+    .split(/\s+/)
+    .filter((token) => token.length >= 3 && !RECONCILIATION_STOPWORDS.has(token));
+}
+
+function reconciliationPattern(value: string | null | undefined) {
+  return reconciliationTokens(value).slice(0, 3).join(' ');
+}
+
+function descriptionScore(entryDescription: string, transaction: FinanceTransactionDto) {
+  const entryTokens = reconciliationTokens(entryDescription);
+  if (entryTokens.length === 0) return 0;
+
+  const transactionTokens = new Set(reconciliationTokens([
+    transaction.note,
+    transaction.financial_entity_name,
+    transaction.financial_category_name,
+    transaction.financial_cost_center_name
+  ].filter(Boolean).join(' ')));
+  if (transactionTokens.size === 0) return 0;
+
+  const overlap = entryTokens.filter((token) => transactionTokens.has(token)).length;
+  return Number(Math.min(1, overlap / Math.max(1, Math.min(entryTokens.length, 5))).toFixed(2));
+}
+
+function entryMentionsEntity(entryDescription: string, transaction: FinanceTransactionDto) {
+  const entityTokens = reconciliationTokens(transaction.financial_entity_name);
+  if (entityTokens.length === 0) return false;
+  const entryText = ` ${normalizeReconciliationText(entryDescription)} `;
+  return entityTokens.some((token) => entryText.includes(` ${token} `));
+}
+
+function buildLearnedReconciliationRules(params: {
+  entries: FinanceStatementEntryDto[];
+  matches: FinanceReconciliationMatchDto[];
+  transactions: FinanceTransactionDto[];
+}): FinanceReconciliationLearnedRuleDto[] {
+  const entriesById = new Map(params.entries.map((entry) => [entry.id, entry]));
+  const transactionsById = new Map(params.transactions.map((transaction) => [transaction.id, transaction]));
+  const buckets = new Map<string, {
+    pattern: string;
+    usage_count: number;
+    financial_entity_id: string | null;
+    financial_entity_name: string | null;
+    financial_category_id: string | null;
+    financial_category_name: string | null;
+    financial_cost_center_id: string | null;
+    financial_cost_center_name: string | null;
+  }>();
+
+  for (const match of params.matches) {
+    if (match.match_status !== 'matched' || !match.financial_transaction_id) continue;
+    const entry = entriesById.get(match.financial_bank_statement_entry_id);
+    const transaction = transactionsById.get(match.financial_transaction_id);
+    if (!entry || !transaction) continue;
+
+    const pattern = reconciliationPattern(entry.description);
+    if (!pattern) continue;
+    const key = [
+      pattern,
+      transaction.kind,
+      transaction.financial_entity_id ?? '',
+      transaction.financial_category_id ?? '',
+      transaction.financial_cost_center_id ?? ''
+    ].join('|');
+    const current = buckets.get(key) ?? {
+      pattern,
+      usage_count: 0,
+      financial_entity_id: transaction.financial_entity_id,
+      financial_entity_name: transaction.financial_entity_name,
+      financial_category_id: transaction.financial_category_id,
+      financial_category_name: transaction.financial_category_name,
+      financial_cost_center_id: transaction.financial_cost_center_id,
+      financial_cost_center_name: transaction.financial_cost_center_name
+    };
+    current.usage_count += 1;
+    buckets.set(key, current);
+  }
+
+  return [...buckets.values()]
+    .filter((rule) => rule.usage_count >= 2)
+    .map((rule) => {
+      const label = rule.financial_entity_name
+        ?? rule.financial_category_name
+        ?? rule.financial_cost_center_name
+        ?? rule.pattern;
+      return {
+        id: `rule-${normalizeReconciliationText(`${rule.pattern} ${label}`).replace(/\s+/g, '-')}`,
+        label,
+        pattern: rule.pattern,
+        usage_count: rule.usage_count,
+        confidence_boost: Number(Math.min(0.2, 0.08 + rule.usage_count * 0.04).toFixed(2)),
+        financial_entity_name: rule.financial_entity_name,
+        financial_category_name: rule.financial_category_name,
+        financial_cost_center_name: rule.financial_cost_center_name
+      };
+    })
+    .sort((left, right) => right.usage_count - left.usage_count || left.label.localeCompare(right.label))
+    .slice(0, 8);
+}
+
+function matchingLearnedRule(
+  entry: FinanceStatementEntryDto,
+  transaction: FinanceTransactionDto,
+  rules: FinanceReconciliationLearnedRuleDto[]
+) {
+  const entryText = ` ${normalizeReconciliationText(entry.description)} `;
+  return rules.find((rule) => {
+    const patternTokens = reconciliationTokens(rule.pattern);
+    if (patternTokens.length === 0 || !patternTokens.every((token) => entryText.includes(` ${token} `))) {
+      return false;
+    }
+    if (rule.financial_entity_name && transaction.financial_entity_name !== rule.financial_entity_name) {
+      return false;
+    }
+    if (rule.financial_category_name && transaction.financial_category_name !== rule.financial_category_name) {
+      return false;
+    }
+    if (rule.financial_cost_center_name && transaction.financial_cost_center_name !== rule.financial_cost_center_name) {
+      return false;
+    }
+    return true;
+  }) ?? null;
+}
+
 function buildReconciliationSuggestion(
   entry: FinanceStatementEntryDto,
-  transaction: FinanceTransactionDto
+  transaction: FinanceTransactionDto,
+  learnedRules: FinanceReconciliationLearnedRuleDto[]
 ): FinanceReconciliationSuggestionDto {
   const entryDate = entry.posted_at ?? entry.statement_date;
   const anchorDate = getTransactionAnchorDate(transaction);
@@ -1138,24 +3709,52 @@ function buildReconciliationSuggestion(
   const entryDirection = entry.amount_cents >= 0 ? 'inflow' : 'outflow';
   const transactionDirection = transaction.kind === 'income' ? 'inflow' : 'outflow';
   const directionMatches = entryDirection === transactionDirection;
-  const entryLabel = entry.description.toLowerCase();
-  const transactionLabel = `${transaction.note ?? ''} ${transaction.financial_entity_name ?? ''}`.toLowerCase();
-  const hasTextOverlap = entryLabel.split(/\s+/).some((token) => token.length >= 4 && transactionLabel.includes(token));
+  const amountGapCents = Math.abs(Math.abs(entry.amount_cents) - Math.abs(transaction.amount_cents));
+  const textScore = descriptionScore(entry.description, transaction);
+  const mentionsEntity = entryMentionsEntity(entry.description, transaction);
+  const learnedRule = matchingLearnedRule(entry, transaction, learnedRules);
+  const reasons: FinanceReconciliationSuggestionReasonDto[] = [];
 
-  let confidence = 0.55;
+  let confidence = 0.16;
+  if (amountGapCents === 0) {
+    confidence += 0.28;
+    reasons.push({ label: 'Valor exato', detail: 'O valor do extrato bate com o lançamento.', tone: 'positive' });
+  } else {
+    confidence += 0.12;
+    reasons.push({ label: 'Valor próximo', detail: `Diferença de ${Math.abs(amountGapCents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}.`, tone: 'warning' });
+  }
   if (directionMatches) {
-    confidence += 0.18;
+    confidence += 0.16;
+    reasons.push({ label: 'Direção compatível', detail: entryDirection === 'inflow' ? 'Entrada com receita.' : 'Saída com despesa.', tone: 'positive' });
   }
   if (dateGapDays <= 1) {
-    confidence += 0.17;
+    confidence += 0.16;
+    reasons.push({ label: 'Data muito próxima', detail: `${dateGapDays} dia de diferença.`, tone: 'positive' });
   } else if (dateGapDays <= 3) {
-    confidence += 0.11;
+    confidence += 0.1;
+    reasons.push({ label: 'Data próxima', detail: `${dateGapDays} dias de diferença.`, tone: 'positive' });
   } else if (dateGapDays <= 7) {
-    confidence += 0.06;
-  }
-  if (hasTextOverlap) {
     confidence += 0.05;
+    reasons.push({ label: 'Data aceitável', detail: `${dateGapDays} dias de diferença.`, tone: 'neutral' });
   }
+  if (textScore > 0) {
+    confidence += Math.min(0.16, textScore * 0.16);
+    reasons.push({ label: 'Descrição parecida', detail: `${Math.round(textScore * 100)}% de sinal textual.`, tone: 'positive' });
+  }
+  if (mentionsEntity) {
+    confidence += 0.1;
+    reasons.push({ label: 'Entidade encontrada', detail: transaction.financial_entity_name ?? 'Nome da entidade aparece no extrato.', tone: 'positive' });
+  }
+  if (learnedRule) {
+    confidence += learnedRule.confidence_boost;
+    reasons.push({ label: 'Regra aprendida', detail: `${learnedRule.usage_count} decisões anteriores parecidas.`, tone: 'positive' });
+  }
+
+  const source = learnedRule
+    ? 'learned_rule'
+    : textScore >= 0.2 || mentionsEntity
+      ? 'description'
+      : 'value_date';
 
   return {
     financial_transaction_id: transaction.id,
@@ -1169,7 +3768,14 @@ function buildReconciliationSuggestion(
     due_date: transaction.due_date,
     competence_date: transaction.competence_date,
     financial_entity_name: transaction.financial_entity_name,
-    confidence_score: Number(Math.min(confidence, 0.99).toFixed(2))
+    confidence_score: Number(Math.min(confidence, 0.99).toFixed(2)),
+    source,
+    amount_gap_cents: amountGapCents,
+    date_gap_days: anchorDate ? dateGapDays : null,
+    description_score: textScore,
+    learned_rule_id: learnedRule?.id ?? null,
+    learned_rule_label: learnedRule?.label ?? null,
+    reasons
   };
 }
 
@@ -1177,21 +3783,24 @@ function buildReconciliationSuggestions(params: {
   entry: FinanceStatementEntryDto;
   transactions: FinanceTransactionDto[];
   matchedTransactionIds: Set<string>;
+  learnedRules: FinanceReconciliationLearnedRuleDto[];
 }) {
   const entryAmount = Math.abs(params.entry.amount_cents);
   const entryDirection = params.entry.amount_cents >= 0 ? 'income' : 'expense';
+  const maxAmountGap = Math.max(500, Math.round(entryAmount * 0.02));
 
   return params.transactions
     .filter((transaction) => !params.matchedTransactionIds.has(transaction.id))
     .filter((transaction) => !transaction.is_deleted && transaction.status !== 'canceled')
-    .filter((transaction) => Math.abs(transaction.amount_cents) === entryAmount)
+    .filter((transaction) => Math.abs(Math.abs(transaction.amount_cents) - entryAmount) <= maxAmountGap)
     .filter((transaction) => {
       if (transaction.kind === 'transfer' || transaction.kind === 'adjustment') {
         return true;
       }
       return transaction.kind === entryDirection;
     })
-    .map((transaction) => buildReconciliationSuggestion(params.entry, transaction))
+    .map((transaction) => buildReconciliationSuggestion(params.entry, transaction, params.learnedRules))
+    .filter((suggestion) => suggestion.confidence_score >= 0.48)
     .sort((left, right) => right.confidence_score - left.confidence_score)
     .slice(0, 3);
 }
@@ -1272,6 +3881,7 @@ export function getFinanceReconciliationInbox(
   const jobs = listFinanceImportJobs(normalizedOrganizationId, companyId).jobs;
   const matches = listFinanceReconciliationMatches(normalizedOrganizationId, companyId).matches;
   const transactions = listFinanceTransactions(normalizedOrganizationId, {}).transactions;
+  const learnedRules = buildLearnedReconciliationRules({ entries, matches, transactions });
   const todayIso = getOperationalTodayIso();
   const staleCutoff = getDateOffsetIso(todayIso, -3);
 
@@ -1297,7 +3907,8 @@ export function getFinanceReconciliationInbox(
       const suggestedMatches = buildReconciliationSuggestions({
         entry,
         transactions,
-        matchedTransactionIds
+        matchedTransactionIds,
+        learnedRules
       });
       return {
         ...entry,
@@ -1357,6 +3968,7 @@ export function getFinanceReconciliationInbox(
       withoutSuggestionCount,
       staleCount: inbox.filter((entry) => entry.statement_date < staleCutoff).length
     }),
+    learned_rules: learnedRules,
     inbox,
     recent_matches: recentMatches,
     imported_jobs: jobs.slice(0, 5)
@@ -1853,6 +4465,88 @@ export function createFinanceReconciliationMatch(input: CreateFinanceReconciliat
   return mapReconciliationRow(created);
 }
 
+export function createFinanceTransactionFromStatement(
+  input: CreateFinanceTransactionFromStatementInput
+): FinanceStatementTransactionResultDto {
+  const normalizedOrganizationId = resolveOrganizationId(input.organization_id);
+  readOrganizationRow(normalizedOrganizationId);
+
+  return db.transaction(() => {
+    const statementEntry = db.prepare(`
+      select
+        id,
+        organization_id,
+        company_id,
+        financial_account_id,
+        statement_date,
+        posted_at,
+        amount_cents,
+        description
+      from financial_bank_statement_entry
+      where id = ?
+        and organization_id = ?
+      limit 1
+    `).get(input.financial_bank_statement_entry_id, normalizedOrganizationId) as {
+      id: string;
+      organization_id: string;
+      company_id: string | null;
+      financial_account_id: string;
+      statement_date: string;
+      posted_at: string | null;
+      amount_cents: number;
+      description: string;
+    } | undefined;
+
+    if (!statementEntry) {
+      throw new Error('Lançamento de extrato não encontrado.');
+    }
+
+    const existingMatch = db.prepare(`
+      select id
+      from financial_reconciliation_match
+      where organization_id = ?
+        and financial_bank_statement_entry_id = ?
+        and match_status = 'matched'
+      limit 1
+    `).get(normalizedOrganizationId, statementEntry.id) as { id: string } | undefined;
+    if (existingMatch) {
+      throw new Error('Extrato já conciliado.');
+    }
+
+    const anchorDate = statementEntry.posted_at ?? statementEntry.statement_date;
+    const transaction = createFinanceTransaction({
+      organization_id: normalizedOrganizationId,
+      financial_entity_id: input.financial_entity_id ?? null,
+      financial_account_id: statementEntry.financial_account_id,
+      financial_category_id: input.financial_category_id ?? null,
+      financial_cost_center_id: input.financial_cost_center_id ?? null,
+      financial_payment_method_id: input.financial_payment_method_id ?? null,
+      kind: statementEntry.amount_cents >= 0 ? 'income' : 'expense',
+      status: 'settled',
+      amount_cents: Math.abs(statementEntry.amount_cents),
+      issue_date: anchorDate,
+      due_date: anchorDate,
+      settlement_date: anchorDate,
+      competence_date: anchorDate,
+      note: input.note?.trim() || statementEntry.description,
+      created_by: input.created_by ?? null
+    });
+
+    const match = createFinanceReconciliationMatch({
+      organization_id: normalizedOrganizationId,
+      company_id: statementEntry.company_id,
+      financial_bank_statement_entry_id: statementEntry.id,
+      financial_transaction_id: transaction.id,
+      confidence_score: 1,
+      match_status: 'matched',
+      source: 'statement_create',
+      reviewed_by: input.created_by ?? null
+    });
+
+    return { transaction, match };
+  })();
+}
+
 function mapDebtRow(row: {
   id: string;
   organization_id: string;
@@ -2083,6 +4777,10 @@ function mapTransactionRow(row: FinanceTransactionRow): FinanceTransactionDto {
     financial_account_name: row.financial_account_name ?? null,
     financial_category_id: row.financial_category_id,
     financial_category_name: row.financial_category_name ?? null,
+    financial_cost_center_id: row.financial_cost_center_id,
+    financial_cost_center_name: row.financial_cost_center_name ?? null,
+    financial_payment_method_id: row.financial_payment_method_id,
+    financial_payment_method_name: row.financial_payment_method_name ?? null,
     kind: row.kind,
     status: row.status,
     amount_cents: row.amount_cents,
@@ -2119,6 +4817,8 @@ function readTransactionRow(
       ft.financial_entity_id,
       ft.financial_account_id,
       ft.financial_category_id,
+      ft.financial_cost_center_id,
+      ft.financial_payment_method_id,
       ft.kind,
       ft.status,
       ft.amount_cents,
@@ -2135,7 +4835,9 @@ function readTransactionRow(
       ft.is_deleted,
       coalesce(fe.trade_name, fe.legal_name) as financial_entity_name,
       fa.name as financial_account_name,
-      fc.name as financial_category_name
+      fc.name as financial_category_name,
+      fcc.name as financial_cost_center_name,
+      fpm.name as financial_payment_method_name
     from financial_transaction ft
     left join financial_entity fe
       on fe.organization_id = ft.organization_id
@@ -2146,6 +4848,12 @@ function readTransactionRow(
     left join financial_category fc
       on fc.organization_id = ft.organization_id
       and fc.id = ft.financial_category_id
+    left join financial_cost_center fcc
+      on fcc.organization_id = ft.organization_id
+      and fcc.id = ft.financial_cost_center_id
+    left join financial_payment_method fpm
+      on fpm.organization_id = ft.organization_id
+      and fpm.id = ft.financial_payment_method_id
     where ft.id = ?
       ${organizationFilter}
       ${whereActive}
@@ -2203,6 +4911,10 @@ function buildTransactionLedgerConditions(
         coalesce(ft.note, '') || ' ' ||
         coalesce(ft.source, '') || ' ' ||
         coalesce(ft.source_ref, '') || ' ' ||
+        coalesce(ft.issue_date, '') || ' ' ||
+        coalesce(ft.due_date, '') || ' ' ||
+        coalesce(ft.settlement_date, '') || ' ' ||
+        coalesce(ft.competence_date, '') || ' ' ||
         coalesce(fe.trade_name, '') || ' ' ||
         coalesce(fe.legal_name, '') || ' ' ||
         coalesce(fa.name, '') || ' ' ||
@@ -2235,6 +4947,8 @@ export function listFinanceTransactions(
       ft.financial_entity_id,
       ft.financial_account_id,
       ft.financial_category_id,
+      ft.financial_cost_center_id,
+      ft.financial_payment_method_id,
       ft.kind,
       ft.status,
       ft.amount_cents,
@@ -2251,7 +4965,9 @@ export function listFinanceTransactions(
       ft.is_deleted,
       coalesce(fe.trade_name, fe.legal_name) as financial_entity_name,
       fa.name as financial_account_name,
-      fc.name as financial_category_name
+      fc.name as financial_category_name,
+      fcc.name as financial_cost_center_name,
+      fpm.name as financial_payment_method_name
     from financial_transaction ft
     left join financial_entity fe
       on fe.organization_id = ft.organization_id
@@ -2262,6 +4978,12 @@ export function listFinanceTransactions(
     left join financial_category fc
       on fc.organization_id = ft.organization_id
       and fc.id = ft.financial_category_id
+    left join financial_cost_center fcc
+      on fcc.organization_id = ft.organization_id
+      and fcc.id = ft.financial_cost_center_id
+    left join financial_payment_method fpm
+      on fpm.organization_id = ft.organization_id
+      and fpm.id = ft.financial_payment_method_id
     where ft.organization_id = ?
       ${whereDeleted}
       ${ledgerConditions.sql}
@@ -2344,6 +5066,8 @@ export function createFinanceTransaction(input: CreateFinanceTransactionInput): 
       financial_entity_id,
       financial_account_id,
       financial_category_id,
+      financial_cost_center_id,
+      financial_payment_method_id,
       kind,
       status,
       amount_cents,
@@ -2358,14 +5082,16 @@ export function createFinanceTransaction(input: CreateFinanceTransactionInput): 
       created_at,
       updated_at,
       is_deleted
-    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', null, ?, ?, ?, ?, 0)
+    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
   `).run(
     transactionId,
     normalizedOrganizationId,
-    null,
+    input.company_id?.trim() || null,
     financialEntityId,
     input.financial_account_id ?? null,
     input.financial_category_id ?? null,
+    input.financial_cost_center_id ?? null,
+    input.financial_payment_method_id ?? null,
     input.kind,
     status,
     Math.trunc(input.amount_cents),
@@ -2373,6 +5099,8 @@ export function createFinanceTransaction(input: CreateFinanceTransactionInput): 
     input.due_date ?? null,
     settlementDate,
     input.competence_date ?? null,
+    input.source?.trim() || 'manual',
+    input.source_ref?.trim() || null,
     input.note ?? null,
     input.created_by ?? null,
     nowIso,
@@ -2420,6 +5148,8 @@ export function updateFinanceTransaction(
       financial_entity_id = ?,
       financial_account_id = ?,
       financial_category_id = ?,
+      financial_cost_center_id = ?,
+      financial_payment_method_id = ?,
       kind = ?,
       status = ?,
       amount_cents = ?,
@@ -2439,6 +5169,12 @@ export function updateFinanceTransaction(
     Object.prototype.hasOwnProperty.call(input, 'financial_category_id')
       ? input.financial_category_id ?? null
       : current.financial_category_id,
+    Object.prototype.hasOwnProperty.call(input, 'financial_cost_center_id')
+      ? input.financial_cost_center_id ?? null
+      : current.financial_cost_center_id,
+    Object.prototype.hasOwnProperty.call(input, 'financial_payment_method_id')
+      ? input.financial_payment_method_id ?? null
+      : current.financial_payment_method_id,
     input.kind ?? current.kind,
     nextStatus,
     Object.prototype.hasOwnProperty.call(input, 'amount_cents')

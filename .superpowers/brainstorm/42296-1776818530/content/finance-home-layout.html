@@ -1,0 +1,114 @@
+<h2>Qual estrutura de home “Executive Overview” parece mais certa?</h2>
+<p class="subtitle">Todas seguem a mesma navegação aprovada. Aqui estamos decidindo a ordem de leitura e o peso de cada bloco na tela inicial.</p>
+
+<div class="cards">
+  <div class="card" data-choice="overview-a" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">A. KPI first</div>
+        <div class="mockup-body" style="display:grid;gap:14px;background:#f6f7f8;padding:18px">
+          <div style="display:grid;gap:6px">
+            <div class="label">Saúde financeira</div>
+            <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px">
+              <div style="background:#fff;border:1px solid #d8dee3;border-radius:16px;padding:14px"><div class="label">Caixa</div><strong>R$ 182k</strong></div>
+              <div style="background:#fff;border:1px solid #d8dee3;border-radius:16px;padding:14px"><div class="label">Receber</div><strong>R$ 94k</strong></div>
+              <div style="background:#fff;border:1px solid #d8dee3;border-radius:16px;padding:14px"><div class="label">Pagar</div><strong>R$ 61k</strong></div>
+              <div style="background:#fff;border:1px solid #ead0c9;border-radius:16px;padding:14px"><div class="label">Saldo projetado</div><strong>R$ 215k</strong></div>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1.35fr 0.95fr;gap:12px">
+            <div style="background:#fff;border:1px solid #d8dee3;border-radius:18px;padding:16px">
+              <div class="label">Fluxo de caixa 90 dias</div>
+              <div class="placeholder" style="min-height:190px;margin-top:10px">gráfico principal</div>
+            </div>
+            <div style="display:grid;gap:12px">
+              <div style="background:#fff;border:1px solid #d8dee3;border-radius:18px;padding:16px"><div class="label">Atenção imediata</div><p style="margin:10px 0 0">6 atrasados • 12 vencendo hoje • 4 conciliações pendentes</p></div>
+              <div style="background:#fff;border:1px solid #d8dee3;border-radius:18px;padding:16px"><div class="label">Atalhos</div><p style="margin:10px 0 0">Nova despesa • Nova receita • Importar extrato</p></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A. KPI first</h3>
+      <p>Começa por números e saldo. Passa credibilidade rápido e parece mais “ERP financeiro clássico”.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="overview-b" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">B. Narrative finance</div>
+        <div class="mockup-body" style="display:grid;gap:14px;background:#f6f7f8;padding:18px">
+          <div style="display:grid;grid-template-columns:1.25fr 1fr;gap:12px">
+            <div style="background:#fff;border:1px solid #e5d1cc;border-radius:18px;padding:16px">
+              <div class="label">Resumo executivo</div>
+              <strong style="font-size:1.45rem">Sua empresa projeta encerrar o mês com folga de caixa.</strong>
+              <p style="margin:10px 0 0">Recebimentos esperados superam compromissos previstos nas próximas 4 semanas.</p>
+            </div>
+            <div style="background:#fff;border:1px solid #d8dee3;border-radius:18px;padding:16px">
+              <div class="label">Ação imediata</div>
+              <p style="margin:10px 0 0">7 itens precisam de ação hoje.</p>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px">
+            <div style="background:#fff;border:1px solid #d8dee3;border-radius:16px;padding:14px"><div class="label">Caixa</div><strong>R$ 182k</strong></div>
+            <div style="background:#fff;border:1px solid #d8dee3;border-radius:16px;padding:14px"><div class="label">Receber</div><strong>R$ 94k</strong></div>
+            <div style="background:#fff;border:1px solid #d8dee3;border-radius:16px;padding:14px"><div class="label">Pagar</div><strong>R$ 61k</strong></div>
+            <div style="background:#fff;border:1px solid #ead0c9;border-radius:16px;padding:14px"><div class="label">Saldo projetado</div><strong>R$ 215k</strong></div>
+          </div>
+          <div style="background:#fff;border:1px solid #d8dee3;border-radius:18px;padding:16px">
+            <div class="label">Fluxo de caixa</div>
+            <div class="placeholder" style="min-height:170px;margin-top:10px">gráfico principal</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B. Narrative finance</h3>
+      <p>Mais moderno e mais “produto premium”. Explica a situação da empresa antes de despejar números.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="overview-c" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">C. Split control</div>
+        <div class="mockup-body" style="display:grid;gap:14px;background:#f6f7f8;padding:18px">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div style="background:#fff;border:1px solid #d8dee3;border-radius:18px;padding:16px">
+              <div class="label">Leitura executiva</div>
+              <div style="display:grid;gap:10px;margin-top:10px">
+                <div style="display:flex;justify-content:space-between"><span>Saldo projetado</span><strong>R$ 215k</strong></div>
+                <div style="display:flex;justify-content:space-between"><span>Margem do mês</span><strong>18%</strong></div>
+                <div style="display:flex;justify-content:space-between"><span>Queima semanal</span><strong>R$ 24k</strong></div>
+              </div>
+            </div>
+            <div style="background:#fff;border:1px solid #d8dee3;border-radius:18px;padding:16px">
+              <div class="label">Fila operacional</div>
+              <div style="display:grid;gap:8px;margin-top:10px">
+                <div>12 vencendo hoje</div>
+                <div>4 sem conciliar</div>
+                <div>3 sem categoria</div>
+              </div>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1.2fr 0.8fr;gap:12px">
+            <div style="background:#fff;border:1px solid #d8dee3;border-radius:18px;padding:16px">
+              <div class="label">Fluxo de caixa</div>
+              <div class="placeholder" style="min-height:190px;margin-top:10px">gráfico principal</div>
+            </div>
+            <div style="background:#fff;border:1px solid #d8dee3;border-radius:18px;padding:16px">
+              <div class="label">Atalhos</div>
+              <p style="margin:10px 0 0">Lançar, receber, pagar, importar, conciliar.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C. Split control</h3>
+      <p>Equilibra bem gestão e operação logo na primeira dobra. Parece produto mais maduro e mais completo.</p>
+    </div>
+  </div>
+</div>

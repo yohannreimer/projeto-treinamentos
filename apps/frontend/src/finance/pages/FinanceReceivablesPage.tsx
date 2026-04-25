@@ -1,91 +1,525 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import { hasAnyPermission, internalSessionStore } from '../../auth/session';
 import {
   financeApi,
-  type FinanceAccount,
-  type FinanceCategory,
+  type FinanceCatalogSnapshot,
+  type FinanceEntity,
+  type FinanceReceivable,
   type FinanceReceivableStatus,
-  type FinanceReceivablesGroups,
-  type FinanceReceivablesList,
-  type FinanceReceivablesSummary
+  type FinanceReceivablesList
 } from '../api';
-import {
-  FinanceErrorState,
-  FinancePanel,
-  FinancePageHeader,
-  FinanceLoadingState,
-  FinanceStatusPill
-} from '../components/FinancePrimitives';
-import {
-  FinanceOperationalListGroup,
-  FinanceOperationalRow,
-  FinanceOperationalSummaryCard
-} from '../components/FinanceOperationalBlocks';
-import { formatCurrency, parseAmountToCents, todayIso } from '../utils/financeFormatters';
+import { FinanceEntityCombobox } from '../components/FinanceEntityCombobox';
+import { FINANCE_QUICK_LAUNCH_CREATED_EVENT } from '../components/FinanceFloatingQuickLauncher';
+import { FinancePeriodFilter } from '../components/FinancePeriodFilter';
+import { FinanceMono } from '../components/FinancePrimitives';
+import { resolveFinancePeriodWindow, useFinancePeriod } from '../hooks/useFinancePeriod';
+import { formatCurrency, formatDate, parseAmountToCents, todayIso } from '../utils/financeFormatters';
 
 type ReceivableForm = {
-  description: string;
-  customer_name: string;
-  amount: string;
-  status: FinanceReceivableStatus;
-  due_date: string;
-  issue_date: string;
-  received_at: string;
-  financial_account_id: string;
+  desc: string;
+  entity: string;
+  financial_entity_id: string;
   financial_category_id: string;
-  note: string;
+  financial_cost_center_id: string;
+  financial_account_id: string;
+  financial_payment_method_id: string;
+  value: string;
+  status: 'pendente' | 'recebido' | 'atrasado';
+  due: string;
+  obs: string;
 };
+
+type Tone = 'neutral' | 'success' | 'warning' | 'danger' | 'info';
+
+type StatusTone = Exclude<Tone, 'info'>;
+type DailyOperation = 'settle' | 'partial' | 'duplicate' | 'cancel' | 'installments' | 'recurrences';
+type DraftOperation = Exclude<DailyOperation, 'settle' | 'duplicate'>;
 
 const initialForm: ReceivableForm = {
-  description: '',
-  customer_name: '',
-  amount: '',
-  status: 'open',
-  due_date: '',
-  issue_date: '',
-  received_at: '',
-  financial_account_id: '',
+  desc: '',
+  entity: '',
+  financial_entity_id: '',
   financial_category_id: '',
-  note: ''
+  financial_cost_center_id: '',
+  financial_account_id: '',
+  financial_payment_method_id: '',
+  value: '',
+  status: 'pendente',
+  due: '',
+  obs: ''
 };
 
-const emptySummary: FinanceReceivablesSummary = {
-  open_cents: 0,
-  overdue_cents: 0,
-  due_today_cents: 0
+const emptyGroups = {
+  overdue: [] as FinanceReceivable[],
+  due_today: [] as FinanceReceivable[],
+  upcoming: [] as FinanceReceivable[],
+  settled: [] as FinanceReceivable[]
 };
 
-const emptyGroups: FinanceReceivablesGroups = {
-  overdue: [],
-  due_today: [],
-  upcoming: [],
-  settled: []
+const pageStyle = {
+  display: 'grid',
+  gap: 20
+} as const;
+
+const gridStyle = {
+  display: 'grid',
+  gridTemplateColumns: '320px 1fr',
+  gap: 20,
+  alignItems: 'start'
+} as const;
+
+const cardStyle = {
+  background: 'white',
+  border: '1px solid #e2e8f0',
+  borderRadius: 10,
+  padding: 20
+} as const;
+
+const titleStyle = {
+  fontSize: 13,
+  fontWeight: 700,
+  color: '#0f172a',
+  letterSpacing: '-0.01em',
+  marginBottom: 14
+} as const;
+
+const pageHeaderStyle = {
+  marginBottom: 28,
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'flex-start',
+  gap: 24
+} as const;
+
+const pageHeaderCopyStyle = {
+  minWidth: 0
+} as const;
+
+const eyebrowStyle = {
+  fontSize: 10,
+  fontWeight: 700,
+  letterSpacing: '0.1em',
+  textTransform: 'uppercase',
+  color: 'var(--accent)',
+  marginBottom: 6
+} as const;
+
+const pageTitleStyle = {
+  fontSize: 26,
+  fontWeight: 700,
+  color: '#0f172a',
+  marginBottom: 6,
+  lineHeight: 1.2
+} as const;
+
+const pageDescriptionStyle = {
+  fontSize: 13,
+  color: '#64748b',
+  maxWidth: 560,
+  textWrap: 'pretty'
+} as const;
+
+const labelStyle = {
+  fontSize: 11,
+  fontWeight: 600,
+  color: '#64748b',
+  display: 'block',
+  marginBottom: 4
+} as const;
+
+const controlStyle = {
+  width: '100%',
+  padding: '7px 10px',
+  border: '1px solid #e2e8f0',
+  borderRadius: 7,
+  fontSize: 12,
+  color: '#0f172a',
+  background: 'white',
+  fontFamily: 'inherit',
+  outline: 'none'
+} as const;
+
+const fieldStyle = {
+  marginBottom: 11
+} as const;
+
+const twoColStyle = {
+  display: 'grid',
+  gridTemplateColumns: '1fr 1fr',
+  gap: 10,
+  marginBottom: 11
+} as const;
+
+const actionRowStyle = {
+  display: 'flex',
+  gap: 8
+} as const;
+
+const primaryButtonStyle = {
+  flex: 1,
+  padding: '8px 0',
+  background: 'var(--accent)',
+  color: 'white',
+  border: 'none',
+  borderRadius: 7,
+  fontSize: 12,
+  fontWeight: 600,
+  cursor: 'pointer',
+  fontFamily: 'inherit'
+} as const;
+
+const secondaryButtonStyle = {
+  padding: '8px 12px',
+  background: 'white',
+  color: '#64748b',
+  border: '1px solid #e2e8f0',
+  borderRadius: 7,
+  fontSize: 12,
+  cursor: 'pointer',
+  fontFamily: 'inherit'
+} as const;
+
+const successBannerStyle = {
+  background: '#d1fae5',
+  border: '1px solid #6ee7b7',
+  borderRadius: 7,
+  padding: '8px 12px',
+  fontSize: 12,
+  color: '#065f46',
+  marginBottom: 12
+} as const;
+
+const errorBannerStyle = {
+  background: '#fee2e2',
+  border: '1px solid #fca5a5',
+  borderRadius: 7,
+  padding: '8px 12px',
+  fontSize: 12,
+  color: '#991b1b',
+  marginBottom: 12
+} as const;
+
+const pulseCopyStyle = {
+  fontSize: 12,
+  color: '#64748b',
+  marginBottom: 12,
+  lineHeight: 1.6
+} as const;
+
+const pulseGridStyle = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(2, 1fr)',
+  gap: 8,
+  marginBottom: 4
+} as const;
+
+const pulseChipStyle = {
+  borderRadius: 8,
+  padding: '10px 12px',
+  textAlign: 'center'
+} as const;
+
+const dividerStyle = {
+  height: 1,
+  background: '#e2e8f0',
+  margin: '16px 0'
+} as const;
+
+const totalRowStyle = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  padding: '5px 0',
+  borderBottom: '1px solid #f1f5f9'
+} as const;
+
+const listGroupStyle = {
+  marginBottom: 20
+} as const;
+
+const listHeaderStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  marginBottom: 10
+} as const;
+
+const accentBarStyle = {
+  width: 3,
+  height: 16,
+  borderRadius: 2
+} as const;
+
+const countBadgeBaseStyle = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  padding: '2px 8px',
+  borderRadius: 20,
+  fontSize: 11,
+  fontWeight: 600,
+  lineHeight: 1.7,
+  whiteSpace: 'nowrap'
+} as const;
+
+const listCardStyle = {
+  background: 'white',
+  border: '1px solid #e2e8f0',
+  borderRadius: 8,
+  padding: '12px 14px',
+  marginBottom: 8,
+  display: 'grid',
+  gridTemplateColumns: '1fr auto',
+  gap: 8,
+  alignItems: 'center'
+} as const;
+
+const listTitleStyle = {
+  fontSize: 12,
+  fontWeight: 600,
+  color: '#0f172a',
+  marginBottom: 2
+} as const;
+
+const listMetaStyle = {
+  fontSize: 11,
+  color: '#64748b',
+  marginBottom: 4,
+  lineHeight: 1.4
+} as const;
+
+const listBadgeRowStyle = {
+  display: 'flex',
+  gap: 8,
+  alignItems: 'center',
+  flexWrap: 'wrap'
+} as const;
+
+const rowValueStyle = {
+  textAlign: 'right'
+} as const;
+
+const rowAmountStyle = {
+  fontSize: 15,
+  fontWeight: 600,
+  fontFamily: "'DM Mono', monospace",
+  color: '#0f172a'
+} as const;
+
+const compactActionStyle = {
+  height: 26,
+  border: '1px solid #e2e8f0',
+  borderRadius: 7,
+  background: 'white',
+  color: '#475569',
+  padding: '0 8px',
+  fontSize: 11,
+  fontWeight: 650,
+  cursor: 'pointer',
+  fontFamily: 'inherit'
+} as const;
+
+const compactPrimaryActionStyle = {
+  ...compactActionStyle,
+  background: '#0f172a',
+  borderColor: '#0f172a',
+  color: 'white'
+} as const;
+
+const operationDraftStyle = {
+  display: 'flex',
+  gap: 6,
+  flexWrap: 'wrap',
+  alignItems: 'center',
+  marginTop: 8
+} as const;
+
+const operationInputStyle = {
+  height: 26,
+  minWidth: 140,
+  maxWidth: 220,
+  border: '1px solid #e2e8f0',
+  borderRadius: 7,
+  padding: '0 8px',
+  fontSize: 11,
+  color: '#0f172a',
+  fontFamily: 'inherit',
+  background: '#f8fafc'
+} as const;
+
+const toneStyles: Record<StatusTone, { bg: string; color: string; label: string }> = {
+  neutral: { bg: '#f1f5f9', color: '#64748b', label: 'Pendente' },
+  success: { bg: '#d1fae5', color: '#059669', label: 'Recebido' },
+  warning: { bg: '#ffedd5', color: '#ea580c', label: 'Vence hoje' },
+  danger: { bg: '#fee2e2', color: '#ef4444', label: 'Atrasado' }
 };
 
-function statusLabel(status: FinanceReceivableStatus): string {
-  if (status === 'planned') return 'Planejado';
-  if (status === 'open') return 'Em aberto';
-  if (status === 'partial') return 'Parcial';
-  if (status === 'received') return 'Recebido';
-  if (status === 'overdue') return 'Atrasado';
-  return 'Cancelado';
+function PageHeader({ action }: { action?: ReactNode }) {
+  return (
+    <header style={pageHeaderStyle}>
+      <div style={pageHeaderCopyStyle}>
+        <div style={eyebrowStyle}>Contas a Receber</div>
+        <h1 style={pageTitleStyle}>Rotina operacional de recebíveis</h1>
+        <p style={pageDescriptionStyle}>Acompanhe atrasos, vencimentos do dia, próximos recebimentos e baixas.</p>
+      </div>
+      {action ? <div style={{ marginTop: 2, flexShrink: 0 }}>{action}</div> : null}
+    </header>
+  );
 }
 
-function CountBadge(props: { children: ReactNode }) {
+function Card({ children }: { children: ReactNode }) {
+  return <section style={cardStyle}>{children}</section>;
+}
+
+function SectionTitle({ children }: { children: ReactNode }) {
+  return <h2 style={titleStyle}>{children}</h2>;
+}
+
+function Badge({ children, color = '#64748b', bg = '#f1f5f9' }: { children: ReactNode; color?: string; bg?: string }) {
+  return <span style={{ ...countBadgeBaseStyle, background: bg, color }}>{children}</span>;
+}
+
+function StatusBadge({ status }: { status: FinanceReceivableStatus }) {
+  const map: Record<FinanceReceivableStatus, { bg: string; color: string; label: string }> = {
+    planned: { bg: '#f1f5f9', color: '#64748b', label: 'Planejado' },
+    open: { bg: '#fef3c7', color: '#d97706', label: 'Pendente' },
+    partial: { bg: '#ffedd5', color: '#ea580c', label: 'Parcial' },
+    received: { bg: '#d1fae5', color: '#059669', label: 'Recebido' },
+    overdue: { bg: '#fee2e2', color: '#dc2626', label: 'Atrasado' },
+    canceled: { bg: '#f1f5f9', color: '#94a3b8', label: 'Cancelado' }
+  };
+
+  const tone = map[status] ?? map.open;
+  return <Badge color={tone.color} bg={tone.bg}>{tone.label}</Badge>;
+}
+
+function entityName(entity: FinanceEntity) {
+  return entity.trade_name || entity.legal_name;
+}
+
+function normalizeEntitySearch(value: string) {
+  return value.trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+}
+
+function Divider() {
+  return <div style={dividerStyle} />;
+}
+
+function PulseChip({ label, count, tone }: { label: string; count: number; tone: Exclude<Tone, 'info'> }) {
+  const colors = toneStyles[tone];
   return (
-    <FinanceStatusPill tone="neutral">{props.children}</FinanceStatusPill>
+    <article style={{ ...pulseChipStyle, background: colors.bg }}>
+      <div style={{ fontSize: 20, fontWeight: 700, fontFamily: "'DM Mono', monospace", color: colors.color }}>{count}</div>
+      <div style={{ fontSize: 10, fontWeight: 600, color: colors.color }}>{label}</div>
+    </article>
+  );
+}
+
+function draftDefaultValue(operation: DraftOperation) {
+  if (operation === 'cancel') return 'Cancelado pela rotina operacional.';
+  if (operation === 'installments') return '3';
+  if (operation === 'recurrences') return '6';
+  return '';
+}
+
+function draftLabel(operation: DraftOperation) {
+  if (operation === 'partial') return 'Valor parcial';
+  if (operation === 'cancel') return 'Motivo do cancelamento';
+  if (operation === 'installments') return 'Quantidade de parcelas';
+  return 'Quantidade de recorrências';
+}
+
+function ReceivablesListGroup({
+  title,
+  items,
+  emptyText,
+  accentColor,
+  canWrite,
+  onOperation
+}: {
+  title: string;
+  items: FinanceReceivable[];
+  emptyText: string;
+  accentColor: string;
+  canWrite: boolean;
+  onOperation: (operation: DailyOperation, item: FinanceReceivable, value?: string) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState<{ itemId: string; operation: DraftOperation; value: string } | null>(null);
+
+  return (
+    <section style={listGroupStyle}>
+      <header style={listHeaderStyle}>
+        <div style={{ ...accentBarStyle, background: accentColor }} aria-hidden="true" />
+        <span style={{ fontSize: 12, fontWeight: 700, color: '#0f172a' }}>{title}</span>
+        <Badge color={accentColor} bg={`${accentColor}18`}>{items.length}</Badge>
+      </header>
+      {items.length === 0 ? (
+        <div style={{ fontSize: 12, color: '#94a3b8', padding: '8px 0' }}>{emptyText}</div>
+      ) : (
+        items.map((item) => (
+          <article key={item.id} style={listCardStyle}>
+            <div>
+              <div style={listTitleStyle}>{item.description}</div>
+              <div style={listMetaStyle}>
+                {item.customer_name ?? 'Sem cliente'}
+                {item.financial_account_name ? ` · ${item.financial_account_name}` : ''}
+                {item.financial_category_name ? ` · ${item.financial_category_name}` : ''}
+              </div>
+              <div style={listBadgeRowStyle}>
+                <StatusBadge status={item.status} />
+                <span style={{ fontSize: 11, color: '#94a3b8' }}>Vence {formatDate(item.due_date)}</span>
+                {item.received_amount_cents > 0 && item.status !== 'received' ? <span style={{ fontSize: 11, color: '#ea580c' }}>Recebido parcial {formatCurrency(item.received_amount_cents)}</span> : null}
+                {item.received_at ? <span style={{ fontSize: 11, color: '#059669' }}>Recebido {formatDate(item.received_at)}</span> : null}
+              </div>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+                <button type="button" style={compactActionStyle} disabled={!canWrite || item.status === 'received' || item.status === 'canceled'} onClick={() => onOperation('settle', item)}>Baixar</button>
+                <button type="button" style={compactActionStyle} disabled={!canWrite || item.status === 'received' || item.status === 'canceled'} onClick={() => setDraft({ itemId: item.id, operation: 'partial', value: draftDefaultValue('partial') })}>Parcial</button>
+                <button type="button" style={compactActionStyle} disabled={!canWrite} onClick={() => onOperation('duplicate', item)}>Duplicar</button>
+                <button type="button" style={compactActionStyle} disabled={!canWrite} onClick={() => setDraft({ itemId: item.id, operation: 'installments', value: draftDefaultValue('installments') })}>Parcelar</button>
+                <button type="button" style={compactActionStyle} disabled={!canWrite} onClick={() => setDraft({ itemId: item.id, operation: 'recurrences', value: draftDefaultValue('recurrences') })}>Recorrência</button>
+                <button type="button" style={{ ...compactActionStyle, color: '#be123c', borderColor: '#fecdd3' }} disabled={!canWrite || item.status === 'canceled'} onClick={() => setDraft({ itemId: item.id, operation: 'cancel', value: draftDefaultValue('cancel') })}>Cancelar</button>
+              </div>
+              {draft?.itemId === item.id ? (
+                <form
+                  style={operationDraftStyle}
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void onOperation(draft.operation, item, draft.value).then(() => setDraft(null));
+                  }}
+                >
+                  <input
+                    aria-label={draftLabel(draft.operation)}
+                    style={operationInputStyle}
+                    value={draft.value}
+                    onChange={(event) => setDraft({ ...draft, value: event.target.value })}
+                  />
+                  <button type="submit" style={compactPrimaryActionStyle}>Aplicar</button>
+                  <button type="button" style={compactActionStyle} onClick={() => setDraft(null)}>Fechar</button>
+                </form>
+              ) : null}
+            </div>
+            <div style={rowValueStyle}>
+              <div style={rowAmountStyle}>
+                <FinanceMono>{formatCurrency(item.amount_cents)}</FinanceMono>
+              </div>
+            </div>
+          </article>
+        ))
+      )}
+    </section>
   );
 }
 
 export function FinanceReceivablesPage() {
-  const [accounts, setAccounts] = useState<FinanceAccount[]>([]);
-  const [categories, setCategories] = useState<FinanceCategory[]>([]);
-  const [receivablesData, setReceivablesData] = useState<FinanceReceivablesList | null>(null);
+  const { period, setPeriod } = useFinancePeriod();
+  const [dataState, setDataState] = useState<FinanceReceivablesList | null>(null);
+  const [entities, setEntities] = useState<FinanceEntity[]>([]);
+  const [catalog, setCatalog] = useState<FinanceCatalogSnapshot | null>(null);
   const [form, setForm] = useState<ReceivableForm>(initialForm);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [creatingEntity, setCreatingEntity] = useState(false);
   const [error, setError] = useState('');
-  const [message, setMessage] = useState('');
+  const [smartHint, setSmartHint] = useState('');
+  const [success, setSuccess] = useState(false);
 
   const session = internalSessionStore.read();
   const canWrite = hasAnyPermission(session?.user, ['finance.write']);
@@ -94,19 +528,11 @@ export function FinanceReceivablesPage() {
     setLoading(true);
     setError('');
     try {
-      const [accountsRes, categoriesRes, nextReceivables] = await Promise.all([
-        financeApi.listAccounts(),
-        financeApi.listCategories(),
-        financeApi.listReceivables()
-      ]);
-      setAccounts(accountsRes.accounts);
-      setCategories(categoriesRes.categories);
-      setReceivablesData(nextReceivables);
+      const nextReceivables = await financeApi.listReceivables();
+      setDataState(nextReceivables);
     } catch (loadError) {
       setError((loadError as Error).message || 'Falha ao carregar contas a receber.');
-      setAccounts([]);
-      setCategories([]);
-      setReceivablesData(null);
+      setDataState(null);
     } finally {
       setLoading(false);
     }
@@ -114,39 +540,149 @@ export function FinanceReceivablesPage() {
 
   useEffect(() => {
     reload().catch(() => undefined);
+    Promise.allSettled([financeApi.listEntities(), financeApi.getCatalogSnapshot()])
+      .then(([entityResult, catalogResult]) => {
+        if (entityResult.status === 'fulfilled') {
+          setEntities(entityResult.value.filter((entity) => entity.kind === 'customer' || entity.kind === 'both'));
+        }
+
+        if (catalogResult.status === 'fulfilled') {
+          setCatalog(catalogResult.value);
+        }
+      })
+      .catch(() => undefined);
   }, []);
 
-  const summary = receivablesData?.summary ?? emptySummary;
-  const groups = receivablesData?.groups ?? emptyGroups;
-  const operationalCount = groups.overdue.length + groups.due_today.length + groups.upcoming.length;
-  const settledCount = groups.settled.length;
-  const registeredCount = receivablesData?.receivables.length ?? 0;
+  useEffect(() => {
+    function handleQuickLaunchCreated(event: Event) {
+      const detail = (event as CustomEvent<{ type?: string }>).detail;
+      if (detail?.type !== 'receivable') return;
+      setSuccess(true);
+      reload().catch(() => undefined);
+    }
+
+    window.addEventListener(FINANCE_QUICK_LAUNCH_CREATED_EVENT, handleQuickLaunchCreated);
+    return () => window.removeEventListener(FINANCE_QUICK_LAUNCH_CREATED_EVENT, handleQuickLaunchCreated);
+  }, []);
+
+  const groups = dataState?.groups ?? emptyGroups;
+  const statusQuery = typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('status');
+  const periodWindow = useMemo(() => resolveFinancePeriodWindow(period), [period]);
+  const isInsidePeriod = (dateIso?: string | null) => {
+    if (!periodWindow.from || !periodWindow.to) return true;
+    if (!dateIso) return false;
+    return dateIso >= periodWindow.from && dateIso <= periodWindow.to;
+  };
+  const filteredGroups = useMemo(() => {
+    const next = {
+      overdue: groups.overdue.filter((item) => isInsidePeriod(item.due_date)),
+      due_today: groups.due_today.filter((item) => isInsidePeriod(item.due_date)),
+      upcoming: groups.upcoming.filter((item) => isInsidePeriod(item.due_date)),
+      settled: groups.settled.filter((item) => isInsidePeriod(item.due_date))
+    };
+    if (statusQuery === 'overdue') {
+      return { ...next, due_today: [], upcoming: [], settled: [] };
+    }
+    return next;
+  }, [groups, periodWindow.from, periodWindow.to, statusQuery]);
+  const overdue = filteredGroups.overdue;
+  const today = filteredGroups.due_today;
+  const upcoming = filteredGroups.upcoming;
+  const received = filteredGroups.settled;
+  const visibleItems = [...overdue, ...today, ...upcoming, ...received];
+  const openTotal = visibleItems.filter((item) => item.status !== 'received').reduce((total, item) => total + item.amount_cents, 0);
+  const overdueTotal = overdue.reduce((total, item) => total + item.amount_cents, 0);
+  const todayTotal = today.reduce((total, item) => total + item.amount_cents, 0);
+  const pulse = `${visibleItems.length} títulos no filtro · ${visibleItems.filter((item) => item.status !== 'received').length} em acompanhamento · ${received.length} liquidados`;
+  const typedEntityName = form.entity.trim();
+  const hasExactEntityMatch = typedEntityName.length > 0 && entities.some((entity) => normalizeEntitySearch(entityName(entity)) === normalizeEntitySearch(typedEntityName));
+  const hasVisibleEntityMatch = typedEntityName.length > 0 && entities.some((entity) => normalizeEntitySearch(entityName(entity)).includes(normalizeEntitySearch(typedEntityName)));
+  const shouldOfferEntityCreation = typedEntityName.length > 0 && !form.financial_entity_id && !hasExactEntityMatch && !hasVisibleEntityMatch;
+
+  async function handleSelectEntity(entity: FinanceEntity) {
+    setForm((current) => ({
+      ...current,
+      entity: entityName(entity),
+      financial_entity_id: entity.id
+    }));
+    setSmartHint('');
+
+    try {
+      const profile = await financeApi.getEntityDefaultProfile(entity.id, 'receivable');
+      if (!profile) {
+        setSmartHint('Entidade vinculada. Sem perfil padrão para conta a receber ainda.');
+        return;
+      }
+
+      setForm((current) => ({
+        ...current,
+        financial_category_id: profile.financial_category_id ?? current.financial_category_id,
+        financial_cost_center_id: profile.financial_cost_center_id ?? current.financial_cost_center_id,
+        financial_account_id: profile.financial_account_id ?? current.financial_account_id,
+        financial_payment_method_id: profile.financial_payment_method_id ?? current.financial_payment_method_id
+      }));
+      setSmartHint('Perfil padrão aplicado ao lançamento.');
+    } catch {
+      setSmartHint('Entidade vinculada. Não foi possível carregar os defaults agora.');
+    }
+  }
+
+  async function handleCreateAndUseEntity() {
+    const legalName = form.entity.trim();
+    if (!legalName) return;
+
+    setCreatingEntity(true);
+    setError('');
+    try {
+      const created = await financeApi.createEntity({
+        legal_name: legalName,
+        trade_name: null,
+        document_number: null,
+        kind: 'customer',
+        email: null,
+        phone: null,
+        is_active: true
+      });
+      setEntities((current) => [created, ...current]);
+      await handleSelectEntity(created);
+      setSmartHint('Cliente cadastrado e vinculado ao lançamento.');
+    } catch (createError) {
+      setError(createError instanceof Error ? createError.message : 'Falha ao cadastrar cliente.');
+    } finally {
+      setCreatingEntity(false);
+    }
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const amountCents = parseAmountToCents(form.amount);
+    const amountCents = parseAmountToCents(form.value);
     if (amountCents <= 0) {
       setError('Informe um valor monetário válido.');
       return;
     }
+
     setSubmitting(true);
     setError('');
-    setMessage('');
+    setSuccess(false);
     try {
       await financeApi.createReceivable({
         financial_account_id: form.financial_account_id || null,
         financial_category_id: form.financial_category_id || null,
-        customer_name: form.customer_name.trim() || null,
-        description: form.description.trim(),
+        financial_cost_center_id: form.financial_cost_center_id || null,
+        financial_payment_method_id: form.financial_payment_method_id || null,
+        financial_entity_id: form.financial_entity_id || null,
+        customer_name: form.entity.trim() || null,
+        description: form.desc.trim(),
         amount_cents: amountCents,
-        status: form.received_at ? 'received' : form.status,
-        issue_date: form.issue_date || todayIso(),
-        due_date: form.due_date || null,
-        received_at: form.received_at || null,
-        note: form.note.trim() || null
+        status: form.status === 'recebido' ? 'received' : form.status === 'atrasado' ? 'overdue' : 'open',
+        issue_date: todayIso(),
+        due_date: form.due || null,
+        received_at: form.status === 'recebido' ? todayIso() : null,
+        note: form.obs.trim() || null
       });
       setForm(initialForm);
-      setMessage('Conta a receber cadastrada com sucesso.');
+      setSmartHint('');
+      setSuccess(true);
       await reload();
     } catch (submitError) {
       setError((submitError as Error).message || 'Falha ao cadastrar conta a receber.');
@@ -155,244 +691,273 @@ export function FinanceReceivablesPage() {
     }
   }
 
+  async function handleOperation(
+    operation: DailyOperation,
+    item: FinanceReceivable,
+    value?: string
+  ) {
+    setError('');
+    setSuccess(false);
+    try {
+      if (operation === 'settle') {
+        await financeApi.settleReceivable(item.id, { settled_at: todayIso() });
+      } else if (operation === 'partial') {
+        const amountCents = parseAmountToCents(value ?? '');
+        if (amountCents <= 0) return;
+        await financeApi.partiallySettleReceivable(item.id, { amount_cents: amountCents, settled_at: todayIso() });
+      } else if (operation === 'duplicate') {
+        await financeApi.duplicateReceivable(item.id, { note: 'Duplicado pela rotina operacional.' });
+      } else if (operation === 'cancel') {
+        await financeApi.cancelReceivable(item.id, { note: value?.trim() || 'Cancelado pela rotina operacional.' });
+      } else if (operation === 'installments') {
+        const count = Number.parseInt(value ?? '', 10);
+        if (!Number.isFinite(count) || count < 2) return;
+        await financeApi.createReceivableInstallments(item.id, { count, first_due_date: item.due_date ?? todayIso() });
+      } else {
+        const count = Number.parseInt(value ?? '', 10);
+        if (!Number.isFinite(count) || count < 1) return;
+        await financeApi.createReceivableRecurrences(item.id, { count, first_due_date: item.due_date ?? todayIso() });
+      }
+      setSuccess(true);
+      await reload();
+    } catch (operationError) {
+      setError(operationError instanceof Error ? operationError.message : 'Falha ao executar operação.');
+    }
+  }
+
   return (
-    <section className="page finance-page">
-      <FinancePageHeader
-        eyebrow="Contas a receber"
-        title="Rotina operacional de recebíveis"
-        description="Organize o dia entre atrasos, vencimentos do dia, próximos recebimentos e baixas já realizadas."
-      />
+    <section className="page finance-page finance-ops-page">
+      <div style={pageStyle}>
+        <PageHeader action={<FinancePeriodFilter value={period} onChange={setPeriod} scopeLabel="Filtro local da rotina" />} />
 
-      <div className="finance-page-stack">
-        <FinancePanel title="Operação da empresa logada" description="Cadastre novos títulos, acompanhe o que exige ação hoje e mantenha a carteira de recebíveis previsível." eyebrow="Base única">
-            <form className="form form-spacious finance-form-shell" onSubmit={handleSubmit}>
-              <div className="finance-form-grid">
-                <label className="finance-form-field">
-                  <span>Descrição</span>
+        <div style={gridStyle}>
+          <div>
+            <Card>
+              <SectionTitle>Nova conta a receber</SectionTitle>
+              {success ? <div style={successBannerStyle}>✓ Conta registrada com sucesso!</div> : null}
+              {error ? <div style={errorBannerStyle}>{error}</div> : null}
+              <form onSubmit={handleSubmit} aria-busy={loading}>
+                <label style={fieldStyle}>
+                  <span style={labelStyle}>Descrição</span>
                   <input
-                    value={form.description}
-                    onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))}
-                    placeholder="Ex.: parcela contrato mensal"
+                    type="text"
+                    placeholder="Ex: Patrocínio Bradesco"
+                    style={controlStyle}
+                    value={form.desc}
+                    onChange={(event) => setForm((current) => ({ ...current, desc: event.target.value }))}
                     disabled={!canWrite || submitting}
                   />
                 </label>
-                <label className="finance-form-field">
-                  <span>Cliente</span>
-                  <input
-                    value={form.customer_name}
-                    onChange={(event) => setForm((current) => ({ ...current, customer_name: event.target.value }))}
-                    placeholder="Nome do cliente"
+                <label style={fieldStyle}>
+                  <span style={labelStyle}>Cliente</span>
+                  <FinanceEntityCombobox
+                    ariaLabel="Cliente"
+                    placeholder="Buscar cadastro ou digitar cliente"
+                    entities={entities}
+                    value={form.financial_entity_id}
+                    inputValue={form.entity}
+                    onSelect={handleSelectEntity}
+                    onInputChange={(value) => {
+                      setSmartHint('');
+                      setForm((current) => ({ ...current, entity: value, financial_entity_id: '' }));
+                    }}
                     disabled={!canWrite || submitting}
                   />
                 </label>
-                <label className="finance-form-field">
-                  <span>Valor (R$)</span>
-                  <input
-                    value={form.amount}
-                    onChange={(event) => setForm((current) => ({ ...current, amount: event.target.value }))}
-                    placeholder="0,00"
-                    disabled={!canWrite || submitting}
-                  />
-                </label>
-              </div>
-              <div className="finance-form-grid finance-form-grid--compact">
-                <label className="finance-form-field">
-                  <span>Status</span>
-                  <select value={form.status} onChange={(event) => setForm((current) => ({ ...current, status: event.target.value as FinanceReceivableStatus }))} disabled={!canWrite || submitting}>
-                    <option value="planned">Planejado</option>
-                    <option value="open">Em aberto</option>
-                    <option value="partial">Parcial</option>
-                    <option value="received">Recebido</option>
-                    <option value="overdue">Atrasado</option>
-                    <option value="canceled">Cancelado</option>
-                  </select>
-                </label>
-                <label className="finance-form-field">
-                  <span>Vencimento</span>
-                  <input type="date" value={form.due_date} onChange={(event) => setForm((current) => ({ ...current, due_date: event.target.value }))} disabled={!canWrite || submitting} />
-                </label>
-                <label className="finance-form-field">
-                  <span>Recebido em</span>
-                  <input type="date" value={form.received_at} onChange={(event) => setForm((current) => ({ ...current, received_at: event.target.value }))} disabled={!canWrite || submitting} />
-                </label>
-              </div>
-              <div className="finance-form-grid finance-form-grid--compact">
-                <label className="finance-form-field">
-                  <span>Conta</span>
-                  <select value={form.financial_account_id} onChange={(event) => setForm((current) => ({ ...current, financial_account_id: event.target.value }))} disabled={!canWrite || submitting}>
-                    <option value="">Sem conta vinculada</option>
-                    {accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
-                  </select>
-                </label>
-                <label className="finance-form-field">
-                  <span>Categoria</span>
-                  <select value={form.financial_category_id} onChange={(event) => setForm((current) => ({ ...current, financial_category_id: event.target.value }))} disabled={!canWrite || submitting}>
-                    <option value="">Sem categoria vinculada</option>
-                    {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
-                  </select>
-                </label>
-                <label className="finance-form-field">
-                  <span>Emissão</span>
-                  <input type="date" value={form.issue_date} onChange={(event) => setForm((current) => ({ ...current, issue_date: event.target.value }))} disabled={!canWrite || submitting} />
-                </label>
-              </div>
-              <label className="finance-form-field">
-                <span>Observação</span>
-                <textarea value={form.note} onChange={(event) => setForm((current) => ({ ...current, note: event.target.value }))} rows={2} disabled={!canWrite || submitting} />
-              </label>
-              <div className="actions finance-inline-actions">
-                <button type="submit" disabled={!canWrite || submitting}>
-                  {submitting ? 'Salvando...' : 'Registrar conta a receber'}
-                </button>
-                <button type="button" onClick={() => setForm(initialForm)} disabled={submitting}>Limpar</button>
-              </div>
-            </form>
-        </FinancePanel>
-
-        <div className="finance-section-stack">
-          <FinancePanel
-            title="Pulso operacional"
-            description={`${registeredCount} título(s) na base, ${operationalCount} exigindo acompanhamento e ${settledCount} já liquidado(s).`}
-            eyebrow="Leitura operacional"
-            action={(
-              <div className="finance-inline-badges">
-                <CountBadge>{groups.overdue.length} atrasado(s)</CountBadge>
-                <CountBadge>{groups.due_today.length} vencendo hoje</CountBadge>
-                <CountBadge>{groups.upcoming.length} próximo(s)</CountBadge>
-                <CountBadge>{groups.settled.length} recebido(s)</CountBadge>
-              </div>
-            )}
-          >
-            {error ? <FinanceErrorState title="Falha ao carregar contas a receber." description={error} /> : null}
-            {message ? <p className="finance-inline-message finance-inline-message--success">{message}</p> : null}
-            {loading ? (
-              <FinanceLoadingState title="Carregando contas a receber..." />
-            ) : (
-                <>
-                  <section className="finance-kpi-grid finance-kpi-grid--three">
-                    <FinanceOperationalSummaryCard
-                      label="Carteira em aberto"
-                      amount={summary.open_cents}
-                      detail="Total ainda em rotina operacional."
-                      tone="default"
-                      accentLabel="Recebíveis"
-                      formatCurrency={formatCurrency}
-                    />
-                    <FinanceOperationalSummaryCard
-                      label="Atrasado"
-                      amount={summary.overdue_cents}
-                      detail="Valores já fora da data-alvo."
-                      tone="critical"
-                      accentLabel="Recebíveis"
-                      formatCurrency={formatCurrency}
-                    />
-                    <FinanceOperationalSummaryCard
-                      label="Vence hoje"
-                      amount={summary.due_today_cents}
-                      detail="Entradas que precisam de contato imediato."
-                      tone="warning"
-                      accentLabel="Recebíveis"
-                      formatCurrency={formatCurrency}
-                    />
-                  </section>
-
-                  <div className="finance-section-stack">
-                    <FinanceOperationalListGroup
-                      title="Atrasados"
-                      caption="Prioridade máxima para cobrança e renegociação."
-                      rows={groups.overdue}
-                      emptyMessage="Nenhum recebível atrasado neste recorte."
-                      rowKey={(item) => item.id}
-                      renderRow={(item) => (
-                        <FinanceOperationalRow
-                          description={item.description}
-                          counterpartyLabel="Cliente"
-                          counterpartyValue={item.customer_name}
-                          accountName={item.financial_account_name}
-                          categoryName={item.financial_category_name}
-                          amountCents={item.amount_cents}
-                          primaryDateLabel="Vencimento"
-                          primaryDate={item.due_date}
-                          secondaryDateLabel="Recebido em"
-                          secondaryDate={item.received_at}
-                          statusLabel={statusLabel(item.status)}
-                          statusTone={item.status === 'received' ? 'success' : item.status === 'overdue' ? 'danger' : item.status === 'partial' ? 'warning' : 'neutral'}
-                        />
-                      )}
-                    />
-                    <FinanceOperationalListGroup
-                      title="Vencendo hoje"
-                      caption="Entradas que precisam de acompanhamento ainda hoje."
-                      rows={groups.due_today}
-                      emptyMessage="Nada vencendo hoje."
-                      rowKey={(item) => item.id}
-                      renderRow={(item) => (
-                        <FinanceOperationalRow
-                          description={item.description}
-                          counterpartyLabel="Cliente"
-                          counterpartyValue={item.customer_name}
-                          accountName={item.financial_account_name}
-                          categoryName={item.financial_category_name}
-                          amountCents={item.amount_cents}
-                          primaryDateLabel="Vencimento"
-                          primaryDate={item.due_date}
-                          secondaryDateLabel="Recebido em"
-                          secondaryDate={item.received_at}
-                          statusLabel={statusLabel(item.status)}
-                          statusTone={item.status === 'received' ? 'success' : item.status === 'overdue' ? 'danger' : item.status === 'partial' ? 'warning' : 'neutral'}
-                        />
-                      )}
-                    />
-                    <FinanceOperationalListGroup
-                      title="Próximos vencimentos"
-                      caption="Pipeline de caixa para os próximos dias."
-                      rows={groups.upcoming}
-                      emptyMessage="Sem próximos recebimentos no momento."
-                      rowKey={(item) => item.id}
-                      renderRow={(item) => (
-                        <FinanceOperationalRow
-                          description={item.description}
-                          counterpartyLabel="Cliente"
-                          counterpartyValue={item.customer_name}
-                          accountName={item.financial_account_name}
-                          categoryName={item.financial_category_name}
-                          amountCents={item.amount_cents}
-                          primaryDateLabel="Vencimento"
-                          primaryDate={item.due_date}
-                          secondaryDateLabel="Recebido em"
-                          secondaryDate={item.received_at}
-                          statusLabel={statusLabel(item.status)}
-                          statusTone={item.status === 'received' ? 'success' : item.status === 'overdue' ? 'danger' : item.status === 'partial' ? 'warning' : 'neutral'}
-                        />
-                      )}
-                    />
-                    <FinanceOperationalListGroup
-                      title="Liquidados"
-                      caption="Histórico recente de baixas concluídas."
-                      rows={groups.settled}
-                      emptyMessage="Nenhum título liquidado neste recorte."
-                      rowKey={(item) => item.id}
-                      renderRow={(item) => (
-                        <FinanceOperationalRow
-                          description={item.description}
-                          counterpartyLabel="Cliente"
-                          counterpartyValue={item.customer_name}
-                          accountName={item.financial_account_name}
-                          categoryName={item.financial_category_name}
-                          amountCents={item.amount_cents}
-                          primaryDateLabel="Vencimento"
-                          primaryDate={item.due_date}
-                          secondaryDateLabel="Recebido em"
-                          secondaryDate={item.received_at}
-                          statusLabel={statusLabel(item.status)}
-                          statusTone={item.status === 'received' ? 'success' : item.status === 'overdue' ? 'danger' : item.status === 'partial' ? 'warning' : 'neutral'}
-                        />
-                      )}
-                    />
+                {smartHint ? (
+                  <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 7, padding: '7px 10px', fontSize: 11, color: '#1d4ed8', marginBottom: 11 }}>
+                    {smartHint}
                   </div>
-                </>
-              )}
-          </FinancePanel>
+                ) : null}
+                {shouldOfferEntityCreation ? (
+                  <div style={{ background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 7, padding: '7px 10px', fontSize: 11, color: '#9a3412', marginBottom: 11 }}>
+                    <div style={{ fontWeight: 700, marginBottom: 6 }}>Esta entidade não existe no cadastro.</div>
+                    <div style={{ marginBottom: 8 }}>O lançamento pode seguir solto ou você pode cadastrar e já usar o vínculo inteligente.</div>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      <button
+                        type="button"
+                        onClick={handleCreateAndUseEntity}
+                        disabled={!canWrite || submitting || creatingEntity}
+                        style={{ height: 26, border: 'none', borderRadius: 7, background: '#ea580c', color: 'white', padding: '0 10px', fontSize: 11, fontWeight: 700, cursor: creatingEntity ? 'default' : 'pointer', fontFamily: 'inherit' }}
+                      >
+                        {creatingEntity ? 'Cadastrando...' : 'Cadastrar e usar'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSmartHint('Cliente será usado só neste lançamento.')}
+                        disabled={submitting || creatingEntity}
+                        style={{ height: 26, border: '1px solid #fed7aa', borderRadius: 7, background: 'white', color: '#9a3412', padding: '0 10px', fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}
+                      >
+                        Usar só neste lançamento
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+                <div style={twoColStyle}>
+                  <label style={fieldStyle}>
+                    <span style={labelStyle}>Categoria</span>
+                    <select
+                      style={{ ...controlStyle, cursor: 'pointer' }}
+                      value={form.financial_category_id}
+                      onChange={(event) => setForm((current) => ({ ...current, financial_category_id: event.target.value }))}
+                      disabled={!canWrite || submitting}
+                    >
+                      <option value="">Sem categoria</option>
+                      {(catalog?.categories ?? []).map((category) => (
+                        <option key={category.id} value={category.id}>{category.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label style={fieldStyle}>
+                    <span style={labelStyle}>Centro de custo</span>
+                    <select
+                      style={{ ...controlStyle, cursor: 'pointer' }}
+                      value={form.financial_cost_center_id}
+                      onChange={(event) => setForm((current) => ({ ...current, financial_cost_center_id: event.target.value }))}
+                      disabled={!canWrite || submitting}
+                    >
+                      <option value="">Sem centro</option>
+                      {(catalog?.cost_centers ?? []).map((costCenter) => (
+                        <option key={costCenter.id} value={costCenter.id}>{costCenter.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label style={fieldStyle}>
+                    <span style={labelStyle}>Conta</span>
+                    <select
+                      style={{ ...controlStyle, cursor: 'pointer' }}
+                      value={form.financial_account_id}
+                      onChange={(event) => setForm((current) => ({ ...current, financial_account_id: event.target.value }))}
+                      disabled={!canWrite || submitting}
+                    >
+                      <option value="">Sem conta</option>
+                      {(catalog?.accounts ?? []).map((account) => (
+                        <option key={account.id} value={account.id}>{account.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label style={fieldStyle}>
+                    <span style={labelStyle}>Forma</span>
+                    <select
+                      style={{ ...controlStyle, cursor: 'pointer' }}
+                      value={form.financial_payment_method_id}
+                      onChange={(event) => setForm((current) => ({ ...current, financial_payment_method_id: event.target.value }))}
+                      disabled={!canWrite || submitting}
+                    >
+                      <option value="">Sem forma</option>
+                      {(catalog?.payment_methods ?? []).map((paymentMethod) => (
+                        <option key={paymentMethod.id} value={paymentMethod.id}>{paymentMethod.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <label style={fieldStyle}>
+                  <span style={labelStyle}>Valor (R$)</span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="0,00"
+                    style={controlStyle}
+                    value={form.value}
+                    onChange={(event) => setForm((current) => ({ ...current, value: event.target.value }))}
+                    disabled={!canWrite || submitting}
+                  />
+                </label>
+                <div style={twoColStyle}>
+                  <label style={fieldStyle}>
+                    <span style={labelStyle}>Vencimento</span>
+                    <input
+                      type="date"
+                      style={controlStyle}
+                      value={form.due}
+                      onChange={(event) => setForm((current) => ({ ...current, due: event.target.value }))}
+                      disabled={!canWrite || submitting}
+                    />
+                  </label>
+                  <label style={fieldStyle}>
+                    <span style={labelStyle}>Status</span>
+                    <select
+                      style={{ ...controlStyle, cursor: 'pointer' }}
+                      value={form.status}
+                      onChange={(event) => setForm((current) => ({ ...current, status: event.target.value as ReceivableForm['status'] }))}
+                      disabled={!canWrite || submitting}
+                    >
+                      <option value="pendente">Pendente</option>
+                      <option value="recebido">Recebido</option>
+                      <option value="atrasado">Atrasado</option>
+                    </select>
+                  </label>
+                </div>
+                <div style={fieldStyle}>
+                  <label style={fieldStyle}>
+                    <span style={labelStyle}>Observação</span>
+                  <textarea
+                    style={{ ...controlStyle, resize: 'vertical', minHeight: 56 }}
+                    placeholder="Observações opcionais..."
+                    value={form.obs}
+                    onChange={(event) => setForm((current) => ({ ...current, obs: event.target.value }))}
+                    disabled={!canWrite || submitting}
+                  />
+                  </label>
+                </div>
+                <div style={actionRowStyle}>
+                  <button type="submit" style={primaryButtonStyle} disabled={!canWrite || submitting}>
+                    Registrar conta a receber
+                  </button>
+                  <button
+                    type="button"
+                    style={secondaryButtonStyle}
+                    onClick={() => {
+                      setForm(initialForm);
+                      setSuccess(false);
+                      setError('');
+                      setSmartHint('');
+                    }}
+                    disabled={submitting}
+                  >
+                    Limpar
+                  </button>
+                </div>
+              </form>
+            </Card>
+
+            <Card>
+              <SectionTitle>Pulso operacional</SectionTitle>
+              <p style={pulseCopyStyle}>{pulse}</p>
+              <div style={pulseGridStyle}>
+                <PulseChip label="Atrasados" count={overdue.length} tone="danger" />
+                <PulseChip label="Vence hoje" count={today.length} tone="warning" />
+                <PulseChip label="Próximos" count={upcoming.length} tone="neutral" />
+                <PulseChip label="Recebidos" count={received.length} tone="success" />
+              </div>
+              <Divider />
+              <div style={totalRowStyle}>
+                <span style={{ fontSize: 11, color: '#64748b' }}>Carteira em aberto</span>
+                <span style={{ fontSize: 12, fontWeight: 600, fontFamily: "'DM Mono', monospace", color: '#2563eb' }}>
+                  <FinanceMono>{formatCurrency(openTotal)}</FinanceMono>
+                </span>
+              </div>
+              <div style={totalRowStyle}>
+                <span style={{ fontSize: 11, color: '#64748b' }}>Atrasado</span>
+                <span style={{ fontSize: 12, fontWeight: 600, fontFamily: "'DM Mono', monospace", color: '#ef4444' }}>
+                  <FinanceMono>{formatCurrency(overdueTotal)}</FinanceMono>
+                </span>
+              </div>
+              <div style={{ ...totalRowStyle, borderBottom: 'none' }}>
+                <span style={{ fontSize: 11, color: '#64748b' }}>Vence hoje</span>
+                <span style={{ fontSize: 12, fontWeight: 600, fontFamily: "'DM Mono', monospace", color: '#ea580c' }}>
+                  <FinanceMono>{formatCurrency(todayTotal)}</FinanceMono>
+                </span>
+              </div>
+            </Card>
+          </div>
+
+          <div>
+            <ReceivablesListGroup title="Atrasados" items={overdue} emptyText="Nenhum recebível em atraso." accentColor="#ef4444" canWrite={canWrite} onOperation={handleOperation} />
+            <ReceivablesListGroup title="Vencendo hoje" items={today} emptyText="Nenhum vencimento hoje." accentColor="#ea580c" canWrite={canWrite} onOperation={handleOperation} />
+            <ReceivablesListGroup title="Próximos vencimentos" items={upcoming} emptyText="Nenhum recebível próximo." accentColor="#2563eb" canWrite={canWrite} onOperation={handleOperation} />
+            <ReceivablesListGroup title="Liquidados" items={received} emptyText="Nenhuma baixa registrada." accentColor="#059669" canWrite={canWrite} onOperation={handleOperation} />
+          </div>
         </div>
       </div>
     </section>
