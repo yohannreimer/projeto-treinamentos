@@ -14,6 +14,7 @@ dist/
 # local data
 apps/backend/data/*
 !apps/backend/data/.gitkeep
+.superpowers/
 
 # logs and os files
 npm-debug.log*
