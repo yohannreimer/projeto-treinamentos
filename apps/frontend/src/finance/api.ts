@@ -46,6 +46,10 @@ export type FinanceAssistantExecutionResult = {
   }>;
 };
 
+export type FinanceAssistantTranscription = {
+  transcript: string;
+};
+
 export type FinanceAccount = {
   id: string;
   organization_id: string;
@@ -1273,6 +1277,11 @@ export function financeApiUrl(path: string): string {
 }
 
 export const financeApi = {
+  transcribeAssistantAudio: (payload: { audio_base64: string; mime_type: string }) =>
+    req<FinanceAssistantTranscription>('/finance/assistant/transcribe', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
   interpretAssistantCommand: (payload: { transcript: string; surface_path?: string | null }) =>
     req<FinanceAssistantPlan>('/finance/assistant/interpret', {
       method: 'POST',

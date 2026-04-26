@@ -9,7 +9,7 @@ import {
   type FinanceReceivablesList
 } from '../api';
 import { FinanceEntityCombobox } from '../components/FinanceEntityCombobox';
-import { FINANCE_QUICK_LAUNCH_CREATED_EVENT } from '../components/FinanceFloatingQuickLauncher';
+import { FINANCE_QUICK_LAUNCH_CREATED_EVENT, type FinanceQuickLaunchCreatedDetail } from '../components/financeFloatingEvents';
 import { FinancePeriodFilter } from '../components/FinancePeriodFilter';
 import { FinanceMono } from '../components/FinancePrimitives';
 import { resolveFinancePeriodWindow, useFinancePeriod } from '../hooks/useFinancePeriod';
@@ -55,6 +55,39 @@ const emptyGroups = {
   upcoming: [] as FinanceReceivable[],
   settled: [] as FinanceReceivable[]
 };
+
+function addDaysIso(days: number) {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function periodThatShowsDate(dateIso: string) {
+  const today = todayIso();
+  const next30 = addDaysIso(29);
+  if (dateIso >= today && dateIso <= next30) {
+    return { preset: 'next_30' as const, from: '', to: '' };
+  }
+
+  const [year, month] = dateIso.split('-');
+  if (!year || !month) {
+    return { preset: 'all' as const, from: '', to: '' };
+  }
+  const endDate = new Date(Number(year), Number(month), 0);
+  return {
+    preset: 'custom' as const,
+    from: `${year}-${month}-01`,
+    to: `${year}-${month}-${String(endDate.getDate()).padStart(2, '0')}`
+  };
+}
+
+function isDateInsideWindow(dateIso: string | null | undefined, windowRange: { from: string | null; to: string | null }) {
+  if (!dateIso || !windowRange.from || !windowRange.to) return true;
+  return dateIso >= windowRange.from && dateIso <= windowRange.to;
+}
 
 const pageStyle = {
   display: 'grid',
@@ -523,6 +556,7 @@ export function FinanceReceivablesPage() {
 
   const session = internalSessionStore.read();
   const canWrite = hasAnyPermission(session?.user, ['finance.write']);
+  const periodWindow = useMemo(() => resolveFinancePeriodWindow(period), [period]);
 
   async function reload() {
     setLoading(true);
@@ -555,19 +589,21 @@ export function FinanceReceivablesPage() {
 
   useEffect(() => {
     function handleQuickLaunchCreated(event: Event) {
-      const detail = (event as CustomEvent<{ type?: string }>).detail;
+      const detail = (event as CustomEvent<FinanceQuickLaunchCreatedDetail>).detail;
       if (detail?.type !== 'receivable') return;
       setSuccess(true);
+      if (detail.due_date && !isDateInsideWindow(detail.due_date, resolveFinancePeriodWindow(period))) {
+        setPeriod(periodThatShowsDate(detail.due_date));
+      }
       reload().catch(() => undefined);
     }
 
     window.addEventListener(FINANCE_QUICK_LAUNCH_CREATED_EVENT, handleQuickLaunchCreated);
     return () => window.removeEventListener(FINANCE_QUICK_LAUNCH_CREATED_EVENT, handleQuickLaunchCreated);
-  }, []);
+  }, [period, setPeriod]);
 
   const groups = dataState?.groups ?? emptyGroups;
   const statusQuery = typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('status');
-  const periodWindow = useMemo(() => resolveFinancePeriodWindow(period), [period]);
   const isInsidePeriod = (dateIso?: string | null) => {
     if (!periodWindow.from || !periodWindow.to) return true;
     if (!dateIso) return false;

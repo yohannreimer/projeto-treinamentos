@@ -453,6 +453,96 @@ test('initDb cria tabela de interações do Whisper Flow financeiro', () => {
   }
 });
 
+test('POST /finance/assistant/transcribe retorna texto do áudio transcrito', async () => {
+  const dbPath = assignTestDbPath('finance-whisper-transcribe');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = process.env.OPENAI_API_KEY;
+
+  try {
+    seedFinanceCompanies();
+    createInternalUser({
+      username: 'finance.whisper.transcribe',
+      display_name: 'Finance Whisper Transcribe',
+      password: 'Senha#123',
+      role: 'supremo',
+      permissions: ['finance.read', 'finance.write']
+    });
+    process.env.OPENAI_API_KEY = 'test-openai-key';
+    globalThis.fetch = async () => new Response(JSON.stringify({ text: 'lançar aluguel de 8000' }), { status: 200 });
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.whisper.transcribe', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+
+    const audioBuffer = Buffer.alloc(1024, 1);
+    const res = await request(app)
+      .post('/finance/assistant/transcribe')
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({
+        audio_base64: audioBuffer.toString('base64'),
+        mime_type: 'audio/webm'
+      });
+
+    assert.equal(res.status, 201);
+    assert.equal(res.body.transcript, 'lançar aluguel de 8000');
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (typeof originalApiKey === 'string') {
+      process.env.OPENAI_API_KEY = originalApiKey;
+    } else {
+      delete process.env.OPENAI_API_KEY;
+    }
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('POST /finance/assistant/transcribe informa quando servidor não tem transcrição configurada', async () => {
+  const dbPath = assignTestDbPath('finance-whisper-transcribe-missing-key');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+  const originalApiKey = process.env.OPENAI_API_KEY;
+  delete process.env.OPENAI_API_KEY;
+
+  try {
+    seedFinanceCompanies();
+    createInternalUser({
+      username: 'finance.whisper.no.transcribe',
+      display_name: 'Finance Whisper No Transcribe',
+      password: 'Senha#123',
+      role: 'supremo',
+      permissions: ['finance.read', 'finance.write']
+    });
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.whisper.no.transcribe', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+
+    const res = await request(app)
+      .post('/finance/assistant/transcribe')
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({
+        audio_base64: Buffer.alloc(1024, 1).toString('base64'),
+        mime_type: 'audio/webm'
+      });
+
+    assert.equal(res.status, 400);
+    assert.match(res.body.message, /transcrição por voz ainda não está configurada/i);
+  } finally {
+    if (typeof originalApiKey === 'string') {
+      process.env.OPENAI_API_KEY = originalApiKey;
+    }
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
 test('POST /finance/assistant/interpret cria plano confirmável para lançamento por voz', async () => {
   const dbPath = assignTestDbPath('finance-whisper-interpret');
   cleanupDbFiles(dbPath);
@@ -622,6 +712,60 @@ test('POST /finance/assistant/plans/:id/execute executa plano confirmado de lan�
     assert.equal(interaction.status, 'executed');
     assert.ok(interaction.confirmed_at);
     assert.match(interaction.result_json, /create_payable/);
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('POST /finance/assistant/plans/:id/execute cria recorrência mensal quando o comando pedir por mês', async () => {
+  const dbPath = assignTestDbPath('finance-whisper-execute-recurring');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+  try {
+    seedFinanceCompanies();
+    seedFinanceAccountAndCategory();
+    createInternalUser({
+      username: 'finance.whisper.recurring',
+      display_name: 'Finance Whisper Recurring',
+      password: 'Senha#123',
+      role: 'supremo',
+      permissions: ['finance.read', 'finance.write']
+    });
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.whisper.recurring', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+
+    const interpretRes = await request(app)
+      .post('/finance/assistant/interpret')
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({
+        transcript: 'lançar aluguel 20000 por mês, pagamento todo dia 15',
+        surface_path: '/financeiro/payables'
+      });
+
+    assert.equal(interpretRes.status, 201);
+    assert.equal(interpretRes.body.actions[0].payload.recurring_monthly, true);
+    assert.equal(interpretRes.body.actions[0].payload.day_of_month, 15);
+
+    const executeRes = await request(app)
+      .post(`/finance/assistant/plans/${interpretRes.body.id}/execute`)
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({ confirmed: true });
+
+    assert.equal(executeRes.status, 200);
+    assert.ok(executeRes.body.results[0].payload.recurring_rule);
+    assert.ok(executeRes.body.results[0].payload.materialized_payables.length >= 1);
+
+    const recurringCount = db.prepare('select count(*) as total from financial_recurring_rule').get() as { total: number };
+    assert.equal(recurringCount.total, 1);
+
+    const payableCount = db.prepare('select count(*) as total from financial_payable').get() as { total: number };
+    assert.ok(payableCount.total >= 2);
   } finally {
     db.close();
     cleanupDbFiles(dbPath);

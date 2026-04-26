@@ -2,6 +2,7 @@ import { db, uuid } from '../db.js';
 import {
   createFinancePayable,
   createFinanceReceivable,
+  createFinanceRecurringRuleFromResource,
   listFinancePayables,
   listFinanceReceivables
 } from './service.js';
@@ -31,6 +32,8 @@ type ValidatedCreateResourcePayload = {
   description: string;
   amount_cents: number;
   due_date: string | null;
+  recurring_monthly: boolean;
+  day_of_month: number | null;
 };
 
 type ValidatedFinanceAssistantAction = {
@@ -111,6 +114,13 @@ function extractDueDate(text: string) {
   return null;
 }
 
+function extractDayOfMonth(text: string) {
+  const dayMatch = text.match(/\bdia\s+(\d{1,2})\b/);
+  if (!dayMatch?.[1]) return null;
+  const day = Number.parseInt(dayMatch[1], 10);
+  return Number.isInteger(day) && day >= 1 && day <= 31 ? day : null;
+}
+
 function defaultOperationalDateForSurface(surfacePath: string | null) {
   if (!surfacePath) {
     return null;
@@ -122,6 +132,10 @@ function defaultOperationalDateForSurface(surfacePath: string | null) {
 
 function includesAny(text: string, terms: string[]) {
   return terms.some((term) => text.includes(term));
+}
+
+function isMonthlyRecurringCommand(text: string) {
+  return includesAny(text, ['por mes', 'todo mes', 'mensal', 'recorrente', 'recorrencia']);
 }
 
 function buildAction(input: {
@@ -229,6 +243,10 @@ function readPayloadPositiveInteger(payload: Record<string, unknown>, key: strin
   return value;
 }
 
+function readPayloadOptionalBoolean(payload: Record<string, unknown>, key: string) {
+  return typeof payload[key] === 'boolean' ? payload[key] : false;
+}
+
 function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -250,7 +268,14 @@ function validateAction(action: FinanceAssistantActionDto): ValidatedFinanceAssi
       createPayload: {
         description,
         amount_cents: amountCents,
-        due_date: readPayloadOptionalDate(action.payload, 'due_date')
+        due_date: readPayloadOptionalDate(action.payload, 'due_date'),
+        recurring_monthly: readPayloadOptionalBoolean(action.payload, 'recurring_monthly'),
+        day_of_month: typeof action.payload.day_of_month === 'number'
+          && Number.isInteger(action.payload.day_of_month)
+          && action.payload.day_of_month >= 1
+          && action.payload.day_of_month <= 31
+          ? action.payload.day_of_month
+          : null
       }
     };
   }
@@ -275,13 +300,28 @@ function executeAction(organizationId: string, validated: ValidatedFinanceAssist
       due_date: validated.createPayload.due_date,
       source: 'whisper_flow'
     });
+    const recurring = validated.createPayload.recurring_monthly
+      ? createFinanceRecurringRuleFromResource({
+        organization_id: organizationId,
+        resource_type: 'payable',
+        resource_id: payable.id,
+        day_of_month: validated.createPayload.day_of_month ?? Number.parseInt((payable.due_date ?? todayIsoDate()).slice(8, 10), 10),
+        start_date: payable.due_date ?? todayIsoDate(),
+        materialization_months: 3,
+        created_by: 'whisper_flow'
+      })
+      : null;
 
     return {
       action_id: action.id,
       intent: action.intent,
       resource_type: 'payable',
       resource_id: payable.id,
-      payload: { payable }
+      payload: {
+        payable,
+        recurring_rule: recurring?.rule ?? null,
+        materialized_payables: recurring?.payables ?? []
+      }
     };
   }
 
@@ -299,13 +339,28 @@ function executeAction(organizationId: string, validated: ValidatedFinanceAssist
       due_date: validated.createPayload.due_date,
       source: 'whisper_flow'
     });
+    const recurring = validated.createPayload.recurring_monthly
+      ? createFinanceRecurringRuleFromResource({
+        organization_id: organizationId,
+        resource_type: 'receivable',
+        resource_id: receivable.id,
+        day_of_month: validated.createPayload.day_of_month ?? Number.parseInt((receivable.due_date ?? todayIsoDate()).slice(8, 10), 10),
+        start_date: receivable.due_date ?? todayIsoDate(),
+        materialization_months: 3,
+        created_by: 'whisper_flow'
+      })
+      : null;
 
     return {
       action_id: action.id,
       intent: action.intent,
       resource_type: 'receivable',
       resource_id: receivable.id,
-      payload: { receivable }
+      payload: {
+        receivable,
+        recurring_rule: recurring?.rule ?? null,
+        materialized_receivables: recurring?.receivables ?? []
+      }
     };
   }
 
@@ -384,6 +439,8 @@ export function interpretFinanceAssistantCommand(input: FinanceAssistantInterpre
   const planId = uuid('faint');
   const amountCents = extractAmountCents(normalized);
   const dueDate = extractDueDate(normalized) ?? defaultOperationalDateForSurface(surfacePath);
+  const dayOfMonth = extractDayOfMonth(normalized);
+  const recurringMonthly = isMonthlyRecurringCommand(normalized);
   const actions: FinanceAssistantActionDto[] = [];
 
   const payableSignal = includesAny(normalized, ['pagamento', 'pagar', 'despesa', 'aluguel', 'fornecedor', 'saida', 'conta a pagar']);
@@ -398,11 +455,15 @@ export function interpretFinanceAssistantCommand(input: FinanceAssistantInterpre
       riskLevel: 'medium',
       requiresConfirmation: true,
       requiresPermission: 'finance.write',
-      humanSummary: `Criar conta a pagar para ${transcript}.`,
+      humanSummary: recurringMonthly
+        ? `Criar conta a pagar recorrente para ${transcript}.`
+        : `Criar conta a pagar para ${transcript}.`,
       payload: {
         description: transcript,
         amount_cents: amountCents,
         due_date: dueDate,
+        recurring_monthly: recurringMonthly,
+        day_of_month: dayOfMonth,
         status: 'open'
       }
     }));
@@ -413,11 +474,15 @@ export function interpretFinanceAssistantCommand(input: FinanceAssistantInterpre
       riskLevel: 'medium',
       requiresConfirmation: true,
       requiresPermission: 'finance.write',
-      humanSummary: `Criar conta a receber para ${transcript}.`,
+      humanSummary: recurringMonthly
+        ? `Criar conta a receber recorrente para ${transcript}.`
+        : `Criar conta a receber para ${transcript}.`,
       payload: {
         description: transcript,
         amount_cents: amountCents,
         due_date: dueDate,
+        recurring_monthly: recurringMonthly,
+        day_of_month: dayOfMonth,
         status: 'open'
       }
     }));

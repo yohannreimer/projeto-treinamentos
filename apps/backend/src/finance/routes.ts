@@ -111,6 +111,7 @@ import {
   updateFinancePaymentMethod
 } from './catalog.js';
 import { applyFinanceQualityCorrection, getFinanceQualityInbox } from './quality.js';
+import { transcribeFinanceAssistantAudio } from './transcription.js';
 import {
   type FinanceEntityKind,
   type FinanceAccountKind,
@@ -504,6 +505,11 @@ const assistantInterpretSchema = z.object({
   surface_path: z.string().trim().max(240).nullable().optional()
 });
 
+const assistantTranscribeSchema = z.object({
+  audio_base64: z.string().trim().min(64).max(28_000_000),
+  mime_type: z.string().trim().min(5).max(120)
+});
+
 const assistantExecuteSchema = z.object({
   confirmed: z.boolean()
 });
@@ -651,6 +657,19 @@ export function registerFinanceRoutes(app: Express) {
         transcript: parsed.data.transcript,
         surface_path: parsed.data.surface_path
       }));
+    } catch (error) {
+      return respondFinanceError(res, error);
+    }
+  });
+
+  router.post('/assistant/transcribe', requireFinancePermission(['finance.read']), async (req, res) => {
+    const parsed = assistantTranscribeSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+
+    try {
+      return res.status(201).json(await transcribeFinanceAssistantAudio(parsed.data));
     } catch (error) {
       return respondFinanceError(res, error);
     }

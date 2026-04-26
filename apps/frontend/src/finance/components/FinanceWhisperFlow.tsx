@@ -20,10 +20,30 @@ function createdDetailFromExecution(execution: FinanceAssistantExecutionResult) 
   if (!created || !created.resource_id) {
     return null;
   }
+  const payload = created.payload && typeof created.payload === 'object' ? created.payload as Record<string, unknown> : {};
+  const resource = (created.resource_type === 'payable' ? payload.payable : payload.receivable) as Record<string, unknown> | undefined;
   return {
     type: created.resource_type,
-    id: created.resource_id
+    id: created.resource_id,
+    description: typeof resource?.description === 'string' ? resource.description : null,
+    amount_cents: typeof resource?.amount_cents === 'number' ? resource.amount_cents : null,
+    due_date: typeof resource?.due_date === 'string' ? resource.due_date : null
   };
+}
+
+function formatAssistantCurrency(amountCents: number | null | undefined) {
+  if (typeof amountCents !== 'number') return null;
+  return new Intl.NumberFormat('pt-BR', {
+    style: 'currency',
+    currency: 'BRL'
+  }).format(amountCents / 100);
+}
+
+function formatAssistantDate(dateIso: string | null | undefined) {
+  if (!dateIso) return null;
+  const [year, month, day] = dateIso.split('-');
+  if (!year || !month || !day) return dateIso;
+  return `${day}/${month}/${year}`;
 }
 
 export function FinanceWhisperFlow() {
@@ -33,7 +53,9 @@ export function FinanceWhisperFlow() {
   const {
     supported,
     listening,
+    processing,
     transcript,
+    error: speechError,
     start,
     stop,
     reset,
@@ -60,7 +82,9 @@ export function FinanceWhisperFlow() {
     setExecution(null);
 
     try {
-      stop();
+      if (listening) {
+        stop();
+      }
       const nextPlan = await financeApi.interpretAssistantCommand({
         transcript: trimmedTranscript,
         surface_path: location.pathname
@@ -72,7 +96,7 @@ export function FinanceWhisperFlow() {
     } finally {
       setLoading(false);
     }
-  }, [location.pathname, stop]);
+  }, [listening, location.pathname, stop]);
 
   const openListening = useCallback(() => {
     window.dispatchEvent(new CustomEvent(FINANCE_WHISPER_FLOW_OPEN_EVENT));
@@ -82,9 +106,9 @@ export function FinanceWhisperFlow() {
     setExecution(null);
     setError('');
     reset();
-    setVoiceAutoSubmitArmed(supported);
-    start();
-  }, [reset, start, supported]);
+    setVoiceAutoSubmitArmed(true);
+    void start();
+  }, [reset, start]);
 
   const close = useCallback(() => {
     if (autoInterpretTimerRef.current) {
@@ -119,7 +143,7 @@ export function FinanceWhisperFlow() {
   }, [openListening]);
 
   useEffect(() => {
-    if (!open || phase !== 'listening' || loading || listening || !voiceAutoSubmitArmed || !transcript.trim()) {
+    if (!open || phase !== 'listening' || loading || listening || processing || !voiceAutoSubmitArmed || !transcript.trim()) {
       return undefined;
     }
 
@@ -134,7 +158,14 @@ export function FinanceWhisperFlow() {
         autoInterpretTimerRef.current = null;
       }
     };
-  }, [interpretTranscript, listening, loading, open, phase, transcript, voiceAutoSubmitArmed]);
+  }, [interpretTranscript, listening, loading, open, phase, processing, transcript, voiceAutoSubmitArmed]);
+
+  useEffect(() => {
+    if (speechError) {
+      setError(speechError);
+      setVoiceAutoSubmitArmed(false);
+    }
+  }, [speechError]);
 
   function handleInterpret(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -168,24 +199,27 @@ export function FinanceWhisperFlow() {
   }
 
   return (
-    <div className={`finance-whisper-flow${open ? ' finance-whisper-flow--open' : ''}${listening ? ' finance-whisper-flow--listening' : ''}`}>
+    <div className={`finance-whisper-flow${open ? ' finance-whisper-flow--open' : ''}${listening ? ' finance-whisper-flow--listening' : ''}${processing ? ' finance-whisper-flow--processing' : ''}`}>
       {open ? (
         <section className="finance-whisper-flow__panel" aria-label="Whisper Flow financeiro">
           <header className="finance-whisper-flow__header">
             <div>
               <small>Whisper Flow</small>
-              <h2>{phase === 'done' ? 'Execução concluída' : phase === 'preview' ? 'Prévia do plano' : 'Pronto para ditar'}</h2>
+              <h2>{phase === 'done' ? 'Execução concluída' : phase === 'preview' ? 'Prévia do plano' : listening ? 'Gravando comando' : 'Pronto para ditar'}</h2>
             </div>
             <button type="button" className="finance-whisper-flow__close" aria-label="Fechar Whisper Flow" onClick={close}>
               ×
             </button>
           </header>
 
-          <div className={`finance-whisper-flow__signal${listening ? ' is-listening' : ''}`} aria-live="polite">
-            <span aria-hidden="true" />
+          <div className={`finance-whisper-flow__signal${listening ? ' is-listening' : ''}${processing ? ' is-processing' : ''}`} aria-live="polite">
+            <span className="finance-whisper-flow__signal-dot" aria-hidden="true" />
             <div>
-              <strong>{listening ? 'Ouvindo...' : supported ? 'Diga o comando financeiro' : 'Áudio não disponível neste navegador'}</strong>
-              <p>{supported ? 'Ao parar de falar, eu preparo a ação automaticamente.' : 'Use Chrome/Edge para ditado ou escreva o comando abaixo.'}</p>
+              <strong>{processing ? 'Transcrevendo áudio...' : listening ? 'Gravando agora' : supported ? 'Diga o comando financeiro' : 'Microfone indisponível'}</strong>
+              <p>{processing ? 'Transformando sua fala em comando financeiro.' : listening ? 'Fale naturalmente. Clique em finalizar quando terminar.' : supported ? 'Clique no botão e comece a falar.' : 'Libere o microfone ou escreva o comando abaixo.'}</p>
+            </div>
+            <div className="finance-whisper-flow__wave" aria-hidden="true">
+              {Array.from({ length: 18 }).map((_, index) => <i key={index} />)}
             </div>
           </div>
 
@@ -206,12 +240,12 @@ export function FinanceWhisperFlow() {
                     stop();
                   } else {
                     setVoiceAutoSubmitArmed(true);
-                    start();
+                    void start();
                   }
                 }}
-                disabled={!supported || loading}
+                disabled={!supported || loading || processing}
               >
-                {listening ? 'Parar voz' : 'Ditar'}
+                {processing ? 'Transcrevendo...' : listening ? 'Finalizar áudio' : 'Ditar'}
               </button>
               <button
                 type="button"
@@ -223,14 +257,14 @@ export function FinanceWhisperFlow() {
                   setError('');
                   setVoiceAutoSubmitArmed(false);
                 }}
-                disabled={loading}
+                disabled={loading || processing}
               >
                 Limpar
               </button>
               <button
                 className="finance-whisper-flow__primary"
                 type="submit"
-                disabled={loading || !transcript.trim()}
+                disabled={loading || processing || !transcript.trim()}
                 aria-label="Interpretar comando"
               >
                 {loading && phase !== 'done' ? 'Interpretando...' : 'Interpretar agora'}
@@ -264,6 +298,15 @@ export function FinanceWhisperFlow() {
             <div className="finance-whisper-flow__done" role="status">
               <strong>Plano executado.</strong>
               <span>{execution.results.length} ação{execution.results.length === 1 ? '' : 'ões'} concluída{execution.results.length === 1 ? '' : 's'}.</span>
+              {createdDetailFromExecution(execution) ? (
+                <p>
+                  {[
+                    createdDetailFromExecution(execution)?.description,
+                    formatAssistantCurrency(createdDetailFromExecution(execution)?.amount_cents),
+                    formatAssistantDate(createdDetailFromExecution(execution)?.due_date)
+                  ].filter(Boolean).join(' · ')}
+                </p>
+              ) : null}
             </div>
           ) : null}
         </section>
@@ -273,7 +316,13 @@ export function FinanceWhisperFlow() {
         type="button"
         className="finance-whisper-flow__orb"
         aria-label="Abrir Whisper Flow"
-        onClick={openListening}
+        onClick={() => {
+          if (open && listening) {
+            stop();
+            return;
+          }
+          openListening();
+        }}
       >
         <span className="finance-whisper-flow__orb-mark" aria-hidden="true">
           <i />
