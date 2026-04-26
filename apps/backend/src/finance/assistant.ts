@@ -111,6 +111,15 @@ function extractDueDate(text: string) {
   return null;
 }
 
+function defaultOperationalDateForSurface(surfacePath: string | null) {
+  if (!surfacePath) {
+    return null;
+  }
+  return surfacePath.includes('/payables') || surfacePath.includes('/receivables')
+    ? todayIsoDate()
+    : null;
+}
+
 function includesAny(text: string, terms: string[]) {
   return terms.some((term) => text.includes(term));
 }
@@ -374,7 +383,7 @@ export function interpretFinanceAssistantCommand(input: FinanceAssistantInterpre
   const normalized = normalizeAssistantText(transcript);
   const planId = uuid('faint');
   const amountCents = extractAmountCents(normalized);
-  const dueDate = extractDueDate(normalized);
+  const dueDate = extractDueDate(normalized) ?? defaultOperationalDateForSurface(surfacePath);
   const actions: FinanceAssistantActionDto[] = [];
 
   const payableSignal = includesAny(normalized, ['pagamento', 'pagar', 'despesa', 'aluguel', 'fornecedor', 'saida', 'conta a pagar']);

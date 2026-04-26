@@ -21,35 +21,41 @@
 
 .finance-whisper-flow__orb {
   position: relative;
-  width: 44px;
-  height: 44px;
-  border: 1px solid rgba(15, 23, 42, 0.10);
+  width: 52px;
+  height: 52px;
+  border: 1px solid rgba(14, 116, 144, 0.22);
   border-radius: 999px;
   background:
-    radial-gradient(circle at 32% 22%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0) 38%),
-    linear-gradient(145deg, #0f172a 0%, #164e63 100%);
-  color: #e0f2fe;
+    radial-gradient(circle at 34% 20%, rgba(255, 255, 255, 0.90), rgba(255, 255, 255, 0) 34%),
+    linear-gradient(150deg, #ecfeff 0%, #ffffff 44%, #dbeafe 100%);
+  color: #0e7490;
   box-shadow:
-    0 18px 34px rgba(8, 47, 73, 0.22),
-    0 6px 14px rgba(15, 23, 42, 0.12),
-    inset 0 1px 0 rgba(255, 255, 255, 0.22);
+    0 18px 44px rgba(8, 47, 73, 0.18),
+    0 7px 16px rgba(15, 23, 42, 0.10),
+    inset 0 1px 0 rgba(255, 255, 255, 0.88);
   cursor: pointer;
   font-family: inherit;
-  transition: transform 150ms ease, box-shadow 150ms ease, border-color 150ms ease;
+  transition: transform 150ms ease, box-shadow 150ms ease, border-color 150ms ease, background 150ms ease;
 }
 
 .finance-whisper-flow__orb:hover,
-.finance-whisper-flow--open .finance-whisper-flow__orb {
+.finance-whisper-flow--open .finance-whisper-flow__orb,
+.finance-whisper-flow--listening .finance-whisper-flow__orb {
   transform: translateY(-2px);
-  border-color: rgba(103, 232, 249, 0.50);
+  border-color: rgba(14, 116, 144, 0.40);
   box-shadow:
-    0 20px 42px rgba(8, 47, 73, 0.28),
-    0 8px 18px rgba(15, 23, 42, 0.13),
-    inset 0 1px 0 rgba(255, 255, 255, 0.28);
+    0 22px 52px rgba(8, 47, 73, 0.24),
+    0 8px 18px rgba(15, 23, 42, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95);
 }
 
-.finance-whisper-flow__orb::before,
-.finance-whisper-flow__orb::after {
+.finance-whisper-flow--listening .finance-whisper-flow__orb {
+  background:
+    radial-gradient(circle at 34% 20%, rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0) 34%),
+    linear-gradient(150deg, #cffafe 0%, #ffffff 46%, #bfdbfe 100%);
+}
+
+.finance-whisper-flow--listening .finance-whisper-flow__orb::before {
   content: '';
   position: absolute;
   left: 50%;
@@ -60,22 +66,67 @@
 }
 
 .finance-whisper-flow__orb::before {
-  width: 13px;
-  height: 18px;
-  border: 2px solid currentColor;
-  border-top-left-radius: 8px;
-  border-top-right-radius: 8px;
+  width: 72px;
+  height: 72px;
+  border: 1px solid rgba(14, 116, 144, 0.18);
+  animation: finance-whisper-orb-ring 1.7s ease-out infinite;
 }
 
-.finance-whisper-flow__orb::after {
-  width: 20px;
-  height: 11px;
-  border-bottom: 2px solid currentColor;
+@keyframes finance-whisper-orb-ring {
+  0% {
+    opacity: 0.75;
+    transform: translate(-50%, -50%) scale(0.70);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1.08);
+  }
 }
 
-.finance-whisper-flow__orb span {
-  color: transparent;
-  font-size: 0;
+.finance-whisper-flow__orb-mark {
+  position: absolute;
+  inset: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+}
+
+.finance-whisper-flow__orb-mark i {
+  display: block;
+  width: 4px;
+  height: 13px;
+  border-radius: 999px;
+  background: currentColor;
+  box-shadow: 0 0 0 1px rgba(14, 116, 144, 0.05);
+}
+
+.finance-whisper-flow__orb-mark i:nth-child(2) {
+  height: 22px;
+}
+
+.finance-whisper-flow--listening .finance-whisper-flow__orb-mark i {
+  animation: finance-whisper-orb-wave 850ms ease-in-out infinite;
+}
+
+.finance-whisper-flow--listening .finance-whisper-flow__orb-mark i:nth-child(2) {
+  animation-delay: 110ms;
+}
+
+.finance-whisper-flow--listening .finance-whisper-flow__orb-mark i:nth-child(3) {
+  animation-delay: 220ms;
+}
+
+@keyframes finance-whisper-orb-wave {
+  0%,
+  100% {
+    transform: scaleY(0.72);
+    opacity: 0.68;
+  }
+  50% {
+    transform: scaleY(1.16);
+    opacity: 1;
+  }
 }
 
 .finance-whisper-flow__panel {

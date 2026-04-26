@@ -8,9 +8,13 @@ import {
   type FinanceTransactionKind
 } from '../api';
 import { parseAmountToCents, todayIso } from '../utils/financeFormatters';
-import { FINANCE_QUICK_LAUNCH_OPEN_EVENT, FINANCE_WHISPER_FLOW_OPEN_EVENT } from './financeFloatingEvents';
+import {
+  FINANCE_QUICK_LAUNCH_CREATED_EVENT,
+  FINANCE_QUICK_LAUNCH_OPEN_EVENT,
+  FINANCE_WHISPER_FLOW_OPEN_EVENT
+} from './financeFloatingEvents';
 
-export const FINANCE_QUICK_LAUNCH_CREATED_EVENT = 'finance:quick-launch-created';
+export { FINANCE_QUICK_LAUNCH_CREATED_EVENT };
 
 export type FinanceQuickLaunchType = 'receivable' | 'payable' | 'transaction';
 type QuickLaunchScheduleMode = 'single' | 'installments' | 'recurring';

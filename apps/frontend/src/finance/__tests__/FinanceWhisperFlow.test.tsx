@@ -3,6 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, expect, test, vi } from 'vitest';
 import { FinanceWhisperFlow } from '../components/FinanceWhisperFlow';
+import { FINANCE_QUICK_LAUNCH_CREATED_EVENT } from '../components/financeFloatingEvents';
 
 const mocks = vi.hoisted(() => ({
   interpretAssistantCommand: vi.fn(),
@@ -56,6 +57,8 @@ beforeEach(() => {
 
 test('FinanceWhisperFlow interprets a typed command and executes the confirmed plan', async () => {
   const user = userEvent.setup();
+  const created = vi.fn();
+  window.addEventListener(FINANCE_QUICK_LAUNCH_CREATED_EVENT, created);
 
   render(
     <MemoryRouter initialEntries={['/financeiro/payables']}>
@@ -79,6 +82,13 @@ test('FinanceWhisperFlow interprets a typed command and executes the confirmed p
   await waitFor(() => expect(mocks.executeAssistantPlan).toHaveBeenCalledTimes(1));
   expect(mocks.executeAssistantPlan).toHaveBeenCalledWith('plan-whisper-1');
   expect(await screen.findByText('Plano executado.')).toBeInTheDocument();
+  expect(created).toHaveBeenCalledTimes(1);
+  expect(created.mock.calls[0]?.[0]).toMatchObject({
+    detail: {
+      type: 'payable',
+      id: 'payable-1'
+    }
+  });
 
   await user.click(screen.getByRole('button', { name: 'Fechar Whisper Flow' }));
   await user.click(screen.getByRole('button', { name: 'Abrir Whisper Flow' }));
@@ -86,4 +96,6 @@ test('FinanceWhisperFlow interprets a typed command and executes the confirmed p
   expect(screen.getByLabelText('Comando do Whisper Flow')).toHaveValue('');
   expect(screen.queryByText('Plano executado.')).not.toBeInTheDocument();
   expect(screen.queryByText('Criar conta a pagar de aluguel no valor de R$ 8.000,00.')).not.toBeInTheDocument();
+
+  window.removeEventListener(FINANCE_QUICK_LAUNCH_CREATED_EVENT, created);
 });

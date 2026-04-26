@@ -79,7 +79,7 @@ export function useFinanceSpeechRecognition() {
     recognitionRef.current?.abort();
     const recognition = new Recognition();
     recognition.lang = 'pt-BR';
-    recognition.continuous = true;
+    recognition.continuous = false;
     recognition.interimResults = true;
     recognition.onstart = () => setListening(true);
     recognition.onend = () => setListening(false);

@@ -523,6 +523,46 @@ test('POST /finance/assistant/interpret cria plano confirmável para lançamento
   }
 });
 
+test('POST /finance/assistant/interpret usa vencimento de hoje em rotina operacional sem data falada', async () => {
+  const dbPath = assignTestDbPath('finance-whisper-interpret-default-date');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+  try {
+    seedFinanceCompanies();
+    seedFinanceAccountAndCategory();
+    createInternalUser({
+      username: 'finance.whisper.default.date',
+      display_name: 'Finance Whisper Default Date',
+      password: 'Senha#123',
+      role: 'supremo',
+      permissions: ['finance.read', 'finance.write']
+    });
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.whisper.default.date', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+
+    const res = await request(app)
+      .post('/finance/assistant/interpret')
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({
+        transcript: 'lança aluguel de 8000',
+        surface_path: '/financeiro/payables'
+      });
+
+    assert.equal(res.status, 201);
+    assert.equal(res.body.actions[0].intent, 'create_payable');
+    assert.equal(res.body.actions[0].payload.amount_cents, 800000);
+    assert.equal(res.body.actions[0].payload.due_date, new Date().toISOString().slice(0, 10));
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
 test('POST /finance/assistant/plans/:id/execute executa plano confirmado de lançamento por voz', async () => {
   const dbPath = assignTestDbPath('finance-whisper-execute');
   cleanupDbFiles(dbPath);
