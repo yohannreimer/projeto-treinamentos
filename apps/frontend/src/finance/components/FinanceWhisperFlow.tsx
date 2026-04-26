@@ -198,9 +198,81 @@ export function FinanceWhisperFlow() {
     }
   }
 
+  const reviewMode = open && (phase === 'preview' || phase === 'done');
+  const compactMode = open && !reviewMode;
+  const createdExecutionDetail = execution ? createdDetailFromExecution(execution) : null;
+  const compactTitle = processing
+    ? 'Transcrevendo...'
+    : loading
+      ? 'Preparando ação...'
+      : listening
+        ? 'Ouvindo'
+        : transcript.trim()
+          ? 'Comando capturado'
+          : 'Pronto para falar';
+  const compactHint = processing
+    ? 'Convertendo sua fala em texto.'
+    : loading
+      ? 'Lendo intenção e montando o plano.'
+      : listening
+        ? 'Fale naturalmente. Clique na cápsula para finalizar.'
+        : supported
+          ? 'Clique na cápsula ou escreva um comando curto.'
+          : 'Microfone indisponível. Escreva o comando abaixo.';
+
   return (
-    <div className={`finance-whisper-flow${open ? ' finance-whisper-flow--open' : ''}${listening ? ' finance-whisper-flow--listening' : ''}${processing ? ' finance-whisper-flow--processing' : ''}`}>
-      {open ? (
+    <div className={`finance-whisper-flow${open ? ' finance-whisper-flow--open' : ''}${compactMode ? ' finance-whisper-flow--capsule' : ''}${listening ? ' finance-whisper-flow--listening' : ''}${processing ? ' finance-whisper-flow--processing' : ''}`}>
+      {compactMode ? (
+        <section className="finance-whisper-flow__compact" aria-label="Whisper Flow financeiro">
+          <button
+            type="button"
+            className="finance-whisper-flow__listen-pill"
+            aria-label={listening ? 'Finalizar gravação do Whisper Flow' : 'Iniciar gravação do Whisper Flow'}
+            onClick={() => {
+              if (listening) {
+                stop();
+                return;
+              }
+              setVoiceAutoSubmitArmed(true);
+              void start();
+            }}
+            disabled={!supported || loading || processing}
+          >
+            <span className="finance-whisper-flow__listen-wave" aria-hidden="true">
+              {Array.from({ length: 14 }).map((_, index) => <i key={index} />)}
+            </span>
+          </button>
+
+          <form className="finance-whisper-flow__command-palette" onSubmit={handleInterpret}>
+            <div className="finance-whisper-flow__command-status">
+              <strong>{compactTitle}</strong>
+              <span>{compactHint}</span>
+            </div>
+            <label className="finance-whisper-flow__sr-only" htmlFor={commandId}>Comando do Whisper Flow</label>
+            <div className="finance-whisper-flow__command-row">
+              <input
+                id={commandId}
+                value={transcript}
+                onChange={(event) => {
+                  setTranscript(event.target.value);
+                  setVoiceAutoSubmitArmed(false);
+                }}
+                placeholder="Ex.: lançar aluguel de 8000 dia 15"
+                disabled={listening || processing || loading}
+              />
+              <button type="submit" disabled={listening || processing || loading || !transcript.trim()} aria-label="Interpretar comando">
+                Enter
+              </button>
+            </div>
+            {error ? <p className="finance-whisper-flow__compact-error">{error}</p> : null}
+            <button type="button" className="finance-whisper-flow__compact-close" aria-label="Fechar Whisper Flow" onClick={close}>
+              ×
+            </button>
+          </form>
+        </section>
+      ) : null}
+
+      {reviewMode ? (
         <section className="finance-whisper-flow__panel" aria-label="Whisper Flow financeiro">
           <header className="finance-whisper-flow__header">
             <div>
@@ -298,12 +370,12 @@ export function FinanceWhisperFlow() {
             <div className="finance-whisper-flow__done" role="status">
               <strong>Plano executado.</strong>
               <span>{execution.results.length} ação{execution.results.length === 1 ? '' : 'ões'} concluída{execution.results.length === 1 ? '' : 's'}.</span>
-              {createdDetailFromExecution(execution) ? (
+              {createdExecutionDetail ? (
                 <p>
                   {[
-                    createdDetailFromExecution(execution)?.description,
-                    formatAssistantCurrency(createdDetailFromExecution(execution)?.amount_cents),
-                    formatAssistantDate(createdDetailFromExecution(execution)?.due_date)
+                    createdExecutionDetail.description,
+                    formatAssistantCurrency(createdExecutionDetail.amount_cents),
+                    formatAssistantDate(createdExecutionDetail.due_date)
                   ].filter(Boolean).join(' · ')}
                 </p>
               ) : null}
@@ -312,24 +384,20 @@ export function FinanceWhisperFlow() {
         </section>
       ) : null}
 
-      <button
-        type="button"
-        className="finance-whisper-flow__orb"
-        aria-label="Abrir Whisper Flow"
-        onClick={() => {
-          if (open && listening) {
-            stop();
-            return;
-          }
-          openListening();
-        }}
-      >
-        <span className="finance-whisper-flow__orb-mark" aria-hidden="true">
-          <i />
-          <i />
-          <i />
-        </span>
-      </button>
+      {!open ? (
+        <button
+          type="button"
+          className="finance-whisper-flow__orb"
+          aria-label="Abrir Whisper Flow"
+          onClick={openListening}
+        >
+          <span className="finance-whisper-flow__orb-mark" aria-hidden="true">
+            <i />
+            <i />
+            <i />
+          </span>
+        </button>
+      ) : null}
     </div>
   );
 }
