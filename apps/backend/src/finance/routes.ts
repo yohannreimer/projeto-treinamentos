@@ -76,6 +76,7 @@ import {
 } from './service.js';
 import { getFinanceCashflow } from './cashflow.js';
 import { getFinanceExecutiveOverview } from './context.js';
+import { executeFinanceAssistantPlan, interpretFinanceAssistantCommand } from './assistant.js';
 import {
   createFinanceEntity,
   createFinanceEntityTag,
@@ -498,6 +499,15 @@ const transactionUpdateSchema = z.object({
   }
 });
 
+const assistantInterpretSchema = z.object({
+  transcript: z.string().trim().min(2).max(4_000),
+  surface_path: z.string().trim().max(240).nullable().optional()
+});
+
+const assistantExecuteSchema = z.object({
+  confirmed: z.boolean()
+});
+
 function requireFinancePermission(permissions: InternalPermissionKey[]) {
   return (_req: Request, res: Response, next: NextFunction) => {
     const context = readInternalAuthContext(res);
@@ -626,6 +636,42 @@ export function registerFinanceRoutes(app: Express) {
   const router = express.Router();
 
   router.use(requireInternalAuth);
+
+  router.post('/assistant/interpret', requireFinancePermission(['finance.read']), (req, res) => {
+    const parsed = assistantInterpretSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+
+    try {
+      const context = readInternalAuthContext(res);
+      return res.status(201).json(interpretFinanceAssistantCommand({
+        organization_id: readFinanceOrganizationId(res),
+        created_by: context?.username ?? null,
+        transcript: parsed.data.transcript,
+        surface_path: parsed.data.surface_path
+      }));
+    } catch (error) {
+      return respondFinanceError(res, error);
+    }
+  });
+
+  router.post('/assistant/plans/:id/execute', requireFinancePermission(['finance.write']), (req, res) => {
+    const parsed = assistantExecuteSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+
+    try {
+      return res.json(executeFinanceAssistantPlan(
+        readFinanceOrganizationId(res),
+        req.params.id,
+        parsed.data.confirmed
+      ));
+    } catch (error) {
+      return respondFinanceError(res, error);
+    }
+  });
 
   router.get('/context', requireFinancePermission(['finance.read']), (_req, res) => {
     try {

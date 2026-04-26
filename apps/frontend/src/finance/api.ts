@@ -9,6 +9,42 @@ export type FinanceAccountKind = 'bank' | 'cash' | 'wallet' | 'other';
 export type FinanceCategoryKind = 'income' | 'expense' | 'neutral';
 export type FinanceDeleteResult = { ok: true; id: string };
 export type FinanceOperationalResetResult = { ok: true; deleted: Record<string, number> };
+export type FinanceAssistantRiskLevel = 'low' | 'medium' | 'high';
+export type FinanceAssistantStatus = 'draft' | 'executed' | 'canceled' | 'failed';
+
+export type FinanceAssistantAction = {
+  id: string;
+  intent: string;
+  confidence: number;
+  risk_level: FinanceAssistantRiskLevel;
+  requires_confirmation: boolean;
+  requires_permission: string;
+  human_summary: string;
+  payload: Record<string, unknown>;
+};
+
+export type FinanceAssistantPlan = {
+  id: string;
+  transcript: string;
+  surface_path: string | null;
+  status: FinanceAssistantStatus;
+  risk_level: FinanceAssistantRiskLevel;
+  requires_confirmation: boolean;
+  human_summary: string;
+  actions: FinanceAssistantAction[];
+};
+
+export type FinanceAssistantExecutionResult = {
+  id: string;
+  status: 'executed';
+  results: Array<{
+    action_id: string;
+    intent: string;
+    resource_type: string;
+    resource_id: string | null;
+    payload?: unknown;
+  }>;
+};
 
 export type FinanceAccount = {
   id: string;
@@ -1237,6 +1273,16 @@ export function financeApiUrl(path: string): string {
 }
 
 export const financeApi = {
+  interpretAssistantCommand: (payload: { transcript: string; surface_path?: string | null }) =>
+    req<FinanceAssistantPlan>('/finance/assistant/interpret', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  executeAssistantPlan: (planId: string) =>
+    req<FinanceAssistantExecutionResult>(`/finance/assistant/plans/${encodeURIComponent(planId)}/execute`, {
+      method: 'POST',
+      body: JSON.stringify({ confirmed: true })
+    }),
   getAdvancedDashboard: () =>
     req<FinanceAdvancedDashboard>('/finance/advanced'),
   createAutomationRule: (payload: CreateFinanceAutomationRulePayload) =>

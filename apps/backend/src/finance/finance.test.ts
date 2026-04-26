@@ -427,6 +427,397 @@ test('initDb cria schema financeiro v1', () => {
   }
 });
 
+test('initDb cria tabela de interações do Whisper Flow financeiro', () => {
+  const dbPath = assignTestDbPath('finance-whisper-schema');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+
+  try {
+    initDb();
+
+    const columns = db.prepare('pragma table_info(financial_ai_interaction)').all() as Array<{ name: string }>;
+    const names = columns.map((column) => column.name);
+
+    assert.ok(names.includes('id'));
+    assert.ok(names.includes('organization_id'));
+    assert.ok(names.includes('created_by'));
+    assert.ok(names.includes('surface_path'));
+    assert.ok(names.includes('transcript'));
+    assert.ok(names.includes('status'));
+    assert.ok(names.includes('plan_json'));
+    assert.ok(names.includes('result_json'));
+    assert.ok(names.includes('confirmed_at'));
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('POST /finance/assistant/interpret cria plano confirmável para lançamento por voz', async () => {
+  const dbPath = assignTestDbPath('finance-whisper-interpret');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+  try {
+    seedFinanceCompanies();
+    seedFinanceAccountAndCategory();
+    createInternalUser({
+      username: 'finance.whisper',
+      display_name: 'Finance Whisper',
+      password: 'Senha#123',
+      role: 'supremo',
+      permissions: ['finance.read', 'finance.write']
+    });
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.whisper', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+
+    const res = await request(app)
+      .post('/finance/assistant/interpret')
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({
+        transcript: 'lança aluguel dia 15 de 8000',
+        surface_path: '/financeiro/payables'
+      });
+
+    assert.equal(res.status, 201);
+    assert.equal(res.body.status, 'draft');
+    assert.equal(res.body.actions[0].intent, 'create_payable');
+    assert.equal(res.body.actions[0].payload.amount_cents, 800000);
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    let expectedDueDate: string | null = null;
+    for (let offset = 0; offset <= 12; offset += 1) {
+      const monthIndex = now.getMonth() + offset;
+      const candidate = new Date(now.getFullYear(), monthIndex, 15);
+      const expectedYear = now.getFullYear() + Math.floor(monthIndex / 12);
+      const expectedMonth = ((monthIndex % 12) + 12) % 12;
+      if (
+        candidate.getFullYear() === expectedYear
+        && candidate.getMonth() === expectedMonth
+        && candidate.getDate() === 15
+        && candidate >= today
+      ) {
+        expectedDueDate = `${candidate.getFullYear()}-${String(candidate.getMonth() + 1).padStart(2, '0')}-15`;
+        break;
+      }
+    }
+    assert.equal(res.body.actions[0].payload.due_date, expectedDueDate);
+    assert.equal(res.body.requires_confirmation, true);
+    assert.match(res.body.human_summary, /aluguel|conta a pagar/i);
+
+    const row = db.prepare('select status, transcript, created_by from financial_ai_interaction where id = ?').get(res.body.id) as {
+      status: string;
+      transcript: string;
+      created_by: string;
+    };
+    assert.equal(row.status, 'draft');
+    assert.equal(row.transcript, 'lança aluguel dia 15 de 8000');
+    assert.equal(row.created_by, 'finance.whisper');
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('POST /finance/assistant/plans/:id/execute executa plano confirmado de lançamento por voz', async () => {
+  const dbPath = assignTestDbPath('finance-whisper-execute');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+  try {
+    seedFinanceCompanies();
+    seedFinanceAccountAndCategory();
+    createInternalUser({
+      username: 'finance.whisper.execute',
+      display_name: 'Finance Whisper Execute',
+      password: 'Senha#123',
+      role: 'supremo',
+      permissions: ['finance.read', 'finance.write']
+    });
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.whisper.execute', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+
+    const interpretRes = await request(app)
+      .post('/finance/assistant/interpret')
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({
+        transcript: 'lança aluguel dia 15 de 8000',
+        surface_path: '/financeiro/payables'
+      });
+
+    assert.equal(interpretRes.status, 201);
+
+    const executeRes = await request(app)
+      .post(`/finance/assistant/plans/${interpretRes.body.id}/execute`)
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({ confirmed: true });
+
+    assert.equal(executeRes.status, 200);
+    assert.equal(executeRes.body.status, 'executed');
+    assert.equal(executeRes.body.results[0].intent, 'create_payable');
+
+    const payable = db.prepare(`
+      select description, amount_cents
+      from financial_payable
+      where organization_id = ?
+      order by created_at desc
+      limit 1
+    `).get('org-holand') as { description: string; amount_cents: number };
+    assert.match(payable.description, /aluguel/i);
+    assert.equal(payable.amount_cents, 800000);
+
+    const interaction = db.prepare(`
+      select status, confirmed_at, result_json
+      from financial_ai_interaction
+      where id = ?
+    `).get(interpretRes.body.id) as { status: string; confirmed_at: string | null; result_json: string };
+    assert.equal(interaction.status, 'executed');
+    assert.ok(interaction.confirmed_at);
+    assert.match(interaction.result_json, /create_payable/);
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('POST /finance/assistant/plans/:id/execute exige confirmação antes de executar', async () => {
+  const dbPath = assignTestDbPath('finance-whisper-execute-unconfirmed');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+  try {
+    seedFinanceCompanies();
+    seedFinanceAccountAndCategory();
+    createInternalUser({
+      username: 'finance.whisper.unconfirmed',
+      display_name: 'Finance Whisper Unconfirmed',
+      password: 'Senha#123',
+      role: 'supremo',
+      permissions: ['finance.read', 'finance.write']
+    });
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.whisper.unconfirmed', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+
+    const interpretRes = await request(app)
+      .post('/finance/assistant/interpret')
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({
+        transcript: 'lança aluguel dia 15 de 8000',
+        surface_path: '/financeiro/payables'
+      });
+    assert.equal(interpretRes.status, 201);
+
+    const executeRes = await request(app)
+      .post(`/finance/assistant/plans/${interpretRes.body.id}/execute`)
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({ confirmed: false });
+
+    assert.equal(executeRes.status, 400);
+    assert.match(executeRes.body.message, /confirme o plano/i);
+
+    const payableCount = db.prepare('select count(*) as total from financial_payable').get() as { total: number };
+    assert.equal(payableCount.total, 0);
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('POST /finance/assistant/plans/:id/execute não duplica plano já executado', async () => {
+  const dbPath = assignTestDbPath('finance-whisper-execute-idempotency');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+  try {
+    seedFinanceCompanies();
+    seedFinanceAccountAndCategory();
+    createInternalUser({
+      username: 'finance.whisper.retry',
+      display_name: 'Finance Whisper Retry',
+      password: 'Senha#123',
+      role: 'supremo',
+      permissions: ['finance.read', 'finance.write']
+    });
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.whisper.retry', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+
+    const interpretRes = await request(app)
+      .post('/finance/assistant/interpret')
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({
+        transcript: 'lança aluguel dia 15 de 8000',
+        surface_path: '/financeiro/payables'
+      });
+    assert.equal(interpretRes.status, 201);
+
+    const firstExecuteRes = await request(app)
+      .post(`/finance/assistant/plans/${interpretRes.body.id}/execute`)
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({ confirmed: true });
+    assert.equal(firstExecuteRes.status, 200);
+
+    const secondExecuteRes = await request(app)
+      .post(`/finance/assistant/plans/${interpretRes.body.id}/execute`)
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({ confirmed: true });
+
+    assert.equal(secondExecuteRes.status, 400);
+    assert.match(secondExecuteRes.body.message, /não está mais disponível/i);
+
+    const payableCount = db.prepare('select count(*) as total from financial_payable').get() as { total: number };
+    assert.equal(payableCount.total, 1);
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('POST /finance/assistant/plans/:id/execute rejeita plan_json inválido sem criar payable', async () => {
+  const dbPath = assignTestDbPath('finance-whisper-execute-invalid-payload');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+  try {
+    seedFinanceCompanies();
+    seedFinanceAccountAndCategory();
+    createInternalUser({
+      username: 'finance.whisper.invalid',
+      display_name: 'Finance Whisper Invalid',
+      password: 'Senha#123',
+      role: 'supremo',
+      permissions: ['finance.read', 'finance.write']
+    });
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.whisper.invalid', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+
+    const interpretRes = await request(app)
+      .post('/finance/assistant/interpret')
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({
+        transcript: 'lança aluguel dia 15 de 8000',
+        surface_path: '/financeiro/payables'
+      });
+    assert.equal(interpretRes.status, 201);
+
+    const invalidPlan = {
+      ...interpretRes.body,
+      actions: [
+        interpretRes.body.actions[0],
+        {
+          ...interpretRes.body.actions[0],
+          id: `${interpretRes.body.actions[0].id}-invalid`,
+          payload: {
+            ...interpretRes.body.actions[0].payload,
+            amount_cents: 0
+          }
+        }
+      ]
+    };
+    db.prepare('update financial_ai_interaction set plan_json = ? where id = ?')
+      .run(JSON.stringify(invalidPlan), interpretRes.body.id);
+
+    const executeRes = await request(app)
+      .post(`/finance/assistant/plans/${interpretRes.body.id}/execute`)
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({ confirmed: true });
+
+    assert.equal(executeRes.status, 400);
+    assert.match(executeRes.body.message, /plano do whisper flow inválido/i);
+
+    const payableCount = db.prepare('select count(*) as total from financial_payable').get() as { total: number };
+    assert.equal(payableCount.total, 0);
+
+    const interaction = db.prepare('select status from financial_ai_interaction where id = ?')
+      .get(interpretRes.body.id) as { status: string };
+    assert.equal(interaction.status, 'draft');
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('POST /finance/assistant/plans/:id/execute rejeita due_date inválida sem criar payable', async () => {
+  const dbPath = assignTestDbPath('finance-whisper-execute-invalid-due-date');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+  try {
+    seedFinanceCompanies();
+    seedFinanceAccountAndCategory();
+    createInternalUser({
+      username: 'finance.whisper.invalid.date',
+      display_name: 'Finance Whisper Invalid Date',
+      password: 'Senha#123',
+      role: 'supremo',
+      permissions: ['finance.read', 'finance.write']
+    });
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.whisper.invalid.date', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+
+    const interpretRes = await request(app)
+      .post('/finance/assistant/interpret')
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({
+        transcript: 'lança aluguel dia 15 de 8000',
+        surface_path: '/financeiro/payables'
+      });
+    assert.equal(interpretRes.status, 201);
+
+    const invalidPlan = {
+      ...interpretRes.body,
+      actions: [
+        {
+          ...interpretRes.body.actions[0],
+          payload: {
+            ...interpretRes.body.actions[0].payload,
+            due_date: 'not-a-date'
+          }
+        }
+      ]
+    };
+    db.prepare('update financial_ai_interaction set plan_json = ? where id = ?')
+      .run(JSON.stringify(invalidPlan), interpretRes.body.id);
+
+    const executeRes = await request(app)
+      .post(`/finance/assistant/plans/${interpretRes.body.id}/execute`)
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({ confirmed: true });
+
+    assert.equal(executeRes.status, 400);
+    assert.match(executeRes.body.message, /data de vencimento inválida/i);
+
+    const payableCount = db.prepare('select count(*) as total from financial_payable').get() as { total: number };
+    assert.equal(payableCount.total, 0);
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
 test('initDb cria schema do núcleo conectado financeiro', async () => {
   const dbPath = assignTestDbPath('finance-connected-core-schema');
   cleanupDbFiles(dbPath);

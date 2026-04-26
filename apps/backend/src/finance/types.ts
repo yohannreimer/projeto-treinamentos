@@ -1418,3 +1418,43 @@ export type UpdateFinanceTransactionInput = {
   competence_date?: string | null;
   note?: string | null;
 };
+
+export type FinanceAssistantRiskLevel = 'low' | 'medium' | 'high';
+export type FinanceAssistantInteractionStatus = 'draft' | 'executed' | 'canceled' | 'failed';
+export type FinanceAssistantIntent =
+  | 'create_payable'
+  | 'create_receivable'
+  | 'settle_payable'
+  | 'settle_receivable'
+  | 'query_due'
+  | 'query_quality'
+  | 'create_simulation';
+
+export type FinanceAssistantActionDto = {
+  id: string;
+  intent: FinanceAssistantIntent;
+  confidence: number;
+  risk_level: FinanceAssistantRiskLevel;
+  requires_confirmation: boolean;
+  requires_permission: string;
+  human_summary: string;
+  payload: Record<string, unknown>;
+};
+
+export type FinanceAssistantPlanDto = {
+  id: string;
+  transcript: string;
+  surface_path: string | null;
+  status: FinanceAssistantInteractionStatus;
+  risk_level: FinanceAssistantRiskLevel;
+  requires_confirmation: boolean;
+  human_summary: string;
+  actions: FinanceAssistantActionDto[];
+};
+
+export type FinanceAssistantInterpretInput = {
+  organization_id: string;
+  created_by?: string | null;
+  transcript: string;
+  surface_path?: string | null;
+};

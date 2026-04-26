@@ -8,6 +8,7 @@ import {
   type FinanceTransactionKind
 } from '../api';
 import { parseAmountToCents, todayIso } from '../utils/financeFormatters';
+import { FINANCE_QUICK_LAUNCH_OPEN_EVENT, FINANCE_WHISPER_FLOW_OPEN_EVENT } from './financeFloatingEvents';
 
 export const FINANCE_QUICK_LAUNCH_CREATED_EVENT = 'finance:quick-launch-created';
 
@@ -138,6 +139,15 @@ export function FinanceFloatingQuickLauncher() {
   }, [location.pathname, open]);
 
   useEffect(() => {
+    function handleWhisperOpen() {
+      setOpen(false);
+    }
+
+    window.addEventListener(FINANCE_WHISPER_FLOW_OPEN_EVENT, handleWhisperOpen);
+    return () => window.removeEventListener(FINANCE_WHISPER_FLOW_OPEN_EVENT, handleWhisperOpen);
+  }, []);
+
+  useEffect(() => {
     if (!open || catalogLoaded) return;
     let cancelled = false;
 
@@ -180,6 +190,16 @@ export function FinanceFloatingQuickLauncher() {
     setForm((current) => ({ ...current, [field]: value }));
     setError('');
     setSuccess('');
+  }
+
+  function toggleOpen() {
+    setOpen((current) => {
+      const nextOpen = !current;
+      if (nextOpen) {
+        window.dispatchEvent(new CustomEvent(FINANCE_QUICK_LAUNCH_OPEN_EVENT));
+      }
+      return nextOpen;
+    });
   }
 
   function resetForNextEntry() {
@@ -601,7 +621,7 @@ export function FinanceFloatingQuickLauncher() {
         type="button"
         className="finance-floating-launcher__fab"
         aria-label={open ? 'Fechar lançamento rápido' : 'Abrir lançamento rápido'}
-        onClick={() => setOpen((current) => !current)}
+        onClick={toggleOpen}
       >
         <span aria-hidden="true">{open ? '×' : '+'}</span>
       </button>

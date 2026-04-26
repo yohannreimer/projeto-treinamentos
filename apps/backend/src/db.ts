@@ -687,6 +687,26 @@ export function initDb() {
       foreign key(company_id) references company(id) on delete set null
     );
 
+    create table if not exists financial_ai_interaction (
+      id text primary key,
+      organization_id text not null,
+      company_id text,
+      created_by text,
+      surface_path text,
+      transcript text not null,
+      status text not null check(status in ('draft', 'executed', 'canceled', 'failed')),
+      risk_level text not null check(risk_level in ('low', 'medium', 'high')),
+      plan_json text not null default '{}',
+      result_json text not null default '{}',
+      error_message text,
+      confirmed_at text,
+      created_at text not null,
+      updated_at text not null,
+      unique(organization_id, id),
+      foreign key(organization_id) references organization(id) on delete cascade,
+      foreign key(company_id) references company(id) on delete cascade
+    );
+
     create table if not exists financial_recurring_rule (
       id text primary key,
       organization_id text not null,
@@ -2144,6 +2164,8 @@ export function initDb() {
     create index if not exists idx_financial_debt_org_receivable on financial_debt(organization_id, financial_receivable_id);
     create index if not exists idx_financial_operation_audit_resource
       on financial_operation_audit(organization_id, resource_type, resource_id, created_at desc);
+    create index if not exists idx_financial_ai_interaction_org_status
+      on financial_ai_interaction(organization_id, status, created_at);
     create index if not exists idx_financial_recurring_rule_org_status
       on financial_recurring_rule(organization_id, status, start_date);
     create index if not exists idx_financial_recurring_rule_template
