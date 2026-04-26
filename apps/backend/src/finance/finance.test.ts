@@ -460,6 +460,7 @@ test('POST /finance/assistant/transcribe retorna texto do áudio transcrito', as
   const app = createApp({ forceDbRefresh: true, seedDb: false });
   const originalFetch = globalThis.fetch;
   const originalApiKey = process.env.OPENAI_API_KEY;
+  const originalOpenRouterApiKey = process.env.OPENROUTER_API_KEY;
 
   try {
     seedFinanceCompanies();
@@ -471,6 +472,7 @@ test('POST /finance/assistant/transcribe retorna texto do áudio transcrito', as
       permissions: ['finance.read', 'finance.write']
     });
     process.env.OPENAI_API_KEY = 'test-openai-key';
+    delete process.env.OPENROUTER_API_KEY;
     globalThis.fetch = async () => new Response(JSON.stringify({ text: 'lançar aluguel de 8000' }), { status: 200 });
 
     const loginRes = await request(app)
@@ -496,6 +498,91 @@ test('POST /finance/assistant/transcribe retorna texto do áudio transcrito', as
     } else {
       delete process.env.OPENAI_API_KEY;
     }
+    if (typeof originalOpenRouterApiKey === 'string') {
+      process.env.OPENROUTER_API_KEY = originalOpenRouterApiKey;
+    } else {
+      delete process.env.OPENROUTER_API_KEY;
+    }
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('POST /finance/assistant/transcribe usa OpenRouter quando OPENROUTER_API_KEY existe', async () => {
+  const dbPath = assignTestDbPath('finance-whisper-transcribe-openrouter');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+  const originalFetch = globalThis.fetch;
+  const originalOpenRouterApiKey = process.env.OPENROUTER_API_KEY;
+  const originalOpenRouterModel = process.env.OPENROUTER_AUDIO_MODEL;
+  const originalApiKey = process.env.OPENAI_API_KEY;
+
+  try {
+    seedFinanceCompanies();
+    createInternalUser({
+      username: 'finance.whisper.openrouter',
+      display_name: 'Finance Whisper OpenRouter',
+      password: 'Senha#123',
+      role: 'supremo',
+      permissions: ['finance.read', 'finance.write']
+    });
+    process.env.OPENROUTER_API_KEY = 'test-openrouter-key';
+    process.env.OPENROUTER_AUDIO_MODEL = 'google/gemini-test-audio';
+    delete process.env.OPENAI_API_KEY;
+    globalThis.fetch = async (input, init) => {
+      assert.equal(input, 'https://openrouter.ai/api/v1/chat/completions');
+      const body = JSON.parse(String(init?.body)) as {
+        model: string;
+        messages: Array<{ content: Array<{ type: string; input_audio?: { format: string }; inputAudio?: { format: string } }> }>;
+      };
+      assert.equal(body.model, 'google/gemini-test-audio');
+      const audio = body.messages[0].content.find((item) => item.type === 'input_audio');
+      assert.equal(audio?.input_audio?.format, 'webm');
+      assert.equal(audio?.inputAudio?.format, 'webm');
+      return new Response(JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: 'lançar aluguel de 8000'
+            }
+          }
+        ]
+      }), { status: 200 });
+    };
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.whisper.openrouter', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+
+    const res = await request(app)
+      .post('/finance/assistant/transcribe')
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({
+        audio_base64: Buffer.alloc(1024, 1).toString('base64'),
+        mime_type: 'audio/webm'
+      });
+
+    assert.equal(res.status, 201);
+    assert.equal(res.body.transcript, 'lançar aluguel de 8000');
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (typeof originalOpenRouterApiKey === 'string') {
+      process.env.OPENROUTER_API_KEY = originalOpenRouterApiKey;
+    } else {
+      delete process.env.OPENROUTER_API_KEY;
+    }
+    if (typeof originalOpenRouterModel === 'string') {
+      process.env.OPENROUTER_AUDIO_MODEL = originalOpenRouterModel;
+    } else {
+      delete process.env.OPENROUTER_AUDIO_MODEL;
+    }
+    if (typeof originalApiKey === 'string') {
+      process.env.OPENAI_API_KEY = originalApiKey;
+    } else {
+      delete process.env.OPENAI_API_KEY;
+    }
     db.close();
     cleanupDbFiles(dbPath);
   }
@@ -507,7 +594,9 @@ test('POST /finance/assistant/transcribe informa quando servidor não tem transc
   resetDbConnection();
   const app = createApp({ forceDbRefresh: true, seedDb: false });
   const originalApiKey = process.env.OPENAI_API_KEY;
+  const originalOpenRouterApiKey = process.env.OPENROUTER_API_KEY;
   delete process.env.OPENAI_API_KEY;
+  delete process.env.OPENROUTER_API_KEY;
 
   try {
     seedFinanceCompanies();
@@ -537,6 +626,9 @@ test('POST /finance/assistant/transcribe informa quando servidor não tem transc
   } finally {
     if (typeof originalApiKey === 'string') {
       process.env.OPENAI_API_KEY = originalApiKey;
+    }
+    if (typeof originalOpenRouterApiKey === 'string') {
+      process.env.OPENROUTER_API_KEY = originalOpenRouterApiKey;
     }
     db.close();
     cleanupDbFiles(dbPath);
