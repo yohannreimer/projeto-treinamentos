@@ -5,13 +5,14 @@ import type { LicenseProgram, LicenseRow } from '../types';
 import { Section } from '../components/Section';
 import { askDestructiveConfirmation } from '../utils/destructive';
 
-type RenewalCycle = 'Mensal' | 'Anual';
+type RenewalCycle = 'Mensal' | 'Bimestral' | 'Trimestral' | 'Semestral' | 'Anual';
 type LicenseSortKey = 'company_name' | 'program_name' | 'user_name' | 'license_identifier' | 'renewal_cycle' | 'expires_at' | 'alert_level';
 
 type LicenseAlertsResponse = {
   rows: LicenseRow[];
   alerts: {
     expired: LicenseRow[];
+    due_soon?: LicenseRow[];
     monthly_due_soon: LicenseRow[];
     annual_due_soon: LicenseRow[];
     total_attention: number;
@@ -24,7 +25,15 @@ function formatDate(dateIso: string): string {
 }
 
 function renewalLabel(cycle: RenewalCycle): string {
-  return cycle === 'Anual' ? 'Anual' : 'Mensal';
+  return cycle;
+}
+
+function renewalActionLabel(cycle: RenewalCycle): string {
+  if (cycle === 'Anual') return 'Renovar +1 ano';
+  if (cycle === 'Semestral') return 'Renovar +180 dias';
+  if (cycle === 'Trimestral') return 'Renovar +90 dias';
+  if (cycle === 'Bimestral') return 'Renovar +60 dias';
+  return 'Renovar +30 dias';
 }
 
 function alertRank(level: string): number {
@@ -38,6 +47,7 @@ export function LicensesPage() {
   const [rows, setRows] = useState<LicenseRow[]>([]);
   const [alerts, setAlerts] = useState<LicenseAlertsResponse['alerts']>({
     expired: [],
+    due_soon: [],
     monthly_due_soon: [],
     annual_due_soon: [],
     total_attention: 0
@@ -83,6 +93,7 @@ export function LicensesPage() {
     setRows(payload.rows ?? []);
     setAlerts(payload.alerts ?? {
       expired: [],
+      due_soon: [],
       monthly_due_soon: [],
       annual_due_soon: [],
       total_attention: 0
@@ -110,7 +121,7 @@ export function LicensesPage() {
   }, [rows, query]);
 
   const attentionRows = useMemo(
-    () => [...alerts.expired, ...alerts.monthly_due_soon, ...alerts.annual_due_soon],
+    () => [...alerts.expired, ...(alerts.due_soon ?? [...alerts.monthly_due_soon, ...alerts.annual_due_soon])],
     [alerts]
   );
 
@@ -253,11 +264,7 @@ export function LicensesPage() {
     setMessage('');
     try {
       const response = await api.renewLicense(row.id) as { expires_at: string; renewal_cycle: RenewalCycle };
-      setMessage(
-        response.renewal_cycle === 'Anual'
-          ? `Licença anual renovada. Novo vencimento: ${formatDate(response.expires_at)}.`
-          : `Licença mensal renovada por 30 dias. Novo vencimento: ${formatDate(response.expires_at)}.`
-      );
+      setMessage(`Licença ${renewalLabel(response.renewal_cycle).toLowerCase()} renovada. Novo vencimento: ${formatDate(response.expires_at)}.`);
       await load();
     } catch (err) {
       setError((err as Error).message);
@@ -318,8 +325,8 @@ export function LicensesPage() {
           <strong>{alerts.expired.length}</strong>
         </article>
         <article className="mini-stat">
-          <span>Mensais (até 7 dias)</span>
-          <strong>{alerts.monthly_due_soon.length}</strong>
+          <span>Ciclos até 7 dias</span>
+          <strong>{(alerts.due_soon ?? []).filter((row) => row.renewal_cycle !== 'Anual').length}</strong>
         </article>
         <article className="mini-stat">
           <span>Anuais (até 30 dias)</span>
@@ -398,6 +405,9 @@ export function LicensesPage() {
               Tipo de renovação
               <select value={renewalCycle} onChange={(event) => setRenewalCycle(event.target.value as RenewalCycle)}>
                 <option value="Mensal">Mensal (alerta 7 dias antes)</option>
+                <option value="Bimestral">Bimestral (alerta 7 dias antes)</option>
+                <option value="Trimestral">Trimestral (alerta 7 dias antes)</option>
+                <option value="Semestral">Semestral (alerta 7 dias antes)</option>
                 <option value="Anual">Anual (alerta 30 dias antes)</option>
               </select>
             </label>
@@ -504,7 +514,7 @@ export function LicensesPage() {
                 </td>
                 <td className="actions actions-compact">
                   <button type="button" onClick={() => renewLicense(row)}>
-                    {row.renewal_cycle === 'Anual' ? 'Renovar +1 ano' : 'Renovar +30 dias'}
+                    {renewalActionLabel(row.renewal_cycle)}
                   </button>
                   <button type="button" onClick={() => editLicense(row)}>Editar</button>
                   <button type="button" onClick={() => deleteLicense(row)}>Excluir</button>

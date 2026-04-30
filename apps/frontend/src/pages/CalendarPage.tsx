@@ -1273,7 +1273,7 @@ export function CalendarPage() {
 
                 <div className="calendar-day-events">
                   {cohortEvents.slice(0, 2).map((event) => {
-                    const participants = splitPipeList(event.participant_names);
+                    const clientNames = splitPipeList(event.company_names || event.participant_names);
                     const moduleNames = splitPipeList(event.module_names).map(moduleShortLabel);
                     return (
                       <div
@@ -1306,8 +1306,8 @@ export function CalendarPage() {
                         <p className="calendar-event-meta calendar-ops-only" title={collapseList(moduleNames, 10)}>
                           Módulos: {collapseList(moduleNames, 2)}
                         </p>
-                        <p className="calendar-event-meta calendar-ops-only" title={collapseList(participants, 20)}>
-                          Participantes: {collapseList(participants, 2)}
+                        <p className="calendar-event-meta calendar-client-highlight" title={collapseList(clientNames, 20)}>
+                          Clientes: {collapseList(clientNames, 2)}
                         </p>
                       </div>
                     );
@@ -1330,6 +1330,9 @@ export function CalendarPage() {
                       }}
                     >
                       <p className="calendar-event-title" title={activity.title}>{activity.title}</p>
+                      {activity.company_name ? (
+                        <p className="calendar-event-meta calendar-client-highlight">Cliente: {activity.company_name}</p>
+                      ) : null}
                       <p className="calendar-event-meta">{statusLabel(activity.activity_type)}</p>
                       <p className="calendar-event-meta">Técnicos: {collapseList(activity.technician_names, 2)}</p>
                       {activity.hours_scope !== 'none' ? (
@@ -1377,7 +1380,7 @@ export function CalendarPage() {
                       <tr>
                         <th><button type="button" className="table-sort-btn" onClick={() => toggleDaySort('name')}>Turma{daySortIndicator('name')}</button></th>
                         <th><button type="button" className="table-sort-btn" onClick={() => toggleDaySort('technician_name')}>Técnico{daySortIndicator('technician_name')}</button></th>
-                        <th className="calendar-ops-only"><button type="button" className="table-sort-btn" onClick={() => toggleDaySort('participant_names')}>Participantes{daySortIndicator('participant_names')}</button></th>
+                        <th className="calendar-ops-only"><button type="button" className="table-sort-btn" onClick={() => toggleDaySort('participant_names')}>Clientes{daySortIndicator('participant_names')}</button></th>
                         <th><button type="button" className="table-sort-btn" onClick={() => toggleDaySort('status')}>Status{daySortIndicator('status')}</button></th>
                       </tr>
                     </thead>
@@ -1390,8 +1393,8 @@ export function CalendarPage() {
                         >
                           <td>{event.name} (dia {event.day_index}/{event.total_business_days})</td>
                           <td>{event.technician_name ?? '-'}</td>
-                          <td className="calendar-ops-only" title={collapseList(splitPipeList(event.participant_names), 100)}>
-                            {collapseList(splitPipeList(event.participant_names), 3)}
+                          <td className="calendar-ops-only" title={collapseList(splitPipeList(event.company_names || event.participant_names), 100)}>
+                            {collapseList(splitPipeList(event.company_names || event.participant_names), 3)}
                           </td>
                           <td>
                             <StatusChip value={event.status} />

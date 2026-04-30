@@ -5,6 +5,7 @@ export type AppNavItem = {
   label: string;
   permissions: InternalPermission[];
   roles?: InternalRole[];
+  badgeCount?: number;
 };
 
 export const APP_NAV_ITEMS: AppNavItem[] = [

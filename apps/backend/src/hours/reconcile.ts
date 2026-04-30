@@ -315,11 +315,12 @@ function readAllocationHoursScope(companyId: string): AllocationHoursScopeRow[] 
       c.period,
       c.start_time,
       c.end_time,
-      coalesce(cmb.duration_days, mt.duration_days, 1) as duration_days
+      coalesce(cmp.custom_duration_days, cmb.duration_days, mt.duration_days, 1) as duration_days
     from cohort_allocation a
     join cohort c on c.id = a.cohort_id
     join module_template mt on mt.id = a.module_id
     left join cohort_module_block cmb on cmb.cohort_id = a.cohort_id and cmb.module_id = a.module_id
+    left join company_module_progress cmp on cmp.company_id = a.company_id and cmp.module_id = a.module_id
     where a.company_id = ?
       and coalesce(mt.delivery_mode, 'ministrado') = 'ministrado'
       and coalesce(mt.client_hours_policy, 'consome') = 'consome'

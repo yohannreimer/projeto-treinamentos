@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
 import { Section } from '../components/Section';
 import { askDestructiveConfirmation } from '../utils/destructive';
@@ -40,6 +40,7 @@ function priorityRank(level?: string | null): number {
 }
 
 export function ClientsPage() {
+  const navigate = useNavigate();
   const [rows, setRows] = useState<any[]>([]);
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
@@ -66,6 +67,10 @@ export function ClientsPage() {
 
   function load() {
     api.companies().then(setRows).catch(() => setRows([]));
+  }
+
+  function shouldIgnoreRowOpen(target: EventTarget | null) {
+    return target instanceof HTMLElement && Boolean(target.closest('a, button, input, select, textarea, label'));
   }
 
   useEffect(() => {
@@ -515,7 +520,15 @@ export function ClientsPage() {
           </thead>
           <tbody>
             {ordered.map((row) => (
-              <tr key={row.id}>
+              <tr
+                key={row.id}
+                className="row-openable"
+                onDoubleClick={(event) => {
+                  if (shouldIgnoreRowOpen(event.target)) return;
+                  navigate(`/clientes/${row.id}`);
+                }}
+                title="Dê dois cliques para abrir o cliente"
+              >
                 <td>
                   <strong>{row.name}</strong>
                   {row.contact_phone ? <div className="muted">{row.contact_phone}</div> : null}

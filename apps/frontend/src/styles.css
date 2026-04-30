@@ -141,7 +141,10 @@ h1, h2, h3, h4, h5, h6,
 }
 
 .nav-item {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   color: #425160;
   text-decoration: none;
   padding: 9px 10px;
@@ -150,6 +153,22 @@ h1, h2, h3, h4, h5, h6,
   font-weight: 600;
   font-size: 0.92rem;
   border: 1px solid transparent;
+}
+
+.nav-item-alert-badge {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #fff5f3;
+  color: #b63a29;
+  border: 1px solid #f2c7bf;
+  font-size: 0.7rem;
+  font-weight: 800;
+  line-height: 1;
 }
 
 .nav-item.active,
@@ -1421,14 +1440,26 @@ button:focus-visible,
   gap: 10px;
 }
 
-.journey-module-facts > div {
+.journey-module-facts > div,
+.journey-module-facts > button {
   border: 1px solid #dfe6ed;
   border-radius: 13px;
   background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
   padding: 10px 11px;
   display: grid;
   gap: 4px;
+  color: inherit;
+  text-align: left;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+}
+
+.journey-module-facts > button {
+  cursor: pointer;
+}
+
+.journey-module-facts > button:disabled {
+  cursor: default;
+  opacity: 0.72;
 }
 
 .journey-module-facts span {
@@ -1445,6 +1476,33 @@ button:focus-visible,
   line-height: 1.35;
 }
 
+.journey-duration-card small {
+  color: #7a8792;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.journey-duration-card {
+  cursor: pointer;
+}
+
+.journey-duration-card.is-editing {
+  border-color: #f2b2a6;
+  background: #fff8f6;
+  cursor: default;
+}
+
+.journey-duration-card label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.journey-duration-card input {
+  max-width: 116px;
+}
+
 .journey-module-editor {
   border: 1px solid #dde4eb;
   border-radius: 14px;
@@ -1457,7 +1515,7 @@ button:focus-visible,
 
 .journey-module-editor-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: 1fr;
   gap: 11px;
 }
 
@@ -1693,6 +1751,85 @@ button:focus-visible,
   background: #e8f2ff;
 }
 
+.cohort-wizard-progress {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid #d8e4f2;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #f7fbff 0%, #eef5fb 100%);
+}
+
+.cohort-wizard-tab {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas:
+    "index title"
+    "index hint";
+  gap: 0 8px;
+  align-items: center;
+  min-height: 54px;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: #546575;
+  box-shadow: none;
+  text-align: left;
+}
+
+.cohort-wizard-tab span {
+  grid-area: index;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #ffffff;
+  border: 1px solid #cedceb;
+  color: #4d6478;
+  font-weight: 800;
+  font-size: 0.78rem;
+}
+
+.cohort-wizard-tab strong {
+  grid-area: title;
+  color: inherit;
+  font-size: 0.88rem;
+}
+
+.cohort-wizard-tab small {
+  grid-area: hint;
+  color: #6c7b88;
+  font-size: 0.72rem;
+}
+
+.cohort-wizard-tab.is-current {
+  border-color: #aac8e8;
+  background: #ffffff;
+  color: #19344b;
+  box-shadow: 0 8px 18px rgba(35, 79, 118, 0.09);
+}
+
+.cohort-wizard-tab.is-current span {
+  border-color: #2e76b6;
+  background: #2e76b6;
+  color: #ffffff;
+}
+
+.cohort-wizard-tab.is-complete span {
+  border-color: #89c4a6;
+  background: #eaf8f0;
+  color: #1f754d;
+}
+
+.cohort-wizard-tab:disabled {
+  cursor: default;
+  opacity: 0.72;
+}
+
 .wizard-step {
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
@@ -1727,6 +1864,21 @@ button:focus-visible,
   font-size: 0.78rem;
   color: #ffffff;
   background: linear-gradient(180deg, #1e7dc2 0%, #0f669f 100%);
+}
+
+.cohort-wizard-footer {
+  justify-content: flex-end;
+}
+
+.button-secondary {
+  background: #ffffff;
+  border-color: #cdd8e4;
+  color: #334356;
+  box-shadow: none;
+}
+
+.button-secondary:hover {
+  background: #f5f8fb;
 }
 
 .muted {
@@ -1968,6 +2120,17 @@ button:focus-visible,
 
 .table-hover tbody tr:hover {
   background: #fff1ee;
+}
+
+.table tr.row-openable {
+  cursor: pointer;
+}
+
+.table tr.row-openable select,
+.table tr.row-openable button,
+.table tr.row-openable a,
+.table tr.row-openable input {
+  cursor: auto;
 }
 
 .table-tight th,
@@ -2327,6 +2490,76 @@ button:focus-visible,
 .calendar-event-meta {
   font-size: 0.69rem;
   color: #4c5d6d;
+}
+
+.calendar-client-highlight {
+  color: #2d3d4b;
+  font-weight: 800;
+}
+
+.cohort-client-cell {
+  max-width: 220px;
+  color: #2d3d4b;
+  font-weight: 700;
+}
+
+.cohort-table {
+  min-width: 1120px !important;
+}
+
+.cohort-table th:last-child,
+.cohort-table td.actions {
+  width: 172px;
+}
+
+.cohort-table .cohort-client-cell {
+  max-width: 260px;
+  white-space: normal;
+  line-height: 1.25;
+}
+
+.cohort-table td.actions button,
+.cohort-table td.actions .action-link-button {
+  padding: 5px 8px;
+  font-size: 0.76rem;
+}
+
+.cohort-detail-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.cohort-detail-summary article {
+  border: 1px solid #dce6f1;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #ffffff 0%, #f7fafc 100%);
+  padding: 12px;
+  display: grid;
+  gap: 5px;
+}
+
+.cohort-detail-summary span {
+  color: #637386;
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.cohort-detail-summary strong {
+  color: #1d2c39;
+  font-size: 0.98rem;
+}
+
+.cohort-detail-grid {
+  align-items: start;
+}
+
+.status-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .calendar-more {
@@ -2765,6 +2998,53 @@ button:focus-visible,
   max-width: 100%;
 }
 
+.module-rollout-card {
+  border: 1px solid #f0d5cf;
+  border-radius: 16px;
+  background:
+    linear-gradient(135deg, rgba(255, 244, 241, 0.95) 0%, rgba(248, 251, 253, 0.98) 56%),
+    #ffffff;
+  padding: 13px;
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: center;
+}
+
+.module-rollout-card strong {
+  display: block;
+  color: #23313e;
+  font-size: 0.96rem;
+}
+
+.module-rollout-card p {
+  margin: 4px 0 0;
+  color: #657484;
+  font-size: 0.84rem;
+  line-height: 1.35;
+}
+
+.module-rollout-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.module-rollout-actions button {
+  background: #ffffff;
+  border-color: #d9e2eb;
+  color: #30404f;
+  box-shadow: none;
+}
+
+.module-rollout-actions button.is-selected {
+  background: linear-gradient(180deg, #ef472f 0%, #dd2f18 100%);
+  border-color: #c62712;
+  color: #ffffff;
+  box-shadow: 0 8px 18px rgba(221, 47, 24, 0.2);
+}
+
 .admin-page .page-header {
   background:
     linear-gradient(90deg, rgba(29, 40, 48, 0.12) 0, rgba(29, 40, 48, 0.12) 4px, transparent 4px),
@@ -3181,6 +3461,21 @@ button:focus-visible,
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+
+.kanban-column-alert-badge {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #fff5f3;
+  color: #b63a29;
+  border: 1px solid #f2c7bf;
+  font-size: 0.7rem;
+  font-weight: 800;
 }
 
 .kanban-column-header-right .chip {
@@ -3686,6 +3981,7 @@ button:focus-visible,
   .three-col { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .clients-tools-grid { grid-template-columns: 1fr; }
   .cohorts-editor-panel .panel-content { max-height: none; }
+  .cohort-wizard-progress { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .calendar-toolbar-filters { grid-template-columns: 1fr 1fr; }
   .calendar-metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .allocation-head-grid { grid-template-columns: 1fr 1fr; }
@@ -5724,6 +6020,16 @@ button:focus-visible,
   .licenses-modules-grid,
   .allocation-head-grid,
   .cohort-block-grid {
+    grid-template-columns: 1fr;
+  }
+  .module-rollout-card {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .module-rollout-actions {
+    justify-content: flex-start;
+  }
+  .cohort-wizard-progress {
     grid-template-columns: 1fr;
   }
   .calendar-grid-head,

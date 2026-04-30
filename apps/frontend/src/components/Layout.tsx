@@ -99,7 +99,12 @@ export function Layout({ children, loggedUser, navItems, onLogout }: LayoutProps
         <nav>
           {navItems.map((item) => (
             <NavLink key={item.to} to={item.to} className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
-              {item.label}
+              <span>{item.label}</span>
+              {item.badgeCount && item.badgeCount > 0 ? (
+                <strong className="nav-item-alert-badge" aria-label={`${item.badgeCount} pendência(s)`}>
+                  {item.badgeCount > 99 ? '99+' : item.badgeCount}
+                </strong>
+              ) : null}
             </NavLink>
           ))}
         </nav>

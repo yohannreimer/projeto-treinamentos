@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, createInternalAuthHeaders } from '../services/api';
 import type { Cohort, Module } from '../types';
 import { Section } from '../components/Section';
@@ -64,7 +64,14 @@ type CohortScheduleDayDraft = {
 const statuses = ['Planejada', 'Aguardando_quorum', 'Confirmada', 'Concluida', 'Cancelada'];
 const periodOptions = ['Integral', 'Meio_periodo'] as const;
 const deliveryModeOptions = ['Online', 'Presencial', 'Hibrida'] as const;
-type CohortSortKey = 'code' | 'start_date' | 'delivery_mode' | 'technician_name' | 'status';
+type CohortSortKey = 'code' | 'start_date' | 'delivery_mode' | 'company_names' | 'technician_name' | 'status';
+
+const cohortWizardSteps = [
+  { id: 1, title: 'Informações', hint: 'dados básicos' },
+  { id: 2, title: 'Módulos', hint: 'sequência' },
+  { id: 3, title: 'Agenda', hint: 'datas e horários' },
+  { id: 4, title: 'Clientes', hint: 'confirmação' }
+] as const;
 
 function randomKey() {
   return Math.random().toString(36).slice(2, 10);
@@ -154,6 +161,7 @@ function totalDaysFromDraftBlocks(draft: BlockDraft[]) {
 
 export function CohortsPage() {
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
 
   const [cohorts, setCohorts] = useState<Cohort[]>([]);
   const [modules, setModules] = useState<Module[]>([]);
@@ -166,6 +174,7 @@ export function CohortsPage() {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingDetail, setEditingDetail] = useState<CohortDetail | null>(null);
+  const [cohortWizardStep, setCohortWizardStep] = useState(1);
 
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -198,6 +207,7 @@ export function CohortsPage() {
   const [hasTechnicianConflict, setHasTechnicianConflict] = useState(false);
   const [technicianConflictMessage, setTechnicianConflictMessage] = useState('');
   const [technicianConflictCohortId, setTechnicianConflictCohortId] = useState<string | null>(null);
+  const scheduleBasisRef = useRef<{ startDate: string; totalDays: number; period: (typeof periodOptions)[number] } | null>(null);
 
   function suggestedCode(rows: Cohort[]) {
     const maxNumeric = rows.reduce((acc, row) => {
@@ -296,6 +306,7 @@ export function CohortsPage() {
     const firstModule = requestedModule ?? availableModules[0];
 
     setEditingId(null);
+    setCohortWizardStep(1);
     setCode(suggestedCode(existingCohorts));
     setName('Nova turma');
     setStartDate(new Date().toISOString().slice(0, 10));
@@ -329,6 +340,11 @@ export function CohortsPage() {
     setHasTechnicianConflict(false);
     setTechnicianConflictMessage('');
     setTechnicianConflictCohortId(null);
+    scheduleBasisRef.current = {
+      startDate: new Date().toISOString().slice(0, 10),
+      totalDays: totalScheduleEntriesFromBlocks(nextBlocks, 'Integral'),
+      period: 'Integral'
+    };
   }
 
   useEffect(() => {
@@ -354,7 +370,7 @@ export function CohortsPage() {
     if (!query.trim()) return cohorts;
     const normalized = query.toLowerCase();
     return cohorts.filter((item) =>
-      `${item.code} ${item.name} ${item.technician_name ?? ''}`.toLowerCase().includes(normalized)
+      `${item.code} ${item.name} ${item.company_names ?? ''} ${item.technician_name ?? ''}`.toLowerCase().includes(normalized)
     );
   }, [cohorts, query]);
 
@@ -389,6 +405,10 @@ export function CohortsPage() {
   function sortIndicator(nextKey: CohortSortKey) {
     if (sortKey !== nextKey) return '';
     return sortDirection === 'asc' ? ' ↑' : ' ↓';
+  }
+
+  function shouldIgnoreRowOpen(target: EventTarget | null) {
+    return target instanceof HTMLElement && Boolean(target.closest('a, button, input, select, textarea, label'));
   }
 
   const blockPreview = useMemo(() => toBlockPayload(blocks), [blocks]);
@@ -583,7 +603,20 @@ export function CohortsPage() {
 
   useEffect(() => {
     const totalDays = totalScheduleEntriesFromBlocks(blocks, period);
-    setScheduleDays((prev) => buildScheduleDraft(startDate, totalDays, prev, cohortStartTime, cohortEndTime));
+    const previousBasis = scheduleBasisRef.current;
+    const shouldResetDates = !previousBasis
+      || previousBasis.startDate !== startDate
+      || previousBasis.totalDays !== totalDays
+      || previousBasis.period !== period;
+
+    setScheduleDays((prev) => buildScheduleDraft(
+      startDate,
+      totalDays,
+      shouldResetDates ? [] : prev,
+      cohortStartTime,
+      cohortEndTime
+    ));
+    scheduleBasisRef.current = { startDate, totalDays, period };
   }, [startDate, blocks, period, cohortStartTime, cohortEndTime]);
 
   function addBlock() {
@@ -622,7 +655,96 @@ export function CohortsPage() {
     });
   }
 
+  function currentMaxWizardStep() {
+    return editingId ? 4 : 3;
+  }
+
+  function validateCohortWizardStep(step: number) {
+    setError('');
+    setMessage('');
+
+    if (step === 1) {
+      if (!code.trim() || !name.trim()) {
+        setError('Preencha código e nome da turma antes de avançar.');
+        return false;
+      }
+      if (!startDate) {
+        setError('Informe a data de início antes de avançar.');
+        return false;
+      }
+      if (isCheckingTechnicianConflict) {
+        setError('Aguarde a validação da agenda do técnico.');
+        return false;
+      }
+      if (hasTechnicianConflict) {
+        setError(technicianConflictMessage || 'Conflito de agenda detectado para o técnico.');
+        return false;
+      }
+      if (period === 'Meio_periodo') {
+        if (!cohortStartTime || !cohortEndTime) {
+          setError('Para turma de meio período, informe horário inicial e final.');
+          return false;
+        }
+        if (cohortEndTime <= cohortStartTime) {
+          setError('Horário final deve ser maior que o horário inicial.');
+          return false;
+        }
+      }
+    }
+
+    if (step === 2) {
+      if (blocks.length === 0) {
+        setError('Adicione pelo menos um bloco para montar a sequência.');
+        return false;
+      }
+      if (blocks.some((block) => !block.module_id)) {
+        setError('Todos os blocos precisam ter um módulo selecionado.');
+        return false;
+      }
+      const uniqueModules = new Set(blocks.map((block) => block.module_id));
+      if (uniqueModules.size !== blocks.length) {
+        setError('Não repita o mesmo módulo na mesma turma.');
+        return false;
+      }
+    }
+
+    if (step === 3) {
+      if (scheduleDays.length !== totalScheduleEntriesFromBlocks(blocks, period)) {
+        setError('Agenda personalizada inválida. Atualize as datas da turma.');
+        return false;
+      }
+      if (scheduleDays.some((day) => !day.day_date)) {
+        setError('Preencha a data de todos os dias da agenda personalizada.');
+        return false;
+      }
+      const invalidTimeDay = scheduleDays.find((day) => !day.start_time || !day.end_time || day.end_time <= day.start_time);
+      if (invalidTimeDay) {
+        setError(`Verifique o horário do dia ${invalidTimeDay.day_index}.`);
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  function goToNextCohortStep() {
+    if (!validateCohortWizardStep(cohortWizardStep)) return;
+    setCohortWizardStep((prev) => Math.min(prev + 1, currentMaxWizardStep()));
+  }
+
+  function goToPreviousCohortStep() {
+    setError('');
+    setCohortWizardStep((prev) => Math.max(prev - 1, 1));
+  }
+
   function closeEditor() {
+    const shouldClose = window.confirm(
+      editingId
+        ? 'Fechar sem salvar as alterações desta turma?'
+        : 'Fechar agora descarta esta turma em criação. Deseja fechar mesmo assim?'
+    );
+    if (!shouldClose) return;
+
     resetForm(modules, cohorts);
     setShowForm(false);
   }
@@ -651,6 +773,12 @@ export function CohortsPage() {
         module_id: block.module_id,
         duration_days: Number(block.duration_days) || 1
       }));
+      const nextTotalDays = totalScheduleEntriesFromBlocks(nextBlocks, (detail.period ?? 'Integral') as (typeof periodOptions)[number]);
+      scheduleBasisRef.current = {
+        startDate: detail.start_date,
+        totalDays: nextTotalDays,
+        period: (detail.period ?? 'Integral') as (typeof periodOptions)[number]
+      };
       setBlocks(nextBlocks);
       const persistedSchedule = (detail.schedule_days ?? []).map((day) => ({
         key: randomKey(),
@@ -661,7 +789,7 @@ export function CohortsPage() {
       }));
       setScheduleDays(buildScheduleDraft(
         detail.start_date,
-        totalScheduleEntriesFromBlocks(nextBlocks, (detail.period ?? 'Integral') as (typeof periodOptions)[number]),
+        nextTotalDays,
         persistedSchedule,
         detail.start_time ?? '13:30',
         detail.end_time ?? '17:00'
@@ -670,6 +798,7 @@ export function CohortsPage() {
       setAllocationNotes('');
       setParticipantCompanyId(detail.allocations?.[0]?.company_id ?? '');
       setParticipantName('');
+      setCohortWizardStep(1);
       setShowForm(true);
     } catch (err) {
       setError((err as Error).message);
@@ -902,8 +1031,8 @@ export function CohortsPage() {
     }
   }
 
-  async function submit(event: React.FormEvent) {
-    event.preventDefault();
+  async function submit(event?: React.FormEvent) {
+    event?.preventDefault();
     setError('');
     setMessage('');
 
@@ -989,6 +1118,9 @@ export function CohortsPage() {
         setMessage('Turma atualizada com sucesso.');
         await loadCohortDetail(editingId);
         await loadAll();
+        if (cohortWizardStep === 3) {
+          setCohortWizardStep(4);
+        }
       } else {
         const created = await api.createCohort(payload) as { id: string };
         setMessage('Turma criada com sucesso. Agora você já pode incluir clientes.');
@@ -996,6 +1128,8 @@ export function CohortsPage() {
 
         if (created?.id) {
           await startEdit(created.id);
+          setCohortWizardStep(4);
+          setMessage('Turma criada com sucesso. Agora confirme os clientes e participantes.');
           setShowForm(true);
           return;
         }
@@ -1057,12 +1191,13 @@ export function CohortsPage() {
             </div>
           }
         >
-          <div className="table-wrap">
-          <table className="table table-hover table-tight">
+          <div className="table-wrap table-wrap-wide">
+          <table className="table table-hover table-tight table-sticky-actions cohort-table">
             <thead>
               <tr>
                 <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('code')}>Turma{sortIndicator('code')}</button></th>
                 <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('start_date')}>Data de início{sortIndicator('start_date')}</button></th>
+                <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('company_names')}>Clientes{sortIndicator('company_names')}</button></th>
                 <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('delivery_mode')}>Formato{sortIndicator('delivery_mode')}</button></th>
                 <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('technician_name')}>Técnico{sortIndicator('technician_name')}</button></th>
                 <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('status')}>Status{sortIndicator('status')}</button></th>
@@ -1071,12 +1206,23 @@ export function CohortsPage() {
             </thead>
             <tbody>
               {ordered.map((cohort) => (
-                <tr key={cohort.id} className={editingId === cohort.id ? 'row-selected' : ''}>
+                <tr
+                  key={cohort.id}
+                  className={`row-openable ${editingId === cohort.id ? 'row-selected' : ''}`.trim()}
+                  onDoubleClick={(event) => {
+                    if (shouldIgnoreRowOpen(event.target)) return;
+                    navigate(`/turmas/${cohort.id}`);
+                  }}
+                  title="Dê dois cliques para abrir a turma"
+                >
                   <td>
                     <strong>{cohort.code}</strong>
                     <div>{cohort.name}</div>
                   </td>
                   <td>{formatDateBr(cohort.start_date)}</td>
+                  <td className="cohort-client-cell" title={cohort.company_names || 'Sem cliente alocado'}>
+                    {cohort.company_names || 'Sem cliente alocado'}
+                  </td>
                   <td>{statusLabel(cohort.delivery_mode ?? 'Online')} · {formatCohortSchedule(cohort.period, cohort.start_time, cohort.end_time)}</td>
                   <td>{cohort.technician_name ?? 'Sem técnico'}</td>
                   <td><StatusChip value={cohort.status} /></td>
@@ -1089,7 +1235,7 @@ export function CohortsPage() {
               ))}
               {ordered.length === 0 ? (
                 <tr>
-                  <td colSpan={6}>
+                  <td colSpan={7}>
                     <p className="muted">Nenhuma turma encontrada para o filtro informado.</p>
                   </td>
                 </tr>
@@ -1121,7 +1267,28 @@ export function CohortsPage() {
                 </div>
               )}
             >
-            <form className="form form-spacious" onSubmit={submit}>
+            <form className="form form-spacious" onSubmit={(event) => event.preventDefault()}>
+            <div className="cohort-wizard-progress" aria-label="Etapas da turma">
+              {cohortWizardSteps.slice(0, currentMaxWizardStep()).map((step) => (
+                <button
+                  key={step.id}
+                  type="button"
+                  className={`cohort-wizard-tab ${cohortWizardStep === step.id ? 'is-current' : ''} ${editingId ? step.id !== cohortWizardStep ? 'is-complete' : '' : cohortWizardStep > step.id ? 'is-complete' : ''}`}
+                  onClick={() => {
+                    if (editingId || step.id < cohortWizardStep) {
+                      setCohortWizardStep(step.id);
+                      setError('');
+                    }
+                  }}
+                  disabled={!editingId && step.id > cohortWizardStep}
+                >
+                  <span>{step.id}</span>
+                  <strong>{step.title}</strong>
+                  <small>{step.hint}</small>
+                </button>
+              ))}
+            </div>
+            {cohortWizardStep === 1 ? (
             <div className="wizard-step">
               <h3 className="wizard-step-title"><span className="step-index">1</span>Informações principais</h3>
               <p className="form-hint">Defina dados da turma e valide conflito de agenda antes de salvar.</p>
@@ -1220,7 +1387,9 @@ export function CohortsPage() {
                 <textarea rows={2} value={notes} onChange={(event) => setNotes(event.target.value)} />
               </label>
             </div>
+            ) : null}
 
+            {cohortWizardStep === 2 ? (
             <div className="wizard-step">
               <h3 className="wizard-step-title"><span className="step-index">2</span>Sequência de módulos da turma</h3>
               <p className="muted">A ordem abaixo define automaticamente o início de cada módulo em diárias úteis.</p>
@@ -1268,7 +1437,9 @@ export function CohortsPage() {
                 <button type="button" onClick={addBlock}>Adicionar bloco</button>
               </div>
             </div>
+            ) : null}
 
+            {cohortWizardStep === 3 ? (
             <div className="wizard-step">
               <h3 className="wizard-step-title"><span className="step-index">3</span>Prévia da sequência</h3>
               <div className="table-wrap">
@@ -1363,8 +1534,9 @@ export function CohortsPage() {
                 </div>
               </div>
             </div>
+            ) : null}
 
-            {editingId && editingDetail ? (
+            {editingId && editingDetail && cohortWizardStep === 4 ? (
               <div className="wizard-step">
                 <h3 className="wizard-step-title"><span className="step-index">4</span>Participantes por módulo de entrada</h3>
                 <p className="muted">Você escolhe o módulo de entrada e os módulos que o cliente vai fazer. O sistema calcula os dias sozinho.</p>
@@ -1638,16 +1810,34 @@ export function CohortsPage() {
               </div>
             ) : null}
 
-            <div className="actions form-footer-actions">
-              <button type="submit" disabled={isCheckingTechnicianConflict || hasTechnicianConflict}>
-                {editingId ? 'Salvar alterações' : 'Salvar turma'}
-              </button>
-              <button
-                type="button"
-                onClick={closeEditor}
-              >
+            <div className="actions form-footer-actions cohort-wizard-footer">
+              <button type="button" onClick={closeEditor} className="button-secondary">
                 Cancelar
               </button>
+              {cohortWizardStep > 1 ? (
+                <button type="button" onClick={goToPreviousCohortStep} className="button-secondary">
+                  Voltar
+                </button>
+              ) : null}
+              {cohortWizardStep < currentMaxWizardStep() && !(editingId && cohortWizardStep === 3) ? (
+                <button
+                  type="button"
+                  onClick={goToNextCohortStep}
+                  disabled={isCheckingTechnicianConflict || hasTechnicianConflict}
+                >
+                  Avançar
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void submit()}
+                  disabled={isCheckingTechnicianConflict || hasTechnicianConflict}
+                >
+                  {editingId
+                    ? (cohortWizardStep === 3 ? 'Salvar e avançar para clientes' : 'Salvar alterações')
+                    : 'Criar turma e continuar para clientes'}
+                </button>
+              )}
             </div>
             </form>
           </Section>

@@ -25,6 +25,7 @@ export type Cohort = {
   notes: string | null;
   occupancy?: number;
   participant_names?: string;
+  company_names?: string;
   module_codes?: string;
   module_names?: string;
   total_duration_days?: number;
@@ -106,7 +107,7 @@ export type LicenseRow = {
   module_ids: string[];
   module_list: string;
   license_identifier: string;
-  renewal_cycle: 'Mensal' | 'Anual';
+  renewal_cycle: 'Mensal' | 'Bimestral' | 'Trimestral' | 'Semestral' | 'Anual';
   expires_at: string;
   notes: string | null;
   last_renewed_at: string | null;

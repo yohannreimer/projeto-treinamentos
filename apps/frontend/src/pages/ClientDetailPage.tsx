@@ -34,6 +34,13 @@ function formatDateTimeBr(value: string | null | undefined) {
   return date.toLocaleString('pt-BR');
 }
 
+function formatDateBr(value: string | null | undefined) {
+  if (!value) return '-';
+  const [year, month, day] = value.split('T')[0].split('-').map(Number);
+  if (!year || !month || !day) return value;
+  return new Date(year, month - 1, day).toLocaleDateString('pt-BR');
+}
+
 function formatHoursValue(value: number | null | undefined) {
   const safe = Number(value ?? 0);
   if (!Number.isFinite(safe)) return '0';
@@ -207,6 +214,7 @@ export function ClientDetailPage() {
   const [showJourneySection, setShowJourneySection] = useState(true);
   const [showOptionalsSection, setShowOptionalsSection] = useState(true);
   const [showHistorySection, setShowHistorySection] = useState(true);
+  const [editingDurationModuleId, setEditingDurationModuleId] = useState<string | null>(null);
   const [moduleToActivate, setModuleToActivate] = useState('');
   const [activatingModule, setActivatingModule] = useState(false);
 
@@ -773,6 +781,7 @@ export function ClientDetailPage() {
         custom_duration_days: edit.custom_duration_days.trim() ? Number(edit.custom_duration_days) : null
       });
       setMessage('Módulo atualizado.');
+      setEditingDurationModuleId(null);
       load();
     } catch (err) {
       setError((err as Error).message);
@@ -1541,13 +1550,55 @@ export function ClientDetailPage() {
                           <div className="journey-module-facts-wrap">
                             <h4 className="journey-module-block-title">Resumo do módulo</h4>
                             <div className="journey-module-facts">
-                            <div>
+                            <div
+                              className={`journey-duration-card ${editingDurationModuleId === moduleItem.module_id ? 'is-editing' : ''}`}
+                              onDoubleClick={() => {
+                                if (!moduleItem.is_enabled) return;
+                                updateModuleEdit(moduleItem.module_id, {
+                                  custom_duration_days: edit.custom_duration_days || String(moduleItem.effective_duration_days)
+                                });
+                                setEditingDurationModuleId(moduleItem.module_id);
+                              }}
+                              title="Dê dois cliques para editar as diárias deste cliente"
+                            >
                               <span>Planejado para este cliente</span>
-                              <strong>{moduleItem.effective_duration_days} diárias</strong>
+                              {editingDurationModuleId === moduleItem.module_id ? (
+                                <label>
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    placeholder="Ex: 3"
+                                    value={edit.custom_duration_days}
+                                    onChange={(event) => updateModuleEdit(moduleItem.module_id, { custom_duration_days: event.target.value })}
+                                    onBlur={() => {
+                                      if (!savingModuleId) void saveModuleProgress(moduleItem.module_id);
+                                    }}
+                                    onKeyDown={(event) => {
+                                      if (event.key === 'Enter') {
+                                        event.preventDefault();
+                                        void saveModuleProgress(moduleItem.module_id);
+                                      }
+                                      if (event.key === 'Escape') {
+                                        event.preventDefault();
+                                        setEditingDurationModuleId(null);
+                                      }
+                                    }}
+                                    disabled={!moduleItem.is_enabled}
+                                    className="timeline-days-input"
+                                    autoFocus
+                                  />
+                                  <small>diárias para este cliente</small>
+                                </label>
+                              ) : (
+                                <>
+                                  <strong>{moduleItem.effective_duration_days} diárias</strong>
+                                  <small>Dê dois cliques para editar</small>
+                                </>
+                              )}
                             </div>
                             <div>
                               <span>Concluído em</span>
-                              <strong>{moduleItem.completed_at ?? '-'}</strong>
+                              <strong>{formatDateBr(moduleItem.completed_at)}</strong>
                             </div>
                             <div>
                               <span>Turma vinculada</span>
@@ -1582,29 +1633,6 @@ export function ClientDetailPage() {
                                   ))}
                                 </select>
                               </label>
-                              <label>
-                                Diárias customizadas
-                                <input
-                                  type="number"
-                                  min={1}
-                                  placeholder="Ex: 3"
-                                  value={edit.custom_duration_days}
-                                  onChange={(event) => updateModuleEdit(moduleItem.module_id, { custom_duration_days: event.target.value })}
-                                  disabled={!moduleItem.is_enabled}
-                                  className="timeline-days-input"
-                                />
-                              </label>
-                              <label className="journey-module-notes">
-                                Observação do módulo
-                                <textarea
-                                  rows={2}
-                                  placeholder="Contexto interno deste módulo para o cliente."
-                                  value={edit.notes}
-                                  onChange={(event) => updateModuleEdit(moduleItem.module_id, { notes: event.target.value })}
-                                  disabled={!moduleItem.is_enabled}
-                                  className="timeline-notes-input"
-                                />
-                              </label>
                             </div>
                             <div className="actions timeline-actions journey-module-actions journey-module-actions-primary">
                               <button
@@ -1613,22 +1641,6 @@ export function ClientDetailPage() {
                                 disabled={!moduleItem.is_enabled || savingModuleId === moduleItem.module_id}
                               >
                                 Salvar módulo
-                              </button>
-                            </div>
-                            <div className="actions timeline-actions journey-module-actions journey-module-actions-secondary">
-                              <button
-                                type="button"
-                                onClick={() => markDone(moduleItem.module_id)}
-                                disabled={!moduleItem.is_enabled || savingModuleId === moduleItem.module_id}
-                              >
-                                Concluir (Admin)
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => undoDone(moduleItem.module_id)}
-                                disabled={!moduleItem.is_enabled || moduleItem.status !== 'Concluido' || savingModuleId === moduleItem.module_id}
-                              >
-                                Desfazer conclusão
                               </button>
                               <button type="button" onClick={() => toggleModule(moduleItem.module_id, Boolean(moduleItem.is_enabled))}>
                                 {moduleItem.is_enabled ? 'Desativar módulo' : 'Ativar módulo'}

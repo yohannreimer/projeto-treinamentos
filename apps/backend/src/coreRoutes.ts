@@ -203,7 +203,7 @@ const licenseCreateSchema = z.object({
   module_list: z.string().min(1).optional(),
   module_ids: z.array(z.string()).optional(),
   license_identifier: z.string().min(1),
-  renewal_cycle: z.enum(['Mensal', 'Anual']).default('Mensal'),
+  renewal_cycle: z.enum(['Mensal', 'Bimestral', 'Trimestral', 'Semestral', 'Anual']).default('Mensal'),
   expires_at: z.string().min(10),
   notes: z.string().nullable().optional()
 }).superRefine((data, context) => {
@@ -223,7 +223,7 @@ const licenseUpdateSchema = z.object({
   module_list: z.string().min(1).optional(),
   module_ids: z.array(z.string()).optional(),
   license_identifier: z.string().min(1).optional(),
-  renewal_cycle: z.enum(['Mensal', 'Anual']).optional(),
+  renewal_cycle: z.enum(['Mensal', 'Bimestral', 'Trimestral', 'Semestral', 'Anual']).optional(),
   expires_at: z.string().min(10).optional(),
   notes: z.string().nullable().optional()
 });
@@ -2164,11 +2164,28 @@ function hasTechnicianPeriodConflict(
   return newStartMinutes < existingEndMinutes && existingStartMinutes < newEndMinutes;
 }
 
-function renewalAlertWindowDays(renewalCycle: 'Mensal' | 'Anual'): number {
+type LicenseRenewalCycle = 'Mensal' | 'Bimestral' | 'Trimestral' | 'Semestral' | 'Anual';
+
+function renewalAlertWindowDays(renewalCycle: LicenseRenewalCycle): number {
   return renewalCycle === 'Anual' ? 30 : 7;
 }
 
-function nextRenewalDate(currentExpiresAt: string, renewalCycle: 'Mensal' | 'Anual'): string {
+function renewalCycleLabelLower(renewalCycle: LicenseRenewalCycle): string {
+  if (renewalCycle === 'Anual') return 'anual';
+  if (renewalCycle === 'Semestral') return 'semestral';
+  if (renewalCycle === 'Trimestral') return 'trimestral';
+  if (renewalCycle === 'Bimestral') return 'bimestral';
+  return 'mensal';
+}
+
+function renewalCycleDays(renewalCycle: LicenseRenewalCycle): number {
+  if (renewalCycle === 'Semestral') return 180;
+  if (renewalCycle === 'Trimestral') return 90;
+  if (renewalCycle === 'Bimestral') return 60;
+  return 30;
+}
+
+function nextRenewalDate(currentExpiresAt: string, renewalCycle: LicenseRenewalCycle): string {
   const today = parseIsoDate(nowDateIso());
   const current = parseIsoDate(currentExpiresAt);
   const base = current.getTime() < today.getTime() ? today : current;
@@ -2176,7 +2193,7 @@ function nextRenewalDate(currentExpiresAt: string, renewalCycle: 'Mensal' | 'Anu
   if (renewalCycle === 'Anual') {
     next.setFullYear(next.getFullYear() + 1);
   } else {
-    next.setDate(next.getDate() + 30);
+    next.setDate(next.getDate() + renewalCycleDays(renewalCycle));
   }
   return isoDate(next);
 }
@@ -2824,6 +2841,17 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
           )
         ), '') as participant_names,
         coalesce((
+          select group_concat(company_name, ' | ')
+          from (
+            select distinct comp.name as company_name
+            from cohort_allocation a_clients
+            join company comp on comp.id = a_clients.company_id
+            where a_clients.cohort_id = c.id
+              and a_clients.status in ('Previsto','Confirmado','Executado')
+            order by comp.name asc
+          )
+        ), '') as company_names,
+        coalesce((
           select group_concat(module_code, ' | ')
           from (
             select mt.code as module_code
@@ -3368,7 +3396,18 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
   
   app.get('/cohorts', (_req, res) => {
     const rows = db.prepare(`
-      select c.*, t.name as technician_name
+      select c.*, t.name as technician_name,
+        coalesce((
+          select group_concat(company_name, ' | ')
+          from (
+            select distinct comp.name as company_name
+            from cohort_allocation a
+            join company comp on comp.id = a.company_id
+            where a.cohort_id = c.id
+              and a.status in ('Previsto','Confirmado','Executado')
+            order by comp.name asc
+          )
+        ), '') as company_names
       from cohort c
       left join technician t on t.id = c.technician_id
       order by date(c.start_date) asc
@@ -5957,7 +5996,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       license_identifier: string | null;
       module_ids_raw: string | null;
       module_list_from_modules: string | null;
-      renewal_cycle: 'Mensal' | 'Anual';
+      renewal_cycle: LicenseRenewalCycle;
       expires_at: string;
       notes: string | null;
       last_renewed_at: string | null;
@@ -5977,9 +6016,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       const warningMessage = alertLevel === 'Expirada'
         ? `Licença expirada há ${Math.abs(daysUntilExpiration)} dia(s).`
         : alertLevel === 'Atenção'
-          ? row.renewal_cycle === 'Anual'
-            ? `Renovação anual em ${daysUntilExpiration} dia(s).`
-            : `Renovação mensal em ${daysUntilExpiration} dia(s).`
+          ? `Renovação ${renewalCycleLabelLower(row.renewal_cycle)} em ${daysUntilExpiration} dia(s).`
           : null;
   
       return {
@@ -5998,6 +6035,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
     });
   
     const expired = normalized.filter((row) => row.alert_level === 'Expirada');
+    const dueSoon = normalized.filter((row) => row.alert_level === 'Atenção');
     const monthlyDueSoon = normalized.filter((row) => row.alert_level === 'Atenção' && row.renewal_cycle === 'Mensal');
     const annualDueSoon = normalized.filter((row) => row.alert_level === 'Atenção' && row.renewal_cycle === 'Anual');
   
@@ -6005,9 +6043,10 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       rows: normalized,
       alerts: {
         expired,
+        due_soon: dueSoon,
         monthly_due_soon: monthlyDueSoon,
         annual_due_soon: annualDueSoon,
-        total_attention: expired.length + monthlyDueSoon.length + annualDueSoon.length
+        total_attention: expired.length + dueSoon.length
       }
     });
   });
@@ -6178,7 +6217,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       where id = ?
     `).get(req.params.id) as {
       id: string;
-      renewal_cycle: 'Mensal' | 'Anual';
+      renewal_cycle: LicenseRenewalCycle;
       expires_at: string;
     } | undefined;
   
@@ -6578,25 +6617,28 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       const support_unread_count = linkedTicket
         ? (unreadCountByTicketId.get(linkedTicket.ticket_id) ?? 0)
         : 0;
+      const columnTitle = (columnById.get(card.column_id ?? '')?.title ?? '').toLowerCase();
+      const isConcluded = columnTitle.includes('conclu');
   
       if (card.subcategory === 'Suporte') {
-        const columnTitle = (columnById.get(card.column_id ?? '')?.title ?? '').toLowerCase();
-        const isConcluded = columnTitle.includes('conclu');
         const hasSupportResolution = Boolean(card.support_resolution?.trim());
         if (isConcluded) {
           if (!hasSupportResolution) {
             support_alert_level = 'done';
             support_alert_message = 'Suporte concluído sem resolução registrada.';
           }
-        } else {
-          const updatedAt = new Date(`${card.updated_at}T00:00:00`);
-          if (!Number.isNaN(updatedAt.getTime())) {
-            const diffMs = today.getTime() - updatedAt.getTime();
-            const diffDays = Math.floor(diffMs / 86_400_000);
-            if (diffDays >= 2) {
-              support_alert_level = 'stale';
-              support_alert_message = `Suporte sem atualização há ${diffDays} dia(s).`;
-            }
+        }
+      }
+      if (!isConcluded && support_alert_level === 'none') {
+        const updatedAt = new Date(`${card.updated_at}T00:00:00`);
+        if (!Number.isNaN(updatedAt.getTime())) {
+          const diffMs = today.getTime() - updatedAt.getTime();
+          const diffDays = Math.floor(diffMs / 86_400_000);
+          if (diffDays >= 2) {
+            support_alert_level = 'stale';
+            support_alert_message = card.subcategory === 'Suporte'
+              ? `Suporte sem atualização há ${diffDays} dia(s).`
+              : `Implementação sem atualização há ${diffDays} dia(s).`;
           }
         }
       }
@@ -7762,7 +7804,8 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       profile: z.string().nullable().optional(),
       is_mandatory: z.number().int().min(0).max(1),
       delivery_mode: z.enum(MODULE_DELIVERY_MODE_VALUES).default('ministrado'),
-      client_hours_policy: z.enum(MODULE_CLIENT_HOURS_POLICY_VALUES).default('consome')
+      client_hours_policy: z.enum(MODULE_CLIENT_HOURS_POLICY_VALUES).default('consome'),
+      apply_to_existing_clients: z.boolean().default(false)
     });
   
     const parsed = schema.safeParse(req.body);
@@ -7792,18 +7835,24 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
         );
   
         const companies = db.prepare('select id from company').all() as Array<{ id: string }>;
-        const insertProgress = db.prepare(`
-          insert or ignore into company_module_progress (id, company_id, module_id, status, notes, completed_at)
-          values (?, ?, ?, 'Nao_iniciado', null, null)
-        `);
         const insertActivation = db.prepare(`
           insert or ignore into company_module_activation (company_id, module_id, is_enabled)
-          values (?, ?, 1)
+          values (?, ?, ?)
         `);
-        companies.forEach((company) => {
-          insertProgress.run(uuid('prog'), company.id, id);
-          insertActivation.run(company.id, id);
-        });
+        if (parsed.data.apply_to_existing_clients) {
+          const insertProgress = db.prepare(`
+            insert or ignore into company_module_progress (id, company_id, module_id, status, notes, completed_at)
+            values (?, ?, ?, 'Nao_iniciado', null, null)
+          `);
+          companies.forEach((company) => {
+            insertProgress.run(uuid('prog'), company.id, id);
+            insertActivation.run(company.id, id, 1);
+          });
+        } else {
+          companies.forEach((company) => {
+            insertActivation.run(company.id, id, 0);
+          });
+        }
       });
       tx();
   

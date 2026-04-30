@@ -1401,14 +1401,21 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
     () => visibleColumns.reduce((acc, column) => acc + column.cards.length, 0),
     [visibleColumns]
   );
-  const supportAlerts = useMemo(() => (
+  const boardAlerts = useMemo(() => (
     boardScopedColumns
       .flatMap((column) => column.cards.map((card) => ({
         ...card,
         columnTitle: column.title
       })))
-      .filter((card) => card.subcategory === 'Suporte' && card.support_alert_level !== 'none')
+      .filter((card) => card.support_alert_level !== 'none')
   ), [boardScopedColumns]);
+  const alertCountByColumnId = useMemo(() => {
+    const counts = new Map<string, number>();
+    boardScopedColumns.forEach((column) => {
+      counts.set(column.id, column.cards.filter((card) => card.support_alert_level !== 'none').length);
+    });
+    return counts;
+  }, [boardScopedColumns]);
 
   function clearFilters() {
     setFilterClientName('');
@@ -1471,10 +1478,10 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
 
       {error ? <p className="error">{error}</p> : null}
       {message ? <p className="info">{message}</p> : null}
-      {boardMode === 'support' && supportAlerts.length > 0 ? (
-        <Section title="Alertas de suporte" className="kanban-config-panel">
+      {boardAlerts.length > 0 ? (
+        <Section title={boardMode === 'support' ? 'Alertas de suporte' : 'Alertas de implementação'} className="kanban-config-panel">
           <div className="stack">
-            {supportAlerts.map((alert) => (
+            {boardAlerts.map((alert) => (
               <div key={`support-alert-${alert.id}`} className="kanban-support-alert-row">
                 <strong>{alert.title}</strong>
                 <span>{alert.support_alert_message}</span>
@@ -1608,6 +1615,7 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
             <div ref={boardProvided.innerRef} {...boardProvided.droppableProps} className="kanban-board">
               {visibleColumns.map((column, columnIndex) => {
                 const draft = getDraft(column.id);
+                const columnAlertCount = alertCountByColumnId.get(column.id) ?? 0;
                 return (
                   <Draggable
                     key={column.id}
@@ -1627,6 +1635,11 @@ export function ImplementationPage({ boardMode = 'implementation' }: Implementat
                             {column.title}
                           </h2>
                           <div className="kanban-column-header-right">
+                            {columnAlertCount > 0 ? (
+                              <span className="kanban-column-alert-badge" title={`${columnAlertCount} pendência(s)`}>
+                                {columnAlertCount > 99 ? '99+' : columnAlertCount}
+                              </span>
+                            ) : null}
                             <span className="chip">{column.cards.length}</span>
                             <div className="kanban-icon-actions">
                               <button type="button" className="kanban-icon-btn" onClick={() => editColumn(column)} title="Editar coluna">✎</button>

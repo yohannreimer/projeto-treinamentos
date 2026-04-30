@@ -47,6 +47,10 @@ const FINANCE_PERMISSIONS: InternalPermission[] = [
   'finance.close',
   'finance.billing'
 ];
+type KanbanAlertCounts = {
+  implementation: number;
+  support: number;
+};
 
 function ProtectedRoute({
   user,
@@ -223,6 +227,10 @@ function OperationsRoutes({ user, defaultRoute }: { user: InternalSessionUser; d
 function InternalApp() {
   const [session, setSession] = useState<InternalSessionData | null>(() => internalSessionStore.read());
   const [loadingSession, setLoadingSession] = useState(true);
+  const [kanbanAlertCounts, setKanbanAlertCounts] = useState<KanbanAlertCounts>({
+    implementation: 0,
+    support: 0
+  });
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -288,8 +296,47 @@ function InternalApp() {
 
   const user = session?.user ?? null;
   const navItems = useMemo(() => visibleNavItemsForUser(user), [user]);
+  const navItemsWithAlerts = useMemo(() => navItems.map((item) => {
+    if (item.to === '/implementacao') {
+      return { ...item, badgeCount: kanbanAlertCounts.implementation };
+    }
+    if (item.to === '/suporte') {
+      return { ...item, badgeCount: kanbanAlertCounts.support };
+    }
+    return item;
+  }), [navItems, kanbanAlertCounts]);
   const defaultRoute = defaultRouteForUser(user);
   const isFinanceRoute = location.pathname.startsWith('/financeiro');
+
+  useEffect(() => {
+    if (!session || !user) {
+      setKanbanAlertCounts({ implementation: 0, support: 0 });
+      return;
+    }
+
+    let cancelled = false;
+    const loadKanbanAlertCounts = () => {
+      api.implementationKanban()
+        .then((response: any) => {
+          if (cancelled) return;
+          const cards = (response.columns ?? []).flatMap((column: any) => column.cards ?? []);
+          setKanbanAlertCounts({
+            implementation: cards.filter((card: any) => card.subcategory !== 'Suporte' && card.support_alert_level !== 'none').length,
+            support: cards.filter((card: any) => card.subcategory === 'Suporte' && card.support_alert_level !== 'none').length
+          });
+        })
+        .catch(() => {
+          if (!cancelled) setKanbanAlertCounts({ implementation: 0, support: 0 });
+        });
+    };
+
+    loadKanbanAlertCounts();
+    const intervalId = window.setInterval(loadKanbanAlertCounts, 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [session, user, location.pathname]);
 
   useEffect(() => {
     if (!session || !user) return;
@@ -317,7 +364,7 @@ function InternalApp() {
     <Layout
       onLogout={handleLogout}
       loggedUser={user.display_name || user.username}
-      navItems={navItems}
+      navItems={navItemsWithAlerts}
     >
       <OperationsRoutes user={user} defaultRoute={defaultRoute} />
     </Layout>

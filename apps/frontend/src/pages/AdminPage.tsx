@@ -148,6 +148,7 @@ export function AdminPage() {
   const [newMandatory, setNewMandatory] = useState(0);
   const [newDeliveryMode, setNewDeliveryMode] = useState<'ministrado' | 'entregavel'>('ministrado');
   const [newHoursPolicy, setNewHoursPolicy] = useState<'consome' | 'nao_consume'>('consome');
+  const [newApplyToExistingClients, setNewApplyToExistingClients] = useState(false);
 
   const [loadingBootstrap, setLoadingBootstrap] = useState(false);
   const [loadingRealScenario, setLoadingRealScenario] = useState(false);
@@ -395,9 +396,12 @@ export function AdminPage() {
         profile: newProfile || null,
         is_mandatory: newMandatory,
         delivery_mode: newDeliveryMode,
-        client_hours_policy: newHoursPolicy
+        client_hours_policy: newHoursPolicy,
+        apply_to_existing_clients: newApplyToExistingClients
       });
-      setMessage('Módulo criado com sucesso.');
+      setMessage(newApplyToExistingClients
+        ? 'Módulo criado e aplicado aos clientes existentes.'
+        : 'Módulo criado com sucesso. Ele ficará disponível para novas turmas e novas configurações.');
       setNewCode('');
       setNewName('');
       setNewDescription('');
@@ -406,6 +410,7 @@ export function AdminPage() {
       setNewMandatory(0);
       setNewDeliveryMode('ministrado');
       setNewHoursPolicy('consome');
+      setNewApplyToExistingClients(false);
       loadCatalog();
     } catch (error) {
       setMessage((error as Error).message);
@@ -1037,6 +1042,30 @@ export function AdminPage() {
       <Section title="Criar novo módulo">
         <div className="form form-spacious">
           <p className="form-hint">Novos módulos entram no catálogo e ficam disponíveis em Administração, Turmas e Licenças.</p>
+          <div className="module-rollout-card">
+            <div>
+              <strong>Aplicar aos clientes existentes?</strong>
+              <p>
+                Escolha “Não” para criar só o catálogo. Assim o módulo não aparece automaticamente na jornada dos clientes que já existem.
+              </p>
+            </div>
+            <div className="module-rollout-actions" role="group" aria-label="Aplicação do novo módulo">
+              <button
+                type="button"
+                className={!newApplyToExistingClients ? 'is-selected' : ''}
+                onClick={() => setNewApplyToExistingClients(false)}
+              >
+                Não, só daqui para frente
+              </button>
+              <button
+                type="button"
+                className={newApplyToExistingClients ? 'is-selected' : ''}
+                onClick={() => setNewApplyToExistingClients(true)}
+              >
+                Sim, aplicar a todos
+              </button>
+            </div>
+          </div>
           <div className="three-col admin-module-grid">
             <label>
               Código
