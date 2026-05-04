@@ -103,7 +103,8 @@ vi.mock('../api', () => ({
     duplicatePayable: vi.fn().mockResolvedValue({ id: 'pay-copy' }),
     cancelPayable: vi.fn().mockResolvedValue({ id: 'pay-1', status: 'canceled' }),
     createPayableInstallments: vi.fn().mockResolvedValue({ payables: [] }),
-    createPayableRecurrences: vi.fn().mockResolvedValue({ payables: [] })
+    createPayableRecurrences: vi.fn().mockResolvedValue({ payables: [] }),
+    createRecurringRuleFromResource: vi.fn().mockResolvedValue({ rule: { id: 'rule-pay' }, payables: [], receivables: [] })
   }
 }));
 
@@ -194,6 +195,69 @@ test('payables page sends paid_at when status is pago', async () => {
       })
     );
   });
+});
+
+test('payables page creates a continuous monthly recurrence from the full form', async () => {
+  const user = userEvent.setup();
+  render(<FinancePayablesPage />);
+
+  expect(await screen.findByRole('heading', { name: 'Rotina operacional de obrigações' })).toBeInTheDocument();
+
+  await user.type(screen.getByLabelText('Descrição'), 'Aluguel recorrente');
+  await user.type(screen.getByLabelText('Fornecedor'), 'Ven');
+  await user.click(await screen.findByRole('button', { name: 'Vendor' }));
+  await user.type(screen.getByLabelText('Valor (R$)'), '8000,00');
+  await user.type(screen.getByLabelText('Vencimento'), '2026-05-15');
+  await user.click(screen.getByRole('button', { name: 'Mensal fixa' }));
+  await user.click(screen.getByRole('button', { name: 'Registrar conta a pagar' }));
+
+  const { financeApi } = await import('../api');
+  await waitFor(() => {
+    expect(financeApi.createRecurringRuleFromResource).toHaveBeenCalledWith(expect.objectContaining({
+      resource_type: 'payable',
+      resource_id: 'pay-created',
+      day_of_month: 15,
+      start_date: '2026-05-15',
+      materialization_months: 3
+    }));
+  });
+});
+
+test('payables page creates installments from the full form', async () => {
+  const user = userEvent.setup();
+  render(<FinancePayablesPage />);
+
+  expect(await screen.findByRole('heading', { name: 'Rotina operacional de obrigações' })).toBeInTheDocument();
+
+  await user.type(screen.getByLabelText('Descrição'), 'Notebook');
+  await user.type(screen.getByLabelText('Fornecedor'), 'Ven');
+  await user.click(await screen.findByRole('button', { name: 'Vendor' }));
+  await user.type(screen.getByLabelText('Valor (R$)'), '10000,00');
+  await user.type(screen.getByLabelText('Vencimento'), '2026-05-10');
+  await user.click(screen.getByRole('button', { name: 'Parcelada' }));
+  await user.clear(screen.getByLabelText('Parcelas'));
+  await user.type(screen.getByLabelText('Parcelas'), '10');
+  await user.clear(screen.getByLabelText('Começar pela parcela'));
+  await user.type(screen.getByLabelText('Começar pela parcela'), '4');
+  await user.click(screen.getByRole('button', { name: 'Registrar conta a pagar' }));
+
+  const { financeApi } = await import('../api');
+  await waitFor(() => {
+    expect(financeApi.createPayable).toHaveBeenCalledTimes(7);
+  });
+  expect(financeApi.createPayable).toHaveBeenNthCalledWith(1, expect.objectContaining({
+    description: 'Notebook 4/10',
+    amount_cents: 100000,
+    due_date: '2026-05-10',
+    status: 'open'
+  }));
+  expect(financeApi.createPayable).toHaveBeenNthCalledWith(7, expect.objectContaining({
+    description: 'Notebook 10/10',
+    amount_cents: 100000,
+    due_date: '2026-11-10',
+    status: 'open'
+  }));
+  expect(financeApi.createRecurringRuleFromResource).not.toHaveBeenCalled();
 });
 
 test('payables page runs daily operation actions', async () => {

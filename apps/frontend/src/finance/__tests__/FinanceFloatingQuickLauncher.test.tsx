@@ -109,7 +109,8 @@ test('FinanceFloatingQuickLauncher creates a payable without leaving the current
 
   await user.click(screen.getByRole('button', { name: 'Abrir lançamento rápido' }));
   await user.type(await screen.findByLabelText('Descrição'), 'Aluguel sala');
-  await user.type(screen.getByLabelText('Fornecedor'), 'Fornecedor Alpha');
+  await user.type(screen.getByLabelText('Fornecedor'), 'Alpha');
+  await user.click(await screen.findByRole('button', { name: 'Fornecedor Alpha' }));
   await user.type(screen.getByLabelText('Valor'), '6800,00');
   await screen.findByRole('option', { name: 'Aluguel' });
   await user.selectOptions(screen.getByLabelText('Categoria'), 'cat-expense');

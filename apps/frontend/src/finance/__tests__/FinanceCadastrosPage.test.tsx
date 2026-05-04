@@ -268,8 +268,8 @@ test('cadastros page lists unified entities with customer and supplier filters',
   expect(screen.getByRole('tab', { name: /Recorrências/i })).toBeInTheDocument();
   expect(screen.getByRole('tab', { name: /Duplicidades/i })).toBeInTheDocument();
   expect(screen.getByText('Defaults inteligentes')).toBeInTheDocument();
-  expect(screen.getAllByText('Classificações').length).toBeGreaterThanOrEqual(1);
-  expect(screen.getByLabelText('Nova classificação')).toBeInTheDocument();
+  expect(screen.getAllByText('Tags operacionais').length).toBeGreaterThanOrEqual(1);
+  expect(screen.getByLabelText('Nova tag operacional')).toBeInTheDocument();
   expect(screen.getByText('Usar estes defaults em')).toBeInTheDocument();
   expect(screen.getByRole('heading', { name: 'Nova entidade financeira' })).toBeInTheDocument();
 

@@ -673,7 +673,7 @@ export function FinanceWhisperFlow() {
                         <div className="finance-whisper-flow__analyst-row-main">
                           <div>
                             <strong>{item.title}</strong>
-                            <span>{metaText || 'Sem classificação operacional'}</span>
+                            <span>{metaText || 'Sem tags operacionais'}</span>
                           </div>
                           <div className="finance-whisper-flow__analyst-row-value">
                             <strong>{formatAssistantCurrency(item.amount_cents) ?? item.status ?? 'Cadastro'}</strong>

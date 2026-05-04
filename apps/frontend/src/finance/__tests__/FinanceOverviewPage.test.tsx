@@ -179,8 +179,8 @@ test('FinanceOverviewPage renders the approved executive split-control home', as
 
   expect(await screen.findByText('R$ 1.284.300,00')).toBeInTheDocument();
   expect(screen.getByRole('heading', { name: 'Visão Geral' })).toBeInTheDocument();
-  expect(screen.getByLabelText('Período financeiro')).toHaveValue('month');
-  expect(getExecutiveOverview).toHaveBeenCalledWith({ preset: 'month', from: null, to: null });
+  expect(screen.getByLabelText('Período financeiro')).toHaveValue('all');
+  expect(getExecutiveOverview).toHaveBeenCalledWith({ preset: 'all', from: null, to: null });
   expect(screen.getByText('Leitura executiva do financeiro da Holand.')).toBeInTheDocument();
   expect(screen.getByText('3 lançamentos precisam de revisão')).toBeInTheDocument();
   expect(screen.getByRole('link', { name: 'Revisar dados' })).toBeInTheDocument();
@@ -207,7 +207,7 @@ test('FinanceOverviewPage renders the approved executive split-control home', as
   await waitFor(() => {
     expect(getExecutiveOverview).toHaveBeenLastCalledWith({ preset: 'next_7', from: null, to: null });
   });
-  expect(window.localStorage.getItem('orquestrador_finance_global_period_v1:anonymous')).toContain('next_7');
+  expect(window.localStorage.getItem('orquestrador_finance_global_period_v1:anonymous')).toBeNull();
 
   await user.click(screen.getByRole('button', { name: 'Salvar filtro' }));
   await user.type(screen.getByLabelText('Nome do filtro'), 'Semana executiva');

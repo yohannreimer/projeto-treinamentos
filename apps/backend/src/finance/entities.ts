@@ -447,7 +447,7 @@ export function createFinanceEntityTag(input: CreateFinanceEntityTagInput): Fina
   } | undefined;
 
   if (!created) {
-    throw new Error('Falha ao criar classificação da entidade.');
+    throw new Error('Falha ao criar tag operacional da entidade.');
   }
 
   return mapEntityTagRow(created);
@@ -478,7 +478,7 @@ export function setFinanceEntityTags(input: SetFinanceEntityTagsInput): FinanceE
     `).all(normalizedOrganizationId, ...uniqueTagIds) as Array<{ id: string }>;
 
   if (validTagRows.length !== uniqueTagIds.length) {
-    throw new Error('Uma ou mais classificações são inválidas.');
+    throw new Error('Uma ou mais tags operacionais são inválidas.');
   }
 
   const nowIso = new Date().toISOString();

@@ -27,6 +27,10 @@ type PayableForm = {
   status: 'pendente' | 'pago' | 'atrasado';
   due: string;
   obs: string;
+  scheduleMode: 'single' | 'installments' | 'recurring';
+  installmentCount: string;
+  installmentStart: string;
+  installmentBasis: 'total' | 'installment';
 };
 
 type Tone = 'neutral' | 'success' | 'warning' | 'danger' | 'info';
@@ -45,7 +49,11 @@ const initialForm: PayableForm = {
   value: '',
   status: 'pendente',
   due: '',
-  obs: ''
+  obs: '',
+  scheduleMode: 'single',
+  installmentCount: '10',
+  installmentStart: '1',
+  installmentBasis: 'total'
 };
 
 const emptyGroups = {
@@ -81,6 +89,26 @@ function periodThatShowsDate(dateIso: string) {
     from: `${year}-${month}-01`,
     to: `${year}-${month}-${String(endDate.getDate()).padStart(2, '0')}`
   };
+}
+
+function dayOfMonthFromIso(dateIso: string) {
+  const day = Number.parseInt(dateIso.split('-')[2] ?? '', 10);
+  return Number.isFinite(day) ? Math.max(1, Math.min(31, day)) : 1;
+}
+
+function addMonthsIso(dateIso: string, months: number) {
+  const [year, month, day] = dateIso.split('-').map((part) => Number.parseInt(part, 10));
+  const target = new Date(Date.UTC(year, month - 1 + months, day));
+  return target.toISOString().slice(0, 10);
+}
+
+function installmentAmounts(amountCents: number, count: number, basis: PayableForm['installmentBasis']) {
+  if (basis === 'installment') {
+    return Array.from({ length: count }, () => amountCents);
+  }
+  const baseAmount = Math.floor(amountCents / count);
+  const remainder = amountCents - (baseAmount * count);
+  return Array.from({ length: count }, (_item, index) => baseAmount + (index === 0 ? remainder : 0));
 }
 
 function isDateInsideWindow(dateIso: string | null | undefined, windowRange: { from: string | null; to: string | null }) {
@@ -633,6 +661,15 @@ export function FinancePayablesPage() {
   const hasExactEntityMatch = typedEntityName.length > 0 && entities.some((entity) => normalizeEntitySearch(entityName(entity)) === normalizeEntitySearch(typedEntityName));
   const hasVisibleEntityMatch = typedEntityName.length > 0 && entities.some((entity) => normalizeEntitySearch(entityName(entity)).includes(normalizeEntitySearch(typedEntityName)));
   const shouldOfferEntityCreation = typedEntityName.length > 0 && !form.financial_entity_id && !hasExactEntityMatch && !hasVisibleEntityMatch;
+  const installmentCount = Math.max(2, Math.min(36, Number.parseInt(form.installmentCount, 10) || 2));
+  const installmentStart = Math.max(1, Math.min(installmentCount, Number.parseInt(form.installmentStart, 10) || 1));
+  const installmentPreviewAmounts = installmentAmounts(parseAmountToCents(form.value), installmentCount, form.installmentBasis);
+  const installmentPreviewTotal = form.installmentBasis === 'installment'
+    ? parseAmountToCents(form.value) * installmentCount
+    : parseAmountToCents(form.value);
+  const installmentPreviewRemaining = installmentPreviewAmounts
+    .slice(installmentStart - 1)
+    .reduce((total, amount) => total + amount, 0);
 
   async function handleSelectEntity(entity: FinanceEntity) {
     setForm((current) => ({
@@ -700,21 +737,58 @@ export function FinancePayablesPage() {
     setError('');
     setSuccess(false);
     try {
-      await financeApi.createPayable({
+      const basePayload = {
         financial_account_id: form.financial_account_id || null,
         financial_category_id: form.financial_category_id || null,
         financial_cost_center_id: form.financial_cost_center_id || null,
         financial_payment_method_id: form.financial_payment_method_id || null,
         financial_entity_id: form.financial_entity_id || null,
         supplier_name: form.entity.trim() || null,
+        issue_date: todayIso(),
+        note: form.obs.trim() || null
+      };
+
+      if (form.scheduleMode === 'installments') {
+        const amounts = installmentAmounts(amountCents, installmentCount, form.installmentBasis);
+        const firstInstallment = installmentStart;
+        for (let index = firstInstallment - 1; index < amounts.length; index += 1) {
+          await financeApi.createPayable({
+            ...basePayload,
+            description: `${form.desc.trim()} ${index + 1}/${installmentCount}`,
+            amount_cents: amounts[index],
+            paid_amount_cents: 0,
+            status: 'open',
+            due_date: addMonthsIso(form.due || todayIso(), index - (firstInstallment - 1)),
+            paid_at: null,
+            note: form.obs.trim() || `Parcelamento: ${installmentCount} parcelas`
+          });
+        }
+        setForm(initialForm);
+        setSmartHint('');
+        setSuccess(true);
+        await reload();
+        return;
+      }
+
+      const payable = await financeApi.createPayable({
+        ...basePayload,
         description: form.desc.trim(),
         amount_cents: amountCents,
         status: form.status === 'pago' ? 'paid' : form.status === 'atrasado' ? 'overdue' : 'open',
-        issue_date: todayIso(),
         due_date: form.due || null,
         paid_at: form.status === 'pago' ? todayIso() : null,
-        note: form.obs.trim() || null
+        note: basePayload.note
       });
+      if (form.scheduleMode === 'recurring') {
+        const startDate = form.due || todayIso();
+        await financeApi.createRecurringRuleFromResource({
+          resource_type: 'payable',
+          resource_id: payable.id,
+          day_of_month: dayOfMonthFromIso(startDate),
+          start_date: startDate,
+          materialization_months: 3
+        });
+      }
       setForm(initialForm);
       setSmartHint('');
       setSuccess(true);
@@ -897,6 +971,87 @@ export function FinancePayablesPage() {
                     onChange={(event) => setForm((current) => ({ ...current, value: event.target.value }))}
                     disabled={!canWrite || submitting}
                   />
+                </label>
+                <label style={fieldStyle}>
+                  <span style={labelStyle}>Recorrência</span>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                    {[
+                      { value: 'single' as const, label: 'Única' },
+                      { value: 'installments' as const, label: 'Parcelada' },
+                      { value: 'recurring' as const, label: 'Mensal fixa' }
+                    ].map((option) => {
+                      const active = form.scheduleMode === option.value;
+                      return (
+                        <button
+                          key={option.value}
+                          type="button"
+                          aria-pressed={active}
+                          onClick={() => setForm((current) => ({
+                            ...current,
+                            scheduleMode: option.value,
+                            status: option.value === 'single' ? current.status : 'pendente'
+                          }))}
+                          disabled={!canWrite || submitting}
+                          style={{
+                            height: 32,
+                            borderRadius: 7,
+                            border: '1px solid',
+                            borderColor: active ? '#2563eb' : '#e2e8f0',
+                            background: active ? '#eff6ff' : 'white',
+                            color: active ? '#1d4ed8' : '#64748b',
+                            fontSize: 11,
+                            fontWeight: 750,
+                            fontFamily: 'inherit',
+                            cursor: !canWrite || submitting ? 'default' : 'pointer'
+                          }}
+                        >
+                          {option.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {form.scheduleMode === 'recurring' ? (
+                    <div style={{ fontSize: 11, color: '#64748b', marginTop: 6, lineHeight: 1.45 }}>
+                      Mantém três meses à frente e continua projetando nos relatórios.
+                    </div>
+                  ) : null}
+                  {form.scheduleMode === 'installments' ? (
+                    <div style={{ display: 'grid', gap: 8, marginTop: 8 }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                        <input
+                          aria-label="Parcelas"
+                          style={controlStyle}
+                          value={form.installmentCount}
+                          onChange={(event) => setForm((current) => ({ ...current, installmentCount: event.target.value }))}
+                          inputMode="numeric"
+                          placeholder="10"
+                          disabled={!canWrite || submitting}
+                        />
+                        <input
+                          aria-label="Começar pela parcela"
+                          style={controlStyle}
+                          value={form.installmentStart}
+                          onChange={(event) => setForm((current) => ({ ...current, installmentStart: event.target.value }))}
+                          inputMode="numeric"
+                          placeholder="1"
+                          disabled={!canWrite || submitting}
+                        />
+                      </div>
+                      <select
+                        aria-label="Valor informado no parcelamento"
+                        style={{ ...controlStyle, cursor: 'pointer' }}
+                        value={form.installmentBasis}
+                        onChange={(event) => setForm((current) => ({ ...current, installmentBasis: event.target.value as PayableForm['installmentBasis'] }))}
+                        disabled={!canWrite || submitting}
+                      >
+                        <option value="total">Valor é total da compra</option>
+                        <option value="installment">Valor é de cada parcela</option>
+                      </select>
+                      <div style={{ fontSize: 11, color: '#64748b', lineHeight: 1.45 }}>
+                        Criando da {installmentStart}/{installmentCount} até {installmentCount}/{installmentCount} · total original {formatCurrency(installmentPreviewTotal)} · restante {formatCurrency(installmentPreviewRemaining)}.
+                      </div>
+                    </div>
+                  ) : null}
                 </label>
                 <div style={twoColStyle}>
                   <label style={fieldStyle}>

@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useLocation } from 'react-router-dom';
 import {
   financeApi,
@@ -8,6 +8,7 @@ import {
   type FinanceTransactionKind
 } from '../api';
 import { parseAmountToCents, todayIso } from '../utils/financeFormatters';
+import { FinanceEntityCombobox } from './FinanceEntityCombobox';
 import {
   FINANCE_QUICK_LAUNCH_CREATED_EVENT,
   FINANCE_QUICK_LAUNCH_OPEN_EVENT,
@@ -28,6 +29,7 @@ type QuickLaunchCreatedDetail = {
 type QuickLaunchForm = {
   description: string;
   counterparty: string;
+  counterpartyEntityId: string;
   amount: string;
   date: string;
   categoryId: string;
@@ -50,6 +52,7 @@ const emptyCatalog: FinanceCatalogSnapshot = {
 const initialForm: QuickLaunchForm = {
   description: '',
   counterparty: '',
+  counterpartyEntityId: '',
   amount: '',
   date: todayIso(),
   categoryId: '',
@@ -135,7 +138,6 @@ export function FinanceFloatingQuickLauncher() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
-  const datalistId = useId();
 
   useEffect(() => {
     if (!open) return;
@@ -222,7 +224,7 @@ export function FinanceFloatingQuickLauncher() {
     const description = form.description.trim();
     const counterparty = form.counterparty.trim();
     const date = form.date || todayIso();
-    const entityId = findEntityId(entities, counterparty);
+    const entityId = form.counterpartyEntityId || findEntityId(entities, counterparty);
 
     if (!description) {
       setError('Descreva o lançamento para ele aparecer claro nos relatórios.');
@@ -464,17 +466,32 @@ export function FinanceFloatingQuickLauncher() {
 
             <label>
               <span>{mode === 'receivable' ? 'Cliente' : mode === 'payable' ? 'Fornecedor' : 'Pessoa ou empresa'}</span>
-              <input
-                value={form.counterparty}
-                onChange={(event) => updateForm('counterparty', event.target.value)}
-                placeholder="Digite ou escolha uma entidade"
-                list={datalistId}
+              <FinanceEntityCombobox
+                ariaLabel={mode === 'receivable' ? 'Cliente' : mode === 'payable' ? 'Fornecedor' : 'Pessoa ou empresa'}
+                placeholder="Buscar cadastro ou digitar nome"
+                entities={entities}
+                value={form.counterpartyEntityId}
+                inputValue={form.counterparty}
+                onSelect={(entity) => {
+                  setForm((current) => ({
+                    ...current,
+                    counterparty: entityName(entity),
+                    counterpartyEntityId: entity.id
+                  }));
+                  setError('');
+                  setSuccess('');
+                }}
+                onInputChange={(value) => {
+                  setForm((current) => ({
+                    ...current,
+                    counterparty: value,
+                    counterpartyEntityId: ''
+                  }));
+                  setError('');
+                  setSuccess('');
+                }}
+                disabled={loadingCatalog || submitting}
               />
-              <datalist id={datalistId}>
-                {entities.map((entity) => (
-                  <option key={entity.id} value={entityName(entity)} />
-                ))}
-              </datalist>
             </label>
 
             <div className="finance-floating-launcher__split">

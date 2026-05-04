@@ -103,7 +103,8 @@ vi.mock('../api', () => ({
     duplicateReceivable: vi.fn().mockResolvedValue({ id: 'recv-copy' }),
     cancelReceivable: vi.fn().mockResolvedValue({ id: 'recv-1', status: 'canceled' }),
     createReceivableInstallments: vi.fn().mockResolvedValue({ receivables: [] }),
-    createReceivableRecurrences: vi.fn().mockResolvedValue({ receivables: [] })
+    createReceivableRecurrences: vi.fn().mockResolvedValue({ receivables: [] }),
+    createRecurringRuleFromResource: vi.fn().mockResolvedValue({ rule: { id: 'rule-rec' }, payables: [], receivables: [] })
   }
 }));
 
@@ -194,6 +195,69 @@ test('receivables page sends received_at when status is recebido', async () => {
       })
     );
   });
+});
+
+test('receivables page creates a continuous monthly recurrence from the full form', async () => {
+  const user = userEvent.setup();
+  render(<FinanceReceivablesPage />);
+
+  expect(await screen.findByRole('heading', { name: 'Rotina operacional de recebíveis' })).toBeInTheDocument();
+
+  await user.type(screen.getByLabelText('Descrição'), 'Assinatura recorrente');
+  await user.type(screen.getByLabelText('Cliente'), 'AC');
+  await user.click(await screen.findByRole('button', { name: 'ACME' }));
+  await user.type(screen.getByLabelText('Valor (R$)'), '1200,00');
+  await user.type(screen.getByLabelText('Vencimento'), '2026-05-10');
+  await user.click(screen.getByRole('button', { name: 'Mensal fixa' }));
+  await user.click(screen.getByRole('button', { name: 'Registrar conta a receber' }));
+
+  const { financeApi } = await import('../api');
+  await waitFor(() => {
+    expect(financeApi.createRecurringRuleFromResource).toHaveBeenCalledWith(expect.objectContaining({
+      resource_type: 'receivable',
+      resource_id: 'recv-created',
+      day_of_month: 10,
+      start_date: '2026-05-10',
+      materialization_months: 3
+    }));
+  });
+});
+
+test('receivables page creates installments from the full form', async () => {
+  const user = userEvent.setup();
+  render(<FinanceReceivablesPage />);
+
+  expect(await screen.findByRole('heading', { name: 'Rotina operacional de recebíveis' })).toBeInTheDocument();
+
+  await user.type(screen.getByLabelText('Descrição'), 'Contrato anual');
+  await user.type(screen.getByLabelText('Cliente'), 'AC');
+  await user.click(await screen.findByRole('button', { name: 'ACME' }));
+  await user.type(screen.getByLabelText('Valor (R$)'), '12000,00');
+  await user.type(screen.getByLabelText('Vencimento'), '2026-05-05');
+  await user.click(screen.getByRole('button', { name: 'Parcelada' }));
+  await user.clear(screen.getByLabelText('Parcelas'));
+  await user.type(screen.getByLabelText('Parcelas'), '12');
+  await user.clear(screen.getByLabelText('Começar pela parcela'));
+  await user.type(screen.getByLabelText('Começar pela parcela'), '10');
+  await user.click(screen.getByRole('button', { name: 'Registrar conta a receber' }));
+
+  const { financeApi } = await import('../api');
+  await waitFor(() => {
+    expect(financeApi.createReceivable).toHaveBeenCalledTimes(3);
+  });
+  expect(financeApi.createReceivable).toHaveBeenNthCalledWith(1, expect.objectContaining({
+    description: 'Contrato anual 10/12',
+    amount_cents: 100000,
+    due_date: '2026-05-05',
+    status: 'open'
+  }));
+  expect(financeApi.createReceivable).toHaveBeenNthCalledWith(3, expect.objectContaining({
+    description: 'Contrato anual 12/12',
+    amount_cents: 100000,
+    due_date: '2026-07-05',
+    status: 'open'
+  }));
+  expect(financeApi.createRecurringRuleFromResource).not.toHaveBeenCalled();
 });
 
 test('receivables page runs daily operation actions', async () => {

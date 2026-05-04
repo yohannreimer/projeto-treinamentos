@@ -18,7 +18,8 @@ export type FinanceSavedPeriodFilter = FinancePeriodState & {
 const GLOBAL_PERIOD_KEY_PREFIX = 'orquestrador_finance_global_period_v1';
 const SAVED_PERIODS_KEY_PREFIX = 'orquestrador_finance_saved_periods_v1';
 const FINANCE_PERIOD_CHANGED_EVENT = 'orquestrador_finance_period_changed';
-const DEFAULT_FINANCE_PERIOD: FinancePeriodState = { preset: 'month', from: '', to: '' };
+const DEFAULT_FINANCE_PERIOD: FinancePeriodState = { preset: 'all', from: '', to: '' };
+let currentGlobalPeriod: FinancePeriodState = DEFAULT_FINANCE_PERIOD;
 
 export const FINANCE_PERIOD_OPTIONS: Array<{ value: FinancePeriodPreset; label: string }> = [
   { value: 'last_7', label: 'Últimos 7 dias' },
@@ -54,19 +55,13 @@ function normalizePeriod(raw: unknown, fallback: FinancePeriodState = DEFAULT_FI
 }
 
 function readGlobalPeriod(fallback: FinancePeriodState = DEFAULT_FINANCE_PERIOD) {
-  if (typeof window === 'undefined') return fallback;
-  const raw = window.localStorage.getItem(scopedKey(GLOBAL_PERIOD_KEY_PREFIX));
-  if (!raw) return fallback;
-  try {
-    return normalizePeriod(JSON.parse(raw), fallback);
-  } catch {
-    return fallback;
-  }
+  return normalizePeriod(currentGlobalPeriod, fallback);
 }
 
 function writeGlobalPeriod(period: FinancePeriodState) {
+  currentGlobalPeriod = normalizePeriod(period);
   if (typeof window === 'undefined') return;
-  window.localStorage.setItem(scopedKey(GLOBAL_PERIOD_KEY_PREFIX), JSON.stringify(period));
+  window.localStorage.removeItem(scopedKey(GLOBAL_PERIOD_KEY_PREFIX));
   window.dispatchEvent(new CustomEvent(FINANCE_PERIOD_CHANGED_EVENT, { detail: period }));
 }
 

@@ -464,9 +464,9 @@ export function FinanceCadastrosPage() {
       });
       setSelectedTagIds((current) => current.includes(createdTag.id) ? current : [...current, createdTag.id]);
       setNewTagName('');
-      setSuccessMessage(`Classificação "${createdTag.name}" adicionada.`);
+      setSuccessMessage(`Tag operacional "${createdTag.name}" adicionada.`);
     } catch (unknownError) {
-      setError(unknownError instanceof Error ? unknownError.message : 'Falha ao criar classificação.');
+      setError(unknownError instanceof Error ? unknownError.message : 'Falha ao criar tag operacional.');
     } finally {
       setCreatingTag(false);
     }
@@ -890,7 +890,7 @@ export function FinanceCadastrosPage() {
                       <Badge color="#1d4ed8" bg="#dbeafe">Automático</Badge>
                     </div>
 
-                    <Field label="Classificações">
+                    <Field label="Tags operacionais">
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                         {entityTags.slice(0, 12).map((tag) => {
                           const active = selectedTagIds.includes(tag.id);
@@ -922,7 +922,7 @@ export function FinanceCadastrosPage() {
                       </div>
                       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: 6, marginTop: 8 }}>
                         <input
-                          aria-label="Nova classificação"
+                          aria-label="Nova tag operacional"
                           value={newTagName}
                           onChange={(event) => setNewTagName(event.target.value)}
                           onKeyDown={(event) => {
@@ -931,7 +931,7 @@ export function FinanceCadastrosPage() {
                               void handleCreateEntityTag();
                             }
                           }}
-                          placeholder="Adicionar classificação"
+                          placeholder="Adicionar tag"
                           style={{ ...inputStyle, height: 30, fontSize: 11 }}
                         />
                         <ActionButton onClick={handleCreateEntityTag} disabled={creatingTag || !newTagName.trim()}>
@@ -1163,7 +1163,7 @@ export function FinanceCadastrosPage() {
               ))}
             </div>
           </div>
-          <CatalogTable headers={['Razão Social', 'Tipo', 'Classificações', 'Documento', 'Status', 'Ações']}>
+          <CatalogTable headers={['Razão Social', 'Tipo', 'Tags operacionais', 'Documento', 'Status', 'Ações']}>
             {filteredEntities.map((entity) => (
               <tr key={entity.id} style={rowStyle()}>
                 <td style={{ padding: '10px 14px', fontSize: 12, fontWeight: 650, color: '#0f172a' }}>
