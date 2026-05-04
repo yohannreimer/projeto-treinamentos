@@ -61,7 +61,8 @@ vi.mock('../../services/api', () => ({
     }),
     internalLogin: vi.fn(),
     internalLogout: vi.fn().mockResolvedValue({ ok: true }),
-    companies: vi.fn().mockResolvedValue([])
+    companies: vi.fn().mockResolvedValue([]),
+    implementationKanban: vi.fn().mockResolvedValue({ columns: [] })
   }
 }));
 
@@ -162,9 +163,12 @@ test('finance workspace shows the approved ERP sitemap and no counterparty copy 
   expect(within(sidebar).getByRole('link', { name: 'Avançado' })).toBeInTheDocument();
   expect(within(sidebar).getByRole('link', { name: 'Voltar ao sistema' })).toBeInTheDocument();
   expect(within(sidebar).queryByText(/contraparte/i)).not.toBeInTheDocument();
-  await waitFor(() => {
-    expect(within(sidebar).queryAllByText('Holand').length).toBeGreaterThan(0);
-  });
+  expect(within(sidebar).getByText('Financeiro')).toBeInTheDocument();
+  expect(within(sidebar).getByText('ERP Holand')).toBeInTheDocument();
+  expect(within(sidebar).queryByText(/ERP financeiro da empresa logada/i)).not.toBeInTheDocument();
+  expect(within(sidebar).queryByText(/Contexto da organização/i)).not.toBeInTheDocument();
+  expect(within(sidebar).queryByText(/BRL/i)).not.toBeInTheDocument();
+  expect(within(sidebar).queryByText(/America\/Sao_Paulo/i)).not.toBeInTheDocument();
   expect(screen.queryByRole('link', { name: 'Dívidas' })).not.toBeInTheDocument();
   expect(screen.queryByRole('link', { name: 'Calendário' })).not.toBeInTheDocument();
   expect(screen.queryByText('Orquestrador de Jornadas')).not.toBeInTheDocument();

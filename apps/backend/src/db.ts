@@ -2760,6 +2760,15 @@ function seedFinanceDemoData() {
   });
 }
 
+function shouldSeedFinanceDemoData() {
+  const explicitValue = process.env.SEED_FINANCE_DEMO?.trim().toLowerCase();
+  if (explicitValue) {
+    return ['1', 'true', 'yes', 'on'].includes(explicitValue);
+  }
+
+  return process.env.NODE_ENV !== 'production';
+}
+
 export function seedDb() {
   if (!hasSeed()) {
 
@@ -2852,7 +2861,9 @@ export function seedDb() {
       .forEach((item) => prereq.run(item[0], 'mod-01'));
   }
 
-  seedFinanceDemoData();
+  if (shouldSeedFinanceDemoData()) {
+    seedFinanceDemoData();
+  }
 }
 
 export function clearAllData() {

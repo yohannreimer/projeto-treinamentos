@@ -67,6 +67,7 @@ import {
   settleFinanceReceivable,
   softDeleteFinanceTransaction,
   toggleFinanceAutomationRule,
+  undoSettleFinancePayable,
   updateFinanceAccount,
   updateFinanceCategory,
   updateFinanceRecurringRule,
@@ -76,7 +77,7 @@ import {
 } from './service.js';
 import { getFinanceCashflow } from './cashflow.js';
 import { getFinanceExecutiveOverview } from './context.js';
-import { executeFinanceAssistantPlan, interpretFinanceAssistantCommand } from './assistant.js';
+import { executeFinanceAssistantPlan, executeFinanceAssistantPlanAction, interpretFinanceAssistantCommand } from './assistant.js';
 import {
   createFinanceEntity,
   createFinanceEntityTag,
@@ -502,7 +503,11 @@ const transactionUpdateSchema = z.object({
 
 const assistantInterpretSchema = z.object({
   transcript: z.string().trim().min(2).max(4_000),
-  surface_path: z.string().trim().max(240).nullable().optional()
+  surface_path: z.string().trim().max(240).nullable().optional(),
+  conversation_context: z.array(z.object({
+    role: z.enum(['user', 'assistant']),
+    content: z.string().trim().min(1).max(1_500)
+  })).max(8).optional()
 });
 
 const assistantTranscribeSchema = z.object({
@@ -643,7 +648,7 @@ export function registerFinanceRoutes(app: Express) {
 
   router.use(requireInternalAuth);
 
-  router.post('/assistant/interpret', requireFinancePermission(['finance.read']), (req, res) => {
+  router.post('/assistant/interpret', requireFinancePermission(['finance.read']), async (req, res) => {
     const parsed = assistantInterpretSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json(parsed.error.flatten());
@@ -651,11 +656,32 @@ export function registerFinanceRoutes(app: Express) {
 
     try {
       const context = readInternalAuthContext(res);
-      return res.status(201).json(interpretFinanceAssistantCommand({
+      return res.status(201).json(await interpretFinanceAssistantCommand({
         organization_id: readFinanceOrganizationId(res),
         created_by: context?.username ?? null,
         transcript: parsed.data.transcript,
-        surface_path: parsed.data.surface_path
+        surface_path: parsed.data.surface_path,
+        conversation_context: parsed.data.conversation_context
+      }));
+    } catch (error) {
+      return respondFinanceError(res, error);
+    }
+  });
+
+  router.post('/assistant/run', requireFinancePermission(['finance.read']), async (req, res) => {
+    const parsed = assistantInterpretSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+
+    try {
+      const context = readInternalAuthContext(res);
+      return res.status(201).json(await interpretFinanceAssistantCommand({
+        organization_id: readFinanceOrganizationId(res),
+        created_by: context?.username ?? null,
+        transcript: parsed.data.transcript,
+        surface_path: parsed.data.surface_path,
+        conversation_context: parsed.data.conversation_context
       }));
     } catch (error) {
       return respondFinanceError(res, error);
@@ -685,6 +711,24 @@ export function registerFinanceRoutes(app: Express) {
       return res.json(executeFinanceAssistantPlan(
         readFinanceOrganizationId(res),
         req.params.id,
+        parsed.data.confirmed
+      ));
+    } catch (error) {
+      return respondFinanceError(res, error);
+    }
+  });
+
+  router.post('/assistant/plans/:id/actions/:actionId/execute', requireFinancePermission(['finance.write']), (req, res) => {
+    const parsed = assistantExecuteSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+
+    try {
+      return res.json(executeFinanceAssistantPlanAction(
+        readFinanceOrganizationId(res),
+        req.params.id,
+        req.params.actionId,
         parsed.data.confirmed
       ));
     } catch (error) {
@@ -1519,6 +1563,24 @@ export function registerFinanceRoutes(app: Express) {
     try {
       const context = readInternalAuthContext(res);
       return res.json(settleFinancePayable({
+        ...parsed.data,
+        organization_id: readFinanceOrganizationId(res),
+        resource_id: req.params.id,
+        created_by: context?.username ?? null
+      }));
+    } catch (error) {
+      return respondFinanceError(res, error);
+    }
+  });
+
+  router.post('/payables/:id/undo-settle', requireFinancePermission(['finance.write']), (req, res) => {
+    const parsed = operationNoteSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+    try {
+      const context = readInternalAuthContext(res);
+      return res.json(undoSettleFinancePayable({
         ...parsed.data,
         organization_id: readFinanceOrganizationId(res),
         resource_id: req.params.id,

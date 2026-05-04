@@ -23,15 +23,52 @@ export type FinanceAssistantAction = {
   payload: Record<string, unknown>;
 };
 
+export type FinanceAssistantAnswerBreakdownItem = {
+  id: string;
+  resource_type:
+    | 'payable'
+    | 'receivable'
+    | 'transaction'
+    | 'recurring_rule'
+    | 'category'
+    | 'cost_center'
+    | 'account'
+    | 'payment_method'
+    | 'entity'
+    | 'metric'
+    | 'recommendation';
+  title: string;
+  amount_cents?: number;
+  due_date?: string | null;
+  status?: string | null;
+  meta: string[];
+  available_actions: string[];
+};
+
+export type FinanceAssistantAnswer = {
+  title: string;
+  summary: string;
+  primary_metric: {
+    label: string;
+    amount_cents?: number;
+    count?: number;
+  };
+  breakdown: FinanceAssistantAnswerBreakdownItem[];
+  insights: string[];
+  suggested_actions: string[];
+};
+
 export type FinanceAssistantPlan = {
   id: string;
   transcript: string;
   surface_path: string | null;
   status: FinanceAssistantStatus;
+  mode?: 'command' | 'analysis' | 'hybrid';
   risk_level: FinanceAssistantRiskLevel;
   requires_confirmation: boolean;
   human_summary: string;
   actions: FinanceAssistantAction[];
+  answer?: FinanceAssistantAnswer;
 };
 
 export type FinanceAssistantExecutionResult = {
@@ -1254,19 +1291,30 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (!response.ok) {
     const raw = await response.text();
+    let parsed: {
+      message?: string;
+      formErrors?: string[];
+      fieldErrors?: Record<string, string[] | undefined>;
+    } | null = null;
+
     try {
-      const parsed = JSON.parse(raw) as {
+      parsed = JSON.parse(raw) as {
         message?: string;
         formErrors?: string[];
         fieldErrors?: Record<string, string[] | undefined>;
       };
+    } catch {
+      parsed = null;
+    }
+
+    if (parsed) {
       const fieldErrorEntry = Object.entries(parsed.fieldErrors ?? {}).find(([, messages]) => Array.isArray(messages) && messages.length > 0);
       const fieldMessage = fieldErrorEntry?.[1]?.[0];
       const formMessage = parsed.formErrors?.[0];
       throw new Error(fieldMessage || formMessage || parsed.message || raw || 'Erro na API');
-    } catch {
-      throw new Error(raw || 'Erro na API');
     }
+
+    throw new Error(raw || 'Erro na API');
   }
 
   return response.json() as Promise<T>;
@@ -1282,13 +1330,22 @@ export const financeApi = {
       method: 'POST',
       body: JSON.stringify(payload)
     }),
-  interpretAssistantCommand: (payload: { transcript: string; surface_path?: string | null }) =>
-    req<FinanceAssistantPlan>('/finance/assistant/interpret', {
+  interpretAssistantCommand: (payload: {
+    transcript: string;
+    surface_path?: string | null;
+    conversation_context?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  }) =>
+    req<FinanceAssistantPlan>('/finance/assistant/run', {
       method: 'POST',
       body: JSON.stringify(payload)
     }),
   executeAssistantPlan: (planId: string) =>
     req<FinanceAssistantExecutionResult>(`/finance/assistant/plans/${encodeURIComponent(planId)}/execute`, {
+      method: 'POST',
+      body: JSON.stringify({ confirmed: true })
+    }),
+  executeAssistantPlanAction: (planId: string, actionId: string) =>
+    req<FinanceAssistantExecutionResult>(`/finance/assistant/plans/${encodeURIComponent(planId)}/actions/${encodeURIComponent(actionId)}/execute`, {
       method: 'POST',
       body: JSON.stringify({ confirmed: true })
     }),
@@ -1581,6 +1638,11 @@ export const financeApi = {
     }),
   settlePayable: (payableId: string, payload: FinanceOperationPayload = {}) =>
     req<FinancePayable>(`/finance/payables/${payableId}/settle`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  undoSettlePayable: (payableId: string, payload: FinanceOperationPayload = {}) =>
+    req<FinancePayable>(`/finance/payables/${payableId}/undo-settle`, {
       method: 'POST',
       body: JSON.stringify(payload)
     }),

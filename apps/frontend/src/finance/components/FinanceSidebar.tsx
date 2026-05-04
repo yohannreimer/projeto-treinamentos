@@ -5,8 +5,6 @@ import type { FinanceContext } from '../api';
 
 type FinanceSidebarProps = {
   context: FinanceContext | null;
-  loading: boolean;
-  error: string | null;
 };
 
 const navigationItems = [
@@ -102,29 +100,18 @@ function NavigationGlyph({ name }: { name: typeof navigationItems[number]['icon'
   }
 }
 
-export function FinanceSidebar({ context, loading, error }: FinanceSidebarProps) {
-  const organizationName = context?.organization_name || 'Empresa logada';
+export function FinanceSidebar({ context }: FinanceSidebarProps) {
+  const organizationName = context?.organization_name || 'Holand';
   const currentUser = internalSessionStore.read()?.user ?? null;
   const nonFinanceNavItems = visibleNavItemsForUser(currentUser).filter((item) => item.to !== '/financeiro');
   const backLink = nonFinanceNavItems[0]?.to ?? null;
   const fallbackRoute = defaultRouteForUser(currentUser);
-  const timezone = context?.timezone || 'America/Sao_Paulo';
-  const currency = context?.currency || 'BRL';
 
   return (
     <aside className="finance-sidebar" aria-label="Navegação financeira">
       <div className="finance-sidebar__intro">
-        <small className="finance-sidebar__eyebrow">Financeiro ERP</small>
-        <strong className="finance-sidebar__title">{organizationName}</strong>
-        <p className="finance-sidebar__copy">ERP financeiro da empresa logada, com navegação para rotina de caixa, contas, conciliação e relatórios.</p>
-      </div>
-
-      <div className="finance-sidebar__org-card">
-        <small className="finance-sidebar__label">Contexto da organização</small>
-        <strong className="finance-sidebar__org-name">{organizationName}</strong>
-        <p className="finance-sidebar__microcopy">{currency} · {timezone}</p>
-        {loading ? <p className="finance-sidebar__microcopy">Carregando contexto...</p> : null}
-        {error ? <p className="finance-sidebar__error">{error}</p> : null}
+        <small className="finance-sidebar__eyebrow">Financeiro</small>
+        <strong className="finance-sidebar__title">ERP {organizationName}</strong>
       </div>
 
       <nav className="finance-sidebar__nav" aria-label="Sitemap financeiro">

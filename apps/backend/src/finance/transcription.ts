@@ -66,6 +66,14 @@ function extractOpenRouterText(parsed: OpenRouterChatCompletionResponse) {
   return '';
 }
 
+function isTerminatedProviderError(message: string) {
+  return /\bterminated\b/i.test(message);
+}
+
+function openRouterTranscriptionInterruptedMessage() {
+  return 'A transcrição por IA foi interrompida pelo provedor. Use o texto capturado ou tente gravar novamente.';
+}
+
 async function transcribeWithOpenAi(input: FinanceAssistantTranscriptionInput) {
   const apiKey = readOpenAiApiKey();
   const { audioBuffer, mimeType } = validateAudioInput(input);
@@ -109,45 +117,57 @@ async function transcribeWithOpenRouter(input: FinanceAssistantTranscriptionInpu
   const { mimeType } = validateAudioInput(input);
   const model = process.env.OPENROUTER_AUDIO_MODEL?.trim() || 'google/gemini-2.5-flash';
 
-  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': process.env.OPENROUTER_SITE_URL?.trim() || 'http://localhost:5173',
-      'X-Title': process.env.OPENROUTER_APP_NAME?.trim() || 'Orquestrador Financeiro'
-    },
-    body: JSON.stringify({
-      model,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: 'Transcreva este áudio em português do Brasil. Responda somente com o texto transcrito, sem comentários.'
-            },
-            {
-              type: 'input_audio',
-              input_audio: {
-                data: input.audio_base64,
-                format: formatFromMimeType(mimeType)
+  let response: Response;
+  try {
+    response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': process.env.OPENROUTER_SITE_URL?.trim() || 'http://localhost:5173',
+        'X-Title': process.env.OPENROUTER_APP_NAME?.trim() || 'Orquestrador Financeiro'
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: 'Transcreva este áudio em português do Brasil. Responda somente com o texto transcrito, sem comentários.'
               },
-              inputAudio: {
-                data: input.audio_base64,
-                format: formatFromMimeType(mimeType)
+              {
+                type: 'input_audio',
+                input_audio: {
+                  data: input.audio_base64,
+                  format: formatFromMimeType(mimeType)
+                },
+                inputAudio: {
+                  data: input.audio_base64,
+                  format: formatFromMimeType(mimeType)
+                }
               }
-            }
-          ]
-        }
-      ],
-      temperature: 0,
-      stream: false
-    })
-  });
+            ]
+          }
+        ],
+        temperature: 0,
+        stream: false
+      })
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (isTerminatedProviderError(message)) {
+      throw new Error(openRouterTranscriptionInterruptedMessage());
+    }
+    throw new Error('Falha ao conectar com a transcrição por voz via OpenRouter.');
+  }
 
   const raw = await response.text();
   if (!response.ok) {
+    if (isTerminatedProviderError(raw)) {
+      throw new Error(openRouterTranscriptionInterruptedMessage());
+    }
     throw new Error(`Falha na transcrição por voz via OpenRouter: ${raw || response.statusText}`);
   }
 

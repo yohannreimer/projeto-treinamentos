@@ -933,6 +933,8 @@ export type CreateFinanceRecurringRuleInput = FinanceOperationActorInput & {
 export type UpdateFinanceRecurringRuleInput = FinanceOperationActorInput & {
   organization_id: string;
   recurring_rule_id: string;
+  name?: string | null;
+  day_of_month?: number | null;
   status?: FinanceRecurringRuleStatus;
   end_date?: string | null;
   materialization_months?: number | null;
@@ -1422,13 +1424,24 @@ export type UpdateFinanceTransactionInput = {
 export type FinanceAssistantRiskLevel = 'low' | 'medium' | 'high';
 export type FinanceAssistantInteractionStatus = 'draft' | 'executed' | 'canceled' | 'failed';
 export type FinanceAssistantIntent =
+  | 'create_entity'
   | 'create_payable'
   | 'create_receivable'
   | 'settle_payable'
   | 'settle_receivable'
+  | 'cancel_payable'
+  | 'cancel_receivable'
   | 'query_due'
   | 'query_quality'
-  | 'create_simulation';
+  | 'create_simulation'
+  | 'update_recurring_rule'
+  | 'create_cost_center'
+  | 'update_cost_center'
+  | 'inactivate_cost_center'
+  | 'create_category'
+  | 'update_category'
+  | 'inactivate_category'
+  | 'classify_payable';
 
 export type FinanceAssistantActionDto = {
   id: string;
@@ -1441,15 +1454,52 @@ export type FinanceAssistantActionDto = {
   payload: Record<string, unknown>;
 };
 
+export type FinanceAssistantAnswerBreakdownItemDto = {
+  id: string;
+  resource_type:
+    | 'payable'
+    | 'receivable'
+    | 'transaction'
+    | 'recurring_rule'
+    | 'category'
+    | 'cost_center'
+    | 'account'
+    | 'payment_method'
+    | 'entity'
+    | 'metric'
+    | 'recommendation';
+  title: string;
+  amount_cents?: number;
+  due_date?: string | null;
+  status?: string | null;
+  meta: string[];
+  available_actions: string[];
+};
+
+export type FinanceAssistantAnswerDto = {
+  title: string;
+  summary: string;
+  primary_metric: {
+    label: string;
+    amount_cents?: number;
+    count?: number;
+  };
+  breakdown: FinanceAssistantAnswerBreakdownItemDto[];
+  insights: string[];
+  suggested_actions: string[];
+};
+
 export type FinanceAssistantPlanDto = {
   id: string;
   transcript: string;
   surface_path: string | null;
   status: FinanceAssistantInteractionStatus;
+  mode?: 'command' | 'analysis' | 'hybrid';
   risk_level: FinanceAssistantRiskLevel;
   requires_confirmation: boolean;
   human_summary: string;
   actions: FinanceAssistantActionDto[];
+  answer?: FinanceAssistantAnswerDto;
 };
 
 export type FinanceAssistantInterpretInput = {
@@ -1457,4 +1507,8 @@ export type FinanceAssistantInterpretInput = {
   created_by?: string | null;
   transcript: string;
   surface_path?: string | null;
+  conversation_context?: Array<{
+    role: 'user' | 'assistant';
+    content: string;
+  }>;
 };

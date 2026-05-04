@@ -4,6 +4,8 @@ services:
     environment:
       NODE_ENV: production
       PORT: "4000"
+      APP_DB_PATH: /app/apps/backend/data/app.db
+      SEED_FINANCE_DEMO: "false"
     volumes:
       - orquestrador_data:/app/apps/backend/data
     networks:

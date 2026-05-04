@@ -2798,17 +2798,24 @@ export function updateFinanceRecurringRule(input: UpdateFinanceRecurringRuleInpu
   const organizationId = resolveOrganizationId(input.organization_id);
   const current = readFinanceRecurringRule(organizationId, input.recurring_rule_id);
   const nextStatus = input.status ?? current.status;
+  const nextDayOfMonth = typeof input.day_of_month === 'number'
+    ? Math.max(1, Math.min(31, Math.trunc(input.day_of_month)))
+    : current.day_of_month;
   const nowIso = new Date().toISOString();
 
   db.prepare(`
     update financial_recurring_rule
-    set status = ?,
+    set name = ?,
+        day_of_month = ?,
+        status = ?,
         end_date = ?,
         materialization_months = ?,
         updated_at = ?
     where organization_id = ?
       and id = ?
   `).run(
+    input.name?.trim() || current.name,
+    nextDayOfMonth,
     nextStatus,
     typeof input.end_date === 'undefined' ? current.end_date : input.end_date,
     Math.max(1, Math.min(24, Math.trunc(input.materialization_months ?? current.materialization_months))),
@@ -3071,6 +3078,69 @@ export function settleFinancePayable(input: FinanceOperationInput): FinancePayab
     created_by: input.created_by
   });
   return readFinancePayable(organizationId, input.resource_id);
+}
+
+export function undoSettleFinancePayable(input: FinanceOperationInput): FinancePayableDto {
+  const organizationId = resolveOrganizationId(input.organization_id);
+  const payable = readFinancePayable(organizationId, input.resource_id);
+  if (payable.status !== 'paid' || payable.paid_amount_cents <= 0 || !payable.financial_transaction_id) {
+    throw new Error('Essa conta não tem uma baixa individual para desfazer.');
+  }
+
+  const movement = db.prepare(`
+    select id, source, source_ref, is_deleted
+    from financial_transaction
+    where organization_id = ?
+      and id = ?
+    limit 1
+  `).get(organizationId, payable.financial_transaction_id) as {
+    id: string;
+    source: string;
+    source_ref: string | null;
+    is_deleted: number;
+  } | undefined;
+
+  if (!movement || movement.source !== 'payable_settlement' || movement.source_ref !== payable.id || Number(movement.is_deleted) === 1) {
+    throw new Error('Não encontrei uma movimentação de baixa segura para desfazer.');
+  }
+
+  const nowIso = new Date().toISOString();
+  const restoredStatus = payable.due_date && payable.due_date < getOperationalTodayIso() ? 'overdue' : 'open';
+  const run = db.transaction(() => {
+    db.prepare(`
+      update financial_transaction
+      set is_deleted = 1,
+          updated_at = ?
+      where organization_id = ?
+        and id = ?
+    `).run(nowIso, organizationId, movement.id);
+
+    db.prepare(`
+      update financial_payable
+      set status = ?,
+          paid_at = null,
+          paid_amount_cents = 0,
+          financial_transaction_id = null,
+          note = coalesce(nullif(?, ''), note),
+          updated_at = ?
+      where organization_id = ?
+        and id = ?
+    `).run(restoredStatus, input.note?.trim() || null, nowIso, organizationId, payable.id);
+  });
+  run();
+
+  writeFinanceOperationAudit({
+    organization_id: organizationId,
+    company_id: payable.company_id,
+    resource_type: 'payable',
+    resource_id: payable.id,
+    action: 'undo_settle',
+    amount_cents: payable.paid_amount_cents,
+    note: input.note,
+    created_by: input.created_by
+  });
+
+  return readFinancePayable(organizationId, payable.id);
 }
 
 export function partiallySettleFinancePayable(input: FinancePartialSettlementInput): FinancePayableDto {

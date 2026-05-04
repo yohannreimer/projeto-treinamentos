@@ -7,13 +7,13 @@ import { useFinanceContext } from './hooks/useFinanceContext';
 import './finance.css';
 
 export function FinanceWorkspace() {
-  const { context, loading, error } = useFinanceContext();
+  const { context } = useFinanceContext();
   const session = internalSessionStore.read();
   const canWrite = hasAnyPermission(session?.user, ['finance.write']);
 
   return (
     <div className="finance-shell">
-      <FinanceSidebar context={context} loading={loading} error={error} />
+      <FinanceSidebar context={context} />
       <main className="finance-workspace__main">
         <Outlet />
       </main>

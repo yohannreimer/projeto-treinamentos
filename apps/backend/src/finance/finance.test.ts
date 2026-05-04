@@ -8,11 +8,59 @@ import { db, initDb, resetDbConnection } from '../db.js';
 import { createInternalUser } from '../internalAuth.js';
 import { assignTestDbPath } from '../test/testDb.js';
 import { currentFinanceMonthRange, financeOffsetDateKey } from './period.js';
+import { getFinanceAgentCapabilities } from './agentCapabilities.js';
+import { runFinanceAgentQueryTool } from './agentQueries.js';
 
 function cleanupDbFiles(dbPath: string) {
   for (const suffix of ['', '-shm', '-wal']) {
     fs.rmSync(`${dbPath}${suffix}`, { force: true });
   }
+}
+
+function parseOpenRouterBody(init: RequestInit | undefined) {
+  return JSON.parse(String(init?.body)) as {
+    model?: string;
+    provider?: { order?: string[] };
+    tools?: Array<{ function?: { name?: string } }>;
+    tool_choice?: string;
+    messages: Array<{ role: string; content: string }>;
+  };
+}
+
+function isOpenRouterIntentJudgeBody(body: { tools?: unknown; messages: Array<{ content: string }> }) {
+  return !body.tools && body.messages.some((message) => message.content.includes('juiz de intenção'));
+}
+
+function openRouterIntentJudgeResponse(input: {
+  speechAct?: 'consultative' | 'hypothetical_suggestion' | 'operational_command' | 'mixed' | 'ambiguous' | 'unsafe';
+  allowCommands?: boolean;
+  dataNeeds?: string[];
+} = {}) {
+  return new Response(JSON.stringify({
+    model: 'deepseek/deepseek-v4-flash-20260423',
+    provider: 'Novita',
+    choices: [
+      {
+        finish_reason: 'stop',
+        message: {
+          content: JSON.stringify({
+            speech_act: input.speechAct ?? 'consultative',
+            allow_commands: Boolean(input.allowCommands),
+            confidence: 0.94,
+            user_goal: 'Entender intenção antes de agir.',
+            data_needs: input.dataNeeds ?? [],
+            rationale: 'Julgamento simulado no teste.'
+          })
+        }
+      }
+    ]
+  }), { status: 200 });
+}
+
+function lastOpenRouterUserPayload(body: { messages: Array<{ role: string; content: string }> }) {
+  const userMessage = [...body.messages].reverse().find((message) => message.role === 'user');
+  assert.ok(userMessage, 'OpenRouter request sem mensagem user');
+  return JSON.parse(userMessage.content);
 }
 
 type ForeignKeyRow = {
@@ -588,6 +636,61 @@ test('POST /finance/assistant/transcribe usa OpenRouter quando OPENROUTER_API_KE
   }
 });
 
+test('POST /finance/assistant/transcribe traduz erro terminated do OpenRouter', async () => {
+  const dbPath = assignTestDbPath('finance-whisper-transcribe-openrouter-terminated');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+  const originalFetch = globalThis.fetch;
+  const originalOpenRouterApiKey = process.env.OPENROUTER_API_KEY;
+  const originalApiKey = process.env.OPENAI_API_KEY;
+
+  try {
+    seedFinanceCompanies();
+    createInternalUser({
+      username: 'finance.whisper.openrouter.terminated',
+      display_name: 'Finance Whisper OpenRouter Terminated',
+      password: 'Senha#123',
+      role: 'supremo',
+      permissions: ['finance.read', 'finance.write']
+    });
+    process.env.OPENROUTER_API_KEY = 'test-openrouter-key';
+    delete process.env.OPENAI_API_KEY;
+    globalThis.fetch = async () => new Response(JSON.stringify({ message: 'terminated' }), { status: 502 });
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.whisper.openrouter.terminated', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+
+    const res = await request(app)
+      .post('/finance/assistant/transcribe')
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({
+        audio_base64: Buffer.alloc(1024, 1).toString('base64'),
+        mime_type: 'audio/webm'
+      });
+
+    assert.equal(res.status, 400);
+    assert.match(res.body.message, /transcrição por IA foi interrompida pelo provedor/i);
+    assert.doesNotMatch(res.body.message, /\{"message":"terminated"\}/i);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (typeof originalOpenRouterApiKey === 'string') {
+      process.env.OPENROUTER_API_KEY = originalOpenRouterApiKey;
+    } else {
+      delete process.env.OPENROUTER_API_KEY;
+    }
+    if (typeof originalApiKey === 'string') {
+      process.env.OPENAI_API_KEY = originalApiKey;
+    } else {
+      delete process.env.OPENAI_API_KEY;
+    }
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
 test('POST /finance/assistant/transcribe informa quando servidor não tem transcrição configurada', async () => {
   const dbPath = assignTestDbPath('finance-whisper-transcribe-missing-key');
   cleanupDbFiles(dbPath);
@@ -858,6 +961,1745 @@ test('POST /finance/assistant/plans/:id/execute cria recorrência mensal quando 
 
     const payableCount = db.prepare('select count(*) as total from financial_payable').get() as { total: number };
     assert.ok(payableCount.total >= 2);
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('POST /finance/assistant/interpret limpa descrição e detecta recorrência em comando natural', async () => {
+  const dbPath = assignTestDbPath('finance-whisper-interpret-natural-recurring');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+  try {
+    seedFinanceCompanies();
+    seedFinanceAccountAndCategory();
+    createInternalUser({
+      username: 'finance.whisper.natural',
+      display_name: 'Finance Whisper Natural',
+      password: 'Senha#123',
+      role: 'supremo',
+      permissions: ['finance.read', 'finance.write']
+    });
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.whisper.natural', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+
+    const res = await request(app)
+      .post('/finance/assistant/interpret')
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({
+        transcript: 'É criar uma conta recorrente de aluguel no valor de 12.553, que o pagamento é todo dia 17.',
+        surface_path: '/financeiro/payables'
+      });
+
+    assert.equal(res.status, 201);
+    assert.equal(res.body.actions[0].intent, 'create_payable');
+    assert.equal(res.body.actions[0].payload.description, 'Aluguel');
+    assert.equal(res.body.actions[0].payload.amount_cents, 1255300);
+    assert.equal(res.body.actions[0].payload.recurring_monthly, true);
+    assert.equal(res.body.actions[0].payload.day_of_month, 17);
+    assert.match(res.body.actions[0].human_summary, /mensal fixa: Aluguel/i);
+    assert.doesNotMatch(res.body.actions[0].human_summary, /É criar uma conta recorrente/i);
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('POST /finance/assistant/run aceita JSON do juiz OpenRouter para plano multi-ação', async () => {
+  const dbPath = assignTestDbPath('finance-agent-tool-run');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+  const originalFetch = globalThis.fetch;
+  const originalOpenRouterApiKey = process.env.OPENROUTER_API_KEY;
+  const originalFinanceAssistantAi = process.env.FINANCE_ASSISTANT_AI;
+  const originalAssistantModel = process.env.OPENROUTER_ASSISTANT_MODEL;
+
+  try {
+    seedFinanceCompanies();
+    seedFinanceAccountAndCategory();
+    createInternalUser({
+      username: 'finance.agent.tools',
+      display_name: 'Finance Agent Tools',
+      password: 'Senha#123',
+      role: 'supremo',
+      permissions: ['finance.read', 'finance.write']
+    });
+    process.env.OPENROUTER_API_KEY = 'test-openrouter-agent-key';
+    delete process.env.FINANCE_ASSISTANT_AI;
+    delete process.env.OPENROUTER_ASSISTANT_MODEL;
+    let openRouterCallCount = 0;
+    globalThis.fetch = async (_input, init) => {
+      openRouterCallCount += 1;
+      const body = parseOpenRouterBody(init);
+      if (isOpenRouterIntentJudgeBody(body)) {
+        return openRouterIntentJudgeResponse({ speechAct: 'mixed', allowCommands: true });
+      }
+      assert.equal(body.model, 'openai/gpt-5.4-mini');
+      assert.equal(body.provider?.order?.[0], 'Azure');
+      assert.ok(body.tools?.some((tool) => tool.function?.name === 'finance_create_payable'));
+      assert.ok(body.tools?.some((tool) => tool.function?.name === 'finance_list_cost_centers'));
+      assert.match(body.messages.map((message) => message.content).join('\n'), /finance_create_payable/i);
+      assert.match(body.messages[0].content, /Você é o copiloto financeiro/i);
+      assert.match(body.messages[1].content, /Responda exclusivamente JSON válido/i);
+      const userPayload = lastOpenRouterUserPayload(body);
+      assert.match(JSON.stringify(userPayload), /finance_create_recurring_payable/i);
+      assert.match(JSON.stringify(userPayload), /finance_create_simulation/i);
+      return new Response(JSON.stringify({
+        choices: [
+          {
+            finish_reason: 'stop',
+            message: {
+              content: JSON.stringify([
+                {
+                  intent: 'create_payable',
+                  description: 'Aluguel',
+                  amount_cents: 1255300,
+                  due_day: 17,
+                  recurring_monthly: true,
+                  confidence: 0.91
+                },
+                {
+                  intent: 'create_simulation',
+                  confidence: 0.86,
+                  payload: {
+                    name: 'Cenário aluguel',
+                    starting_balance_cents: 10000000,
+                    horizon_days: 90
+                  }
+                }
+              ])
+            }
+          }
+        ]
+      }), { status: 200 });
+    };
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.agent.tools', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+
+    const res = await request(app)
+      .post('/finance/assistant/run')
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({
+        transcript: 'cria aluguel recorrente de 12.553 todo dia 17 e monta uma simulação de 90 dias',
+        surface_path: '/financeiro/payables'
+      });
+
+    assert.equal(res.status, 201);
+    assert.equal(openRouterCallCount, 2);
+    assert.equal(res.body.actions.length, 2);
+    assert.equal(res.body.actions[0].intent, 'create_payable');
+    assert.equal(res.body.actions[0].payload.description, 'Aluguel');
+    assert.equal(res.body.actions[0].payload.recurring_monthly, true);
+    assert.equal(res.body.actions[0].payload.day_of_month, 17);
+    assert.equal(res.body.actions[1].intent, 'create_simulation');
+    assert.equal(res.body.actions[1].payload.horizon_days, 90);
+    assert.match(res.body.human_summary, /Aluguel/i);
+    assert.match(res.body.human_summary, /Cenário aluguel/i);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (typeof originalOpenRouterApiKey === 'string') {
+      process.env.OPENROUTER_API_KEY = originalOpenRouterApiKey;
+    } else {
+      delete process.env.OPENROUTER_API_KEY;
+    }
+    if (typeof originalFinanceAssistantAi === 'string') {
+      process.env.FINANCE_ASSISTANT_AI = originalFinanceAssistantAi;
+    } else {
+      delete process.env.FINANCE_ASSISTANT_AI;
+    }
+    if (typeof originalAssistantModel === 'string') {
+      process.env.OPENROUTER_ASSISTANT_MODEL = originalAssistantModel;
+    } else {
+      delete process.env.OPENROUTER_ASSISTANT_MODEL;
+    }
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('POST /finance/assistant/run executa tools de cadastro, baixa e simulação com blocos', async () => {
+  const dbPath = assignTestDbPath('finance-agent-tool-execute');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+  const originalFetch = globalThis.fetch;
+  const originalOpenRouterApiKey = process.env.OPENROUTER_API_KEY;
+  const originalFinanceAssistantAi = process.env.FINANCE_ASSISTANT_AI;
+
+  try {
+    seedFinanceCompanies();
+    seedFinanceAccountAndCategory();
+    createInternalUser({
+      username: 'finance.agent.execute',
+      display_name: 'Finance Agent Execute',
+      password: 'Senha#123',
+      role: 'supremo',
+      permissions: ['finance.read', 'finance.write']
+    });
+    process.env.OPENROUTER_API_KEY = 'test-openrouter-agent-key';
+    process.env.FINANCE_ASSISTANT_AI = 'true';
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.agent.execute', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+
+    const payableRes = await request(app)
+      .post('/finance/payables')
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({
+        description: 'Aluguel sala',
+        amount_cents: 680000,
+        status: 'open',
+        issue_date: '2026-04-01',
+        due_date: '2026-04-15'
+      });
+    assert.equal(payableRes.status, 201);
+
+    globalThis.fetch = async (_input, init) => {
+      const body = parseOpenRouterBody(init);
+      if (isOpenRouterIntentJudgeBody(body)) {
+        return openRouterIntentJudgeResponse({ speechAct: 'mixed', allowCommands: true });
+      }
+      return new Response(JSON.stringify({
+        choices: [
+          {
+            finish_reason: 'tool_calls',
+            message: {
+              tool_calls: [
+              {
+                id: 'call-entity',
+                type: 'function',
+                function: {
+                  name: 'finance_create_entity',
+                  arguments: JSON.stringify({
+                    legal_name: 'Imobiliária Central',
+                    kind: 'supplier'
+                  })
+                }
+              },
+              {
+                id: 'call-settle',
+                type: 'function',
+                function: {
+                  name: 'finance_settle_payable',
+                  arguments: JSON.stringify({
+                    payable_id: payableRes.body.id,
+                    settled_at: '2026-04-16',
+                    note: 'Baixa por voz'
+                  })
+                }
+              },
+              {
+                id: 'call-simulation',
+                type: 'function',
+                function: {
+                  name: 'finance_create_simulation',
+                  arguments: JSON.stringify({
+                    name: 'Cenário caixa',
+                    starting_balance_cents: 5000000,
+                    horizon_days: 30,
+                    items: [
+                      {
+                        label: 'Entrada prevista',
+                        kind: 'manual_inflow',
+                        amount_cents: 2000000,
+                        event_date: '2026-04-20'
+                      },
+                      {
+                        label: 'Pagamento fornecedor',
+                        kind: 'manual_outflow',
+                        amount_cents: 350000,
+                        event_date: '2026-04-22'
+                      }
+                    ]
+                  })
+                }
+              }
+              ]
+            }
+          }
+        ]
+      }), { status: 200 });
+    };
+
+    const planRes = await request(app)
+      .post('/finance/assistant/run')
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({
+        transcript: 'cadastre a imobiliária, baixe o aluguel e simule entrada e pagamento',
+        surface_path: '/financeiro/payables'
+      });
+
+    assert.equal(planRes.status, 201);
+    assert.equal(planRes.body.actions.length, 3);
+    assert.equal(planRes.body.actions[0].intent, 'create_entity');
+    assert.equal(planRes.body.actions[1].intent, 'settle_payable');
+    assert.equal(planRes.body.actions[2].intent, 'create_simulation');
+    assert.equal(planRes.body.actions[2].payload.items.length, 2);
+
+    const executeRes = await request(app)
+      .post(`/finance/assistant/plans/${planRes.body.id}/execute`)
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({ confirmed: true });
+
+    assert.equal(executeRes.status, 200);
+    assert.deepEqual(executeRes.body.results.map((result: { resource_type: string }) => result.resource_type), [
+      'entity',
+      'payable',
+      'simulation'
+    ]);
+
+    const entity = db.prepare('select legal_name, kind from financial_entity where legal_name = ?').get('Imobiliária Central') as {
+      legal_name: string;
+      kind: string;
+    };
+    assert.equal(entity.kind, 'supplier');
+
+    const payable = db.prepare('select status, paid_at, paid_amount_cents from financial_payable where id = ?').get(payableRes.body.id) as {
+      status: string;
+      paid_at: string;
+      paid_amount_cents: number;
+    };
+    assert.equal(payable.status, 'paid');
+    assert.equal(payable.paid_at, '2026-04-16');
+    assert.equal(payable.paid_amount_cents, 680000);
+
+    const simulationItems = db.prepare('select count(*) as total from financial_simulation_item').get() as { total: number };
+    assert.equal(simulationItems.total, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (typeof originalOpenRouterApiKey === 'string') {
+      process.env.OPENROUTER_API_KEY = originalOpenRouterApiKey;
+    } else {
+      delete process.env.OPENROUTER_API_KEY;
+    }
+    if (typeof originalFinanceAssistantAi === 'string') {
+      process.env.FINANCE_ASSISTANT_AI = originalFinanceAssistantAi;
+    } else {
+      delete process.env.FINANCE_ASSISTANT_AI;
+    }
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('POST /finance/assistant/run entende baixar próximos recebíveis em aberto da página atual', async () => {
+  const dbPath = assignTestDbPath('finance-agent-next-receivables');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+  const originalOpenRouterApiKey = process.env.OPENROUTER_API_KEY;
+  const originalFinanceAssistantAi = process.env.FINANCE_ASSISTANT_AI;
+
+  try {
+    seedFinanceCompanies();
+    seedFinanceAccountAndCategory();
+    createInternalUser({
+      username: 'finance.agent.receivables',
+      display_name: 'Finance Agent Receivables',
+      password: 'Senha#123',
+      role: 'supremo',
+      permissions: ['finance.read', 'finance.write']
+    });
+    delete process.env.OPENROUTER_API_KEY;
+    delete process.env.FINANCE_ASSISTANT_AI;
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.agent.receivables', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+
+    for (const receivable of [
+      { description: 'Mensalidade Alpha', amount_cents: 100000, due_date: '2026-04-27' },
+      { description: 'Mensalidade Beta', amount_cents: 200000, due_date: '2026-04-29' },
+      { description: 'Mensalidade Gamma', amount_cents: 300000, due_date: '2026-05-03' }
+    ]) {
+      const created = await request(app)
+        .post('/finance/receivables')
+        .set('Authorization', `Bearer ${loginRes.body.token}`)
+        .send({
+          ...receivable,
+          status: 'open',
+          issue_date: '2026-04-20'
+        });
+      assert.equal(created.status, 201);
+    }
+
+    const planRes = await request(app)
+      .post('/finance/assistant/run')
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({
+        transcript: 'os próximos dois vencimentos em aberto da aba contas a receber, me retorne quais são e baixe os dois para mim',
+        surface_path: '/financeiro/receivables'
+      });
+
+    assert.equal(planRes.status, 201);
+    assert.equal(planRes.body.actions.length, 2);
+    assert.deepEqual(planRes.body.actions.map((action: { intent: string }) => action.intent), [
+      'settle_receivable',
+      'settle_receivable'
+    ]);
+    assert.match(planRes.body.human_summary, /Mensalidade Alpha/i);
+    assert.match(planRes.body.human_summary, /Mensalidade Beta/i);
+    assert.doesNotMatch(planRes.body.human_summary, /Mensalidade Gamma/i);
+
+    const executeRes = await request(app)
+      .post(`/finance/assistant/plans/${planRes.body.id}/execute`)
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({ confirmed: true });
+
+    assert.equal(executeRes.status, 200);
+    assert.equal(executeRes.body.results.length, 2);
+
+    const statuses = db.prepare(`
+      select description, status
+      from financial_receivable
+      order by due_date asc
+    `).all() as Array<{ description: string; status: string }>;
+
+    assert.deepEqual(statuses.map((row) => [row.description, row.status]), [
+      ['Mensalidade Alpha', 'received'],
+      ['Mensalidade Beta', 'received'],
+      ['Mensalidade Gamma', 'open']
+    ]);
+  } finally {
+    if (typeof originalOpenRouterApiKey === 'string') {
+      process.env.OPENROUTER_API_KEY = originalOpenRouterApiKey;
+    } else {
+      delete process.env.OPENROUTER_API_KEY;
+    }
+    if (typeof originalFinanceAssistantAi === 'string') {
+      process.env.FINANCE_ASSISTANT_AI = originalFinanceAssistantAi;
+    } else {
+      delete process.env.FINANCE_ASSISTANT_AI;
+    }
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('agent registry expõe consultas de catálogo e busca categorias por nome', () => {
+  const dbPath = assignTestDbPath('finance-agent-registry-query');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+  createApp({ forceDbRefresh: true, seedDb: false });
+
+  try {
+    seedFinanceCompanies();
+    seedFinanceAccountAndCategory();
+
+    const capabilities = getFinanceAgentCapabilities();
+    assert.ok(capabilities.some((capability) => capability.tool_name === 'finance_list_categories'));
+    assert.ok(capabilities.some((capability) => capability.tool_name === 'finance_update_recurring_rule'));
+
+    const result = runFinanceAgentQueryTool({
+      organization_id: 'org-holand',
+      tool_name: 'finance_list_categories',
+      search: 'despesas operacionais',
+      limit: 5
+    });
+
+    assert.equal(result.items[0].label, 'Despesas Operacionais');
+    assert.equal(result.items[0].kind, 'expense');
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('POST /finance/assistant/run prepara botões seguros para cancelar recebíveis atrasados', async () => {
+  const dbPath = assignTestDbPath('finance-agent-cancel-overdue-receivables');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+  const originalFetch = globalThis.fetch;
+  const originalOpenRouterApiKey = process.env.OPENROUTER_API_KEY;
+  const originalFinanceAssistantAi = process.env.FINANCE_ASSISTANT_AI;
+
+  try {
+    seedFinanceCompanies();
+    seedFinanceAccountAndCategory();
+    createInternalUser({
+      username: 'finance.agent.cancel.overdue',
+      display_name: 'Finance Agent Cancel Overdue',
+      password: 'Senha#123',
+      role: 'supremo',
+      permissions: ['finance.read', 'finance.write']
+    });
+    process.env.OPENROUTER_API_KEY = 'test-openrouter-key';
+    process.env.FINANCE_ASSISTANT_AI = 'true';
+    globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = parseOpenRouterBody(init);
+      assert.ok(isOpenRouterIntentJudgeBody(body), 'esse fluxo deve parar no juiz de intenção');
+      return openRouterIntentJudgeResponse({
+        speechAct: 'unsafe',
+        allowCommands: false,
+        dataNeeds: ['finance_list_receivables']
+      });
+    }) as typeof fetch;
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.agent.cancel.overdue', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+
+    const overdueDate = financeOffsetDateKey(-3);
+    const futureDate = financeOffsetDateKey(8);
+    for (const receivable of [
+      { description: 'Cliente atrasado Alpha', amount_cents: 420000, due_date: overdueDate, status: 'overdue' },
+      { description: 'Cliente atrasado Beta', amount_cents: 180000, due_date: overdueDate, status: 'open' },
+      { description: 'Cliente futuro', amount_cents: 250000, due_date: futureDate, status: 'open' }
+    ]) {
+      const created = await request(app)
+        .post('/finance/receivables')
+        .set('Authorization', `Bearer ${loginRes.body.token}`)
+        .send({
+          ...receivable,
+          issue_date: financeOffsetDateKey(-10)
+        });
+      assert.equal(created.status, 201);
+    }
+
+    const planRes = await request(app)
+      .post('/finance/assistant/run')
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({
+        transcript: 'Apague todos os meus contas a receber atrasados.',
+        surface_path: '/financeiro/receivables'
+      });
+
+    assert.equal(planRes.status, 201);
+    assert.equal(planRes.body.mode, 'hybrid');
+    assert.equal(planRes.body.requires_confirmation, true);
+    assert.equal(planRes.body.actions.length, 2);
+    assert.deepEqual(planRes.body.actions.map((action: { intent: string }) => action.intent), [
+      'cancel_receivable',
+      'cancel_receivable'
+    ]);
+    assert.deepEqual(
+      planRes.body.answer.breakdown.map((item: { title: string }) => item.title),
+      ['Cliente atrasado Alpha', 'Cliente atrasado Beta']
+    );
+    assert.match(planRes.body.human_summary, /Preparei cancelamentos auditáveis/i);
+
+    const executeOneRes = await request(app)
+      .post(`/finance/assistant/plans/${planRes.body.id}/actions/${planRes.body.actions[0].id}/execute`)
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({ confirmed: true });
+
+    assert.equal(executeOneRes.status, 200);
+    assert.equal(executeOneRes.body.results[0].intent, 'cancel_receivable');
+
+    const statuses = db.prepare(`
+      select description, status
+      from financial_receivable
+      order by description asc
+    `).all() as Array<{ description: string; status: string }>;
+    assert.deepEqual(statuses.map((row) => [row.description, row.status]), [
+      ['Cliente atrasado Alpha', 'canceled'],
+      ['Cliente atrasado Beta', 'open'],
+      ['Cliente futuro', 'open']
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (typeof originalOpenRouterApiKey === 'string') {
+      process.env.OPENROUTER_API_KEY = originalOpenRouterApiKey;
+    } else {
+      delete process.env.OPENROUTER_API_KEY;
+    }
+    if (typeof originalFinanceAssistantAi === 'string') {
+      process.env.FINANCE_ASSISTANT_AI = originalFinanceAssistantAi;
+    } else {
+      delete process.env.FINANCE_ASSISTANT_AI;
+    }
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('POST /finance/assistant/run responde consulta de centros de custo via juiz OpenRouter', async () => {
+  const dbPath = assignTestDbPath('finance-agent-cost-center-query-openrouter');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+  const originalFetch = globalThis.fetch;
+  const originalOpenRouterApiKey = process.env.OPENROUTER_API_KEY;
+  const originalAssistantModel = process.env.OPENROUTER_ASSISTANT_MODEL;
+
+  try {
+    seedFinanceCompanies();
+    seedFinanceAccountAndCategory();
+    db.prepare(`
+      insert into financial_cost_center (id, organization_id, name, code, is_active, created_at, updated_at)
+      values (?, ?, ?, ?, 1, ?, ?), (?, ?, ?, ?, 1, ?, ?)
+    `).run(
+      'fcc-comercial',
+      'org-holand',
+      'Comercial',
+      'COM',
+      '2026-04-21T12:00:00.000Z',
+      '2026-04-21T12:00:00.000Z',
+      'fcc-operacoes',
+      'org-holand',
+      'Operações',
+      'OPS',
+      '2026-04-21T12:00:00.000Z',
+      '2026-04-21T12:00:00.000Z'
+    );
+    createInternalUser({
+      username: 'finance.agent.costcenter.query',
+      display_name: 'Finance Agent Cost Center Query',
+      password: 'Senha#123',
+      role: 'supremo',
+      permissions: ['finance.read', 'finance.write']
+    });
+    process.env.OPENROUTER_API_KEY = 'test-openrouter-agent-key';
+    delete process.env.OPENROUTER_ASSISTANT_MODEL;
+    let openRouterCallCount = 0;
+    globalThis.fetch = async (_input, init) => {
+      openRouterCallCount += 1;
+      const body = parseOpenRouterBody(init);
+      if (isOpenRouterIntentJudgeBody(body)) {
+        return openRouterIntentJudgeResponse({
+          speechAct: 'consultative',
+          allowCommands: false,
+          dataNeeds: ['finance_list_cost_centers']
+        });
+      }
+      assert.equal(body.model, 'openai/gpt-5.4-mini');
+      assert.equal(body.provider?.order?.[0], 'Azure');
+      assert.ok(body.tools?.some((tool) => tool.function?.name === 'finance_list_cost_centers'));
+      assert.match(JSON.stringify(lastOpenRouterUserPayload(body)), /finance_list_cost_centers/i);
+      if (openRouterCallCount > 2) {
+        return new Response(JSON.stringify({
+          choices: [
+            {
+              finish_reason: 'stop',
+              message: {
+                content: JSON.stringify({
+                  mode: 'analysis',
+                  human_summary: 'Você tem 2 centros de custo cadastrados.',
+                  answer: {
+                    title: 'Centros de custo cadastrados',
+                    summary: 'Você tem 2 centros de custo cadastrados: Comercial e Operações.',
+                    primary_metric: { label: 'Centros de custo', count: 2 },
+                    breakdown: [
+                      { id: 'fcc-comercial', resource_type: 'cost_center', title: 'Comercial', status: 'active' },
+                      { id: 'fcc-operacoes', resource_type: 'cost_center', title: 'Operações', status: 'active' }
+                    ],
+                    insights: ['A leitura veio da IA após consultar o catálogo do app.'],
+                    suggested_actions: []
+                  }
+                })
+              }
+            }
+          ]
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({
+        choices: [
+          {
+            finish_reason: 'stop',
+            message: {
+              content: JSON.stringify({
+                intent: 'query_catalog',
+                confidence: 0.94,
+                payload: {
+                  tool_name: 'finance_list_cost_centers',
+                  limit: 30
+                }
+              })
+            }
+          }
+        ]
+      }), { status: 200 });
+    };
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.agent.costcenter.query', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+
+    const planRes = await request(app)
+      .post('/finance/assistant/run')
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({
+        transcript: 'quais sao todos os centros de custo que eu tenho hoje em dia.',
+        surface_path: '/financeiro/catalog'
+      });
+
+    assert.equal(planRes.status, 201);
+    assert.equal(planRes.body.mode, 'analysis');
+    assert.equal(planRes.body.requires_confirmation, false);
+    assert.equal(planRes.body.actions.length, 0);
+    assert.equal(openRouterCallCount, 3);
+    assert.equal(planRes.body.answer.primary_metric.count, 2);
+    assert.deepEqual(
+      planRes.body.answer.breakdown.map((item: { resource_type: string; title: string }) => `${item.resource_type}:${item.title}`),
+      ['cost_center:Comercial', 'cost_center:Operações']
+    );
+    assert.match(planRes.body.answer.summary, /2 centros/i);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (typeof originalOpenRouterApiKey === 'string') {
+      process.env.OPENROUTER_API_KEY = originalOpenRouterApiKey;
+    } else {
+      delete process.env.OPENROUTER_API_KEY;
+    }
+    if (typeof originalAssistantModel === 'string') {
+      process.env.OPENROUTER_ASSISTANT_MODEL = originalAssistantModel;
+    } else {
+      delete process.env.OPENROUTER_ASSISTANT_MODEL;
+    }
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('POST /finance/assistant/run executa ciclo agente com tool_requests antes da resposta final', async () => {
+  const dbPath = assignTestDbPath('finance-agent-tool-request-loop');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+  const originalFetch = globalThis.fetch;
+  const originalOpenRouterApiKey = process.env.OPENROUTER_API_KEY;
+  const originalAssistantModel = process.env.OPENROUTER_ASSISTANT_MODEL;
+
+  try {
+    seedFinanceCompanies();
+    seedFinanceAccountAndCategory();
+    db.prepare(`
+      insert into financial_cost_center (id, organization_id, name, code, is_active, created_at, updated_at)
+      values (?, ?, ?, ?, 1, ?, ?), (?, ?, ?, ?, 1, ?, ?)
+    `).run(
+      'fcc-produto',
+      'org-holand',
+      'Produto',
+      'PROD',
+      '2026-04-21T12:00:00.000Z',
+      '2026-04-21T12:00:00.000Z',
+      'fcc-comercial',
+      'org-holand',
+      'Comercial',
+      'COM',
+      '2026-04-21T12:00:00.000Z',
+      '2026-04-21T12:00:00.000Z'
+    );
+    createInternalUser({
+      username: 'finance.agent.loop',
+      display_name: 'Finance Agent Loop',
+      password: 'Senha#123',
+      role: 'supremo',
+      permissions: ['finance.read', 'finance.write']
+    });
+    process.env.OPENROUTER_API_KEY = 'test-openrouter-agent-key';
+    delete process.env.OPENROUTER_ASSISTANT_MODEL;
+    let callCount = 0;
+    let agentCallCount = 0;
+    globalThis.fetch = async (_input, init) => {
+      callCount += 1;
+      const body = parseOpenRouterBody(init);
+      if (isOpenRouterIntentJudgeBody(body)) {
+        return openRouterIntentJudgeResponse({
+          speechAct: 'hypothetical_suggestion',
+          allowCommands: false,
+          dataNeeds: ['finance_list_cost_centers']
+        });
+      }
+      agentCallCount += 1;
+      assert.equal(body.model, 'openai/gpt-5.4-mini');
+      assert.equal(body.provider?.order?.[0], 'Azure');
+      assert.equal(body.tool_choice, agentCallCount === 1 ? 'auto' : 'none');
+      assert.ok(body.tools?.some((tool) => tool.function?.name === 'finance_list_cost_centers'));
+      const userPayload = lastOpenRouterUserPayload(body) as {
+        tool_results?: Array<{ result: { items: Array<{ label: string }> } }>;
+      };
+
+      if (agentCallCount === 1) {
+        assert.equal(userPayload.tool_results, undefined);
+        return new Response(JSON.stringify({
+          model: 'deepseek/deepseek-v4-flash-20260423',
+          provider: 'Novita',
+          choices: [
+            {
+              finish_reason: 'stop',
+              message: {
+                content: JSON.stringify({
+                  tool_requests: [
+                    {
+                      id: 'centros',
+                      tool_name: 'finance_list_cost_centers',
+                      arguments: { limit: 30 }
+                    }
+                  ]
+                })
+              }
+            }
+          ]
+        }), { status: 200 });
+      }
+
+      assert.equal(userPayload.tool_results?.[0]?.result.items.length, 2);
+      return new Response(JSON.stringify({
+        model: 'deepseek/deepseek-v4-flash-20260423',
+        provider: 'Novita',
+        choices: [
+          {
+            finish_reason: 'stop',
+            message: {
+              content: JSON.stringify({
+                mode: 'analysis',
+                human_summary: 'Você tem 2 centros de custo e pode avaliar Customer Success para software.',
+                answer: {
+                  title: 'Centros de custo e próximos cadastros',
+                  summary: 'Você tem 2 centros de custo ativos: Produto e Comercial. Para uma empresa de software, eu avaliaria Customer Success, Tecnologia e Administrativo.',
+                  primary_metric: { label: 'Centros atuais', count: 2 },
+                  breakdown: [
+                    { id: 'fcc-produto', resource_type: 'cost_center', title: 'Produto', status: 'active' },
+                    { id: 'fcc-comercial', resource_type: 'cost_center', title: 'Comercial', status: 'active' }
+                  ],
+                  insights: ['Antes de criar novos centros, eu confirmaria se suporte e implementação são áreas separadas no seu DRE.'],
+                  suggested_actions: ['Criar Customer Success', 'Criar Administrativo']
+                },
+                commands: [
+                  {
+                    intent: 'create_cost_center',
+                    confidence: 0.84,
+                    payload: { name: 'Customer Success' }
+                  }
+                ]
+              })
+            }
+          }
+        ]
+      }), { status: 200 });
+    };
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.agent.loop', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+
+    const planRes = await request(app)
+      .post('/finance/assistant/run')
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({
+        transcript: 'para uma empresa de software, veja os centros de custo que eu tenho e fale quais centros de custo tu criaria',
+        surface_path: '/financeiro/catalog'
+      });
+
+    assert.equal(planRes.status, 201);
+    assert.equal(callCount, 3);
+    assert.equal(agentCallCount, 2);
+    assert.equal(planRes.body.mode, 'analysis');
+    assert.equal(planRes.body.answer.primary_metric.count, 2);
+    assert.match(planRes.body.answer.summary, /Customer Success/i);
+    assert.equal(planRes.body.actions.length, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (typeof originalOpenRouterApiKey === 'string') {
+      process.env.OPENROUTER_API_KEY = originalOpenRouterApiKey;
+    } else {
+      delete process.env.OPENROUTER_API_KEY;
+    }
+    if (typeof originalAssistantModel === 'string') {
+      process.env.OPENROUTER_ASSISTANT_MODEL = originalAssistantModel;
+    } else {
+      delete process.env.OPENROUTER_ASSISTANT_MODEL;
+    }
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('POST /finance/assistant/run não cai em análise determinística quando IA ativa falha', async () => {
+  const dbPath = assignTestDbPath('finance-agent-no-deterministic-fallback');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+  const originalFetch = globalThis.fetch;
+  const originalOpenRouterApiKey = process.env.OPENROUTER_API_KEY;
+
+  try {
+    seedFinanceCompanies();
+    seedFinanceAccountAndCategory();
+    seedFinanceIncomeCategory();
+    createInternalUser({
+      username: 'finance.agent.no.fallback',
+      display_name: 'Finance Agent No Fallback',
+      password: 'Senha#123',
+      role: 'supremo',
+      permissions: ['finance.read', 'finance.write']
+    });
+    process.env.OPENROUTER_API_KEY = 'test-openrouter-agent-key';
+    globalThis.fetch = async () => new Response(JSON.stringify({
+      choices: [
+        {
+          finish_reason: 'stop',
+          message: {
+            content: '{"broken":'
+          }
+        }
+      ]
+    }), { status: 200 });
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.agent.no.fallback', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+    const authHeader = { Authorization: `Bearer ${loginRes.body.token}` };
+
+    const payableRes = await request(app)
+      .post('/finance/payables')
+      .set(authHeader)
+      .send({
+        description: 'Pagamento em breve',
+        amount_cents: 8500000,
+        status: 'open',
+        issue_date: '2026-04-27',
+        due_date: '2026-05-03'
+      });
+    assert.equal(payableRes.status, 201);
+
+    const planRes = await request(app)
+      .post('/finance/assistant/run')
+      .set(authHeader)
+      .send({
+        transcript: 'É, cara, eu quero que tu dê uma analisada nas minhas contas a pagar e contas a receber e também nas minhas movimentações, veja as minhas categorias etc. E eu quero que tu me fale alguns possíveis novos centros de custo para eu colocar.',
+        surface_path: '/financeiro/overview'
+      });
+
+    assert.equal(planRes.status, 201);
+    assert.equal(planRes.body.mode, 'analysis');
+    assert.equal(planRes.body.requires_confirmation, false);
+    assert.equal(planRes.body.actions.length, 0);
+    assert.equal(planRes.body.answer.title, 'IA não concluiu a análise');
+    assert.notEqual(planRes.body.answer.primary_metric.amount_cents, 8500000);
+    assert.doesNotMatch(planRes.body.answer.summary, /próximos 7 dias/i);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (typeof originalOpenRouterApiKey === 'string') {
+      process.env.OPENROUTER_API_KEY = originalOpenRouterApiKey;
+    } else {
+      delete process.env.OPENROUTER_API_KEY;
+    }
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('POST /finance/assistant/run repara JSON inválido do juiz OpenRouter', async () => {
+  const dbPath = assignTestDbPath('finance-agent-repair-truncated-answer');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+  const originalFetch = globalThis.fetch;
+  const originalOpenRouterApiKey = process.env.OPENROUTER_API_KEY;
+
+  try {
+    seedFinanceCompanies();
+    seedFinanceAccountAndCategory();
+    seedFinanceIncomeCategory();
+    createInternalUser({
+      username: 'finance.agent.repair',
+      display_name: 'Finance Agent Repair',
+      password: 'Senha#123',
+      role: 'supremo',
+      permissions: ['finance.read', 'finance.write']
+    });
+    process.env.OPENROUTER_API_KEY = 'test-openrouter-agent-key';
+    let openRouterCallCount = 0;
+    let agentCallCount = 0;
+    globalThis.fetch = async (_input, init) => {
+      openRouterCallCount += 1;
+      const body = parseOpenRouterBody(init);
+      if (isOpenRouterIntentJudgeBody(body)) {
+        return openRouterIntentJudgeResponse({
+          speechAct: 'consultative',
+          allowCommands: false,
+          dataNeeds: [
+            'finance_list_payables',
+            'finance_list_receivables',
+            'finance_list_transactions',
+            'finance_list_categories',
+            'finance_list_cost_centers'
+          ]
+        });
+      }
+      agentCallCount += 1;
+      const payload = lastOpenRouterUserPayload(body) as {
+        tool_results?: unknown[];
+        partial_output?: string;
+      };
+
+      if (agentCallCount === 1) {
+        return new Response(JSON.stringify({
+          model: 'deepseek/deepseek-v4-flash-20260423',
+          provider: 'Novita',
+          choices: [
+            {
+              finish_reason: 'stop',
+              message: {
+                content: JSON.stringify({
+                  tool_requests: [
+                    { id: 'payables', tool_name: 'finance_list_payables', arguments: { limit: 30 } },
+                    { id: 'receivables', tool_name: 'finance_list_receivables', arguments: { limit: 30 } },
+                    { id: 'transactions', tool_name: 'finance_list_transactions', arguments: { limit: 30 } },
+                    { id: 'categories', tool_name: 'finance_list_categories', arguments: { limit: 30 } },
+                    { id: 'cost_centers', tool_name: 'finance_list_cost_centers', arguments: { limit: 30 } }
+                  ]
+                })
+              }
+            }
+          ]
+        }), { status: 200 });
+      }
+
+      if (agentCallCount === 2) {
+        assert.ok(payload.tool_results?.length);
+        return new Response(JSON.stringify({
+          model: 'deepseek/deepseek-v4-flash-20260423',
+          provider: 'Novita',
+          choices: [
+            {
+              finish_reason: 'stop',
+              message: {
+                content: '{ "mode": "analysis", "human_summary": "Analisei contas, categorias e centros de custo", "answer": { "title": "Análise'
+              }
+            }
+          ]
+        }), { status: 200 });
+      }
+
+      assert.match(payload.partial_output ?? '', /Analisei contas/);
+      return new Response(JSON.stringify({
+        model: 'deepseek/deepseek-v4-flash-20260423',
+        provider: 'Novita',
+        choices: [
+          {
+            finish_reason: 'stop',
+            message: {
+              content: JSON.stringify({
+                mode: 'analysis',
+                human_summary: 'Analisei o financeiro e gerei uma leitura compacta.',
+                answer: {
+                  title: 'Análise financeira compacta',
+                  summary: 'O app consultou contas a pagar, receber, movimentações, categorias e centros de custo antes de responder.',
+                  primary_metric: { label: 'Bases consultadas', count: 5 },
+                  breakdown: [
+                    { id: 'payables', resource_type: 'payable', title: 'Contas a pagar', status: 'consultado' },
+                    { id: 'receivables', resource_type: 'receivable', title: 'Contas a receber', status: 'consultado' }
+                  ],
+                  insights: ['A resposta truncada foi reparada com uma chamada compacta.'],
+                  suggested_actions: ['Revisar centros de custo']
+                }
+              })
+            }
+          }
+        ]
+      }), { status: 200 });
+    };
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.agent.repair', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+
+    const planRes = await request(app)
+      .post('/finance/assistant/run')
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({
+        transcript: 'analise minhas contas a pagar, receber, movimentações, categorias e sugira centros de custo',
+        surface_path: '/financeiro/overview'
+      });
+
+    assert.equal(planRes.status, 201);
+    assert.equal(openRouterCallCount, 4);
+    assert.equal(agentCallCount, 3);
+    assert.equal(planRes.body.mode, 'analysis');
+    assert.equal(planRes.body.answer.title, 'Análise financeira compacta');
+    assert.equal(planRes.body.answer.primary_metric.count, 5);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (typeof originalOpenRouterApiKey === 'string') {
+      process.env.OPENROUTER_API_KEY = originalOpenRouterApiKey;
+    } else {
+      delete process.env.OPENROUTER_API_KEY;
+    }
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('POST /finance/assistant/run usa modelo analista configurado para perguntas consultivas', async () => {
+  const dbPath = assignTestDbPath('finance-agent-analysis-model-routing');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+  const originalFetch = globalThis.fetch;
+  const originalOpenRouterApiKey = process.env.OPENROUTER_API_KEY;
+  const originalAssistantModel = process.env.OPENROUTER_ASSISTANT_MODEL;
+  const originalAnalysisModel = process.env.OPENROUTER_ASSISTANT_ANALYSIS_MODEL;
+
+  try {
+    seedFinanceCompanies();
+    seedFinanceAccountAndCategory();
+    createInternalUser({
+      username: 'finance.agent.analysis.model',
+      display_name: 'Finance Agent Analysis Model',
+      password: 'Senha#123',
+      role: 'supremo',
+      permissions: ['finance.read', 'finance.write']
+    });
+    process.env.OPENROUTER_API_KEY = 'test-openrouter-agent-key';
+    process.env.OPENROUTER_ASSISTANT_MODEL = 'deepseek/deepseek-v4-flash';
+    process.env.OPENROUTER_ASSISTANT_ANALYSIS_MODEL = 'analysis/model-test';
+
+    globalThis.fetch = async (_input, init) => {
+      const body = parseOpenRouterBody(init);
+      if (isOpenRouterIntentJudgeBody(body)) {
+        assert.equal(body.model, 'deepseek/deepseek-v4-flash');
+        return openRouterIntentJudgeResponse({
+          speechAct: 'consultative',
+          allowCommands: false,
+          dataNeeds: ['finance_list_payables']
+        });
+      }
+      assert.equal(body.model, 'analysis/model-test');
+      return new Response(JSON.stringify({
+        choices: [
+          {
+            finish_reason: 'stop',
+            message: {
+              content: JSON.stringify({
+                mode: 'analysis',
+                human_summary: 'Modelo analista usado.',
+                answer: {
+                  title: 'Roteamento do analista',
+                  summary: 'Perguntas consultivas usam o modelo analista configurado.',
+                  primary_metric: { label: 'Modelo consultivo', count: 1 },
+                  breakdown: [],
+                  insights: [],
+                  suggested_actions: []
+                }
+              })
+            }
+          }
+        ]
+      }), { status: 200 });
+    };
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.agent.analysis.model', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+
+    const planRes = await request(app)
+      .post('/finance/assistant/run')
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({
+        transcript: 'analise minhas contas e me sugira centros de custo',
+        surface_path: '/financeiro/overview'
+      });
+
+    assert.equal(planRes.status, 201);
+    assert.equal(planRes.body.answer.title, 'Roteamento do analista');
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (typeof originalOpenRouterApiKey === 'string') {
+      process.env.OPENROUTER_API_KEY = originalOpenRouterApiKey;
+    } else {
+      delete process.env.OPENROUTER_API_KEY;
+    }
+    if (typeof originalAssistantModel === 'string') {
+      process.env.OPENROUTER_ASSISTANT_MODEL = originalAssistantModel;
+    } else {
+      delete process.env.OPENROUTER_ASSISTANT_MODEL;
+    }
+    if (typeof originalAnalysisModel === 'string') {
+      process.env.OPENROUTER_ASSISTANT_ANALYSIS_MODEL = originalAnalysisModel;
+    } else {
+      delete process.env.OPENROUTER_ASSISTANT_ANALYSIS_MODEL;
+    }
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('POST /finance/assistant/run renomeia a última recorrência criada por contexto', async () => {
+  const dbPath = assignTestDbPath('finance-agent-rename-recurring');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+  const originalOpenRouterApiKey = process.env.OPENROUTER_API_KEY;
+  const originalFinanceAssistantAi = process.env.FINANCE_ASSISTANT_AI;
+
+  try {
+    seedFinanceCompanies();
+    seedFinanceAccountAndCategory();
+    createInternalUser({
+      username: 'finance.agent.rename',
+      display_name: 'Finance Agent Rename',
+      password: 'Senha#123',
+      role: 'supremo',
+      permissions: ['finance.read', 'finance.write']
+    });
+    delete process.env.OPENROUTER_API_KEY;
+    delete process.env.FINANCE_ASSISTANT_AI;
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.agent.rename', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+
+    const createPlanRes = await request(app)
+      .post('/finance/assistant/run')
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({
+        transcript: 'crie uma conta recorrente de aluguel no valor de 8000 todo dia 15',
+        surface_path: '/financeiro/payables'
+      });
+    assert.equal(createPlanRes.status, 201);
+
+    const createExecuteRes = await request(app)
+      .post(`/finance/assistant/plans/${createPlanRes.body.id}/execute`)
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({ confirmed: true });
+    assert.equal(createExecuteRes.status, 200);
+
+    const renamePlanRes = await request(app)
+      .post('/finance/assistant/run')
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({
+        transcript: 'agora altere o nome dessa conta recorrente para aluguel matriz',
+        surface_path: '/financeiro/payables'
+      });
+    assert.equal(renamePlanRes.status, 201);
+    assert.equal(renamePlanRes.body.actions[0].intent, 'update_recurring_rule');
+    assert.match(renamePlanRes.body.actions[0].human_summary, /Aluguel Matriz/i);
+    assert.deepEqual(Object.keys(renamePlanRes.body.actions[0].payload).sort(), ['name', 'recurring_rule_id']);
+
+    const renameExecuteRes = await request(app)
+      .post(`/finance/assistant/plans/${renamePlanRes.body.id}/execute`)
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({ confirmed: true });
+    assert.equal(renameExecuteRes.status, 200);
+    assert.equal(renameExecuteRes.body.results[0].resource_type, 'recurring_rule');
+
+    const rule = db.prepare('select name from financial_recurring_rule limit 1').get() as { name: string };
+    assert.equal(rule.name, 'Aluguel Matriz');
+  } finally {
+    if (typeof originalOpenRouterApiKey === 'string') {
+      process.env.OPENROUTER_API_KEY = originalOpenRouterApiKey;
+    } else {
+      delete process.env.OPENROUTER_API_KEY;
+    }
+    if (typeof originalFinanceAssistantAi === 'string') {
+      process.env.FINANCE_ASSISTANT_AI = originalFinanceAssistantAi;
+    } else {
+      delete process.env.FINANCE_ASSISTANT_AI;
+    }
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('POST /finance/assistant/run cria e inativa categorias usando catálogo como contexto', async () => {
+  const dbPath = assignTestDbPath('finance-agent-category-management');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+  const originalOpenRouterApiKey = process.env.OPENROUTER_API_KEY;
+  const originalFinanceAssistantAi = process.env.FINANCE_ASSISTANT_AI;
+
+  try {
+    seedFinanceCompanies();
+    seedFinanceAccountAndCategory();
+    createInternalUser({
+      username: 'finance.agent.categories',
+      display_name: 'Finance Agent Categories',
+      password: 'Senha#123',
+      role: 'supremo',
+      permissions: ['finance.read', 'finance.write']
+    });
+    delete process.env.OPENROUTER_API_KEY;
+    delete process.env.FINANCE_ASSISTANT_AI;
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.agent.categories', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+
+    const createPlanRes = await request(app)
+      .post('/finance/assistant/run')
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({
+        transcript: 'crie duas categorias de despesa chamadas Eventos e Fretes',
+        surface_path: '/financeiro/catalog'
+      });
+    assert.equal(createPlanRes.status, 201);
+    assert.deepEqual(createPlanRes.body.actions.map((action: { intent: string }) => action.intent), [
+      'create_category',
+      'create_category'
+    ]);
+
+    const createExecuteRes = await request(app)
+      .post(`/finance/assistant/plans/${createPlanRes.body.id}/execute`)
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({ confirmed: true });
+    assert.equal(createExecuteRes.status, 200);
+
+    const createdCategories = db.prepare(`
+      select name, kind, is_active
+      from financial_category
+      where name in ('Eventos', 'Fretes')
+      order by name asc
+    `).all() as Array<{ name: string; kind: string; is_active: number }>;
+    assert.deepEqual(createdCategories.map((category) => [category.name, category.kind, category.is_active]), [
+      ['Eventos', 'expense', 1],
+      ['Fretes', 'expense', 1]
+    ]);
+
+    const inactivatePlanRes = await request(app)
+      .post('/finance/assistant/run')
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({
+        transcript: 'inative a categoria Fretes',
+        surface_path: '/financeiro/catalog'
+      });
+    assert.equal(inactivatePlanRes.status, 201);
+    assert.equal(inactivatePlanRes.body.actions[0].intent, 'inactivate_category');
+
+    const inactivateExecuteRes = await request(app)
+      .post(`/finance/assistant/plans/${inactivatePlanRes.body.id}/execute`)
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({ confirmed: true });
+    assert.equal(inactivateExecuteRes.status, 200);
+
+    const fretes = db.prepare('select is_active from financial_category where name = ?').get('Fretes') as { is_active: number };
+    assert.equal(fretes.is_active, 0);
+  } finally {
+    if (typeof originalOpenRouterApiKey === 'string') {
+      process.env.OPENROUTER_API_KEY = originalOpenRouterApiKey;
+    } else {
+      delete process.env.OPENROUTER_API_KEY;
+    }
+    if (typeof originalFinanceAssistantAi === 'string') {
+      process.env.FINANCE_ASSISTANT_AI = originalFinanceAssistantAi;
+    } else {
+      delete process.env.FINANCE_ASSISTANT_AI;
+    }
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('POST /finance/assistant/run cria centro de custo por comando nominal', async () => {
+  const dbPath = assignTestDbPath('finance-agent-cost-center-nominal');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+  const originalOpenRouterApiKey = process.env.OPENROUTER_API_KEY;
+  const originalFinanceAssistantAi = process.env.FINANCE_ASSISTANT_AI;
+
+  try {
+    seedFinanceCompanies();
+    seedFinanceAccountAndCategory();
+    createInternalUser({
+      username: 'finance.agent.costcenter',
+      display_name: 'Finance Agent Cost Center',
+      password: 'Senha#123',
+      role: 'supremo',
+      permissions: ['finance.read', 'finance.write']
+    });
+    delete process.env.OPENROUTER_API_KEY;
+    delete process.env.FINANCE_ASSISTANT_AI;
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.agent.costcenter', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+
+    const planRes = await request(app)
+      .post('/finance/assistant/run')
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({
+        transcript: 'Centro de custo com o nome de Maria, fazendo o favor.',
+        surface_path: '/financeiro/catalog'
+      });
+
+    assert.equal(planRes.status, 201);
+    assert.equal(planRes.body.actions[0].intent, 'create_cost_center');
+    assert.equal(planRes.body.actions[0].payload.name, 'Maria');
+    assert.match(planRes.body.human_summary, /Criar centro de custo: Maria/i);
+
+    const executeRes = await request(app)
+      .post(`/finance/assistant/plans/${planRes.body.id}/execute`)
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({ confirmed: true });
+
+    assert.equal(executeRes.status, 200);
+    assert.equal(executeRes.body.results[0].resource_type, 'cost_center');
+
+    const costCenter = db.prepare('select name, is_active from financial_cost_center where name = ?').get('Maria') as {
+      name: string;
+      is_active: number;
+    };
+    assert.equal(costCenter.name, 'Maria');
+    assert.equal(costCenter.is_active, 1);
+  } finally {
+    if (typeof originalOpenRouterApiKey === 'string') {
+      process.env.OPENROUTER_API_KEY = originalOpenRouterApiKey;
+    } else {
+      delete process.env.OPENROUTER_API_KEY;
+    }
+    if (typeof originalFinanceAssistantAi === 'string') {
+      process.env.FINANCE_ASSISTANT_AI = originalFinanceAssistantAi;
+    } else {
+      delete process.env.FINANCE_ASSISTANT_AI;
+    }
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('POST /finance/assistant/run responde análise de contas a pagar dos próximos 7 dias', async () => {
+  const dbPath = assignTestDbPath('finance-agent-payables-analysis');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+  try {
+    seedFinanceCompanies();
+    seedFinanceAccountAndCategory();
+    createInternalUser({
+      username: 'finance.agent.analysis',
+      display_name: 'Finance Agent Analysis',
+      password: 'Senha#123',
+      role: 'supremo',
+      permissions: ['finance.read', 'finance.write']
+    });
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.agent.analysis', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+
+    const inOneDay = financeOffsetDateKey(1);
+    const inThreeDays = financeOffsetDateKey(3);
+    const inSixDays = financeOffsetDateKey(6);
+    const inTwentyThreeDays = financeOffsetDateKey(23);
+    for (const payable of [
+      { description: 'Aluguel', amount_cents: 800000, due_date: inOneDay },
+      { description: 'Software', amount_cents: 420000, due_date: inThreeDays },
+      { description: 'Impostos', amount_cents: 370000, due_date: inSixDays },
+      { description: 'Notebook', amount_cents: 990000, due_date: inTwentyThreeDays }
+    ]) {
+      const created = await request(app)
+        .post('/finance/payables')
+        .set('Authorization', `Bearer ${loginRes.body.token}`)
+        .send({
+          ...payable,
+          status: 'open',
+          issue_date: '2026-04-20'
+        });
+      assert.equal(created.status, 201);
+    }
+
+    const planRes = await request(app)
+      .post('/finance/assistant/run')
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({
+        transcript: 'quanto tenho para pagar nos próximos 7 dias?',
+        surface_path: '/financeiro/payables'
+      });
+
+    assert.equal(planRes.status, 201);
+    assert.equal(planRes.body.mode, 'analysis');
+    assert.equal(planRes.body.requires_confirmation, false);
+    assert.equal(planRes.body.answer.primary_metric.amount_cents, 1590000);
+    assert.equal(planRes.body.answer.primary_metric.count, 3);
+    assert.deepEqual(
+      planRes.body.answer.breakdown.map((item: { title: string }) => item.title),
+      ['Aluguel', 'Software', 'Impostos']
+    );
+    assert.match(planRes.body.answer.summary, /R\$ 15\.900,00|15\.900/i);
+    assert.ok(planRes.body.answer.insights.length >= 1);
+    assert.ok(planRes.body.answer.suggested_actions.includes('Simular caixa'));
+
+    const naturalPlanRes = await request(app)
+      .post('/finance/assistant/run')
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({
+        transcript: 'É, cara, o que é que eu tenho de contas a pagar nos próximos 15 dias?',
+        surface_path: '/financeiro/payables'
+      });
+
+    assert.equal(naturalPlanRes.status, 201);
+    assert.equal(naturalPlanRes.body.mode, 'analysis');
+    assert.equal(naturalPlanRes.body.requires_confirmation, false);
+    assert.equal(naturalPlanRes.body.actions.length, 0);
+    assert.equal(naturalPlanRes.body.answer.primary_metric.amount_cents, 1590000);
+    assert.match(naturalPlanRes.body.answer.title, /15 dias/);
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('POST /finance/assistant/run responde vencimentos de hoje sem criar lançamento', async () => {
+  const dbPath = assignTestDbPath('finance-agent-due-today-analysis');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+  const today = new Date().toISOString().slice(0, 10);
+
+  try {
+    seedFinanceCompanies();
+    seedFinanceAccountAndCategory();
+    seedFinanceIncomeCategory();
+    createInternalUser({
+      username: 'finance.agent.today',
+      display_name: 'Finance Agent Today',
+      password: 'Senha#123',
+      role: 'supremo',
+      permissions: ['finance.read', 'finance.write']
+    });
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.agent.today', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+    const authHeader = { Authorization: `Bearer ${loginRes.body.token}` };
+
+    const payableRes = await request(app)
+      .post('/finance/payables')
+      .set(authHeader)
+      .send({
+        description: 'Aluguel',
+        amount_cents: 800000,
+        status: 'open',
+        issue_date: today,
+        due_date: today
+      });
+    assert.equal(payableRes.status, 201);
+
+    const receivableRes = await request(app)
+      .post('/finance/receivables')
+      .set(authHeader)
+      .send({
+        description: 'Mensalidade',
+        amount_cents: 1200000,
+        status: 'open',
+        issue_date: today,
+        due_date: today
+      });
+    assert.equal(receivableRes.status, 201);
+
+    const planRes = await request(app)
+      .post('/finance/assistant/run')
+      .set(authHeader)
+      .send({
+        transcript: 'eu tenho algo vencendo hoje?',
+        surface_path: '/financeiro/overview'
+      });
+
+    assert.equal(planRes.status, 201);
+    assert.equal(planRes.body.mode, 'analysis');
+    assert.equal(planRes.body.requires_confirmation, false);
+    assert.equal(planRes.body.actions.length, 0);
+    assert.equal(planRes.body.answer.primary_metric.amount_cents, 2000000);
+    assert.equal(planRes.body.answer.primary_metric.count, 2);
+    assert.deepEqual(
+      planRes.body.answer.breakdown.map((item: { title: string; resource_type: string }) => `${item.resource_type}:${item.title}`),
+      ['payable:Aluguel', 'receivable:Mensalidade']
+    );
+    assert.match(planRes.body.answer.summary, /hoje/i);
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('POST /finance/assistant/run responde contas a pagar e receber no mesmo recorte', async () => {
+  const dbPath = assignTestDbPath('finance-agent-payables-receivables-analysis');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+  const originalOpenRouterApiKey = process.env.OPENROUTER_API_KEY;
+  const today = new Date().toISOString().slice(0, 10);
+
+  try {
+    seedFinanceCompanies();
+    seedFinanceAccountAndCategory();
+    seedFinanceIncomeCategory();
+    createInternalUser({
+      username: 'finance.agent.mixed',
+      display_name: 'Finance Agent Mixed',
+      password: 'Senha#123',
+      role: 'supremo',
+      permissions: ['finance.read', 'finance.write']
+    });
+    delete process.env.OPENROUTER_API_KEY;
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.agent.mixed', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+    const authHeader = { Authorization: `Bearer ${loginRes.body.token}` };
+
+    const payableRes = await request(app)
+      .post('/finance/payables')
+      .set(authHeader)
+      .send({
+        description: 'Cache vence hoje',
+        amount_cents: 320000,
+        status: 'open',
+        issue_date: today,
+        due_date: today
+      });
+    assert.equal(payableRes.status, 201);
+
+    const receivableRes = await request(app)
+      .post('/finance/receivables')
+      .set(authHeader)
+      .send({
+        description: 'Projeto Alpha',
+        amount_cents: 5000000,
+        status: 'open',
+        issue_date: '2026-04-20',
+        due_date: '2026-05-03'
+      });
+    assert.equal(receivableRes.status, 201);
+
+    const planRes = await request(app)
+      .post('/finance/assistant/run')
+      .set(authHeader)
+      .send({
+        transcript: 'É, cara, consegue ver para mim tudo o que eu tenho para pagar e tudo o que eu tenho para receber nos próximos 10 dias?',
+        surface_path: '/financeiro/overview'
+      });
+
+    assert.equal(planRes.status, 201);
+    assert.equal(planRes.body.mode, 'analysis');
+    assert.equal(planRes.body.requires_confirmation, false);
+    assert.equal(planRes.body.actions.length, 0);
+    assert.equal(planRes.body.answer.primary_metric.amount_cents, 5320000);
+    assert.equal(planRes.body.answer.primary_metric.count, 2);
+    assert.match(planRes.body.answer.title, /10 dias/);
+    assert.match(planRes.body.answer.summary, /a pagar/i);
+    assert.match(planRes.body.answer.summary, /a receber/i);
+    assert.deepEqual(
+      planRes.body.answer.breakdown.map((item: { title: string; resource_type: string }) => `${item.resource_type}:${item.title}`),
+      ['payable:Cache vence hoje', 'receivable:Projeto Alpha']
+    );
+  } finally {
+    if (typeof originalOpenRouterApiKey === 'string') {
+      process.env.OPENROUTER_API_KEY = originalOpenRouterApiKey;
+    } else {
+      delete process.env.OPENROUTER_API_KEY;
+    }
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('POST /finance/payables/:id/undo-settle desfaz baixa individual', async () => {
+  const dbPath = assignTestDbPath('finance-payable-undo-settle');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+  try {
+    seedFinanceCompanies();
+    seedFinanceAccountAndCategory();
+    createInternalUser({
+      username: 'finance.payable.undo',
+      display_name: 'Finance Payable Undo',
+      password: 'Senha#123',
+      role: 'supremo',
+      permissions: ['finance.read', 'finance.write']
+    });
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.payable.undo', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+
+    const payableRes = await request(app)
+      .post('/finance/payables')
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({
+        description: 'Aluguel',
+        amount_cents: 800000,
+        status: 'open',
+        issue_date: '2026-04-20',
+        due_date: '2026-04-27'
+      });
+    assert.equal(payableRes.status, 201);
+
+    const settleRes = await request(app)
+      .post(`/finance/payables/${payableRes.body.id}/settle`)
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({ settled_at: '2026-04-27' });
+    assert.equal(settleRes.status, 200);
+    assert.equal(settleRes.body.status, 'paid');
+
+    const undoRes = await request(app)
+      .post(`/finance/payables/${payableRes.body.id}/undo-settle`)
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({});
+    assert.equal(undoRes.status, 200);
+    assert.equal(undoRes.body.status, 'open');
+    assert.equal(undoRes.body.paid_amount_cents, 0);
+    assert.equal(undoRes.body.paid_at, null);
+
+    const overduePayableRes = await request(app)
+      .post('/finance/payables')
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({
+        description: 'Direitos autorais',
+        amount_cents: 420000,
+        status: 'overdue',
+        issue_date: '2026-04-20',
+        due_date: '2026-04-26'
+      });
+    assert.equal(overduePayableRes.status, 201);
+
+    const settleOverdueRes = await request(app)
+      .post(`/finance/payables/${overduePayableRes.body.id}/settle`)
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({ settled_at: '2026-04-27' });
+    assert.equal(settleOverdueRes.status, 200);
+    assert.equal(settleOverdueRes.body.status, 'paid');
+
+    const undoOverdueRes = await request(app)
+      .post(`/finance/payables/${overduePayableRes.body.id}/undo-settle`)
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({});
+    assert.equal(undoOverdueRes.status, 200);
+    assert.equal(undoOverdueRes.body.status, 'overdue');
+    assert.equal(undoOverdueRes.body.paid_amount_cents, 0);
+
+    const settlementMovement = db.prepare(`
+      select is_deleted
+      from financial_transaction
+      where source = 'payable_settlement'
+        and source_ref = ?
+      limit 1
+    `).get(payableRes.body.id) as { is_deleted: number };
+    assert.equal(settlementMovement.is_deleted, 1);
   } finally {
     db.close();
     cleanupDbFiles(dbPath);
