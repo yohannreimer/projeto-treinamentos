@@ -2935,7 +2935,8 @@ function recurringReceivableAsTransaction(rule: FinanceRecurringRuleDto, receiva
 
 export function listFinanceRecurringProjectionTransactions(
   organizationId: string,
-  window: { start: string | null; end: string | null }
+  window: { start: string | null; end: string | null },
+  options?: { includeMaterialized?: boolean }
 ): FinanceTransactionDto[] {
   const normalizedOrganizationId = resolveOrganizationId(organizationId);
   const { start, end } = recurringProjectionBounds(window);
@@ -2964,6 +2965,7 @@ export function listFinanceRecurringProjectionTransactions(
         const actualPayable = scheduledDate.slice(0, 7) === rule.start_date.slice(0, 7)
           ? payablesById.get(rule.template_resource_id)
           : payablesBySourceRef.get(sourceRef);
+        if (actualPayable && options?.includeMaterialized === false) continue;
         const payable = actualPayable ?? payablesById.get(rule.template_resource_id);
         if (!payable) continue;
         const anchor = actualPayable ? payable.due_date ?? scheduledDate : scheduledDate;
@@ -2974,6 +2976,7 @@ export function listFinanceRecurringProjectionTransactions(
         const actualReceivable = scheduledDate.slice(0, 7) === rule.start_date.slice(0, 7)
           ? receivablesById.get(rule.template_resource_id)
           : receivablesBySourceRef.get(sourceRef);
+        if (actualReceivable && options?.includeMaterialized === false) continue;
         const receivable = actualReceivable ?? receivablesById.get(rule.template_resource_id);
         if (!receivable) continue;
         const anchor = actualReceivable ? receivable.due_date ?? scheduledDate : scheduledDate;

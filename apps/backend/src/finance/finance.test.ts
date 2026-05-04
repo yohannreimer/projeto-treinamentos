@@ -17,6 +17,58 @@ function cleanupDbFiles(dbPath: string) {
   }
 }
 
+function saoPauloTodayIso() {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  });
+  const parts = formatter.formatToParts(new Date());
+  const year = parts.find((part) => part.type === 'year')?.value ?? '1970';
+  const month = parts.find((part) => part.type === 'month')?.value ?? '01';
+  const day = parts.find((part) => part.type === 'day')?.value ?? '01';
+  return `${year}-${month}-${day}`;
+}
+
+function testDaysInMonth(year: number, monthOneBased: number) {
+  return new Date(Date.UTC(year, monthOneBased, 0)).getUTCDate();
+}
+
+function testMonthlyRuleDate(startDate: string, dayOfMonth: number, monthOffset: number) {
+  const [startYear, startMonth] = startDate.split('-').map((part) => Number.parseInt(part, 10));
+  const anchor = new Date(Date.UTC(startYear, startMonth - 1 + monthOffset, 1));
+  const year = anchor.getUTCFullYear();
+  const month = anchor.getUTCMonth() + 1;
+  const day = Math.min(dayOfMonth, testDaysInMonth(year, month));
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function testMonthOffsetFromStart(startDate: string, dateIso: string) {
+  const [startYear, startMonth] = startDate.split('-').map((part) => Number.parseInt(part, 10));
+  const [dateYear, dateMonth] = dateIso.split('-').map((part) => Number.parseInt(part, 10));
+  return ((dateYear - startYear) * 12) + (dateMonth - startMonth);
+}
+
+function expectedRecurringMaterializedDates(input: {
+  startDate: string;
+  dayOfMonth: number;
+  materializationMonths: number;
+}) {
+  const today = saoPauloTodayIso();
+  const anchorDate = today < input.startDate ? input.startDate : `${today.slice(0, 7)}-01`;
+  const startOffset = Math.max(0, testMonthOffsetFromStart(input.startDate, anchorDate));
+  const endOffset = startOffset + Math.max(1, input.materializationMonths) - 1;
+  const dates: string[] = [];
+  for (let index = startOffset; index <= endOffset; index += 1) {
+    const dueDate = testMonthlyRuleDate(input.startDate, input.dayOfMonth, index);
+    if (dueDate < input.startDate) continue;
+    if (dueDate.slice(0, 7) === input.startDate.slice(0, 7)) continue;
+    dates.push(dueDate);
+  }
+  return dates;
+}
+
 function parseOpenRouterBody(init: RequestInit | undefined) {
   return JSON.parse(String(init?.body)) as {
     model?: string;
@@ -813,6 +865,7 @@ test('POST /finance/assistant/interpret usa vencimento de hoje em rotina operaci
   cleanupDbFiles(dbPath);
   resetDbConnection();
   const app = createApp({ forceDbRefresh: true, seedDb: false });
+  const today = saoPauloTodayIso();
 
   try {
     seedFinanceCompanies();
@@ -841,7 +894,7 @@ test('POST /finance/assistant/interpret usa vencimento de hoje em rotina operaci
     assert.equal(res.status, 201);
     assert.equal(res.body.actions[0].intent, 'create_payable');
     assert.equal(res.body.actions[0].payload.amount_cents, 800000);
-    assert.equal(res.body.actions[0].payload.due_date, new Date().toISOString().slice(0, 10));
+    assert.equal(res.body.actions[0].payload.due_date, today);
   } finally {
     db.close();
     cleanupDbFiles(dbPath);
@@ -2463,7 +2516,7 @@ test('POST /finance/assistant/run responde vencimentos de hoje sem criar lançam
   cleanupDbFiles(dbPath);
   resetDbConnection();
   const app = createApp({ forceDbRefresh: true, seedDb: false });
-  const today = new Date().toISOString().slice(0, 10);
+  const today = saoPauloTodayIso();
 
   try {
     seedFinanceCompanies();
@@ -2538,7 +2591,7 @@ test('POST /finance/assistant/run responde contas a pagar e receber no mesmo rec
   resetDbConnection();
   const app = createApp({ forceDbRefresh: true, seedDb: false });
   const originalOpenRouterApiKey = process.env.OPENROUTER_API_KEY;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = saoPauloTodayIso();
 
   try {
     seedFinanceCompanies();
@@ -2578,8 +2631,8 @@ test('POST /finance/assistant/run responde contas a pagar e receber no mesmo rec
         description: 'Projeto Alpha',
         amount_cents: 5000000,
         status: 'open',
-        issue_date: '2026-04-20',
-        due_date: '2026-05-03'
+        issue_date: today,
+        due_date: today
       });
     assert.equal(receivableRes.status, 201);
 
@@ -2620,6 +2673,7 @@ test('POST /finance/payables/:id/undo-settle desfaz baixa individual', async () 
   cleanupDbFiles(dbPath);
   resetDbConnection();
   const app = createApp({ forceDbRefresh: true, seedDb: false });
+  const today = saoPauloTodayIso();
 
   try {
     seedFinanceCompanies();
@@ -2644,15 +2698,15 @@ test('POST /finance/payables/:id/undo-settle desfaz baixa individual', async () 
         description: 'Aluguel',
         amount_cents: 800000,
         status: 'open',
-        issue_date: '2026-04-20',
-        due_date: '2026-04-27'
+        issue_date: today,
+        due_date: today
       });
     assert.equal(payableRes.status, 201);
 
     const settleRes = await request(app)
       .post(`/finance/payables/${payableRes.body.id}/settle`)
       .set('Authorization', `Bearer ${loginRes.body.token}`)
-      .send({ settled_at: '2026-04-27' });
+      .send({ settled_at: today });
     assert.equal(settleRes.status, 200);
     assert.equal(settleRes.body.status, 'paid');
 
@@ -4404,18 +4458,20 @@ test('finance recurring rules materialize monthly commitments and can be paused'
     assert.equal(recurringRes.status, 201);
     assert.equal(recurringRes.body.rule.name, 'Aluguel mensal');
     assert.equal(recurringRes.body.rule.status, 'active');
-    assert.equal(recurringRes.body.rule.last_materialized_until, '2026-06-15');
-    assert.equal(recurringRes.body.payables.length, 2);
+    const expectedInitialDates = expectedRecurringMaterializedDates({
+      startDate: '2026-04-15',
+      dayOfMonth: 15,
+      materializationMonths: 3
+    });
+    assert.equal(recurringRes.body.rule.last_materialized_until, expectedInitialDates.at(-1));
+    assert.equal(recurringRes.body.payables.length, expectedInitialDates.length);
     assert.deepEqual(
       recurringRes.body.payables.map((payable: { due_date: string; source: string; amount_cents: number }) => ({
         due_date: payable.due_date,
         source: payable.source,
         amount_cents: payable.amount_cents
       })),
-      [
-        { due_date: '2026-05-15', source: 'recurring_rule', amount_cents: 680000 },
-        { due_date: '2026-06-15', source: 'recurring_rule', amount_cents: 680000 }
-      ]
+      expectedInitialDates.map((dueDate) => ({ due_date: dueDate, source: 'recurring_rule', amount_cents: 680000 }))
     );
 
     const rulesRes = await request(app)
@@ -4423,7 +4479,8 @@ test('finance recurring rules materialize monthly commitments and can be paused'
       .set(authHeader);
     assert.equal(rulesRes.status, 200);
     assert.equal(rulesRes.body.rules.length, 1);
-    assert.equal(rulesRes.body.rules[0].next_due_date, '2026-07-15');
+    const lastInitialOffset = testMonthOffsetFromStart('2026-04-15', expectedInitialDates.at(-1) ?? '2026-04-15');
+    assert.equal(rulesRes.body.rules[0].next_due_date, testMonthlyRuleDate('2026-04-15', 15, lastInitialOffset + 1));
 
     const reportsRes = await request(app)
       .get('/finance/reports?preset=custom&from=2026-04-01&to=2026-06-30')
@@ -4448,15 +4505,20 @@ test('finance recurring rules materialize monthly commitments and can be paused'
       .get('/finance/payables')
       .set(authHeader);
     assert.equal(payablesAfterWindowRes.status, 200);
+    const expectedExpandedDates = expectedRecurringMaterializedDates({
+      startDate: '2026-04-15',
+      dayOfMonth: 15,
+      materializationMonths: 4
+    });
     assert.equal(
       payablesAfterWindowRes.body.payables.filter((payable: { description: string }) => payable.description === 'Aluguel mensal').length,
-      4
+      expectedExpandedDates.length + 1
     );
     assert.equal(
       payablesAfterWindowRes.body.payables.filter((payable: { due_date: string }) => payable.due_date === '2026-04-15').length,
       0
     );
-    assert.ok(payablesAfterWindowRes.body.payables.some((payable: { due_date: string }) => payable.due_date === '2026-07-15'));
+    assert.ok(payablesAfterWindowRes.body.payables.some((payable: { due_date: string }) => payable.due_date === expectedExpandedDates.at(-1)));
 
     const pausedRes = await request(app)
       .patch(`/finance/recurring-rules/${recurringRes.body.rule.id}`)
@@ -5628,9 +5690,9 @@ test('GET /finance/reports consolida DRE, aging e fluxo a partir do ledger finan
 
     assert.equal(reportsRes.status, 200);
     assert.equal(reportsRes.body.organization_id, 'org-holand');
-    assert.equal(reportsRes.body.dre.gross_revenue_cents, 130000);
-    assert.equal(reportsRes.body.dre.operating_expenses_cents, 45000);
-    assert.equal(reportsRes.body.dre.operating_result_cents, 85000);
+    assert.equal(reportsRes.body.dre.gross_revenue_cents, 145000);
+    assert.equal(reportsRes.body.dre.operating_expenses_cents, 54000);
+    assert.equal(reportsRes.body.dre.operating_result_cents, 91000);
     assert.equal(reportsRes.body.dre_cash.gross_revenue_cents, 100000);
     assert.equal(reportsRes.body.dre_cash.operating_expenses_cents, 40000);
     assert.equal(reportsRes.body.dre_cash.operating_result_cents, 60000);
@@ -5642,17 +5704,20 @@ test('GET /finance/reports consolida DRE, aging e fluxo a partir do ledger finan
     assert.equal(reportsRes.body.expense_by_category[0].amount_cents, 45000);
     assert.equal(reportsRes.body.expense_by_category[0].transaction_count, 2);
     assert.equal(reportsRes.body.dre_by_period[0].period, currentPeriod);
-    assert.equal(reportsRes.body.dre_by_period[0].net_revenue_cents, 100000);
-    assert.equal(reportsRes.body.dre_by_period[0].operating_expenses_cents, 45000);
-    assert.equal(reportsRes.body.dre_by_period[0].operating_result_cents, 55000);
+    assert.equal(reportsRes.body.dre_by_period[0].net_revenue_cents, 115000);
+    assert.equal(reportsRes.body.dre_by_period[0].operating_expenses_cents, 54000);
+    assert.equal(reportsRes.body.dre_by_period[0].operating_result_cents, 61000);
     assert.equal(reportsRes.body.dre_cash_by_period[0].period, currentPeriod);
     assert.equal(reportsRes.body.dre_cash_by_period[0].net_revenue_cents, 100000);
     assert.equal(reportsRes.body.dre_cash_by_period[0].operating_expenses_cents, 40000);
     assert.equal(reportsRes.body.dre_cash_by_period[0].operating_result_cents, 60000);
     assert.equal(reportsRes.body.cost_center_results[0].cost_center_name, 'Sem centro de custo');
-    assert.equal(reportsRes.body.cost_center_results[0].result_cents, 85000);
-    assert.equal(reportsRes.body.cashflow_by_due[0].period, nextPeriod);
-    assert.equal(reportsRes.body.cashflow_by_due[0].net_cents, 25000);
+    assert.equal(reportsRes.body.cost_center_results[0].result_cents, 91000);
+    const cashflowByDue = new Map<string, { period: string; net_cents: number }>(
+      reportsRes.body.cashflow_by_due.map((row: { period: string; net_cents: number }) => [row.period, row])
+    );
+    assert.equal(cashflowByDue.get(currentPeriod)?.net_cents, 6000);
+    assert.equal(cashflowByDue.get(nextPeriod)?.net_cents, 25000);
     assert.equal(reportsRes.body.cashflow_by_settlement[0].period, currentPeriod);
     assert.equal(reportsRes.body.cashflow_by_settlement[0].net_cents, 60000);
 
@@ -5689,9 +5754,9 @@ test('GET /finance/reports consolida DRE, aging e fluxo a partir do ledger finan
       .set(authHeader);
 
     assert.equal(filteredReportsRes.status, 200);
-    assert.equal(filteredReportsRes.body.dre.gross_revenue_cents, 100000);
-    assert.equal(filteredReportsRes.body.dre.operating_expenses_cents, 45000);
-    assert.equal(filteredReportsRes.body.dre.operating_result_cents, 55000);
+    assert.equal(filteredReportsRes.body.dre.gross_revenue_cents, 115000);
+    assert.equal(filteredReportsRes.body.dre.operating_expenses_cents, 54000);
+    assert.equal(filteredReportsRes.body.dre.operating_result_cents, 61000);
     assert.equal(filteredReportsRes.body.dre_cash.gross_revenue_cents, 100000);
     assert.equal(filteredReportsRes.body.dre_cash.operating_expenses_cents, 40000);
     assert.equal(filteredReportsRes.body.dre_cash.operating_result_cents, 60000);
@@ -5705,6 +5770,114 @@ test('GET /finance/reports consolida DRE, aging e fluxo a partir do ledger finan
     assert.equal(executiveRes.body.summary.monthly_income_cents, 100000);
     assert.equal(executiveRes.body.summary.monthly_expense_cents, 45000);
     assert.equal(executiveRes.body.summary.projected_result_cents, 55000);
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('GET /finance/reports usa contas abertas como competência antes da baixa', async () => {
+  const dbPath = assignTestDbPath('finance-reports-competence-open-accounts');
+  cleanupDbFiles(dbPath);
+  resetDbConnection();
+
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+  try {
+    seedFinanceCompanies();
+    seedFinanceEntity();
+    seedFinanceEntityPartner();
+    seedFinanceAccountAndCategory();
+    seedFinanceIncomeCategory();
+
+    createInternalUser({
+      username: 'finance.reports.competence',
+      display_name: 'Finance Reports Competence',
+      password: 'Senha#123',
+      role: 'supremo',
+      permissions: ['finance.read', 'finance.write']
+    });
+
+    const loginRes = await request(app)
+      .post('/auth/login')
+      .send({ username: 'finance.reports.competence', password: 'Senha#123' });
+    assert.equal(loginRes.status, 200);
+    const authHeader = { Authorization: `Bearer ${loginRes.body.token}` };
+
+    const costCenterRes = await request(app)
+      .post('/finance/catalog/cost-centers')
+      .set(authHeader)
+      .send({ name: 'Conta fixa', code: 'FIXA' });
+    assert.equal(costCenterRes.status, 201);
+
+    const [fixedPayableRes, uncategorizedPayableRes, receivableRes] = await Promise.all([
+      request(app)
+        .post('/finance/payables')
+        .set(authHeader)
+        .send({
+          financial_entity_id: 'entity-holand-supplier',
+          financial_account_id: 'financial-account-holand',
+          financial_category_id: 'financial-category-holand',
+          financial_cost_center_id: costCenterRes.body.id,
+          description: 'Conta fixa categorizada',
+          amount_cents: 2655000,
+          status: 'open',
+          issue_date: '2026-05-01',
+          due_date: '2026-05-10'
+        }),
+      request(app)
+        .post('/finance/payables')
+        .set(authHeader)
+        .send({
+          supplier_name: 'Fornecedor sem categoria',
+          description: 'Despesa sem categoria',
+          amount_cents: 517600,
+          status: 'open',
+          issue_date: '2026-05-01',
+          due_date: '2026-05-15'
+        }),
+      request(app)
+        .post('/finance/receivables')
+        .set(authHeader)
+        .send({
+          financial_entity_id: 'entity-holand-client',
+          financial_account_id: 'financial-account-holand',
+          financial_category_id: 'financial-category-income',
+          financial_cost_center_id: costCenterRes.body.id,
+          description: 'Receita de maio',
+          amount_cents: 1000000,
+          status: 'open',
+          issue_date: '2026-05-01',
+          due_date: '2026-05-20'
+        })
+    ]);
+    assert.equal(fixedPayableRes.status, 201);
+    assert.equal(uncategorizedPayableRes.status, 201);
+    assert.equal(receivableRes.status, 201);
+
+    const reportsRes = await request(app)
+      .get('/finance/reports?preset=custom&from=2026-05-01&to=2026-05-31')
+      .set(authHeader);
+    assert.equal(reportsRes.status, 200);
+
+    assert.equal(reportsRes.body.dre.gross_revenue_cents, 1000000);
+    assert.equal(reportsRes.body.dre.operating_expenses_cents, 3172600);
+    assert.equal(reportsRes.body.dre.operating_result_cents, -2172600);
+    assert.equal(reportsRes.body.dre_by_period[0].period, '2026-05');
+    assert.equal(reportsRes.body.dre_by_period[0].operating_expenses_cents, 3172600);
+
+    const expenses = new Map(
+      reportsRes.body.expense_by_category.map((row: { category_name: string; amount_cents: number }) => [row.category_name, row.amount_cents])
+    );
+    assert.equal(expenses.get('Despesas Operacionais'), 2655000);
+    assert.equal(expenses.get('Sem categoria'), 517600);
+
+    const costCenters = new Map<string, { cost_center_name: string; expense_cents: number; revenue_cents: number }>(
+      reportsRes.body.cost_center_results.map((row: { cost_center_name: string; expense_cents: number; revenue_cents: number }) => [row.cost_center_name, row])
+    );
+    assert.equal(costCenters.get('Conta fixa')?.expense_cents, 2655000);
+    assert.equal(costCenters.get('Conta fixa')?.revenue_cents, 1000000);
+    assert.equal(costCenters.get('Sem centro de custo')?.expense_cents, 517600);
   } finally {
     db.close();
     cleanupDbFiles(dbPath);

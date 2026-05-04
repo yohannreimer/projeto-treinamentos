@@ -2,6 +2,7 @@ import { internalSessionStore } from '../auth/session';
 
 const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
 const BASE_URL = env?.VITE_API_BASE_URL ?? `http://${window.location.hostname}:4000`;
+const FINANCE_API_TIMEOUT_MS = 20_000;
 
 export type FinanceTransactionKind = 'income' | 'expense' | 'transfer' | 'adjustment';
 export type FinanceTransactionStatus = 'planned' | 'open' | 'partial' | 'settled' | 'overdue' | 'canceled';
@@ -1284,10 +1285,33 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     headers.set('Authorization', `Bearer ${authToken}`);
   }
 
-  const response = await fetch(`${BASE_URL}${path}`, {
-    ...init,
-    headers
-  });
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), FINANCE_API_TIMEOUT_MS);
+  const externalSignal = init?.signal;
+  const abortFromExternalSignal = () => controller.abort();
+
+  if (externalSignal?.aborted) {
+    controller.abort();
+  } else {
+    externalSignal?.addEventListener('abort', abortFromExternalSignal, { once: true });
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${BASE_URL}${path}`, {
+      ...init,
+      headers,
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error('Tempo esgotado ao carregar o financeiro. Atualize ou tente novamente.');
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+    externalSignal?.removeEventListener('abort', abortFromExternalSignal);
+  }
 
   if (!response.ok) {
     const raw = await response.text();

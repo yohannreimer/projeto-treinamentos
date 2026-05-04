@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
+import { useLocation } from 'react-router-dom';
 import { hasAnyPermission, internalSessionStore } from '../../auth/session';
 import {
   financeApi,
@@ -459,6 +460,33 @@ function normalizeEntitySearch(value: string) {
   return value.trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 }
 
+function readDrillPeriodFromQuery(search: string) {
+  const params = new URLSearchParams(search);
+  if (params.get('preset') === 'custom' && params.get('from') && params.get('to')) {
+    return {
+      preset: 'custom' as const,
+      from: params.get('from') ?? '',
+      to: params.get('to') ?? ''
+    };
+  }
+  return null;
+}
+
+function matchesDrillSearch(item: FinancePayable, query: string | null) {
+  const normalizedQuery = normalizeEntitySearch(query ?? '');
+  if (!normalizedQuery) return true;
+
+  return [
+    item.description,
+    item.supplier_name,
+    item.financial_entity_name,
+    item.financial_account_name,
+    item.financial_category_name,
+    item.financial_cost_center_name,
+    item.note
+  ].some((value) => value && normalizeEntitySearch(value).includes(normalizedQuery));
+}
+
 function Divider() {
   return <div style={dividerStyle} />;
 }
@@ -570,6 +598,7 @@ function PayablesListGroup({
 
 export function FinancePayablesPage() {
   const { period, setPeriod } = useFinancePeriod();
+  const location = useLocation();
   const [dataState, setDataState] = useState<FinancePayablesList | null>(null);
   const [entities, setEntities] = useState<FinanceEntity[]>([]);
   const [catalog, setCatalog] = useState<FinanceCatalogSnapshot | null>(null);
@@ -584,6 +613,13 @@ export function FinancePayablesPage() {
   const session = internalSessionStore.read();
   const canWrite = hasAnyPermission(session?.user, ['finance.write']);
   const periodWindow = useMemo(() => resolveFinancePeriodWindow(period), [period]);
+
+  useEffect(() => {
+    const queryPeriod = readDrillPeriodFromQuery(location.search);
+    if (queryPeriod) {
+      setPeriod(queryPeriod);
+    }
+  }, [location.search, setPeriod]);
 
   async function reload() {
     setLoading(true);
@@ -630,24 +666,27 @@ export function FinancePayablesPage() {
   }, [period, setPeriod]);
 
   const groups = dataState?.groups ?? emptyGroups;
-  const statusQuery = typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('status');
+  const urlParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const statusQuery = urlParams.get('status');
+  const searchQuery = urlParams.get('search');
   const isInsidePeriod = (dateIso?: string | null) => {
     if (!periodWindow.from || !periodWindow.to) return true;
     if (!dateIso) return false;
     return dateIso >= periodWindow.from && dateIso <= periodWindow.to;
   };
   const filteredGroups = useMemo(() => {
+    const visible = (item: FinancePayable) => isInsidePeriod(item.due_date) && matchesDrillSearch(item, searchQuery);
     const next = {
-      overdue: groups.overdue.filter((item) => isInsidePeriod(item.due_date)),
-      due_today: groups.due_today.filter((item) => isInsidePeriod(item.due_date)),
-      upcoming: groups.upcoming.filter((item) => isInsidePeriod(item.due_date)),
-      settled: groups.settled.filter((item) => isInsidePeriod(item.due_date))
+      overdue: groups.overdue.filter(visible),
+      due_today: groups.due_today.filter(visible),
+      upcoming: groups.upcoming.filter(visible),
+      settled: groups.settled.filter(visible)
     };
     if (statusQuery === 'overdue') {
       return { ...next, due_today: [], upcoming: [], settled: [] };
     }
     return next;
-  }, [groups, periodWindow.from, periodWindow.to, statusQuery]);
+  }, [groups, periodWindow.from, periodWindow.to, searchQuery, statusQuery]);
   const today = filteredGroups.due_today;
   const upcoming = filteredGroups.upcoming;
   const paid = filteredGroups.settled;

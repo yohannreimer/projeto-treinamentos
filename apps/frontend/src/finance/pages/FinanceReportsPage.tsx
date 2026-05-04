@@ -155,29 +155,52 @@ function DrillLink({ to, children = 'Detalhar' }: { to: string; children?: strin
   );
 }
 
-function transactionDrill(params: Record<string, string | null | undefined>) {
+function operationalDrill(resource: 'payables' | 'receivables' | 'transactions', params: Record<string, string | null | undefined>) {
   const query = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
     if (value) query.set(key, value);
   });
   const queryString = query.toString();
-  return `/financeiro/transactions${queryString ? `?${queryString}` : ''}`;
+  return `/financeiro/${resource}${queryString ? `?${queryString}` : ''}`;
 }
 
-function formatReportRows(reports: FinanceReports, dre: FinanceReports['dre'], includeCategoryRows = true) {
+function periodDrillParams(periodWindow: { from: string | null; to: string | null }) {
+  return periodWindow.from && periodWindow.to
+    ? { preset: 'custom', from: periodWindow.from, to: periodWindow.to }
+    : {};
+}
+
+function monthWindowFromPeriod(period: string) {
+  const [year, month] = period.split('-').map(Number);
+  if (!year || !month) return {};
+  const endDate = new Date(year, month, 0);
+  return {
+    preset: 'custom',
+    from: `${year}-${String(month).padStart(2, '0')}-01`,
+    to: `${year}-${String(month).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`
+  };
+}
+
+function formatReportRows(
+  reports: FinanceReports,
+  dre: FinanceReports['dre'],
+  includeCategoryRows = true,
+  periodWindow: { from: string | null; to: string | null } = { from: null, to: null }
+) {
+  const basePeriod = periodDrillParams(periodWindow);
   const expenseRows = includeCategoryRows ? reports.expense_by_category.slice(0, 3) : [];
   return [
-    { label: 'Receita Bruta', value: dre.gross_revenue_cents, type: 'positive' as const, indent: 0, href: transactionDrill({ kind: 'income' }) },
+    { label: 'Receita Bruta', value: dre.gross_revenue_cents, type: 'positive' as const, indent: 0, href: operationalDrill('receivables', basePeriod) },
     { label: 'Deduções e impostos', value: -dre.deductions_cents, type: 'negative' as const, indent: 1 },
-    { label: 'Receita Líquida', value: dre.net_revenue_cents, type: 'subtotal' as const, indent: 0, href: transactionDrill({ kind: 'income' }) },
+    { label: 'Receita Líquida', value: dre.net_revenue_cents, type: 'subtotal' as const, indent: 0, href: operationalDrill('receivables', basePeriod) },
     ...expenseRows.map((row) => ({
       label: row.category_name,
       value: -row.amount_cents,
       type: 'negative' as const,
       indent: 1,
-      href: transactionDrill({ kind: 'expense', search: row.category_name })
+      href: operationalDrill('payables', { ...basePeriod, search: row.category_name })
     })),
-    { label: 'Despesas Operacionais', value: -dre.operating_expenses_cents, type: 'subtotal' as const, indent: 0, href: transactionDrill({ kind: 'expense' }) },
+    { label: 'Despesas Operacionais', value: -dre.operating_expenses_cents, type: 'subtotal' as const, indent: 0, href: operationalDrill('payables', basePeriod) },
     { label: 'Resultado Operacional', value: dre.operating_result_cents, type: 'total' as const, indent: 0 }
   ];
 }
@@ -275,8 +298,8 @@ export function FinanceReportsPage() {
   const quickMonths = useMemo(() => [-1, 0, 1, 2, 3].map(monthRangeFromOffset), []);
   const incomeMax = Math.max(...(reports?.income_by_category.map((row) => row.amount_cents) ?? [1]), 1);
   const expenseMax = Math.max(...(reports?.expense_by_category.map((row) => row.amount_cents) ?? [1]), 1);
-  const dreRows = reports ? formatReportRows(reports, reports.dre) : [];
-  const dreCashRows = reports ? formatReportRows(reports, reports.dre_cash, false) : [];
+  const dreRows = reports ? formatReportRows(reports, reports.dre, true, periodWindow) : [];
+  const dreCashRows = reports ? formatReportRows(reports, reports.dre_cash, false, periodWindow) : [];
 
   function renderComparisonTable(rows: FinanceReportComparisonRow[]) {
     if (rows.length === 0) {
@@ -325,7 +348,7 @@ export function FinanceReportsPage() {
                   </span>
                 </td>
                 <td style={{ padding: '9px 14px', textAlign: 'right' }}>
-                  <DrillLink to={transactionDrill({ search: row.period })}>Abrir</DrillLink>
+                  <DrillLink to={operationalDrill('transactions', { search: row.period })}>Abrir</DrillLink>
                 </td>
               </tr>
             );
@@ -353,7 +376,7 @@ export function FinanceReportsPage() {
               </div>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <span style={{ fontSize: 13, fontWeight: 600, fontFamily: "'DM Mono', monospace", color }}>{formatCurrency(row.amount_cents)}</span>
-                <DrillLink to={transactionDrill({ kind: color === '#059669' ? 'income' : 'expense', search: row.category_name })}>Abrir</DrillLink>
+                <DrillLink to={operationalDrill(color === '#059669' ? 'receivables' : 'payables', { ...periodDrillParams(periodWindow), search: row.category_name })}>Abrir</DrillLink>
               </div>
             </div>
             <MiniProgressBar value={row.amount_cents} max={max} color={color} />
@@ -387,7 +410,7 @@ export function FinanceReportsPage() {
               <td style={{ padding: '9px 14px', textAlign: 'right', fontSize: 13, fontFamily: "'DM Mono', monospace", color: '#ef4444' }}>{formatCurrency(row.operating_expenses_cents)}</td>
               <td style={{ padding: '9px 14px', textAlign: 'right', fontSize: 13, fontWeight: 700, fontFamily: "'DM Mono', monospace", color: row.operating_result_cents >= 0 ? '#2563eb' : '#ef4444' }}>{signedCurrency(row.operating_result_cents)}</td>
               <td style={{ padding: '9px 14px', textAlign: 'right', fontSize: 12, color: '#64748b' }}>{row.transaction_count}</td>
-              <td style={{ padding: '9px 14px', textAlign: 'right' }}><DrillLink to={transactionDrill({ search: row.period })}>Abrir</DrillLink></td>
+              <td style={{ padding: '9px 14px', textAlign: 'right' }}><DrillLink to={operationalDrill(row.operating_expenses_cents >= row.net_revenue_cents ? 'payables' : 'receivables', monthWindowFromPeriod(row.period))}>Abrir</DrillLink></td>
             </tr>
           ))}
         </tbody>
@@ -419,7 +442,7 @@ export function FinanceReportsPage() {
               <td style={{ padding: '9px 14px', textAlign: 'right', fontSize: 13, fontFamily: "'DM Mono', monospace", color: '#ef4444' }}>{formatCurrency(row.expense_cents)}</td>
               <td style={{ padding: '9px 14px', textAlign: 'right', fontSize: 13, fontWeight: 700, fontFamily: "'DM Mono', monospace", color: row.result_cents >= 0 ? '#2563eb' : '#ef4444' }}>{signedCurrency(row.result_cents)}</td>
               <td style={{ padding: '9px 14px', textAlign: 'right', fontSize: 12, color: '#64748b' }}>{row.transaction_count}</td>
-              <td style={{ padding: '9px 14px', textAlign: 'right' }}><DrillLink to={transactionDrill({ search: row.cost_center_name })}>Abrir</DrillLink></td>
+              <td style={{ padding: '9px 14px', textAlign: 'right' }}><DrillLink to={operationalDrill(row.expense_cents >= row.revenue_cents ? 'payables' : 'receivables', { ...periodDrillParams(periodWindow), search: row.cost_center_name })}>Abrir</DrillLink></td>
             </tr>
           ))}
         </tbody>
@@ -451,7 +474,7 @@ export function FinanceReportsPage() {
               <td style={{ padding: '9px 14px', textAlign: 'right', fontSize: 13, fontFamily: "'DM Mono', monospace", color: '#ef4444' }}>{formatCurrency(row.outflow_cents)}</td>
               <td style={{ padding: '9px 14px', textAlign: 'right', fontSize: 13, fontWeight: 700, fontFamily: "'DM Mono', monospace", color: row.net_cents >= 0 ? '#2563eb' : '#ef4444' }}>{signedCurrency(row.net_cents)}</td>
               <td style={{ padding: '9px 14px', textAlign: 'right', fontSize: 12, color: '#64748b' }}>{row.transaction_count}</td>
-              <td style={{ padding: '9px 14px', textAlign: 'right' }}><DrillLink to={transactionDrill({ search: row.period })}>Abrir</DrillLink></td>
+              <td style={{ padding: '9px 14px', textAlign: 'right' }}><DrillLink to={operationalDrill(row.outflow_cents >= row.inflow_cents ? 'payables' : 'receivables', monthWindowFromPeriod(row.period))}>Abrir</DrillLink></td>
             </tr>
           ))}
         </tbody>
