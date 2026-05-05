@@ -70,6 +70,8 @@ import {
   undoSettleFinancePayable,
   updateFinanceAccount,
   updateFinanceCategory,
+  updateFinancePayable,
+  updateFinanceReceivable,
   updateFinanceRecurringRule,
   updateFinanceSimulationItem,
   updateFinanceSimulationScenario,
@@ -237,7 +239,7 @@ const favoriteCombinationUpdateSchema = favoriteCombinationCreateSchema.partial(
   message: 'Informe ao menos um campo para atualização.'
 });
 
-const payableCreateSchema = z.object({
+const payableBaseSchema = z.object({
   financial_account_id: z.string().trim().min(1).nullable().optional(),
   financial_category_id: z.string().trim().min(1).nullable().optional(),
   financial_cost_center_id: z.string().trim().min(1).nullable().optional(),
@@ -251,7 +253,9 @@ const payableCreateSchema = z.object({
   due_date: isoDateSchema.nullable().optional(),
   paid_at: isoDateSchema.nullable().optional(),
   note: z.string().trim().max(2_000).nullable().optional()
-}).superRefine((payload, ctx) => {
+});
+
+const payableCreateSchema = payableBaseSchema.superRefine((payload, ctx) => {
   if (payload.status === 'paid' && !payload.paid_at) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -261,7 +265,23 @@ const payableCreateSchema = z.object({
   }
 });
 
-const receivableCreateSchema = z.object({
+const payableUpdateSchema = payableBaseSchema.partial().superRefine((payload, ctx) => {
+  if (Object.keys(payload).length === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Informe ao menos um campo para atualização.'
+    });
+  }
+  if (payload.status === 'paid' && !payload.paid_at) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['paid_at'],
+      message: 'Informe paid_at para status paid.'
+    });
+  }
+});
+
+const receivableBaseSchema = z.object({
   financial_account_id: z.string().trim().min(1).nullable().optional(),
   financial_category_id: z.string().trim().min(1).nullable().optional(),
   financial_cost_center_id: z.string().trim().min(1).nullable().optional(),
@@ -275,7 +295,25 @@ const receivableCreateSchema = z.object({
   due_date: isoDateSchema.nullable().optional(),
   received_at: isoDateSchema.nullable().optional(),
   note: z.string().trim().max(2_000).nullable().optional()
-}).superRefine((payload, ctx) => {
+});
+
+const receivableCreateSchema = receivableBaseSchema.superRefine((payload, ctx) => {
+  if (payload.status === 'received' && !payload.received_at) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['received_at'],
+      message: 'Informe received_at para status received.'
+    });
+  }
+});
+
+const receivableUpdateSchema = receivableBaseSchema.partial().superRefine((payload, ctx) => {
+  if (Object.keys(payload).length === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Informe ao menos um campo para atualização.'
+    });
+  }
   if (payload.status === 'received' && !payload.received_at) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -1555,6 +1593,26 @@ export function registerFinanceRoutes(app: Express) {
     }
   });
 
+  router.patch('/payables/:id', requireFinancePermission(['finance.write']), (req, res) => {
+    const parsed = payableUpdateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+    try {
+      const financialEntityId = Object.prototype.hasOwnProperty.call(parsed.data, 'financial_entity_id')
+        ? resolveFinancialEntityId(parsed.data)
+        : undefined;
+      return res.json(updateFinancePayable({
+        ...parsed.data,
+        organization_id: readFinanceOrganizationId(res),
+        resource_id: req.params.id,
+        financial_entity_id: financialEntityId
+      }));
+    } catch (error) {
+      return respondFinanceError(res, error);
+    }
+  });
+
   router.post('/payables/:id/settle', requireFinancePermission(['finance.write']), (req, res) => {
     const parsed = operationNoteSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -1704,6 +1762,26 @@ export function registerFinanceRoutes(app: Express) {
         ...parsed.data,
         organization_id: readFinanceOrganizationId(res),
         financial_entity_id: resolveFinancialEntityId(parsed.data)
+      }));
+    } catch (error) {
+      return respondFinanceError(res, error);
+    }
+  });
+
+  router.patch('/receivables/:id', requireFinancePermission(['finance.write']), (req, res) => {
+    const parsed = receivableUpdateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+    try {
+      const financialEntityId = Object.prototype.hasOwnProperty.call(parsed.data, 'financial_entity_id')
+        ? resolveFinancialEntityId(parsed.data)
+        : undefined;
+      return res.json(updateFinanceReceivable({
+        ...parsed.data,
+        organization_id: readFinanceOrganizationId(res),
+        resource_id: req.params.id,
+        financial_entity_id: financialEntityId
       }));
     } catch (error) {
       return respondFinanceError(res, error);

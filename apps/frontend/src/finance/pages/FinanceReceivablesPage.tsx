@@ -113,6 +113,13 @@ function installmentAmounts(amountCents: number, count: number, basis: Receivabl
   return Array.from({ length: count }, (_item, index) => baseAmount + (index === 0 ? remainder : 0));
 }
 
+function centsToFormValue(cents: number) {
+  return (cents / 100).toLocaleString('pt-BR', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+}
+
 function isDateInsideWindow(dateIso: string | null | undefined, windowRange: { from: string | null; to: string | null }) {
   if (!dateIso || !windowRange.from || !windowRange.to) return true;
   return dateIso >= windowRange.from && dateIso <= windowRange.to;
@@ -522,7 +529,8 @@ function ReceivablesListGroup({
   emptyText,
   accentColor,
   canWrite,
-  onOperation
+  onOperation,
+  onEdit
 }: {
   title: string;
   items: FinanceReceivable[];
@@ -530,6 +538,7 @@ function ReceivablesListGroup({
   accentColor: string;
   canWrite: boolean;
   onOperation: (operation: DailyOperation, item: FinanceReceivable, value?: string) => Promise<void>;
+  onEdit: (item: FinanceReceivable) => void;
 }) {
   const [draft, setDraft] = useState<{ itemId: string; operation: DraftOperation; value: string } | null>(null);
 
@@ -559,6 +568,7 @@ function ReceivablesListGroup({
                 {item.received_at ? <span style={{ fontSize: 11, color: '#059669' }}>Recebido {formatDate(item.received_at)}</span> : null}
               </div>
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+                <button type="button" style={compactActionStyle} disabled={!canWrite || item.status === 'received' || item.status === 'canceled'} onClick={() => onEdit(item)}>Editar</button>
                 <button type="button" style={compactActionStyle} disabled={!canWrite || item.status === 'received' || item.status === 'canceled'} onClick={() => onOperation('settle', item)}>Baixar</button>
                 <button type="button" style={compactActionStyle} disabled={!canWrite || item.status === 'received' || item.status === 'canceled'} onClick={() => setDraft({ itemId: item.id, operation: 'partial', value: draftDefaultValue('partial') })}>Parcial</button>
                 <button type="button" style={compactActionStyle} disabled={!canWrite} onClick={() => onOperation('duplicate', item)}>Duplicar</button>
@@ -610,6 +620,7 @@ export function FinanceReceivablesPage() {
   const [error, setError] = useState('');
   const [smartHint, setSmartHint] = useState('');
   const [success, setSuccess] = useState(false);
+  const [editingReceivableId, setEditingReceivableId] = useState<string | null>(null);
 
   const session = internalSessionStore.read();
   const canWrite = hasAnyPermission(session?.user, ['finance.write']);
@@ -739,6 +750,39 @@ export function FinanceReceivablesPage() {
     }
   }
 
+  function startEditingReceivable(item: FinanceReceivable) {
+    setEditingReceivableId(item.id);
+    setForm({
+      desc: item.description,
+      entity: item.financial_entity_name ?? item.customer_name ?? '',
+      financial_entity_id: item.financial_entity_id ?? '',
+      financial_category_id: item.financial_category_id ?? '',
+      financial_cost_center_id: item.financial_cost_center_id ?? '',
+      financial_account_id: item.financial_account_id ?? '',
+      financial_payment_method_id: item.financial_payment_method_id ?? '',
+      value: centsToFormValue(item.amount_cents),
+      status: item.status === 'received' ? 'recebido' : item.status === 'overdue' ? 'atrasado' : 'pendente',
+      due: item.due_date ?? todayIso(),
+      obs: item.note ?? '',
+      scheduleMode: 'single',
+      installmentCount: '10',
+      installmentStart: '1',
+      installmentBasis: 'total'
+    });
+    setError('');
+    setSuccess(false);
+    setSmartHint('Editando conta a receber selecionada.');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function resetFormState() {
+    setForm(initialForm);
+    setEditingReceivableId(null);
+    setSuccess(false);
+    setError('');
+    setSmartHint('');
+  }
+
   async function handleCreateAndUseEntity() {
     const legalName = form.entity.trim();
     if (!legalName) return;
@@ -787,6 +831,24 @@ export function FinanceReceivablesPage() {
         issue_date: todayIso(),
         note: form.obs.trim() || null
       };
+
+      if (editingReceivableId) {
+        await financeApi.updateReceivable(editingReceivableId, {
+          ...basePayload,
+          description: form.desc.trim(),
+          amount_cents: amountCents,
+          status: form.status === 'recebido' ? 'received' : form.status === 'atrasado' ? 'overdue' : 'open',
+          due_date: form.due || null,
+          received_at: form.status === 'recebido' ? todayIso() : null,
+          note: basePayload.note
+        });
+        setEditingReceivableId(null);
+        setForm(initialForm);
+        setSmartHint('');
+        setSuccess(true);
+        await reload();
+        return;
+      }
 
       if (form.scheduleMode === 'installments') {
         const amounts = installmentAmounts(amountCents, installmentCount, form.installmentBasis);
@@ -883,7 +945,7 @@ export function FinanceReceivablesPage() {
           <div>
             <Card>
               <SectionTitle>Nova conta a receber</SectionTitle>
-              {success ? <div style={successBannerStyle}>✓ Conta registrada com sucesso!</div> : null}
+              {success ? <div style={successBannerStyle}>✓ Operação concluída com sucesso!</div> : null}
               {error ? <div style={errorBannerStyle}>{error}</div> : null}
               <form onSubmit={handleSubmit} aria-busy={loading}>
                 <label style={fieldStyle}>
@@ -1132,20 +1194,15 @@ export function FinanceReceivablesPage() {
                 </div>
                 <div style={actionRowStyle}>
                   <button type="submit" style={primaryButtonStyle} disabled={!canWrite || submitting}>
-                    Registrar conta a receber
+                    {editingReceivableId ? 'Salvar alterações' : 'Registrar conta a receber'}
                   </button>
                   <button
                     type="button"
                     style={secondaryButtonStyle}
-                    onClick={() => {
-                      setForm(initialForm);
-                      setSuccess(false);
-                      setError('');
-                      setSmartHint('');
-                    }}
+                    onClick={resetFormState}
                     disabled={submitting}
                   >
-                    Limpar
+                    {editingReceivableId ? 'Cancelar edição' : 'Limpar'}
                   </button>
                 </div>
               </form>
@@ -1183,10 +1240,10 @@ export function FinanceReceivablesPage() {
           </div>
 
           <div>
-            <ReceivablesListGroup title="Atrasados" items={overdue} emptyText="Nenhum recebível em atraso." accentColor="#ef4444" canWrite={canWrite} onOperation={handleOperation} />
-            <ReceivablesListGroup title="Vencendo hoje" items={today} emptyText="Nenhum vencimento hoje." accentColor="#ea580c" canWrite={canWrite} onOperation={handleOperation} />
-            <ReceivablesListGroup title="Próximos vencimentos" items={upcoming} emptyText="Nenhum recebível próximo." accentColor="#2563eb" canWrite={canWrite} onOperation={handleOperation} />
-            <ReceivablesListGroup title="Liquidados" items={received} emptyText="Nenhuma baixa registrada." accentColor="#059669" canWrite={canWrite} onOperation={handleOperation} />
+            <ReceivablesListGroup title="Atrasados" items={overdue} emptyText="Nenhum recebível em atraso." accentColor="#ef4444" canWrite={canWrite} onOperation={handleOperation} onEdit={startEditingReceivable} />
+            <ReceivablesListGroup title="Vencendo hoje" items={today} emptyText="Nenhum vencimento hoje." accentColor="#ea580c" canWrite={canWrite} onOperation={handleOperation} onEdit={startEditingReceivable} />
+            <ReceivablesListGroup title="Próximos vencimentos" items={upcoming} emptyText="Nenhum recebível próximo." accentColor="#2563eb" canWrite={canWrite} onOperation={handleOperation} onEdit={startEditingReceivable} />
+            <ReceivablesListGroup title="Liquidados" items={received} emptyText="Nenhuma baixa registrada." accentColor="#059669" canWrite={canWrite} onOperation={handleOperation} onEdit={startEditingReceivable} />
           </div>
         </div>
       </div>

@@ -1171,6 +1171,8 @@ export type CreateFinancePayablePayload = {
   note?: string | null;
 };
 
+export type UpdateFinancePayablePayload = Partial<CreateFinancePayablePayload>;
+
 export type CreateFinanceReceivablePayload = {
   financial_entity_id?: string | null;
   financial_account_id?: string | null;
@@ -1187,6 +1189,8 @@ export type CreateFinanceReceivablePayload = {
   received_at?: string | null;
   note?: string | null;
 };
+
+export type UpdateFinanceReceivablePayload = Partial<CreateFinanceReceivablePayload>;
 
 export type CreateFinanceRecurringRulePayload = {
   resource_type: FinanceRecurringRuleResourceType;
@@ -1660,6 +1664,11 @@ export const financeApi = {
       method: 'POST',
       body: JSON.stringify(payload)
     }),
+  updatePayable: (payableId: string, payload: UpdateFinancePayablePayload) =>
+    req<FinancePayable>(`/finance/payables/${payableId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload)
+    }),
   settlePayable: (payableId: string, payload: FinanceOperationPayload = {}) =>
     req<FinancePayable>(`/finance/payables/${payableId}/settle`, {
       method: 'POST',
@@ -1716,6 +1725,11 @@ export const financeApi = {
   createReceivable: (payload: CreateFinanceReceivablePayload) =>
     req<FinanceReceivable>('/finance/receivables', {
       method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  updateReceivable: (receivableId: string, payload: UpdateFinanceReceivablePayload) =>
+    req<FinanceReceivable>(`/finance/receivables/${receivableId}`, {
+      method: 'PATCH',
       body: JSON.stringify(payload)
     }),
   settleReceivable: (receivableId: string, payload: FinanceOperationPayload = {}) =>

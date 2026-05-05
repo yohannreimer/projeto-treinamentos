@@ -876,6 +876,11 @@ export type CreateFinancePayableInput = {
   note?: string | null;
 };
 
+export type UpdateFinancePayableInput = Partial<Omit<CreateFinancePayableInput, 'organization_id' | 'company_id' | 'source' | 'source_ref' | 'paid_amount_cents'>> & {
+  organization_id: string;
+  resource_id: string;
+};
+
 export type CreateFinanceReceivableInput = {
   organization_id: string;
   company_id?: string | null;
@@ -895,6 +900,11 @@ export type CreateFinanceReceivableInput = {
   source?: string | null;
   source_ref?: string | null;
   note?: string | null;
+};
+
+export type UpdateFinanceReceivableInput = Partial<Omit<CreateFinanceReceivableInput, 'organization_id' | 'company_id' | 'source' | 'source_ref' | 'received_amount_cents'>> & {
+  organization_id: string;
+  resource_id: string;
 };
 
 export type FinanceRecurringRuleResourceType = 'payable' | 'receivable';

@@ -4721,6 +4721,20 @@ test('POST/GET de payables e receivables funciona com tenant correto', async () 
     assert.equal(payableRes.status, 201);
     assert.equal(payableRes.body.company_id, null);
 
+    const updatedPayableRes = await request(app)
+      .patch(`/finance/payables/${payableRes.body.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        description: 'Hospedagem mensal ajustada',
+        amount_cents: 9900,
+        due_date: '2026-07-11',
+        status: 'open'
+      });
+    assert.equal(updatedPayableRes.status, 200);
+    assert.equal(updatedPayableRes.body.description, 'Hospedagem mensal ajustada');
+    assert.equal(updatedPayableRes.body.amount_cents, 9900);
+    assert.equal(updatedPayableRes.body.due_date, '2026-07-11');
+
     const receivableRes = await request(app)
       .post('/finance/receivables')
       .set('Authorization', `Bearer ${token}`)
@@ -4733,17 +4747,33 @@ test('POST/GET de payables e receivables funciona com tenant correto', async () 
     assert.equal(receivableRes.status, 201);
     assert.equal(receivableRes.body.company_id, null);
 
+    const updatedReceivableRes = await request(app)
+      .patch(`/finance/receivables/${receivableRes.body.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        description: 'Parcela contrato implantação ajustada',
+        amount_cents: 16900,
+        due_date: '2026-07-13',
+        status: 'open'
+      });
+    assert.equal(updatedReceivableRes.status, 200);
+    assert.equal(updatedReceivableRes.body.description, 'Parcela contrato implantação ajustada');
+    assert.equal(updatedReceivableRes.body.amount_cents, 16900);
+    assert.equal(updatedReceivableRes.body.due_date, '2026-07-13');
+
     const listPayablesA = await request(app)
       .get('/finance/payables')
       .set('Authorization', `Bearer ${token}`);
     assert.equal(listPayablesA.status, 200);
     assert.equal(listPayablesA.body.payables.length, 1);
+    assert.equal(listPayablesA.body.payables[0].description, 'Hospedagem mensal ajustada');
 
     const listReceivablesA = await request(app)
       .get('/finance/receivables')
       .set('Authorization', `Bearer ${token}`);
     assert.equal(listReceivablesA.status, 200);
     assert.equal(listReceivablesA.body.receivables.length, 1);
+    assert.equal(listReceivablesA.body.receivables[0].description, 'Parcela contrato implantação ajustada');
   } finally {
     db.close();
     cleanupDbFiles(dbPath);

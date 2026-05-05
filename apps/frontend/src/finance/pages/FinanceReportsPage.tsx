@@ -188,7 +188,7 @@ function formatReportRows(
   periodWindow: { from: string | null; to: string | null } = { from: null, to: null }
 ) {
   const basePeriod = periodDrillParams(periodWindow);
-  const expenseRows = includeCategoryRows ? reports.expense_by_category.slice(0, 3) : [];
+  const expenseRows = includeCategoryRows ? reports.expense_by_category : [];
   return [
     { label: 'Receita Bruta', value: dre.gross_revenue_cents, type: 'positive' as const, indent: 0, href: operationalDrill('receivables', basePeriod) },
     { label: 'Deduções e impostos', value: -dre.deductions_cents, type: 'negative' as const, indent: 1 },

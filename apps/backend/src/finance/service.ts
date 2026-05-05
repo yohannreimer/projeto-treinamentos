@@ -62,6 +62,8 @@ import type {
   FinanceTransactionStatus,
   UpdateFinanceAccountInput,
   UpdateFinanceCategoryInput,
+  UpdateFinancePayableInput,
+  UpdateFinanceReceivableInput,
   UpdateFinanceRecurringRuleInput,
   UpdateFinanceSimulationItemInput,
   UpdateFinanceSimulationScenarioInput,
@@ -1291,6 +1293,91 @@ export function createFinancePayable(input: CreateFinancePayableInput): FinanceP
   return payable;
 }
 
+export function updateFinancePayable(input: UpdateFinancePayableInput): FinancePayableDto {
+  const normalizedOrganizationId = resolveOrganizationId(input.organization_id);
+  const current = readFinancePayable(normalizedOrganizationId, input.resource_id);
+  const financialEntityId = input.financial_entity_id === undefined
+    ? current.financial_entity_id
+    : input.financial_entity_id?.trim() || null;
+  if (financialEntityId) {
+    readFinanceEntityRow(normalizedOrganizationId, financialEntityId);
+  }
+
+  const description = input.description === undefined ? current.description : input.description.trim();
+  if (description.length < 2) {
+    throw new Error('Informe uma descrição válida para a conta a pagar.');
+  }
+
+  const amountCents = input.amount_cents === undefined ? current.amount_cents : Math.trunc(input.amount_cents);
+  if (amountCents <= 0) {
+    throw new Error('Informe um valor válido para a conta a pagar.');
+  }
+
+  const status = input.status ?? current.status;
+  const paidAt = input.paid_at === undefined ? current.paid_at : input.paid_at ?? null;
+  if (status === 'paid' && !paidAt) {
+    throw new Error('Informe a data de baixa para marcar como pago.');
+  }
+
+  const paidAmountCents = status === 'paid'
+    ? amountCents
+    : Math.min(current.paid_amount_cents, amountCents);
+  const nowIso = new Date().toISOString();
+
+  db.prepare(`
+    update financial_payable
+    set financial_entity_id = ?,
+        financial_account_id = ?,
+        financial_category_id = ?,
+        financial_cost_center_id = ?,
+        financial_payment_method_id = ?,
+        supplier_name = ?,
+        description = ?,
+        amount_cents = ?,
+        paid_amount_cents = ?,
+        status = ?,
+        issue_date = ?,
+        due_date = ?,
+        paid_at = ?,
+        note = ?,
+        updated_at = ?
+    where organization_id = ?
+      and id = ?
+  `).run(
+    financialEntityId,
+    input.financial_account_id === undefined ? current.financial_account_id : input.financial_account_id?.trim() || null,
+    input.financial_category_id === undefined ? current.financial_category_id : input.financial_category_id?.trim() || null,
+    input.financial_cost_center_id === undefined ? current.financial_cost_center_id : input.financial_cost_center_id?.trim() || null,
+    input.financial_payment_method_id === undefined ? current.financial_payment_method_id : input.financial_payment_method_id?.trim() || null,
+    input.supplier_name === undefined ? current.supplier_name : input.supplier_name?.trim() || null,
+    description,
+    amountCents,
+    paidAmountCents,
+    status,
+    input.issue_date === undefined ? current.issue_date : input.issue_date ?? null,
+    input.due_date === undefined ? current.due_date : input.due_date ?? null,
+    paidAt,
+    input.note === undefined ? current.note : input.note?.trim() || null,
+    nowIso,
+    normalizedOrganizationId,
+    current.id
+  );
+
+  const updated = readFinancePayable(normalizedOrganizationId, current.id);
+  if (updated.status === 'paid' && updated.paid_amount_cents > 0 && updated.paid_at && !updated.financial_transaction_id) {
+    const movement = createPayableSettlementMovement(updated, updated.paid_amount_cents, updated.paid_at, null, updated.note);
+    db.prepare(`
+      update financial_payable
+      set financial_transaction_id = ?,
+          updated_at = ?
+      where organization_id = ?
+        and id = ?
+    `).run(movement.id, new Date().toISOString(), normalizedOrganizationId, updated.id);
+    return readFinancePayable(normalizedOrganizationId, updated.id);
+  }
+  return updated;
+}
+
 export function createFinanceReceivable(input: CreateFinanceReceivableInput): FinanceReceivableDto {
   const payload = applyEntityDefaultsToReceivable(input);
   const normalizedOrganizationId = resolveOrganizationId(payload.organization_id);
@@ -1445,6 +1532,91 @@ export function createFinanceReceivable(input: CreateFinanceReceivableInput): Fi
     return readFinanceReceivable(normalizedOrganizationId, receivable.id);
   }
   return receivable;
+}
+
+export function updateFinanceReceivable(input: UpdateFinanceReceivableInput): FinanceReceivableDto {
+  const normalizedOrganizationId = resolveOrganizationId(input.organization_id);
+  const current = readFinanceReceivable(normalizedOrganizationId, input.resource_id);
+  const financialEntityId = input.financial_entity_id === undefined
+    ? current.financial_entity_id
+    : input.financial_entity_id?.trim() || null;
+  if (financialEntityId) {
+    readFinanceEntityRow(normalizedOrganizationId, financialEntityId);
+  }
+
+  const description = input.description === undefined ? current.description : input.description.trim();
+  if (description.length < 2) {
+    throw new Error('Informe uma descrição válida para a conta a receber.');
+  }
+
+  const amountCents = input.amount_cents === undefined ? current.amount_cents : Math.trunc(input.amount_cents);
+  if (amountCents <= 0) {
+    throw new Error('Informe um valor válido para a conta a receber.');
+  }
+
+  const status = input.status ?? current.status;
+  const receivedAt = input.received_at === undefined ? current.received_at : input.received_at ?? null;
+  if (status === 'received' && !receivedAt) {
+    throw new Error('Informe a data de baixa para marcar como recebido.');
+  }
+
+  const receivedAmountCents = status === 'received'
+    ? amountCents
+    : Math.min(current.received_amount_cents, amountCents);
+  const nowIso = new Date().toISOString();
+
+  db.prepare(`
+    update financial_receivable
+    set financial_entity_id = ?,
+        financial_account_id = ?,
+        financial_category_id = ?,
+        financial_cost_center_id = ?,
+        financial_payment_method_id = ?,
+        customer_name = ?,
+        description = ?,
+        amount_cents = ?,
+        received_amount_cents = ?,
+        status = ?,
+        issue_date = ?,
+        due_date = ?,
+        received_at = ?,
+        note = ?,
+        updated_at = ?
+    where organization_id = ?
+      and id = ?
+  `).run(
+    financialEntityId,
+    input.financial_account_id === undefined ? current.financial_account_id : input.financial_account_id?.trim() || null,
+    input.financial_category_id === undefined ? current.financial_category_id : input.financial_category_id?.trim() || null,
+    input.financial_cost_center_id === undefined ? current.financial_cost_center_id : input.financial_cost_center_id?.trim() || null,
+    input.financial_payment_method_id === undefined ? current.financial_payment_method_id : input.financial_payment_method_id?.trim() || null,
+    input.customer_name === undefined ? current.customer_name : input.customer_name?.trim() || null,
+    description,
+    amountCents,
+    receivedAmountCents,
+    status,
+    input.issue_date === undefined ? current.issue_date : input.issue_date ?? null,
+    input.due_date === undefined ? current.due_date : input.due_date ?? null,
+    receivedAt,
+    input.note === undefined ? current.note : input.note?.trim() || null,
+    nowIso,
+    normalizedOrganizationId,
+    current.id
+  );
+
+  const updated = readFinanceReceivable(normalizedOrganizationId, current.id);
+  if (updated.status === 'received' && updated.received_amount_cents > 0 && updated.received_at && !updated.financial_transaction_id) {
+    const movement = createReceivableSettlementMovement(updated, updated.received_amount_cents, updated.received_at, null, updated.note);
+    db.prepare(`
+      update financial_receivable
+      set financial_transaction_id = ?,
+          updated_at = ?
+      where organization_id = ?
+        and id = ?
+    `).run(movement.id, new Date().toISOString(), normalizedOrganizationId, updated.id);
+    return readFinanceReceivable(normalizedOrganizationId, updated.id);
+  }
+  return updated;
 }
 
 function addMonthsIso(dateIso: string, months: number) {

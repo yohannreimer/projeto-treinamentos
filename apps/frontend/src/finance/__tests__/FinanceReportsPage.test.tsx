@@ -38,7 +38,22 @@ beforeEach(() => {
     expense_by_category: [
       {
         category_name: 'Despesas Operacionais',
-        amount_cents: 40000,
+        amount_cents: 20000,
+        transaction_count: 1
+      },
+      {
+        category_name: 'Compras',
+        amount_cents: 10000,
+        transaction_count: 1
+      },
+      {
+        category_name: 'Serviços terceiros',
+        amount_cents: 5000,
+        transaction_count: 1
+      },
+      {
+        category_name: 'Sem categoria',
+        amount_cents: 5000,
         transaction_count: 1
       }
     ],
@@ -142,7 +157,10 @@ test('reports page renders DRE and management report sections from the backend c
   expect(await screen.findByRole('heading', { name: /DRE por Competência/i })).toBeInTheDocument();
   expect((await screen.findAllByText('R$ 1.000,00')).length).toBeGreaterThan(0);
   expect(screen.queryByText('R$ 100.000,00')).not.toBeInTheDocument();
-  expect(screen.getAllByRole('link', { name: 'Abrir' })[0]).toHaveAttribute('href', '/financeiro/transactions?kind=income');
+  expect(screen.getAllByRole('link', { name: 'Abrir' })[0]).toHaveAttribute('href', '/financeiro/receivables?preset=custom&from=2026-05-01&to=2026-05-31');
+  expect(await screen.findByText('Compras')).toBeInTheDocument();
+  expect(await screen.findByText('Serviços terceiros')).toBeInTheDocument();
+  expect(await screen.findByText('Sem categoria')).toBeInTheDocument();
 
   await userEvent.click(screen.getByRole('button', { name: /DRE por caixa/i }));
   expect(await screen.findByRole('heading', { name: /DRE por Caixa/i })).toBeInTheDocument();
