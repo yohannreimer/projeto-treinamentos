@@ -955,7 +955,8 @@ export function initDb() {
       id text primary key,
       name text not null,
       availability_notes text,
-      hourly_cost real
+      hourly_cost real,
+      calendar_color text
     );
 
     create table if not exists technician_skill (
@@ -1394,6 +1395,8 @@ export function initDb() {
   );
   ensureColumn('internal_user', 'is_active', 'is_active integer not null default 1');
   ensureColumn('internal_user', 'last_login_at', 'last_login_at text');
+  ensureColumn('internal_user', 'preferences_json', "preferences_json text not null default '{}'");
+  ensureColumn('technician', 'calendar_color', 'calendar_color text');
 
   const financialAccountColumns = readTableColumns('financial_account');
   const financialCategoryColumns = readTableColumns('financial_category');

@@ -360,6 +360,9 @@ const internalUserCreateSchema = z.object({
   password: z.string().trim().min(8).max(200),
   role: internalRoleSchema.default('intermediario'),
   permissions: z.array(internalPermissionSchema).optional(),
+  preferences: z.object({
+    calendar_vivid_mode: z.boolean().optional().default(false)
+  }).optional(),
   is_active: z.boolean().optional().default(true)
 });
 
@@ -369,6 +372,9 @@ const internalUserUpdateSchema = z.object({
   password: z.string().trim().min(8).max(200).optional(),
   role: internalRoleSchema.optional(),
   permissions: z.array(internalPermissionSchema).optional(),
+  preferences: z.object({
+    calendar_vivid_mode: z.boolean().optional().default(false)
+  }).optional(),
   is_active: z.boolean().optional()
 });
 
@@ -2984,7 +2990,8 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
         display_name: session.user.display_name,
         role: session.user.role,
         permissions: session.user.permissions,
-        organization_id: session.user.organization_id
+        organization_id: session.user.organization_id,
+        preferences: session.user.preferences
       }
     });
   });
@@ -3001,7 +3008,8 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
         display_name: context.display_name,
         role: context.role,
         permissions: context.permissions,
-        organization_id: context.organization_id
+        organization_id: context.organization_id,
+        preferences: context.preferences
       }
     });
   });
@@ -3188,7 +3196,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
   
   app.get('/calendar/cohorts', (_req, res) => {
     const rows = db.prepare(`
-      select c.*, t.name as technician_name,
+      select c.*, t.name as technician_name, t.calendar_color as technician_calendar_color,
         (
           select count(distinct a.company_id)
           from cohort_allocation a
@@ -3289,6 +3297,28 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
             order by t.name asc
           ) t2
         ), '') as technician_names,
+        coalesce((
+          select group_concat(t2.calendar_color, '|')
+          from (
+            select t.calendar_color
+            from calendar_activity_technician cat
+            join technician t on t.id = cat.technician_id
+            where cat.activity_id = ca.id
+              and t.calendar_color is not null
+              and trim(t.calendar_color) <> ''
+            order by t.name asc
+          ) t2
+        ), '') as technician_colors,
+        (
+          select t.calendar_color
+          from calendar_activity_technician cat
+          join technician t on t.id = cat.technician_id
+          where cat.activity_id = ca.id
+            and t.calendar_color is not null
+            and trim(t.calendar_color) <> ''
+          order by t.name asc
+          limit 1
+        ) as primary_technician_calendar_color,
         coalesce(ca.selected_dates, '') as selected_dates_raw,
         coalesce((
           select group_concat(cad_row, ' || ')
@@ -6965,7 +6995,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
   
   app.get('/technicians', (_req, res) => {
     const rows = db.prepare(`
-      select t.id, t.name, t.availability_notes, t.hourly_cost,
+      select t.id, t.name, t.availability_notes, t.hourly_cost, t.calendar_color,
         count(c.id) as monthly_load
       from technician t
       left join cohort c on c.technician_id = t.id
@@ -6997,6 +7027,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       name: z.string().min(2),
       availability_notes: z.string().nullable().optional(),
       hourly_cost: z.number().min(0).nullable().optional(),
+      calendar_color: z.string().regex(/^#[0-9a-fA-F]{6}$/).nullable().optional(),
       module_ids: z.array(z.string()).optional()
     });
     const parsed = schema.safeParse(req.body);
@@ -7007,13 +7038,14 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
     const technicianId = uuid('tech');
     const tx = db.transaction(() => {
       db.prepare(`
-        insert into technician (id, name, availability_notes, hourly_cost)
-        values (?, ?, ?, ?)
+        insert into technician (id, name, availability_notes, hourly_cost, calendar_color)
+        values (?, ?, ?, ?, ?)
       `).run(
         technicianId,
         parsed.data.name.trim(),
         parsed.data.availability_notes ?? null,
-        parsed.data.hourly_cost ?? null
+        parsed.data.hourly_cost ?? null,
+        parsed.data.calendar_color?.trim().toLowerCase() ?? null
       );
   
       const insertSkill = db.prepare('insert into technician_skill (technician_id, module_id) values (?, ?)');
@@ -7035,6 +7067,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       name: z.string().min(2).optional(),
       availability_notes: z.string().nullable().optional(),
       hourly_cost: z.number().min(0).nullable().optional(),
+      calendar_color: z.string().regex(/^#[0-9a-fA-F]{6}$/).nullable().optional(),
       module_ids: z.array(z.string()).optional()
     });
     const parsed = schema.safeParse(req.body);
@@ -7061,6 +7094,10 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
     if (Object.prototype.hasOwnProperty.call(payload, 'hourly_cost')) {
       fields.push('hourly_cost = ?');
       values.push(payload.hourly_cost ?? null);
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'calendar_color')) {
+      fields.push('calendar_color = ?');
+      values.push(payload.calendar_color?.trim().toLowerCase() ?? null);
     }
   
     const tx = db.transaction(() => {
@@ -8441,6 +8478,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
         password: parsed.data.password,
         role: parsed.data.role as InternalRole,
         permissions: parsed.data.permissions,
+        preferences: parsed.data.preferences,
         is_active: parsed.data.is_active
       });
       return res.status(201).json(created);
@@ -8465,6 +8503,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
         password: parsed.data.password,
         role: parsed.data.role as InternalRole | undefined,
         permissions: parsed.data.permissions,
+        preferences: parsed.data.preferences,
         is_active: parsed.data.is_active
       });
       return res.json(updated);

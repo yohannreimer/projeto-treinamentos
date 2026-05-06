@@ -31,6 +31,9 @@ export type InternalSessionUser = {
   display_name: string | null;
   role: InternalRole;
   permissions: InternalPermission[];
+  preferences?: {
+    calendar_vivid_mode: boolean;
+  };
 };
 
 export type InternalSessionData = {
@@ -58,6 +61,15 @@ function normalizeRole(raw: unknown): InternalRole {
   return 'custom';
 }
 
+function normalizeUserPreferences(raw: unknown): InternalSessionUser['preferences'] {
+  const source = raw && typeof raw === 'object' && !Array.isArray(raw)
+    ? raw as Record<string, unknown>
+    : {};
+  return {
+    calendar_vivid_mode: source.calendar_vivid_mode === true
+  };
+}
+
 function normalizeUser(raw: unknown): InternalSessionUser | null {
   if (!raw || typeof raw !== 'object') return null;
   const source = raw as Record<string, unknown>;
@@ -70,7 +82,8 @@ function normalizeUser(raw: unknown): InternalSessionUser | null {
     username,
     display_name: typeof source.display_name === 'string' ? source.display_name : null,
     role: normalizeRole(source.role),
-    permissions: normalizePermissions(source.permissions)
+    permissions: normalizePermissions(source.permissions),
+    preferences: normalizeUserPreferences(source.preferences)
   };
 }
 

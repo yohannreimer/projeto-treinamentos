@@ -573,6 +573,9 @@ export const api = {
       display_name: string | null;
       role: InternalRole;
       permissions: InternalPermission[];
+      preferences?: {
+        calendar_vivid_mode?: boolean;
+      };
       is_active: boolean;
       last_login_at: string | null;
       created_at: string;
@@ -584,6 +587,9 @@ export const api = {
     password: string;
     role: InternalRole;
     permissions?: InternalPermission[];
+    preferences?: {
+      calendar_vivid_mode?: boolean;
+    };
     is_active?: boolean;
   }) =>
     req('/admin/internal-users', {
@@ -598,6 +604,9 @@ export const api = {
       password?: string;
       role?: InternalRole;
       permissions?: InternalPermission[];
+      preferences?: {
+        calendar_vivid_mode?: boolean;
+      };
       is_active?: boolean;
     }
   ) =>

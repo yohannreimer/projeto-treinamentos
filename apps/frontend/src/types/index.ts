@@ -16,6 +16,7 @@ export type Cohort = {
   start_date: string;
   technician_id: string | null;
   technician_name?: string;
+  technician_calendar_color?: string | null;
   status: string;
   capacity_companies: number;
   period?: 'Integral' | 'Meio_periodo';

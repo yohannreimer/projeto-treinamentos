@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { type CSSProperties, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
 import type { Cohort, Module } from '../types';
@@ -6,6 +6,7 @@ import { StatusChip } from '../components/StatusChip';
 import { Section } from '../components/Section';
 import { statusLabel } from '../utils/labels';
 import { askDestructiveConfirmation } from '../utils/destructive';
+import { INTERNAL_AUTH_CHANGED_EVENT, internalSessionStore } from '../auth/session';
 
 type BlockDraft = {
   key: string;
@@ -56,6 +57,8 @@ type CalendarActivity = {
   end_time: string | null;
   technician_ids: string[];
   technician_names: string[];
+  technician_colors: string[];
+  primary_technician_calendar_color: string | null;
   company_id: string | null;
   company_name: string | null;
   linked_module_id: string | null;
@@ -352,6 +355,9 @@ function suggestedCohortCode(rows: Cohort[]): string {
 
 export function CalendarPage() {
   const navigate = useNavigate();
+  const [calendarVividMode, setCalendarVividMode] = useState(() => (
+    Boolean(internalSessionStore.read()?.user.preferences?.calendar_vivid_mode)
+  ));
   const [rows, setRows] = useState<Cohort[]>([]);
   const [activities, setActivities] = useState<CalendarActivity[]>([]);
   const [modules, setModules] = useState<Module[]>([]);
@@ -428,6 +434,8 @@ export function CalendarPage() {
         ...(row as unknown as Omit<CalendarActivity, 'technician_ids' | 'technician_names' | 'selected_dates' | 'day_schedules' | 'hours_scope' | 'linked_module_id'>),
         technician_ids: splitPipeList(String(row.technician_ids_raw ?? '')),
         technician_names: splitPipeList(String(row.technician_names ?? '')),
+        technician_colors: splitPipeList(String(row.technician_colors ?? '')),
+        primary_technician_calendar_color: String(row.primary_technician_calendar_color ?? '').trim() || null,
         selected_dates: splitPipeList(String(row.selected_dates_raw ?? '')),
         day_schedules: parseActivityDaySchedulesRaw(String(row.day_schedules_raw ?? '')),
         linked_module_id: String(row.linked_module_id ?? '').trim() || null,
@@ -443,6 +451,14 @@ export function CalendarPage() {
       modules: modulesRows as Module[]
     };
   }
+
+  useEffect(() => {
+    const updatePreference = () => {
+      setCalendarVividMode(Boolean(internalSessionStore.read()?.user.preferences?.calendar_vivid_mode));
+    };
+    window.addEventListener(INTERNAL_AUTH_CHANGED_EVENT, updatePreference);
+    return () => window.removeEventListener(INTERNAL_AUTH_CHANGED_EVENT, updatePreference);
+  }, []);
 
   useEffect(() => {
     loadAll().then(({ rows: loadedRows, modules: loadedModules }) => {
@@ -1114,8 +1130,13 @@ export function CalendarPage() {
     ));
   }
 
+  function calendarCardStyle(color: string | null | undefined): CSSProperties | undefined {
+    if (!calendarVividMode || !color) return undefined;
+    return { '--calendar-tech-color': color } as CSSProperties;
+  }
+
   return (
-    <div className="page calendar-page">
+    <div className={`page calendar-page${calendarVividMode ? ' calendar-page-vivid' : ''}`}>
       <header className="page-header">
         <h1>Calendário Operacional de Turmas</h1>
         <p>Visão mensal ampla com feriados do Brasil. Clique no dia para abrir o painel expandido.</p>
@@ -1279,6 +1300,7 @@ export function CalendarPage() {
                       <div
                         key={`${event.id}-${event.day_index}`}
                         className="calendar-event-card"
+                        style={calendarCardStyle(event.technician_calendar_color)}
                         onClick={(domEvent) => {
                           domEvent.stopPropagation();
                           openCohort(event, cell.date);
@@ -1316,6 +1338,7 @@ export function CalendarPage() {
                     <div
                       key={`activity-${activity.id}-${cell.date}`}
                       className="calendar-activity-card"
+                      style={calendarCardStyle(activity.primary_technician_calendar_color ?? activity.technician_colors[0])}
                       onClick={(domEvent) => {
                         domEvent.stopPropagation();
                         openDayPanel(cell.date);

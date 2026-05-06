@@ -24,10 +24,20 @@ type InternalUserRow = {
   display_name: string | null;
   role: InternalRole;
   permissions: InternalPermission[];
+  preferences?: {
+    calendar_vivid_mode?: boolean;
+  };
   is_active: boolean;
   last_login_at: string | null;
   created_at: string;
   updated_at: string;
+};
+type AdminTechnicianRow = {
+  id: string;
+  name: string;
+  availability_notes: string | null;
+  hourly_cost: number | null;
+  calendar_color: string | null;
 };
 type InternalAuditRow = {
   id: string;
@@ -165,27 +175,36 @@ export function AdminPage() {
   const [newInternalPassword, setNewInternalPassword] = useState('');
   const [newInternalRole, setNewInternalRole] = useState<InternalRole>('junior');
   const [newInternalPermissions, setNewInternalPermissions] = useState<InternalPermission[]>(ROLE_PRESETS.junior);
+  const [newInternalCalendarVividMode, setNewInternalCalendarVividMode] = useState(false);
   const [creatingInternalUser, setCreatingInternalUser] = useState(false);
   const [editInternalDisplayName, setEditInternalDisplayName] = useState('');
   const [editInternalPassword, setEditInternalPassword] = useState('');
   const [editInternalRole, setEditInternalRole] = useState<InternalRole>('junior');
   const [editInternalPermissions, setEditInternalPermissions] = useState<InternalPermission[]>([]);
   const [editInternalActive, setEditInternalActive] = useState(true);
+  const [editInternalCalendarVividMode, setEditInternalCalendarVividMode] = useState(false);
   const [savingInternalUser, setSavingInternalUser] = useState(false);
+  const [adminTechnicians, setAdminTechnicians] = useState<AdminTechnicianRow[]>([]);
+  const [technicianColorDrafts, setTechnicianColorDrafts] = useState<Record<string, string>>({});
+  const [savingTechnicianColorId, setSavingTechnicianColorId] = useState<string | null>(null);
 
   function loadCatalog() {
     Promise.all([
       api.catalog(),
       api.portalOperatorAccess(),
       api.adminInternalUsers(),
-      api.adminInternalAuditLogs({ limit: 120 })
-    ]).then(([response, operatorAccess, usersResponse, auditResponse]) => {
+      api.adminInternalAuditLogs({ limit: 120 }),
+      api.technicians()
+    ]).then(([response, operatorAccess, usersResponse, auditResponse, techniciansResponse]) => {
       setData(response);
       setPortalOperatorUsername(operatorAccess.username ?? '');
       setPortalOperatorConfigured(Boolean(operatorAccess.is_configured));
       const users = usersResponse.items ?? [];
+      const technicians = (techniciansResponse ?? []) as AdminTechnicianRow[];
       setInternalUsers(users);
       setAuditRows(auditResponse.items ?? []);
+      setAdminTechnicians(technicians);
+      setTechnicianColorDrafts(Object.fromEntries(technicians.map((tech) => [tech.id, tech.calendar_color ?? '#ef2f0f'])));
       const modules = (response.modules ?? []) as ModuleCatalog[];
       if (modules.length > 0) {
         setSelectedModuleId((prev) => modules.some((module) => module.id === prev) ? prev : modules[0].id);
@@ -326,6 +345,7 @@ export function AdminPage() {
     setEditInternalRole(selectedInternalUser.role);
     setEditInternalPermissions(selectedInternalUser.permissions ?? []);
     setEditInternalActive(Boolean(selectedInternalUser.is_active));
+    setEditInternalCalendarVividMode(Boolean(selectedInternalUser.preferences?.calendar_vivid_mode));
   }, [selectedInternalUser]);
 
   async function handleImport() {
@@ -549,11 +569,15 @@ export function AdminPage() {
         password: newInternalPassword,
         role: newInternalRole,
         permissions,
+        preferences: {
+          calendar_vivid_mode: newInternalCalendarVividMode
+        },
         is_active: true
       });
       setNewInternalUsername('');
       setNewInternalDisplayName('');
       setNewInternalPassword('');
+      setNewInternalCalendarVividMode(false);
       applyRolePresetToNew('junior');
       setMessage('Usuário interno criado com sucesso.');
       loadCatalog();
@@ -576,6 +600,9 @@ export function AdminPage() {
         password: editInternalPassword.trim() || undefined,
         role: editInternalRole,
         permissions,
+        preferences: {
+          calendar_vivid_mode: editInternalCalendarVividMode
+        },
         is_active: editInternalActive
       });
       setEditInternalPassword('');
@@ -585,6 +612,23 @@ export function AdminPage() {
       setMessage((error as Error).message);
     } finally {
       setSavingInternalUser(false);
+    }
+  }
+
+  async function saveTechnicianCalendarColor(technician: AdminTechnicianRow) {
+    const color = technicianColorDrafts[technician.id] || '#ef2f0f';
+    setSavingTechnicianColorId(technician.id);
+    setMessage('');
+    try {
+      await api.updateTechnician(technician.id, {
+        calendar_color: color
+      });
+      setMessage(`Cor do calendário atualizada para ${technician.name}.`);
+      loadCatalog();
+    } catch (error) {
+      setMessage((error as Error).message);
+    } finally {
+      setSavingTechnicianColorId(null);
     }
   }
 
@@ -744,6 +788,14 @@ export function AdminPage() {
                   placeholder="mínimo 8 caracteres"
                 />
               </label>
+              <label className="admin-toggle-row">
+                <input
+                  type="checkbox"
+                  checked={newInternalCalendarVividMode}
+                  onChange={(event) => setNewInternalCalendarVividMode(event.target.checked)}
+                />
+                Calendário chamativo para este usuário
+              </label>
               {newInternalRole === 'custom' ? (
                 <div className="check-grid admin-permission-grid">
                   {CUSTOM_PERMISSION_KEYS.map((permission) => (
@@ -819,6 +871,14 @@ export function AdminPage() {
                       placeholder="Preencha apenas para trocar"
                     />
                   </label>
+                  <label className="admin-toggle-row">
+                    <input
+                      type="checkbox"
+                      checked={editInternalCalendarVividMode}
+                      onChange={(event) => setEditInternalCalendarVividMode(event.target.checked)}
+                    />
+                    Calendário chamativo para este usuário
+                  </label>
                   {editInternalRole === 'custom' ? (
                     <div className="check-grid admin-permission-grid">
                       {CUSTOM_PERMISSION_KEYS.map((permission) => (
@@ -846,6 +906,42 @@ export function AdminPage() {
               )}
             </div>
           </div>
+        </div>
+      </Section>
+
+      <Section title="Cores do calendário por técnico">
+        <p className="form-hint">
+          Essas cores só aparecem para usuários internos com o calendário chamativo ativado.
+        </p>
+        <div className="admin-technician-color-grid">
+          {adminTechnicians.length === 0 ? (
+            <p className="form-hint">Nenhum técnico cadastrado.</p>
+          ) : adminTechnicians.map((technician) => (
+            <div key={technician.id} className="admin-technician-color-row">
+              <div>
+                <strong>{technician.name}</strong>
+                <small className="muted">Usada em turmas e atividades comuns.</small>
+              </div>
+              <label className="admin-color-control">
+                <input
+                  type="color"
+                  value={technicianColorDrafts[technician.id] ?? '#ef2f0f'}
+                  onChange={(event) => setTechnicianColorDrafts((prev) => ({
+                    ...prev,
+                    [technician.id]: event.target.value
+                  }))}
+                />
+                <span>{technicianColorDrafts[technician.id] ?? '#ef2f0f'}</span>
+              </label>
+              <button
+                type="button"
+                onClick={() => saveTechnicianCalendarColor(technician)}
+                disabled={savingTechnicianColorId === technician.id}
+              >
+                {savingTechnicianColorId === technician.id ? 'Salvando...' : 'Salvar cor'}
+              </button>
+            </div>
+          ))}
         </div>
       </Section>
 
