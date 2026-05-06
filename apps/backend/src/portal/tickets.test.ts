@@ -343,6 +343,72 @@ test('POST /portal/api/tickets creates portal_ticket and implementation_kanban_c
   }
 });
 
+test('GET /implementation/kanban marks stale cards with full ISO timestamps', async () => {
+  const { app, dbPath } = await createPortalTicketsFixture('kanban-stale-iso-timestamps');
+
+  try {
+    const staleIso = '2026-04-12T00:12:18.924Z';
+    db.prepare(`
+      insert into implementation_kanban_column (id, title, color, position, created_at, updated_at)
+      values (?, ?, ?, ?, ?, ?)
+    `).run('kcol-stale-iso', 'Em andamento', '#ef2f0f', 90, staleIso, staleIso);
+
+    const insertCard = db.prepare(`
+      insert into implementation_kanban_card (
+        id, title, description, status, column_id, client_name, subcategory, priority, position, created_at, updated_at
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertCard.run(
+      'kcard-stale-implementation-iso',
+      'Implementação parada com ISO',
+      'Card antigo com timestamp completo precisa gerar alerta.',
+      'Todo',
+      'kcol-stale-iso',
+      'Cliente Portal Tickets',
+      'Implementacao',
+      'Normal',
+      1,
+      staleIso,
+      staleIso
+    );
+    insertCard.run(
+      'kcard-stale-support-iso',
+      'Suporte parado com ISO',
+      'Card antigo de suporte com timestamp completo precisa gerar alerta.',
+      'Todo',
+      'kcol-stale-iso',
+      'Cliente Portal Tickets',
+      'Suporte',
+      'Normal',
+      2,
+      staleIso,
+      staleIso
+    );
+
+    const response = await request(app).get('/implementation/kanban');
+    assert.equal(response.status, 200);
+    type KanbanAlertTestCard = {
+      id: string;
+      support_alert_level: string;
+      support_alert_message: string | null;
+    };
+
+    const cards = ((response.body.columns ?? []) as Array<{ cards?: KanbanAlertTestCard[] }>).flatMap((column) => column.cards ?? []);
+    const implementationCard = cards.find((card: KanbanAlertTestCard) => card.id === 'kcard-stale-implementation-iso');
+    const supportCard = cards.find((card: KanbanAlertTestCard) => card.id === 'kcard-stale-support-iso');
+
+    assert.ok(implementationCard);
+    assert.equal(implementationCard.support_alert_level, 'stale');
+    assert.match(implementationCard.support_alert_message ?? '', /Implementação sem atualização há/);
+    assert.ok(supportCard);
+    assert.equal(supportCard.support_alert_level, 'stale');
+    assert.match(supportCard.support_alert_message ?? '', /Suporte sem atualização há/);
+  } finally {
+    cleanupDbFiles(dbPath);
+  }
+});
+
 test('POST /portal/api/tickets/:id/read marks thread as read and suppresses pending webhook queue', async () => {
   const { app, dbPath } = await createPortalTicketsFixture('portal-tickets-read-and-webhook');
 

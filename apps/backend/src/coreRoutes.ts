@@ -7138,7 +7138,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
         }
       }
       if (!isConcluded && support_alert_level === 'none') {
-        const updatedAt = new Date(`${card.updated_at}T00:00:00`);
+        const updatedAt = parseIsoDate(card.updated_at.slice(0, 10));
         if (!Number.isNaN(updatedAt.getTime())) {
           const diffMs = today.getTime() - updatedAt.getTime();
           const diffDays = Math.floor(diffMs / 86_400_000);
