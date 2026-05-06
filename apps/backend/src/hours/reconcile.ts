@@ -282,10 +282,6 @@ function projectedClientConsumedHoursForModule(row: ModuleHoursScopeRow, journey
   return 0;
 }
 
-function allocationStatusCountsInConfirmedHours(status: string): boolean {
-  return status === 'Confirmado' || status === 'Executado';
-}
-
 function readAllocationHoursScope(companyId: string): AllocationHoursScopeRow[] {
   return db.prepare(`
     select
@@ -311,9 +307,52 @@ function readAllocationHoursScope(companyId: string): AllocationHoursScopeRow[] 
 }
 
 function allocationConfirmedHours(row: AllocationHoursScopeRow): number {
-  if (!allocationStatusCountsInConfirmedHours(row.status)) return 0;
   const durationDays = Math.max(1, Number(row.duration_days || 1));
-  return roundHours(durationDays * 8);
+  const plannedHours = roundHours(durationDays * 8);
+  if (row.status === 'Executado') return plannedHours;
+  if (row.status !== 'Previsto' && row.status !== 'Confirmado') return 0;
+
+  const period = row.period ?? 'Integral';
+  const totalEncounters = durationDays * (period === 'Meio_periodo' ? 2 : 1);
+  const startSlot = period === 'Meio_periodo'
+    ? (Math.max(1, Number(row.entry_day || 1)) * 2) - 1
+    : Math.max(1, Number(row.entry_day || 1));
+  const snapshot = currentLocalSnapshot();
+
+  const scheduleRows = db.prepare(`
+    select day_index, day_date, start_time, end_time
+    from cohort_schedule_day
+    where cohort_id = ?
+      and day_index between ? and ?
+    order by day_index asc
+  `).all(row.cohort_id, startSlot, startSlot + totalEncounters - 1) as Array<{
+    day_index: number;
+    day_date: string;
+    start_time: string | null;
+    end_time: string | null;
+  }>;
+  const scheduleByDay = new Map<number, { day_date: string; start_time: string | null; end_time: string | null }>();
+  scheduleRows.forEach((scheduleRow) => {
+    scheduleByDay.set(Number(scheduleRow.day_index), {
+      day_date: scheduleRow.day_date,
+      start_time: scheduleRow.start_time,
+      end_time: scheduleRow.end_time
+    });
+  });
+
+  let completedEncounters = 0;
+  for (let offset = 0; offset < totalEncounters; offset += 1) {
+    const dayIndex = startSlot + offset;
+    const scheduled = scheduleByDay.get(dayIndex);
+    const dayDate = scheduled?.day_date ?? addBusinessDays(row.start_date, Math.max(0, dayIndex - 1));
+    const startTime = period === 'Meio_periodo' ? (scheduled?.start_time ?? row.start_time ?? null) : null;
+    const endTime = period === 'Meio_periodo' ? (scheduled?.end_time ?? row.end_time ?? null) : null;
+    if (deriveJourneySlotStatus(dayDate, startTime, endTime, snapshot) === 'Concluida') {
+      completedEncounters += 1;
+    }
+  }
+
+  return roundHours(plannedHours * clampRatio(completedEncounters / totalEncounters));
 }
 
 function readAllocationCurrentConfirmedHours(companyId: string, allocationId: string): number {
@@ -566,9 +605,7 @@ export function readCompanyHoursModuleInsights(companyId: string): CompanyHoursM
   return scopedRows.map((row) => {
     const plannedHours = roundHours(Math.max(0, Number(row.duration_days || 0)) * 8);
     const internalEffortHours = roundHours(internalEffortByModule.get(row.module_id) ?? 0);
-    const projectedClientConsumed = row.delivery_mode === 'ministrado' && row.client_hours_policy === 'consome'
-      ? projectedClientConsumedHoursForModule(row, journeyByModule)
-      : plannedHours;
+    const projectedClientConsumed = plannedHours;
     const actualFromTraining = Math.max(0, roundHours(actualClientConsumptionByModule.get(row.module_id) ?? 0));
     const actualClientConsumed = row.delivery_mode === 'entregavel'
       ? roundHours(internalEffortHours + actualFromTraining)

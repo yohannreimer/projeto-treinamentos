@@ -755,6 +755,215 @@ test('allocation status Confirmado/Executado debits once and estorna when leaves
     const summaryAfterCancel = await request(app).get('/companies/comp-hours-api-10/hours/summary');
     assert.equal(summaryAfterCancel.body.consumed_hours, 0);
     assert.equal(summaryAfterCancel.body.balance_hours, 24);
+
+    const progressAfterCancel = db.prepare(`
+      select status, completed_at
+      from company_module_progress
+      where company_id = ? and module_id = ?
+    `).get('comp-hours-api-10', 'mod-hours-training-03') as { status: string; completed_at: string | null } | undefined;
+    assert.ok(progressAfterCancel);
+    assert.equal(progressAfterCancel?.status, 'Nao_iniciado');
+    assert.equal(progressAfterCancel?.completed_at, null);
+  } finally {
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('meio período confirmado consome horas por encontro concluído antes de executar o bloco inteiro', { concurrency: false }, async () => {
+  const dbPath = assignTestDbPath('hours-half-period-partial-progress');
+  cleanupDbFiles(dbPath);
+
+  try {
+    const app = createApp({ forceDbRefresh: true, seedDb: false });
+    db.prepare(`
+      insert into company (id, name, status, notes, priority)
+      values ('comp-hours-api-15', 'Cliente Horas API 15', 'Ativo', null, 0)
+    `).run();
+    db.prepare(`
+      insert into technician (id, name)
+      values ('tech-hours-15', 'Tecnico Horas 15')
+    `).run();
+    db.prepare(`
+      insert into module_template (
+        id, code, category, name, description, duration_days, profile, is_mandatory, delivery_mode, client_hours_policy
+      )
+      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'mod-hours-training-06',
+      'HRS-TR-06',
+      'Treinamento',
+      'Treinamento meio período parcial',
+      null,
+      2,
+      null,
+      1,
+      'ministrado',
+      'consome'
+    );
+    db.prepare(`
+      insert into cohort (
+        id, code, name, start_date, technician_id, status, capacity_companies, notes, period, start_time, end_time, delivery_mode
+      )
+      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'coh-hours-15',
+      'TUR-HRS-15',
+      'Turma horas 15',
+      '2026-05-01',
+      'tech-hours-15',
+      'Confirmada',
+      2,
+      null,
+      'Meio_periodo',
+      '13:30',
+      '17:00',
+      'Online'
+    );
+    db.prepare(`
+      insert into cohort_module_block (id, cohort_id, module_id, order_in_cohort, start_day_offset, duration_days)
+      values (?, ?, ?, ?, ?, ?)
+    `).run('cmb-hours-15', 'coh-hours-15', 'mod-hours-training-06', 1, 1, 2);
+    const insertSchedule = db.prepare(`
+      insert into cohort_schedule_day (id, cohort_id, day_index, day_date, start_time, end_time)
+      values (?, ?, ?, ?, ?, ?)
+    `);
+    [
+      [1, '2026-05-01'],
+      [2, '2026-05-02'],
+      [3, '2026-05-05'],
+      [4, '2026-05-08']
+    ].forEach(([dayIndex, dayDate]) => {
+      insertSchedule.run(`csd-hours-15-${dayIndex}`, 'coh-hours-15', dayIndex, dayDate, '13:30', '17:00');
+    });
+    db.prepare(`
+      insert into cohort_allocation (id, cohort_id, company_id, module_id, entry_day, status, notes)
+      values (?, ?, ?, ?, ?, ?, ?)
+    `).run('all-hours-15', 'coh-hours-15', 'comp-hours-api-15', 'mod-hours-training-06', 1, 'Confirmado', null);
+
+    await request(app)
+      .post('/companies/comp-hours-api-15/hours/adjustments')
+      .send({
+        delta_hours: -16,
+        reason: 'Crédito inicial para teste de meio período parcial.'
+      })
+      .expect(201);
+
+    const summaryRes = await request(app).get('/companies/comp-hours-api-15/hours/summary');
+    assert.equal(summaryRes.status, 200);
+    assert.equal(summaryRes.body.available_hours, 16);
+    assert.equal(summaryRes.body.consumed_hours, 12);
+    assert.equal(summaryRes.body.balance_hours, 4);
+
+    const modulesRes = await request(app).get('/companies/comp-hours-api-15/hours/modules');
+    assert.equal(modulesRes.status, 200);
+    const trainingModule = (modulesRes.body.items as Array<{
+      code: string;
+      projected_client_consumed_hours: number;
+      actual_client_consumed_hours: number;
+      projected_client_remaining_hours: number;
+      status: string;
+    }>).find((item) => item.code === 'HRS-TR-06');
+    assert.ok(trainingModule);
+    assert.equal(trainingModule?.projected_client_consumed_hours, 16);
+    assert.equal(trainingModule?.actual_client_consumed_hours, 12);
+    assert.equal(trainingModule?.projected_client_remaining_hours, 4);
+    assert.equal(trainingModule?.status, 'Em_execucao');
+  } finally {
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('meio período executado legado volta a acompanhar agenda quando ainda há encontro futuro', { concurrency: false }, async () => {
+  const dbPath = assignTestDbPath('hours-half-period-stale-executed');
+  cleanupDbFiles(dbPath);
+
+  try {
+    const app = createApp({ forceDbRefresh: true, seedDb: false });
+    db.prepare(`
+      insert into company (id, name, status, notes, priority)
+      values ('comp-hours-api-16', 'Cliente Horas API 16', 'Ativo', null, 0)
+    `).run();
+    db.prepare(`
+      insert into technician (id, name)
+      values ('tech-hours-16', 'Tecnico Horas 16')
+    `).run();
+    db.prepare(`
+      insert into module_template (
+        id, code, category, name, description, duration_days, profile, is_mandatory, delivery_mode, client_hours_policy
+      )
+      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'mod-hours-training-07',
+      'HRS-TR-07',
+      'Treinamento',
+      'Treinamento executado legado',
+      null,
+      2,
+      null,
+      1,
+      'ministrado',
+      'consome'
+    );
+    db.prepare(`
+      insert into cohort (
+        id, code, name, start_date, technician_id, status, capacity_companies, notes, period, start_time, end_time, delivery_mode
+      )
+      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'coh-hours-16',
+      'TUR-HRS-16',
+      'Turma horas 16',
+      '2026-05-01',
+      'tech-hours-16',
+      'Confirmada',
+      2,
+      null,
+      'Meio_periodo',
+      '13:30',
+      '17:00',
+      'Online'
+    );
+    db.prepare(`
+      insert into cohort_module_block (id, cohort_id, module_id, order_in_cohort, start_day_offset, duration_days)
+      values (?, ?, ?, ?, ?, ?)
+    `).run('cmb-hours-16', 'coh-hours-16', 'mod-hours-training-07', 1, 1, 2);
+    const insertSchedule = db.prepare(`
+      insert into cohort_schedule_day (id, cohort_id, day_index, day_date, start_time, end_time)
+      values (?, ?, ?, ?, ?, ?)
+    `);
+    [
+      [1, '2026-05-01'],
+      [2, '2026-05-02'],
+      [3, '2026-05-03'],
+      [4, '2026-05-08']
+    ].forEach(([dayIndex, dayDate]) => {
+      insertSchedule.run(`csd-hours-16-${dayIndex}`, 'coh-hours-16', dayIndex, dayDate, '13:30', '17:00');
+    });
+    db.prepare(`
+      insert into cohort_allocation (id, cohort_id, company_id, module_id, entry_day, status, notes, executed_at)
+      values (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run('all-hours-16', 'coh-hours-16', 'comp-hours-api-16', 'mod-hours-training-07', 1, 'Executado', null, '2026-05-04');
+
+    await request(app)
+      .post('/companies/comp-hours-api-16/hours/adjustments')
+      .send({
+        delta_hours: -16,
+        reason: 'Crédito inicial para teste de executado legado.'
+      })
+      .expect(201);
+
+    const summaryRes = await request(app).get('/companies/comp-hours-api-16/hours/summary');
+    assert.equal(summaryRes.status, 200);
+    assert.equal(summaryRes.body.consumed_hours, 12);
+    assert.equal(summaryRes.body.balance_hours, 4);
+
+    const allocationAfterSync = db.prepare(`
+      select status, executed_at
+      from cohort_allocation
+      where id = ?
+    `).get('all-hours-16') as { status: string; executed_at: string | null };
+    assert.equal(allocationAfterSync.status, 'Confirmado');
+    assert.equal(allocationAfterSync.executed_at, null);
   } finally {
     cleanupDbFiles(dbPath);
   }

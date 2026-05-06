@@ -1564,25 +1564,6 @@ function roundHours(value: number) {
   return Math.round(value * 100) / 100;
 }
 
-function executedAllocationHours(args: {
-  cohortId: string;
-  moduleId: string;
-  entryDay: number;
-}): number {
-  const block = db.prepare(`
-    select duration_days
-    from cohort_module_block
-    where cohort_id = ? and module_id = ?
-    limit 1
-  `).get(args.cohortId, args.moduleId) as { duration_days: number } | undefined;
-  const durationDays = Math.max(1, Number(block?.duration_days || 1));
-  return roundHours(durationDays * 8);
-}
-
-function allocationStatusCountsInConfirmedHours(status: AllocationStatus): boolean {
-  return status === 'Confirmado' || status === 'Executado';
-}
-
 type ActivityHoursScope = (typeof CALENDAR_ACTIVITY_HOURS_SCOPE_VALUES)[number];
 type ActivityLinkedModule = {
   id: string;
@@ -2259,6 +2240,13 @@ function syncConfirmedCohortExecutions() {
     where id = ?
       and status in ('Previsto', 'Confirmado', 'Executado')
   `);
+  const markNotExecuted = db.prepare(`
+    update cohort_allocation
+    set status = 'Confirmado',
+      executed_at = null
+    where id = ?
+      and status = 'Executado'
+  `);
 
   const upsertProgress = db.prepare(`
     insert into company_module_progress (id, company_id, module_id, status, completed_at)
@@ -2331,6 +2319,9 @@ function syncConfirmedCohortExecutions() {
         markExecuted.run(completedAt, candidate.allocation_id);
       } else if (nowMarker >= slotStart.startMarker) {
         moduleStatus = 'Em_execucao';
+        markNotExecuted.run(candidate.allocation_id);
+      } else {
+        markNotExecuted.run(candidate.allocation_id);
       }
 
       const mapKey = `${candidate.company_id}:${candidate.module_id}`;
@@ -2376,6 +2367,104 @@ function syncConfirmedCohortExecutions() {
   });
 
   tx();
+}
+
+function refreshCompanyModuleProgressFromAllocations(companyId: string, moduleId: string) {
+  const nowMarker = nowDateTimeMarker();
+  const rows = db.prepare(`
+    select
+      a.id as allocation_id,
+      a.cohort_id,
+      a.entry_day,
+      a.status as allocation_status,
+      c.start_date,
+      c.period,
+      c.start_time,
+      c.end_time,
+      coalesce(cmb.duration_days, 1) as duration_days
+    from cohort_allocation a
+    join cohort c on c.id = a.cohort_id
+    left join cohort_module_block cmb on cmb.cohort_id = a.cohort_id and cmb.module_id = a.module_id
+    where a.company_id = ?
+      and a.module_id = ?
+      and a.status <> 'Cancelado'
+  `).all(companyId, moduleId) as Array<{
+    allocation_id: string;
+    cohort_id: string;
+    entry_day: number;
+    allocation_status: AllocationStatus;
+    start_date: string;
+    period: (typeof COHORT_PERIOD_VALUES)[number] | null;
+    start_time: string | null;
+    end_time: string | null;
+    duration_days: number;
+  }>;
+
+  function rank(status: ModuleProgressStatus) {
+    if (status === 'Concluido') return 3;
+    if (status === 'Em_execucao') return 2;
+    if (status === 'Planejado') return 1;
+    return 0;
+  }
+
+  let best: { status: ModuleProgressStatus; completed_at: string | null } = {
+    status: 'Nao_iniciado',
+    completed_at: null
+  };
+
+  rows.forEach((row) => {
+    const period = row.period ?? 'Integral';
+    const durationDays = Math.max(1, Number(row.duration_days || 1));
+    const totalSlots = durationDays * (period === 'Meio_periodo' ? 2 : 1);
+    const startSlot = period === 'Meio_periodo'
+      ? (Math.max(1, Number(row.entry_day || 1)) * 2) - 1
+      : Math.max(1, Number(row.entry_day || 1));
+    const endSlot = startSlot + totalSlots - 1;
+
+    const scheduleRows = db.prepare(`
+      select day_index, day_date, start_time, end_time
+      from cohort_schedule_day
+      where cohort_id = ?
+        and day_index in (?, ?)
+    `).all(row.cohort_id, startSlot, endSlot) as Array<{
+      day_index: number;
+      day_date: string;
+      start_time: string | null;
+      end_time: string | null;
+    }>;
+    const scheduleByIndex = new Map(scheduleRows.map((schedule) => [Number(schedule.day_index), schedule]));
+    const startSchedule = scheduleByIndex.get(startSlot);
+    const endSchedule = scheduleByIndex.get(endSlot);
+    const startDate = startSchedule?.day_date ?? addBusinessDays(row.start_date, Math.max(0, startSlot - 1));
+    const endDate = endSchedule?.day_date ?? addBusinessDays(row.start_date, Math.max(0, endSlot - 1));
+    const startMarker = period === 'Meio_periodo'
+      ? `${startDate}T${startSchedule?.start_time ?? row.start_time ?? '00:00'}`
+      : `${startDate}T00:00`;
+    const endMarker = period === 'Meio_periodo'
+      ? `${endDate}T${endSchedule?.end_time ?? row.end_time ?? '23:59'}`
+      : `${endDate}T23:59`;
+
+    let status: ModuleProgressStatus = 'Planejado';
+    let completedAt: string | null = null;
+    if (row.allocation_status === 'Executado' || nowMarker > endMarker) {
+      status = 'Concluido';
+      completedAt = endDate;
+    } else if (nowMarker >= startMarker) {
+      status = 'Em_execucao';
+    }
+
+    if (rank(status) > rank(best.status)) {
+      best = { status, completed_at: completedAt };
+    }
+  });
+
+  db.prepare(`
+    insert into company_module_progress (id, company_id, module_id, status, completed_at)
+    values (?, ?, ?, ?, ?)
+    on conflict(company_id, module_id) do update set
+      status = excluded.status,
+      completed_at = excluded.completed_at
+  `).run(uuid('prog'), companyId, moduleId, best.status, best.completed_at);
 }
 
 function formatDatePtBr(dateIso: string): string {
@@ -4944,56 +5033,6 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       req.params.id
     );
   
-    const moduleHoursConfig = db.prepare(`
-      select delivery_mode, client_hours_policy
-      from module_template
-      where id = ?
-      limit 1
-    `).get(allocation.module_id) as {
-      delivery_mode: 'ministrado' | 'entregavel';
-      client_hours_policy: 'consome' | 'nao_consume';
-    } | undefined;
-    if (moduleHoursConfig?.delivery_mode === 'ministrado' && moduleHoursConfig.client_hours_policy === 'consome') {
-      const previousCounted = allocationStatusCountsInConfirmedHours(allocation.status);
-      const nextCounted = allocationStatusCountsInConfirmedHours(nextStatus);
-      const consumedHours = executedAllocationHours({
-        cohortId: allocation.cohort_id,
-        moduleId: allocation.module_id,
-        entryDay: allocation.entry_day
-      });
-      if (consumedHours > 0 && !previousCounted && nextCounted) {
-        appendAndProject({
-          aggregate_type: 'company_hours_account',
-          aggregate_id: allocation.id,
-          company_id: allocation.company_id,
-          event_type: 'training_encounter_completed',
-          payload: {
-            hours_consumed: consumedHours,
-            module_id: allocation.module_id,
-            encounter_id: `allocation:${allocation.id}`,
-            reason: 'Consumo automático por alocação confirmada/executada na turma.'
-          },
-          idempotency_key: `allocation-client-consumption:${allocation.id}:from-${allocation.status}:to-${nextStatus}:debit`,
-          actor_type: 'operator'
-        });
-      } else if (consumedHours > 0 && previousCounted && !nextCounted) {
-        appendAndProject({
-          aggregate_type: 'company_hours_account',
-          aggregate_id: allocation.id,
-          company_id: allocation.company_id,
-          event_type: 'hours_manual_adjustment_added',
-          payload: {
-            delta_hours: consumedHours,
-            consumed_delta: -consumedHours,
-            module_id: allocation.module_id,
-            reason: 'Estorno automático por mudança de status da alocação para não confirmada.'
-          },
-          idempotency_key: `allocation-client-consumption:${allocation.id}:from-${allocation.status}:to-${nextStatus}:credit`,
-          actor_type: 'operator'
-        });
-      }
-    }
-
     if (nextStatus === 'Executado') {
       const progressId = uuid('prog');
       db.prepare(`
@@ -5003,6 +5042,10 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
           status = 'Concluido',
           completed_at = excluded.completed_at
       `).run(progressId, allocation.company_id, allocation.module_id, nowDateIso());
+    }
+
+    if (nextStatus === 'Cancelado') {
+      refreshCompanyModuleProgressFromAllocations(allocation.company_id, allocation.module_id);
     }
   
     return res.json({ ok: true, override_used: Boolean(usedInstallationOverride) });
