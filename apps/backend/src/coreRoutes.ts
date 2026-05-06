@@ -7904,13 +7904,12 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
     const tx = db.transaction(() => {
       const update = db.prepare(`
         update implementation_kanban_card
-        set column_id = ?, position = ?, updated_at = ?
+        set column_id = ?, position = ?
         where id = ?
       `);
-      const nowIso = nowDateIso();
       parsed.data.columns.forEach((column) => {
         column.card_ids.forEach((cardId, index) => {
-          update.run(column.column_id, index, nowIso, cardId);
+          update.run(column.column_id, index, cardId);
         });
       });
     });

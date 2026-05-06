@@ -409,6 +409,79 @@ test('GET /implementation/kanban marks stale cards with full ISO timestamps', as
   }
 });
 
+test('POST /implementation/kanban/reorder preserves card updated_at timestamps', async () => {
+  const { app, dbPath } = await createPortalTicketsFixture('kanban-reorder-preserves-updated-at');
+
+  try {
+    const staleIso = '2026-04-12T00:12:18.924Z';
+    const otherIso = '2026-04-13T09:00:00.000Z';
+    db.prepare(`
+      insert into implementation_kanban_column (id, title, color, position, created_at, updated_at)
+      values (?, ?, ?, ?, ?, ?)
+    `).run('kcol-reorder-source', 'Backlog', '#94a3b8', 90, staleIso, staleIso);
+    db.prepare(`
+      insert into implementation_kanban_column (id, title, color, position, created_at, updated_at)
+      values (?, ?, ?, ?, ?, ?)
+    `).run('kcol-reorder-target', 'Em andamento', '#ef2f0f', 91, staleIso, staleIso);
+
+    const insertCard = db.prepare(`
+      insert into implementation_kanban_card (
+        id, title, description, status, column_id, client_name, subcategory, priority, position, created_at, updated_at
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    insertCard.run(
+      'kcard-reorder-1',
+      'Card antigo 1',
+      'Reordenar nao pode zerar dias parados.',
+      'Todo',
+      'kcol-reorder-source',
+      'Cliente Portal Tickets',
+      'Implementacao',
+      'Normal',
+      0,
+      staleIso,
+      staleIso
+    );
+    insertCard.run(
+      'kcard-reorder-2',
+      'Card antigo 2',
+      'Reordenar nao pode zerar dias parados.',
+      'Todo',
+      'kcol-reorder-source',
+      'Cliente Portal Tickets',
+      'Suporte',
+      'Normal',
+      1,
+      otherIso,
+      otherIso
+    );
+
+    const response = await request(app)
+      .post('/implementation/kanban/reorder')
+      .send({
+        columns: [
+          { column_id: 'kcol-reorder-source', card_ids: ['kcard-reorder-2', 'kcard-reorder-1'] },
+          { column_id: 'kcol-reorder-target', card_ids: [] }
+        ]
+      });
+
+    assert.equal(response.status, 200);
+    const cards = db.prepare(`
+      select id, position, updated_at
+      from implementation_kanban_card
+      where id in ('kcard-reorder-1', 'kcard-reorder-2')
+      order by id
+    `).all() as Array<{ id: string; position: number; updated_at: string }>;
+
+    assert.deepEqual(cards, [
+      { id: 'kcard-reorder-1', position: 1, updated_at: staleIso },
+      { id: 'kcard-reorder-2', position: 0, updated_at: otherIso }
+    ]);
+  } finally {
+    cleanupDbFiles(dbPath);
+  }
+});
+
 test('POST /portal/api/tickets/:id/read marks thread as read and suppresses pending webhook queue', async () => {
   const { app, dbPath } = await createPortalTicketsFixture('portal-tickets-read-and-webhook');
 
