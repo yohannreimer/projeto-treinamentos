@@ -72,6 +72,7 @@ export function LicensesPage() {
   const [renewalCycle, setRenewalCycle] = useState<RenewalCycle>('Mensal');
   const [expiresAt, setExpiresAt] = useState(new Date().toISOString().slice(0, 10));
   const [notes, setNotes] = useState('');
+  const [detailRow, setDetailRow] = useState<LicenseRow | null>(null);
 
   async function load() {
     const [licensesResponse, companiesResponse, programsResponse] = await Promise.all([
@@ -109,6 +110,17 @@ export function LicensesPage() {
   useEffect(() => {
     load().catch((err: Error) => setError(err.message));
   }, []);
+
+  useEffect(() => {
+    if (!detailRow) return undefined;
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setDetailRow(null);
+      }
+    }
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [detailRow]);
 
   const filtered = useMemo(() => {
     if (!query.trim()) return rows;
@@ -303,6 +315,10 @@ export function LicensesPage() {
     ));
   }
 
+  function openLicenseDetail(row: LicenseRow) {
+    setDetailRow(row);
+  }
+
   return (
     <div className="page licenses-page">
       <header className="page-header">
@@ -452,17 +468,17 @@ export function LicensesPage() {
             </thead>
             <tbody>
               {sortedAttentionRows.map((row) => (
-                <tr key={`alert-${row.id}`}>
-                  <td>{row.company_name}</td>
-                  <td>{row.program_name}</td>
-                  <td>{row.user_name}</td>
-                  <td>{row.license_identifier}</td>
+                <tr key={`alert-${row.id}`} className="row-openable" onDoubleClick={() => openLicenseDetail(row)}>
+                  <td><div className="table-cell-clamp table-cell-clamp-compact">{row.company_name}</div></td>
+                  <td><div className="table-cell-clamp table-cell-clamp-compact">{row.program_name}</div></td>
+                  <td><div className="table-cell-clamp table-cell-clamp-compact">{row.user_name}</div></td>
+                  <td><div className="table-cell-clamp table-cell-clamp-compact">{row.license_identifier}</div></td>
                   <td>{formatDate(row.expires_at)}</td>
                   <td>
                     {row.alert_level === 'Expirada'
                       ? <span className="chip chip-cancelada">Expirada</span>
                       : <span className="chip chip-aguardando-quorum">Atenção</span>}
-                    <div className="muted warning-copy">{row.warning_message}</div>
+                    <div className="muted warning-copy table-cell-clamp table-cell-clamp-compact">{row.warning_message}</div>
                   </td>
                 </tr>
               ))}
@@ -483,7 +499,18 @@ export function LicensesPage() {
         }
       >
         <div className="table-wrap table-wrap-wide">
-        <table className="table table-hover table-tight">
+        <table className="table table-hover table-tight table-readable-grid">
+          <colgroup>
+            <col className="licenses-col-client" />
+            <col className="licenses-col-program" />
+            <col className="licenses-col-user" />
+            <col className="licenses-col-modules" />
+            <col className="licenses-col-id" />
+            <col className="licenses-col-type" />
+            <col className="licenses-col-date" />
+            <col className="licenses-col-status" />
+            <col className="licenses-col-actions" />
+          </colgroup>
           <thead>
             <tr>
               <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('company_name')}>Cliente{sortIndicator('company_name')}</button></th>
@@ -499,12 +526,14 @@ export function LicensesPage() {
           </thead>
           <tbody>
             {sortedFiltered.map((row) => (
-              <tr key={row.id}>
-                <td>{row.company_name}</td>
-                <td>{row.program_name}</td>
-                <td>{row.user_name}</td>
-                <td title={row.module_list}>{row.module_list}</td>
-                <td>{row.license_identifier}</td>
+              <tr key={row.id} className="row-openable" onDoubleClick={() => openLicenseDetail(row)}>
+                <td><div className="table-cell-clamp">{row.company_name}</div></td>
+                <td><div className="table-cell-clamp">{row.program_name}</div></td>
+                <td><div className="table-cell-clamp">{row.user_name}</div></td>
+                <td title={row.module_list}>
+                  <div className="table-cell-clamp table-cell-clamp-tall">{row.module_list}</div>
+                </td>
+                <td><div className="table-cell-clamp">{row.license_identifier}</div></td>
                 <td>{renewalLabel(row.renewal_cycle)}</td>
                 <td>{formatDate(row.expires_at)}</td>
                 <td>
@@ -512,7 +541,7 @@ export function LicensesPage() {
                   {row.alert_level === 'Atenção' ? <span className="chip chip-aguardando-quorum">Atenção</span> : null}
                   {row.alert_level === 'Expirada' ? <span className="chip chip-cancelada">Expirada</span> : null}
                 </td>
-                <td className="actions actions-compact">
+                <td className="actions actions-compact" onDoubleClick={(event) => event.stopPropagation()}>
                   <button type="button" onClick={() => renewLicense(row)}>
                     {renewalActionLabel(row.renewal_cycle)}
                   </button>
@@ -525,6 +554,59 @@ export function LicensesPage() {
         </table>
         </div>
       </Section>
+
+      {detailRow ? (
+        <div className="read-detail-overlay" role="dialog" aria-modal="true" aria-label="Detalhes da licença">
+          <button type="button" className="read-detail-backdrop" onClick={() => setDetailRow(null)} aria-label="Fechar detalhes da licença" />
+          <section className="read-detail-panel">
+            <header className="read-detail-header">
+              <div>
+                <p>Licença</p>
+                <h2>{detailRow.company_name}</h2>
+              </div>
+              <button type="button" className="read-detail-close" onClick={() => setDetailRow(null)} aria-label="Fechar">✕</button>
+            </header>
+            <div className="read-detail-body">
+              <article className="read-detail-block">
+                <span>Usuário</span>
+                <p>{detailRow.user_name}</p>
+              </article>
+              <article className="read-detail-block">
+                <span>Programa principal</span>
+                <p>{detailRow.program_name}</p>
+              </article>
+              <article className="read-detail-block read-detail-block-wide">
+                <span>Programas da licença</span>
+                <p>{detailRow.module_list}</p>
+              </article>
+              <article className="read-detail-block">
+                <span>ID da licença</span>
+                <p>{detailRow.license_identifier}</p>
+              </article>
+              <article className="read-detail-block">
+                <span>Renovação</span>
+                <p>{renewalLabel(detailRow.renewal_cycle)} · vence em {formatDate(detailRow.expires_at)}</p>
+              </article>
+              <article className="read-detail-block">
+                <span>Status</span>
+                <p>{detailRow.alert_level}</p>
+              </article>
+              {detailRow.warning_message ? (
+                <article className="read-detail-block read-detail-block-wide">
+                  <span>Aviso</span>
+                  <p>{detailRow.warning_message}</p>
+                </article>
+              ) : null}
+              {detailRow.notes ? (
+                <article className="read-detail-block read-detail-block-wide">
+                  <span>Observações</span>
+                  <p>{detailRow.notes}</p>
+                </article>
+              ) : null}
+            </div>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }

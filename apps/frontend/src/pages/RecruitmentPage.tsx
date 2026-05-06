@@ -35,6 +35,7 @@ export function RecruitmentPage() {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [showCandidateFormSection, setShowCandidateFormSection] = useState(false);
+  const [detailRow, setDetailRow] = useState<Candidate | null>(null);
 
   const [name, setName] = useState('');
   const [processStatus, setProcessStatus] = useState<(typeof statusOptions)[number]>('Em_processo');
@@ -54,6 +55,17 @@ export function RecruitmentPage() {
   useEffect(() => {
     load().catch((err: Error) => setError(err.message));
   }, []);
+
+  useEffect(() => {
+    if (!detailRow) return undefined;
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setDetailRow(null);
+      }
+    }
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [detailRow]);
 
   const filtered = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -183,6 +195,10 @@ export function RecruitmentPage() {
     }
   }
 
+  function openCandidateDetail(row: Candidate) {
+    setDetailRow(row);
+  }
+
   return (
     <div className="page">
       <header className="page-header">
@@ -307,7 +323,19 @@ export function RecruitmentPage() {
       </Section>
 
       <Section title="Candidatos">
-        <table className="table table-hover table-tight">
+        <div className="table-wrap table-wrap-wide">
+        <table className="table table-hover table-tight table-readable-grid recruitment-table">
+          <colgroup>
+            <col className="recruitment-col-candidate" />
+            <col className="recruitment-col-stage" />
+            <col className="recruitment-col-status" />
+            <col className="recruitment-col-text" />
+            <col className="recruitment-col-text" />
+            <col className="recruitment-col-specialties" />
+            <col className="recruitment-col-plan" />
+            <col className="recruitment-col-date" />
+            <col className="recruitment-col-actions" />
+          </colgroup>
           <thead>
             <tr>
               <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('name')}>Candidato{sortIndicator('name')}</button></th>
@@ -323,19 +351,19 @@ export function RecruitmentPage() {
           </thead>
           <tbody>
             {ordered.map((row) => (
-              <tr key={row.id}>
+              <tr key={row.id} className="row-openable" onDoubleClick={() => openCandidateDetail(row)}>
                 <td>
-                  <strong>{row.name}</strong>
-                  {row.notes ? <div className="muted">{row.notes}</div> : null}
+                  <strong className="table-cell-clamp table-cell-clamp-title">{row.name}</strong>
+                  {row.notes ? <div className="muted table-cell-clamp table-cell-clamp-tall">{row.notes}</div> : null}
                 </td>
                 <td><StatusChip value={row.stage} /></td>
                 <td><StatusChip value={row.process_status} /></td>
-                <td>{row.strengths ?? '-'}</td>
-                <td>{row.concerns ?? '-'}</td>
-                <td>{row.specialties ?? '-'}</td>
-                <td>{row.career_plan ?? '-'}</td>
+                <td><div className="table-cell-clamp table-cell-clamp-tall">{row.strengths ?? '-'}</div></td>
+                <td><div className="table-cell-clamp table-cell-clamp-tall">{row.concerns ?? '-'}</div></td>
+                <td><div className="table-cell-clamp">{row.specialties ?? '-'}</div></td>
+                <td><div className="table-cell-clamp table-cell-clamp-tall">{row.career_plan ?? '-'}</div></td>
                 <td>{row.updated_at}</td>
-                <td className="actions">
+                <td className="actions" onDoubleClick={(event) => event.stopPropagation()}>
                   <button type="button" onClick={() => editCandidate(row)}>Editar</button>
                   <button type="button" onClick={() => deleteCandidate(row)}>Excluir</button>
                 </td>
@@ -343,7 +371,61 @@ export function RecruitmentPage() {
             ))}
           </tbody>
         </table>
+        </div>
       </Section>
+
+      {detailRow ? (
+        <div className="read-detail-overlay" role="dialog" aria-modal="true" aria-label="Detalhes do candidato">
+          <button type="button" className="read-detail-backdrop" onClick={() => setDetailRow(null)} aria-label="Fechar detalhes do candidato" />
+          <section className="read-detail-panel">
+            <header className="read-detail-header">
+              <div>
+                <p>Processo seletivo</p>
+                <h2>{detailRow.name}</h2>
+              </div>
+              <button type="button" className="read-detail-close" onClick={() => setDetailRow(null)} aria-label="Fechar">✕</button>
+            </header>
+            <div className="read-detail-body">
+              <article className="read-detail-block">
+                <span>Etapa</span>
+                <p>{statusLabel(detailRow.stage)}</p>
+              </article>
+              <article className="read-detail-block">
+                <span>Status</span>
+                <p>{statusLabel(detailRow.process_status)}</p>
+              </article>
+              <article className="read-detail-block">
+                <span>Atualizado</span>
+                <p>{detailRow.updated_at}</p>
+              </article>
+              <article className="read-detail-block read-detail-block-wide">
+                <span>Notas gerais</span>
+                <p>{detailRow.notes || '-'}</p>
+              </article>
+              <article className="read-detail-block read-detail-block-wide">
+                <span>Pontos fortes</span>
+                <p>{detailRow.strengths || '-'}</p>
+              </article>
+              <article className="read-detail-block read-detail-block-wide">
+                <span>Pontos de atenção</span>
+                <p>{detailRow.concerns || '-'}</p>
+              </article>
+              <article className="read-detail-block">
+                <span>Especialidades</span>
+                <p>{detailRow.specialties || '-'}</p>
+              </article>
+              <article className="read-detail-block read-detail-block-wide">
+                <span>Equipamento/infra</span>
+                <p>{detailRow.equipment_notes || '-'}</p>
+              </article>
+              <article className="read-detail-block read-detail-block-wide">
+                <span>Plano de carreira</span>
+                <p>{detailRow.career_plan || '-'}</p>
+              </article>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }

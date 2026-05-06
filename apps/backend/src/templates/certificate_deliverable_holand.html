@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Certificado Holand - Entregável</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --navy: #1D2830;
+    --red: #EF2F0F;
+    --white: #FFFFFF;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    background: #111518;
+    font-family: 'Inter', sans-serif;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 32px 20px;
+    min-height: 100vh;
+  }
+
+  .cert {
+    width: 980px;
+    background: var(--navy);
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 24px 80px rgba(0,0,0,.6);
+  }
+
+  .bg-chevron {
+    position: absolute;
+    top: -60px;
+    right: -80px;
+    width: 460px;
+    opacity: .06;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .top-bar { background: var(--red); height: 6px; }
+
+  .header {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 26px 48px 22px;
+    border-bottom: 1px solid rgba(255,255,255,.08);
+  }
+
+  .header-left { display: flex; align-items: center; gap: 20px; }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--white);
+    font-size: 28px;
+    font-weight: 900;
+    letter-spacing: 1px;
+  }
+
+  .brand-mark {
+    width: 38px;
+    height: 28px;
+    background: var(--red);
+    clip-path: polygon(0 20%, 15% 20%, 26% 0, 44% 0, 34% 20%, 74% 20%, 82% 0, 100% 0, 88% 27%, 100% 54%, 82% 54%, 74% 36%, 34% 36%, 44% 54%, 26% 54%, 15% 36%, 0 36%, 9% 27%);
+  }
+
+  .header-divider { width: 1px; height: 30px; background: rgba(255,255,255,.15); }
+
+  .header-company-label {
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: rgba(255,255,255,.35);
+    margin-bottom: 3px;
+  }
+
+  #company-name {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--white);
+    letter-spacing: .3px;
+  }
+
+  .header-right { text-align: right; }
+
+  .header-right .dept {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: var(--red);
+    margin-bottom: 3px;
+  }
+
+  .header-right .doc-title {
+    font-size: 10px;
+    font-weight: 400;
+    color: rgba(255,255,255,.35);
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+  }
+
+  .hero {
+    position: relative;
+    z-index: 2;
+    padding: 36px 48px 24px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 40px;
+    align-items: start;
+  }
+
+  .certifica-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 4px;
+    text-transform: uppercase;
+    color: var(--red);
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .certifica-label::before {
+    content: '';
+    display: block;
+    width: 22px;
+    height: 2px;
+    background: var(--red);
+  }
+
+  .certifica-title {
+    font-size: 44px;
+    font-weight: 800;
+    color: var(--white);
+    line-height: 1;
+    letter-spacing: -1px;
+  }
+
+  .certifica-title span { color: var(--red); }
+
+  .certifica-sub {
+    font-size: 13px;
+    font-weight: 300;
+    color: rgba(255,255,255,.5);
+    line-height: 1.65;
+    max-width: 500px;
+    margin-top: 14px;
+  }
+
+  .course-box {
+    background: var(--red);
+    padding: 22px 26px;
+    min-width: 220px;
+    max-width: 310px;
+    clip-path: polygon(0 0, 100% 0, 92% 100%, 0 100%);
+    flex-shrink: 0;
+  }
+
+  .course-box-label {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: rgba(255,255,255,.7);
+    margin-bottom: 8px;
+  }
+
+  #course-name {
+    font-size: 18px;
+    font-weight: 900;
+    color: var(--white);
+    line-height: 1.15;
+    text-transform: uppercase;
+  }
+
+  #course-sub {
+    font-size: 13px;
+    font-weight: 600;
+    color: rgba(255,255,255,.85);
+    margin-top: 4px;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+  }
+
+  .arrow-divider {
+    position: relative;
+    z-index: 2;
+    margin: 0 48px;
+    display: flex;
+    align-items: center;
+  }
+
+  .arrow-divider-line { flex: 1; height: 1px; background: rgba(255,255,255,.1); }
+  .arrow-chevrons { display: flex; gap: 4px; padding: 0 16px; }
+  .chev { width: 8px; height: 16px; }
+
+  .company-section {
+    position: relative;
+    z-index: 2;
+    padding: 24px 48px 32px;
+    flex: 1;
+  }
+
+  .company-section-label {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: rgba(255,255,255,.3);
+    margin-bottom: 14px;
+  }
+
+  .company-card {
+    background: rgba(255,255,255,.04);
+    border-left: 4px solid var(--red);
+    padding: 22px 32px;
+    display: flex;
+    align-items: center;
+    gap: 32px;
+  }
+
+  .company-card-info { flex: 1; min-width: 0; }
+
+  #company-name-main {
+    font-size: 26px;
+    font-weight: 800;
+    color: var(--white);
+    letter-spacing: -.5px;
+    line-height: 1.1;
+  }
+
+  .company-card-sub {
+    font-size: 12px;
+    font-weight: 400;
+    color: rgba(255,255,255,.4);
+    margin-top: 5px;
+    letter-spacing: .5px;
+  }
+
+  .company-card-badge {
+    background: rgba(239,47,15,.12);
+    border: 1px solid rgba(239,47,15,.3);
+    padding: 12px 20px;
+    text-align: center;
+    flex-shrink: 0;
+  }
+
+  .company-card-badge-label {
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: rgba(255,255,255,.35);
+    margin-bottom: 5px;
+  }
+
+  .company-card-badge-value {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--red);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+
+  .footer {
+    position: relative;
+    z-index: 2;
+    background: rgba(0,0,0,.22);
+    padding: 18px 48px;
+    display: grid;
+    grid-template-columns: 1fr 1px auto 1px auto;
+    align-items: center;
+    gap: 24px;
+  }
+
+  .footer-div { height: 34px; background: rgba(255,255,255,.1); }
+  .sig-line { width: 110px; height: 1px; background: rgba(255,255,255,.2); margin-bottom: 5px; }
+  .sig-name { font-size: 13px; font-weight: 700; color: var(--white); margin-bottom: 2px; }
+  .sig-title { font-size: 10px; color: rgba(255,255,255,.4); }
+  .meta-label { font-size: 9px; font-weight: 600; letter-spacing: 2px; text-transform: uppercase; color: var(--red); margin-bottom: 3px; }
+  #emit-date { font-size: 12px; font-weight: 500; color: rgba(255,255,255,.7); }
+
+  .seal {
+    width: 72px;
+    height: 72px;
+    border: 2px solid var(--red);
+    border-radius: 50%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: rgba(239,47,15,.08);
+    position: relative;
+  }
+
+  .seal::before {
+    content: '';
+    position: absolute;
+    inset: 4px;
+    border: 1px solid rgba(239,47,15,.3);
+    border-radius: 50%;
+  }
+
+  .seal-icon { font-size: 12px; font-weight: 900; color: var(--red); margin-bottom: 2px; }
+  .seal-text { font-size: 5.5px; font-weight: 700; letter-spacing: 1px; color: var(--red); text-transform: uppercase; text-align: center; line-height: 1.4; }
+
+  .bottom-strip {
+    background: var(--red);
+    padding: 9px 48px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    position: relative;
+    z-index: 2;
+  }
+
+  .bottom-strip p {
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: rgba(255,255,255,.8);
+  }
+
+  #cert-code {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--white);
+    letter-spacing: 1px;
+  }
+
+  @page { size: A4 landscape; margin: 0; }
+
+  @media print {
+    html, body {
+      background: var(--red);
+      padding: 0;
+      margin: 0;
+      width: 297mm;
+      height: 210mm;
+      display: block;
+      overflow: hidden;
+    }
+    .cert {
+      width: 297mm;
+      height: 210mm;
+      box-shadow: none;
+      position: relative;
+      overflow: hidden;
+    }
+    .bottom-strip {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: -0.4mm;
+      margin: 0;
+    }
+    * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+  }
+</style>
+</head>
+<body>
+<div class="cert">
+  <svg class="bg-chevron" viewBox="0 0 400 500" xmlns="http://www.w3.org/2000/svg">
+    <path d="M80,0 L320,0 L400,250 L320,500 L80,500 L160,250 Z" fill="white"/>
+  </svg>
+
+  <div class="top-bar"></div>
+
+  <div class="header">
+    <div class="header-left">
+      <div class="brand">
+        <div class="brand-mark"></div>
+        <div>HOLAND</div>
+      </div>
+      <div class="header-divider"></div>
+      <div>
+        <div class="header-company-label">Empresa Certificada</div>
+        <div id="company-name">{{COMPANY_NAME}}</div>
+      </div>
+    </div>
+
+    <div class="header-right">
+      <div class="dept">Depto. de Treinamento &amp; Desenvolvimento</div>
+      <div class="doc-title">Certificado Oficial de Conclusão de Entrega</div>
+    </div>
+  </div>
+
+  <div class="hero">
+    <div>
+      <div class="certifica-label">Certificado de Conclusão de Entrega</div>
+      <h1 class="certifica-title">CERTIFICA<br><span>A</span><br>ENTREGA</h1>
+      <p class="certifica-sub">
+        que a Holand concluiu com êxito a entrega do produto abaixo para a empresa
+        cliente, confirmando a implementação, configuração e validação completa
+        conforme acordado em contrato.
+      </p>
+    </div>
+    <div class="course-box">
+      <div class="course-box-label">Serviço Entregue</div>
+      <div id="course-name">{{DELIVERABLE_NAME}}</div>
+      <div id="course-sub">{{DELIVERABLE_SUBTITLE}}</div>
+    </div>
+  </div>
+
+  <div class="arrow-divider">
+    <div class="arrow-divider-line"></div>
+    <div class="arrow-chevrons">
+      <svg class="chev" viewBox="0 0 8 16"><path d="M0 0 L8 8 L0 16 L2 16 L10 8 L2 0Z" fill="#EF2F0F" opacity=".4"/></svg>
+      <svg class="chev" viewBox="0 0 8 16"><path d="M0 0 L8 8 L0 16 L2 16 L10 8 L2 0Z" fill="#EF2F0F" opacity=".7"/></svg>
+      <svg class="chev" viewBox="0 0 8 16"><path d="M0 0 L8 8 L0 16 L2 16 L10 8 L2 0Z" fill="#EF2F0F"/></svg>
+    </div>
+    <div class="arrow-divider-line"></div>
+  </div>
+
+  <div class="company-section">
+    <div class="company-section-label">Empresa Receptora da Entrega</div>
+    <div class="company-card">
+      <div class="company-card-info">
+        <div id="company-name-main">{{COMPANY_NAME}}</div>
+        <div class="company-card-sub">Recebeu e aprovou a conclusão da entrega técnica acima especificada</div>
+      </div>
+      <div class="company-card-badge">
+        <div class="company-card-badge-label">Status</div>
+        <div class="company-card-badge-value">Concluído<br>&amp; Aprovado</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <div>
+      <div class="sig-line"></div>
+      <div class="sig-name">Leonardo Holand</div>
+      <div class="sig-title">Diretor Administrativo</div>
+    </div>
+    <div class="footer-div"></div>
+    <div>
+      <div class="meta-label">Data de Emissão</div>
+      <div id="emit-date">{{EMIT_DATE}}</div>
+    </div>
+    <div class="footer-div"></div>
+    <div class="seal">
+      <div class="seal-icon">CERT</div>
+      <div class="seal-text">CERT<br>OFICIAL</div>
+    </div>
+  </div>
+
+  <div class="bottom-strip">
+    <p>Transformando complexidade em eficiência · holand.com.br</p>
+    <span id="cert-code">{{CERT_CODE}}</span>
+  </div>
+</div>
+</body>
+</html>

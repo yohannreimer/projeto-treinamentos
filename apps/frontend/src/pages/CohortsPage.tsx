@@ -28,6 +28,7 @@ type CohortAllocation = {
   company_name: string;
   module_id?: string;
   module_name: string;
+  delivery_mode?: 'ministrado' | 'entregavel';
   entry_day: number;
   status: 'Previsto' | 'Confirmado' | 'Executado' | 'Cancelado';
   override_installation_prereq?: number;
@@ -521,6 +522,7 @@ export function CohortsPage() {
       company_name: string;
       module_id: string;
       module_name: string;
+      delivery_mode: 'ministrado' | 'entregavel';
       participants_count: number;
     }>();
     (editingDetail?.allocations ?? []).forEach((allocation) => {
@@ -533,6 +535,7 @@ export function CohortsPage() {
         company_name: allocation.company_name,
         module_id: allocation.module_id,
         module_name: allocation.module_name,
+        delivery_mode: allocation.delivery_mode ?? 'ministrado',
         participants_count: participantCountByCompanyModule.get(key) ?? 0
       });
     });
@@ -987,8 +990,10 @@ export function CohortsPage() {
       return;
     }
 
+    const certificateTarget = certificateTargets.find((item) => item.company_id === companyId && item.module_id === moduleId);
+    const isDeliverable = certificateTarget?.delivery_mode === 'entregavel';
     const participantCount = participantCountByCompanyModule.get(`${companyId}::${moduleId}`) ?? 0;
-    if (participantCount === 0) {
+    if (!isDeliverable && participantCount === 0) {
       setError('Cadastre participantes vinculados a este módulo para emitir o certificado.');
       return;
     }
@@ -1789,13 +1794,13 @@ export function CohortsPage() {
                             {certificateTargets.map((item) => (
                               <div key={`cert-${item.company_id}-${item.module_id}`} className="event-item">
                                 <span>
-                                  {item.company_name} • {moduleShortLabel(item.module_name)} • {item.participants_count} participante(s)
+                                  {item.company_name} • {moduleShortLabel(item.module_name)} • {item.delivery_mode === 'entregavel' ? 'Entregável' : `${item.participants_count} participante(s)`}
                                 </span>
                                 <button
                                   type="button"
                                   onClick={() => void emitCertificate(item.company_id, item.module_id)}
-                                  disabled={item.participants_count === 0 || emittingCertificateKeys.includes(`${item.company_id}::${item.module_id}`)}
-                                  title={item.participants_count === 0 ? 'Cadastre participantes para habilitar' : 'Baixar certificado PDF do módulo'}
+                                  disabled={(item.delivery_mode !== 'entregavel' && item.participants_count === 0) || emittingCertificateKeys.includes(`${item.company_id}::${item.module_id}`)}
+                                  title={item.delivery_mode !== 'entregavel' && item.participants_count === 0 ? 'Cadastre participantes para habilitar' : 'Baixar certificado PDF do módulo'}
                                 >
                                   {emittingCertificateKeys.includes(`${item.company_id}::${item.module_id}`) ? 'Gerando...' : 'Emitir PDF'}
                                 </button>

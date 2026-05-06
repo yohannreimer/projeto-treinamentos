@@ -77,7 +77,15 @@ const CERTIFICATE_TEMPLATE_PATH_CANDIDATES = [
   path.resolve(process.cwd(), 'src/templates/certificate_holand.html'),
   path.resolve(process.cwd(), 'apps/backend/dist/templates/certificate_holand.html')
 ] as const;
+const DELIVERABLE_CERTIFICATE_TEMPLATE_PATH_CANDIDATES = [
+  path.resolve(SERVER_DIR, 'templates/certificate_deliverable_holand.html'),
+  path.resolve(PROJECT_ROOT_FROM_SERVER, 'apps/backend/src/templates/certificate_deliverable_holand.html'),
+  path.resolve(process.cwd(), 'apps/backend/src/templates/certificate_deliverable_holand.html'),
+  path.resolve(process.cwd(), 'src/templates/certificate_deliverable_holand.html'),
+  path.resolve(process.cwd(), 'apps/backend/dist/templates/certificate_deliverable_holand.html')
+] as const;
 let certificateTemplateCache: string | null = null;
+let deliverableCertificateTemplateCache: string | null = null;
 const PDF_BROWSER_PATH_CANDIDATES = [
   process.env.PUPPETEER_EXECUTABLE_PATH,
   process.env.CHROME_BIN,
@@ -505,6 +513,18 @@ function readCertificateTemplate(): string {
   throw new Error('Template de certificado não encontrado.');
 }
 
+function readDeliverableCertificateTemplate(): string {
+  if (deliverableCertificateTemplateCache) {
+    return deliverableCertificateTemplateCache;
+  }
+  for (const candidatePath of DELIVERABLE_CERTIFICATE_TEMPLATE_PATH_CANDIDATES) {
+    if (!fs.existsSync(candidatePath)) continue;
+    deliverableCertificateTemplateCache = fs.readFileSync(candidatePath, 'utf-8');
+    return deliverableCertificateTemplateCache;
+  }
+  throw new Error('Template de certificado de entregável não encontrado.');
+}
+
 function resolvePdfBrowserExecutablePath(): string {
   for (const candidatePath of PDF_BROWSER_PATH_CANDIDATES) {
     if (fs.existsSync(candidatePath)) {
@@ -593,6 +613,10 @@ function applyPdfLayoutOverrides(html: string): string {
     min-height: 0 !important;
     padding-bottom: 14px !important;
   }
+  .company-section {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+  }
   #employees-grid {
     align-content: start !important;
     gap: 6px !important;
@@ -652,6 +676,24 @@ function moduleShortLabel(name: string): string {
     .trim();
 }
 
+function deliverableCertificateLabels(moduleName: string): { name: string; subtitle: string } {
+  const cleanName = moduleShortLabel(moduleName).replace(/\s+/g, ' ').trim();
+  const separatorMatch = cleanName.match(/\s[-–—|:]\s/);
+  if (!separatorMatch || typeof separatorMatch.index !== 'number') {
+    return {
+      name: cleanName || 'Entrega técnica',
+      subtitle: 'Entrega técnica'
+    };
+  }
+
+  const name = cleanName.slice(0, separatorMatch.index).trim();
+  const subtitle = cleanName.slice(separatorMatch.index + separatorMatch[0].length).trim();
+  return {
+    name: name || cleanName,
+    subtitle: subtitle || 'Entrega técnica'
+  };
+}
+
 function formatLongDatePtBr(dateIso: string): string {
   const parts = parseIsoDate(dateIso).toLocaleDateString('pt-BR', {
     day: '2-digit',
@@ -677,6 +719,77 @@ function normalizeFileLabelPart(value: string): string {
     .replace(/\s+/g, ' ')
     .trim();
   return normalized || 'Sem nome';
+}
+
+function replaceTemplateTokens(html: string, tokens: Array<[string, string]>): string {
+  let output = html;
+  tokens.forEach(([token, value]) => {
+    output = output.split(`{{${token}}}`).join(value);
+  });
+  return output;
+}
+
+function upsertCertificateDocument(args: {
+  documentKey: string;
+  title: string;
+  notes: string;
+  fileBase: string;
+  pdfBuffer: Buffer;
+}) {
+  const certificateDataUrl = `data:application/pdf;base64,${args.pdfBuffer.toString('base64')}`;
+  const existingCertificateDocument = db.prepare(`
+    select id
+    from internal_document
+    where category = 'Certificados'
+      and notes like ?
+    limit 1
+  `).get(`%Chave: ${args.documentKey}%`) as { id: string } | undefined;
+
+  if (existingCertificateDocument) {
+    db.prepare(`
+      update internal_document
+      set
+        title = ?,
+        category = ?,
+        notes = ?,
+        file_name = ?,
+        mime_type = ?,
+        file_data_base64 = ?,
+        file_size_bytes = ?,
+        updated_at = ?
+      where id = ?
+    `).run(
+      args.title,
+      'Certificados',
+      args.notes,
+      `${args.fileBase}.pdf`,
+      'application/pdf',
+      certificateDataUrl,
+      args.pdfBuffer.length,
+      nowDateIso(),
+      existingCertificateDocument.id
+    );
+    return;
+  }
+
+  db.prepare(`
+    insert into internal_document (
+      id, title, category, notes, file_name, mime_type, file_data_base64,
+      file_size_bytes, created_at, updated_at
+    )
+    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    uuid('doc'),
+    args.title,
+    'Certificados',
+    args.notes,
+    `${args.fileBase}.pdf`,
+    'application/pdf',
+    certificateDataUrl,
+    args.pdfBuffer.length,
+    nowDateIso(),
+    nowDateIso()
+  );
 }
 
 function hasDestructiveConfirmation(confirmationPhrase?: string): boolean {
@@ -3437,7 +3550,12 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
     `).all(req.params.id);
   
     const allocations = db.prepare(`
-      select a.*, c.name as company_name, mt.code as module_code, mt.name as module_name
+      select
+        a.*,
+        c.name as company_name,
+        mt.code as module_code,
+        mt.name as module_name,
+        coalesce(mt.delivery_mode, 'ministrado') as delivery_mode
       from cohort_allocation a
       join company c on c.id = a.company_id
       join module_template mt on mt.id = a.module_id
@@ -3547,7 +3665,8 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
         mt.code as module_code,
         mt.name as module_name,
         coalesce(cmb.order_in_cohort, 9999) as order_in_cohort,
-        coalesce(cmb.duration_days, 1) as duration_days
+        coalesce(cmb.duration_days, 1) as duration_days,
+        coalesce(mt.delivery_mode, 'ministrado') as delivery_mode
       from cohort_allocation a
       join module_template mt on mt.id = a.module_id
       left join cohort_module_block cmb on cmb.cohort_id = a.cohort_id and cmb.module_id = a.module_id
@@ -3560,6 +3679,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       module_name: string;
       order_in_cohort: number;
       duration_days: number;
+      delivery_mode: 'ministrado' | 'entregavel';
     }>;
   
     if (moduleRows.length === 0) {
@@ -3571,6 +3691,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       return res.status(400).json({ message: 'Módulo informado não está ativo para esta empresa nesta turma.' });
     }
   
+    const isDeliverableCertificate = moduleRow.delivery_mode === 'entregavel';
     const participants = db.prepare(`
       select cp.participant_name
       from cohort_participant cp
@@ -3579,7 +3700,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       order by cp.participant_name asc
     `).all(req.params.id, companyId, requestedModuleId) as Array<{ participant_name: string }>;
   
-    if (participants.length === 0) {
+    if (!isDeliverableCertificate && participants.length === 0) {
       return res.status(400).json({ message: 'Nenhum participante desta empresa está vinculado ao módulo selecionado.' });
     }
   
@@ -3608,25 +3729,35 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       .join('');
   
     try {
-      let html = readCertificateTemplate();
-      const tokens: Array<[string, string]> = [
-        ['COMPANY_NAME', escapeHtml(company.name)],
-        ['COURSE_NAME', escapeHtml(trainingName || cohort.name)],
-        ['COURSE_HOURS', escapeHtml(`⏱ ${totalDays} diária(s) (${totalHours}h)`)],
-        ['EMPLOYEES_GRID', employeeCardsHtml],
-        ['TECHNICIAN_NAME', escapeHtml(cohort.technician_name ?? 'Sem técnico definido')],
-        ['EMIT_DATE', escapeHtml(formatLongDatePtBr(issueDateIso))],
-        ['CERT_CODE', escapeHtml(certCode)]
-      ];
-      tokens.forEach(([token, value]) => {
-        html = html.split(`{{${token}}}`).join(value);
-      });
+      let html = isDeliverableCertificate ? readDeliverableCertificateTemplate() : readCertificateTemplate();
+      const deliverableLabels = deliverableCertificateLabels(moduleRow.module_name);
+      const tokens: Array<[string, string]> = isDeliverableCertificate
+        ? [
+            ['COMPANY_NAME', escapeHtml(company.name)],
+            ['DELIVERABLE_NAME', escapeHtml(deliverableLabels.name)],
+            ['DELIVERABLE_SUBTITLE', escapeHtml(deliverableLabels.subtitle)],
+            ['EMIT_DATE', escapeHtml(formatLongDatePtBr(issueDateIso))],
+            ['CERT_CODE', escapeHtml(certCode)]
+          ]
+        : [
+            ['COMPANY_NAME', escapeHtml(company.name)],
+            ['COURSE_NAME', escapeHtml(trainingName || cohort.name)],
+            ['COURSE_HOURS', escapeHtml(`⏱ ${totalDays} diária(s) (${totalHours}h)`)],
+            ['EMPLOYEES_GRID', employeeCardsHtml],
+            ['TECHNICIAN_NAME', escapeHtml(cohort.technician_name ?? 'Sem técnico definido')],
+            ['EMIT_DATE', escapeHtml(formatLongDatePtBr(issueDateIso))],
+            ['CERT_CODE', escapeHtml(certCode)]
+          ];
+      html = replaceTemplateTokens(html, tokens);
   
       const format = typeof req.query.format === 'string'
         ? req.query.format.trim().toLowerCase()
         : 'pdf';
       const shouldDownload = String(req.query.download ?? '1') !== '0';
-      const fileBase = `Certificado - ${normalizeFileLabelPart(company.name)} - ${normalizeFileLabelPart(trainingName || moduleRow.module_name)}`;
+      const moduleFileLabel = isDeliverableCertificate
+        ? `${deliverableLabels.name} - ${deliverableLabels.subtitle}`
+        : (trainingName || moduleRow.module_name);
+      const fileBase = `Certificado - ${normalizeFileLabelPart(company.name)} - ${normalizeFileLabelPart(moduleFileLabel)}`;
   
       if (format === 'html') {
         const encodedFileName = encodeURIComponent(`${fileBase}.html`);
@@ -3639,69 +3770,229 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       const pdfBuffer = await renderPdfFromHtml(pdfHtml);
   
       const certificateDocumentTitle = fileBase;
+      const certificateDocumentKey = `CERTIFICADO_TURMA_MODULO:${cohort.id}:${company.id}:${requestedModuleId}`;
       const certificateDocumentNotes = [
         '[CERTIFICADO_AUTOMATICO]',
+        `Chave: ${certificateDocumentKey}`,
         `Código: ${certCode}`,
+        `Tipo: ${isDeliverableCertificate ? 'Entregável' : 'Treinamento ministrado'}`,
         `Turma: ${cohort.code}`,
         `Empresa: ${company.name}`,
-        `Módulo: ${trainingName}`,
-        `Participantes: ${participants.map((item) => item.participant_name).join(' | ')}`,
+        `Módulo: ${isDeliverableCertificate ? `${deliverableLabels.name} - ${deliverableLabels.subtitle}` : trainingName}`,
+        isDeliverableCertificate
+          ? 'Status: Concluído & Aprovado'
+          : `Participantes: ${participants.map((item) => item.participant_name).join(' | ')}`,
         `Emitido em: ${formatLongDatePtBr(issueDateIso)}`
       ].join('\n');
-      const certificateDataUrl = `data:application/pdf;base64,${pdfBuffer.toString('base64')}`;
-      const existingCertificateDocument = db.prepare(`
-        select id
-        from internal_document
-        where category = 'Certificados'
-          and notes like ?
-        limit 1
-      `).get(`%Código: ${certCode}%`) as { id: string } | undefined;
+      upsertCertificateDocument({
+        documentKey: certificateDocumentKey,
+        title: certificateDocumentTitle,
+        notes: certificateDocumentNotes,
+        fileBase,
+        pdfBuffer
+      });
   
-      if (existingCertificateDocument) {
-        db.prepare(`
-          update internal_document
-          set
-            title = ?,
-            category = ?,
-            notes = ?,
-            file_name = ?,
-            mime_type = ?,
-            file_data_base64 = ?,
-            file_size_bytes = ?,
-            updated_at = ?
-          where id = ?
-        `).run(
-          certificateDocumentTitle,
-          'Certificados',
-          certificateDocumentNotes,
-          `${fileBase}.pdf`,
-          'application/pdf',
-          certificateDataUrl,
-          pdfBuffer.length,
-          nowDateIso(),
-          existingCertificateDocument.id
-        );
-      } else {
-        db.prepare(`
-          insert into internal_document (
-            id, title, category, notes, file_name, mime_type, file_data_base64,
-            file_size_bytes, created_at, updated_at
-          )
-          values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          uuid('doc'),
-          certificateDocumentTitle,
-          'Certificados',
-          certificateDocumentNotes,
-          `${fileBase}.pdf`,
-          'application/pdf',
-          certificateDataUrl,
-          pdfBuffer.length,
-          nowDateIso(),
-          nowDateIso()
-        );
+      const encodedFileName = encodeURIComponent(`${fileBase}.pdf`);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `${shouldDownload ? 'attachment' : 'inline'}; filename*=UTF-8''${encodedFileName}`);
+      return res.send(pdfBuffer);
+    } catch (error) {
+      return res.status(500).json({ message: 'Erro ao gerar certificado.', detail: errorMessage(error) });
+    }
+  });
+
+  app.get('/companies/:companyId/modules/:moduleId/certificate', async (req, res) => {
+    const company = db.prepare(`
+      select id, name
+      from company
+      where id = ?
+    `).get(req.params.companyId) as { id: string; name: string } | undefined;
+
+    if (!company) {
+      return res.status(404).json({ message: 'Empresa não encontrada.' });
+    }
+
+    const moduleRow = db.prepare(`
+      select
+        id,
+        code as module_code,
+        name as module_name,
+        duration_days,
+        coalesce(delivery_mode, 'ministrado') as delivery_mode
+      from module_template
+      where id = ?
+    `).get(req.params.moduleId) as {
+      id: string;
+      module_code: string;
+      module_name: string;
+      duration_days: number;
+      delivery_mode: 'ministrado' | 'entregavel';
+    } | undefined;
+
+    if (!moduleRow) {
+      return res.status(404).json({ message: 'Módulo não encontrado.' });
+    }
+
+    if (!hasModuleEnabled(company.id, moduleRow.id)) {
+      return res.status(400).json({ message: 'Módulo está desativado para esta empresa.' });
+    }
+
+    const progress = db.prepare(`
+      select status, completed_at
+      from company_module_progress
+      where company_id = ? and module_id = ?
+    `).get(company.id, moduleRow.id) as { status: ModuleProgressStatus; completed_at: string | null } | undefined;
+
+    if (progress?.status !== 'Concluido') {
+      return res.status(400).json({ message: 'Conclua o módulo na jornada antes de emitir o certificado.' });
+    }
+
+    const isDeliverableCertificate = moduleRow.delivery_mode === 'entregavel';
+    const latestAllocation = !isDeliverableCertificate
+      ? db.prepare(`
+          select
+            a.cohort_id,
+            a.status as allocation_status,
+            a.executed_at,
+            c.code as cohort_code,
+            c.name as cohort_name,
+            c.status as cohort_status,
+            c.start_date,
+            c.technician_id,
+            t.name as technician_name,
+            coalesce(cmb.duration_days, ?) as duration_days
+          from cohort_allocation a
+          join cohort c on c.id = a.cohort_id
+          left join technician t on t.id = c.technician_id
+          left join cohort_module_block cmb on cmb.cohort_id = a.cohort_id and cmb.module_id = a.module_id
+          where a.company_id = ?
+            and a.module_id = ?
+            and a.status <> 'Cancelado'
+          order by
+            case when a.status = 'Executado' then 0 else 1 end asc,
+            date(coalesce(a.executed_at, c.start_date)) desc,
+            c.code desc
+          limit 1
+        `).get(moduleRow.duration_days, company.id, moduleRow.id) as {
+          cohort_id: string;
+          allocation_status: string;
+          executed_at: string | null;
+          cohort_code: string;
+          cohort_name: string;
+          cohort_status: string;
+          start_date: string;
+          technician_id: string | null;
+          technician_name: string | null;
+          duration_days: number;
+        } | undefined
+      : undefined;
+
+    if (!isDeliverableCertificate && !latestAllocation) {
+      return res.status(400).json({ message: 'Nenhuma turma encontrada para emitir o certificado deste treinamento.' });
+    }
+
+    const participants = latestAllocation
+      ? db.prepare(`
+          select cp.participant_name
+          from cohort_participant cp
+          join cohort_participant_module cpm on cpm.participant_id = cp.id
+          where cp.cohort_id = ? and cp.company_id = ? and cpm.module_id = ?
+          order by cp.participant_name asc
+        `).all(latestAllocation.cohort_id, company.id, moduleRow.id) as Array<{ participant_name: string }>
+      : [];
+
+    if (!isDeliverableCertificate && participants.length === 0) {
+      return res.status(400).json({ message: 'Nenhum participante desta empresa está vinculado ao módulo na turma encontrada.' });
+    }
+
+    const issueDateIso = nowDateIso();
+    const trainingName = moduleShortLabel(moduleRow.module_name);
+    const deliverableLabels = deliverableCertificateLabels(moduleRow.module_name);
+    const certCode = [
+      'CERT',
+      normalizeCertToken(latestAllocation?.cohort_code || 'JORNADA'),
+      normalizeCertToken(company.name || 'EMPRESA'),
+      normalizeCertToken(moduleRow.module_code || moduleRow.module_name || moduleRow.id),
+      issueDateIso.replace(/-/g, '')
+    ].filter(Boolean).join('-');
+
+    const totalDays = Math.max(1, Number(latestAllocation?.duration_days ?? moduleRow.duration_days) || 1);
+    const totalHours = totalDays * 8;
+    const employeeCardsHtml = participants
+      .map((participant, index) => {
+        const position = String(index + 1).padStart(2, '0');
+        return `
+        <div class="employee-card">
+          <div class="employee-num">${position}</div>
+          <div class="employee-name">${escapeHtml(participant.participant_name)}</div>
+          <div class="employee-role">Participante</div>
+        </div>`;
+      })
+      .join('');
+
+    try {
+      const template = isDeliverableCertificate ? readDeliverableCertificateTemplate() : readCertificateTemplate();
+      const html = replaceTemplateTokens(template, isDeliverableCertificate
+        ? [
+            ['COMPANY_NAME', escapeHtml(company.name)],
+            ['DELIVERABLE_NAME', escapeHtml(deliverableLabels.name)],
+            ['DELIVERABLE_SUBTITLE', escapeHtml(deliverableLabels.subtitle)],
+            ['EMIT_DATE', escapeHtml(formatLongDatePtBr(issueDateIso))],
+            ['CERT_CODE', escapeHtml(certCode)]
+          ]
+        : [
+            ['COMPANY_NAME', escapeHtml(company.name)],
+            ['COURSE_NAME', escapeHtml(trainingName)],
+            ['COURSE_HOURS', escapeHtml(`⏱ ${totalDays} diária(s) (${totalHours}h)`)],
+            ['EMPLOYEES_GRID', employeeCardsHtml],
+            ['TECHNICIAN_NAME', escapeHtml(latestAllocation?.technician_name ?? 'Sem técnico definido')],
+            ['EMIT_DATE', escapeHtml(formatLongDatePtBr(issueDateIso))],
+            ['CERT_CODE', escapeHtml(certCode)]
+          ]);
+
+      const format = typeof req.query.format === 'string'
+        ? req.query.format.trim().toLowerCase()
+        : 'pdf';
+      const shouldDownload = String(req.query.download ?? '1') !== '0';
+      const moduleFileLabel = isDeliverableCertificate
+        ? `${deliverableLabels.name} - ${deliverableLabels.subtitle}`
+        : (trainingName || moduleRow.module_name);
+      const fileBase = `Certificado - ${normalizeFileLabelPart(company.name)} - ${normalizeFileLabelPart(moduleFileLabel)}`;
+
+      if (format === 'html') {
+        const encodedFileName = encodeURIComponent(`${fileBase}.html`);
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.setHeader('Content-Disposition', `${shouldDownload ? 'attachment' : 'inline'}; filename*=UTF-8''${encodedFileName}`);
+        return res.send(html);
       }
-  
+
+      const pdfHtml = applyPdfLayoutOverrides(html);
+      const pdfBuffer = await renderPdfFromHtml(pdfHtml);
+      const certificateDocumentKey = isDeliverableCertificate
+        ? `CERTIFICADO_CLIENTE_MODULO:${company.id}:${moduleRow.id}:entregavel`
+        : `CERTIFICADO_TURMA_MODULO:${latestAllocation?.cohort_id}:${company.id}:${moduleRow.id}`;
+      const certificateDocumentNotes = [
+        '[CERTIFICADO_AUTOMATICO]',
+        `Chave: ${certificateDocumentKey}`,
+        `Código: ${certCode}`,
+        `Tipo: ${isDeliverableCertificate ? 'Entregável' : 'Treinamento ministrado'}`,
+        latestAllocation ? `Turma: ${latestAllocation.cohort_code}` : 'Turma: Jornada do cliente',
+        `Empresa: ${company.name}`,
+        `Módulo: ${isDeliverableCertificate ? `${deliverableLabels.name} - ${deliverableLabels.subtitle}` : trainingName}`,
+        isDeliverableCertificate
+          ? 'Status: Concluído & Aprovado'
+          : `Participantes: ${participants.map((item) => item.participant_name).join(' | ')}`,
+        `Emitido em: ${formatLongDatePtBr(issueDateIso)}`
+      ].join('\n');
+
+      upsertCertificateDocument({
+        documentKey: certificateDocumentKey,
+        title: fileBase,
+        notes: certificateDocumentNotes,
+        fileBase,
+        pdfBuffer
+      });
+
       const encodedFileName = encodeURIComponent(`${fileBase}.pdf`);
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `${shouldDownload ? 'attachment' : 'inline'}; filename*=UTF-8''${encodedFileName}`);
@@ -4580,6 +4871,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
             and p.completed_at is not null
         ) as last_completed_at,
         case
+          when cmp.status = 'Concluido' then 0
           when ? is null then 1
           when ? = ? then 1
           when exists (
@@ -4589,6 +4881,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
           else 0
         end as can_execute,
         case
+          when cmp.status = 'Concluido' then 'Já concluiu este módulo'
           when ? is not null
             and ? <> ?
             and not exists (
@@ -4604,7 +4897,6 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       left join company_module_activation cma on cma.company_id = c.id and cma.module_id = ?
       where c.status in ('Ativo', 'Em_treinamento')
         and coalesce(cma.is_enabled, 1) = 1
-        and coalesce(cmp.status, 'Nao_iniciado') <> 'Concluido'
         and not exists (
           select 1
           from cohort_allocation a

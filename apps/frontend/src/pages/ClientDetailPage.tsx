@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { api } from '../services/api';
+import { api, createInternalAuthHeaders } from '../services/api';
 import { Section } from '../components/Section';
 import { StatusChip } from '../components/StatusChip';
 import { statusLabel } from '../utils/labels';
@@ -204,6 +204,7 @@ export function ClientDetailPage() {
   const [moduleEdits, setModuleEdits] = useState<Record<string, ModuleEdit>>({});
   const [savingCompany, setSavingCompany] = useState(false);
   const [savingModuleId, setSavingModuleId] = useState<string | null>(null);
+  const [emittingCertificateModuleId, setEmittingCertificateModuleId] = useState<string | null>(null);
   const [historySortKey, setHistorySortKey] = useState<HistorySortKey>('start_date');
   const [historySortDirection, setHistorySortDirection] = useState<'asc' | 'desc'>('desc');
   const [journeyFilter, setJourneyFilter] = useState<JourneyFilter>('all');
@@ -819,6 +820,44 @@ export function ClientDetailPage() {
       setError((err as Error).message);
     } finally {
       setSavingModuleId(null);
+    }
+  }
+
+  async function emitModuleCertificate(moduleId: string) {
+    if (!id) return;
+    setEmittingCertificateModuleId(moduleId);
+    setError('');
+    setMessage('');
+    try {
+      const response = await fetch(api.companyModuleCertificateUrl(id, moduleId, {
+        download: true,
+        format: 'pdf'
+      }), {
+        headers: createInternalAuthHeaders()
+      });
+      if (!response.ok) {
+        const body = await response.text();
+        throw new Error(body || 'Erro ao gerar certificado.');
+      }
+      const blob = await response.blob();
+      const contentDisposition = response.headers.get('Content-Disposition') ?? '';
+      const utfFileNameMatch = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+      const simpleFileNameMatch = contentDisposition.match(/filename=\"?([^\";]+)\"?/i);
+      const encodedFileName = utfFileNameMatch?.[1] ?? simpleFileNameMatch?.[1] ?? '';
+      const fileName = encodedFileName ? decodeURIComponent(encodedFileName) : `certificado-${moduleId}.pdf`;
+      const blobUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = blobUrl;
+      anchor.download = fileName;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(blobUrl);
+      setMessage('Certificado gerado e salvo em Documentação.');
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setEmittingCertificateModuleId(null);
     }
   }
 
@@ -1529,6 +1568,7 @@ export function ClientDetailPage() {
                       notes: '',
                       custom_duration_days: ''
                     };
+                    const canEmitCertificate = Boolean(moduleItem.is_enabled) && moduleItem.status === 'Concluido';
                     return (
                       <li key={moduleItem.module_id} className="timeline-item journey-module-card">
                         <div className="journey-module-head">
@@ -1642,6 +1682,15 @@ export function ClientDetailPage() {
                               >
                                 Salvar módulo
                               </button>
+                              {canEmitCertificate ? (
+                                <button
+                                  type="button"
+                                  onClick={() => void emitModuleCertificate(moduleItem.module_id)}
+                                  disabled={emittingCertificateModuleId === moduleItem.module_id}
+                                >
+                                  {emittingCertificateModuleId === moduleItem.module_id ? 'Gerando...' : 'Certificado PDF'}
+                                </button>
+                              ) : null}
                               <button type="button" onClick={() => toggleModule(moduleItem.module_id, Boolean(moduleItem.is_enabled))}>
                                 {moduleItem.is_enabled ? 'Desativar módulo' : 'Ativar módulo'}
                               </button>

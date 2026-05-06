@@ -209,6 +209,18 @@ export const api = {
     }
     return `${BASE_URL}/cohorts/${cohortId}/certificate?${params.toString()}`;
   },
+  companyModuleCertificateUrl: (
+    companyId: string,
+    moduleId: string,
+    options?: { download?: boolean; format?: 'pdf' | 'html' }
+  ) => {
+    const params = new URLSearchParams();
+    params.set('format', options?.format ?? 'pdf');
+    if (options?.download) {
+      params.set('download', '1');
+    }
+    return `${BASE_URL}/companies/${encodeURIComponent(companyId)}/modules/${encodeURIComponent(moduleId)}/certificate?${params.toString()}`;
+  },
   allocationSuggestions: (cohortId: string, moduleId: string) =>
     req(`/cohorts/${cohortId}/suggestions/${moduleId}`),
   createAllocation: (payload: unknown) =>
