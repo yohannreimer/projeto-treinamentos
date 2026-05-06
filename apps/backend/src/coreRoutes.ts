@@ -1564,13 +1564,6 @@ function roundHours(value: number) {
   return Math.round(value * 100) / 100;
 }
 
-function timeRangeMinutes(startTime: string | null | undefined, endTime: string | null | undefined): number | null {
-  const startMinutes = activityTimeToMinutes(startTime ?? null);
-  const endMinutes = activityTimeToMinutes(endTime ?? null);
-  if (startMinutes === null || endMinutes === null || endMinutes <= startMinutes) return null;
-  return endMinutes - startMinutes;
-}
-
 function executedAllocationHours(args: {
   cohortId: string;
   moduleId: string;
@@ -1583,53 +1576,7 @@ function executedAllocationHours(args: {
     limit 1
   `).get(args.cohortId, args.moduleId) as { duration_days: number } | undefined;
   const durationDays = Math.max(1, Number(block?.duration_days || 1));
-  const startDay = Math.max(1, Number(args.entryDay || 1));
-
-  const cohort = db.prepare(`
-    select period, start_time, end_time
-    from cohort
-    where id = ?
-    limit 1
-  `).get(args.cohortId) as {
-    period: 'Integral' | 'Meio_periodo' | null;
-    start_time: string | null;
-    end_time: string | null;
-  } | undefined;
-
-  if ((cohort?.period ?? 'Integral') !== 'Meio_periodo') {
-    return roundHours(durationDays * 8);
-  }
-
-  const scheduleRows = db.prepare(`
-    select day_index, start_time, end_time
-    from cohort_schedule_day
-    where cohort_id = ?
-      and day_index between ? and ?
-    order by day_index asc
-  `).all(args.cohortId, startDay, startDay + durationDays - 1) as Array<{
-    day_index: number;
-    start_time: string | null;
-    end_time: string | null;
-  }>;
-  const scheduleByDayIndex = new Map<number, { start_time: string | null; end_time: string | null }>();
-  scheduleRows.forEach((row) => {
-    scheduleByDayIndex.set(Number(row.day_index), {
-      start_time: row.start_time,
-      end_time: row.end_time
-    });
-  });
-
-  let totalMinutes = 0;
-  for (let offset = 0; offset < durationDays; offset += 1) {
-    const dayIndex = startDay + offset;
-    const scheduled = scheduleByDayIndex.get(dayIndex);
-    const dayStartTime = scheduled?.start_time ?? cohort?.start_time ?? null;
-    const dayEndTime = scheduled?.end_time ?? cohort?.end_time ?? null;
-    const slotMinutes = timeRangeMinutes(dayStartTime, dayEndTime);
-    totalMinutes += slotMinutes ?? (4 * 60);
-  }
-
-  return roundHours(totalMinutes / 60);
+  return roundHours(durationDays * 8);
 }
 
 function allocationStatusCountsInConfirmedHours(status: AllocationStatus): boolean {

@@ -719,8 +719,8 @@ test('allocation status Confirmado/Executado debits once and estorna when leaves
     const summaryAfterConfirm = await request(app).get('/companies/comp-hours-api-10/hours/summary');
     assert.equal(summaryAfterConfirm.status, 200);
     assert.equal(summaryAfterConfirm.body.available_hours, 24);
-    assert.equal(summaryAfterConfirm.body.consumed_hours, 10.5);
-    assert.equal(summaryAfterConfirm.body.balance_hours, 13.5);
+    assert.equal(summaryAfterConfirm.body.consumed_hours, 24);
+    assert.equal(summaryAfterConfirm.body.balance_hours, 0);
 
     await request(app)
       .patch('/allocations/all-hours-10/status')
@@ -732,8 +732,8 @@ test('allocation status Confirmado/Executado debits once and estorna when leaves
       .expect(200);
 
     const summaryAfterExecute = await request(app).get('/companies/comp-hours-api-10/hours/summary');
-    assert.equal(summaryAfterExecute.body.consumed_hours, 10.5);
-    assert.equal(summaryAfterExecute.body.balance_hours, 13.5);
+    assert.equal(summaryAfterExecute.body.consumed_hours, 24);
+    assert.equal(summaryAfterExecute.body.balance_hours, 0);
 
     const ledgerAfterExecute = await request(app).get('/companies/comp-hours-api-10/hours/ledger');
     assert.equal(ledgerAfterExecute.status, 200);
@@ -742,7 +742,7 @@ test('allocation status Confirmado/Executado debits once and estorna when leaves
     );
     assert.equal(trainingEntries.length, 1);
     const trainingPayload = JSON.parse(trainingEntries[0]?.payload_json ?? '{}') as { hours_consumed?: number };
-    assert.equal(trainingPayload.hours_consumed, 10.5);
+    assert.equal(trainingPayload.hours_consumed, 24);
 
     await request(app)
       .patch('/allocations/all-hours-10/status')

@@ -286,23 +286,6 @@ function allocationStatusCountsInConfirmedHours(status: string): boolean {
   return status === 'Confirmado' || status === 'Executado';
 }
 
-function allocationTimeToMinutes(value: string | null | undefined): number | null {
-  if (!value) return null;
-  const [hourRaw, minuteRaw] = value.split(':');
-  const hour = Number(hourRaw);
-  const minute = Number(minuteRaw);
-  if (!Number.isInteger(hour) || !Number.isInteger(minute)) return null;
-  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
-  return (hour * 60) + minute;
-}
-
-function allocationTimeRangeMinutes(startTime: string | null | undefined, endTime: string | null | undefined): number | null {
-  const startMinutes = allocationTimeToMinutes(startTime);
-  const endMinutes = allocationTimeToMinutes(endTime);
-  if (startMinutes === null || endMinutes === null || endMinutes <= startMinutes) return null;
-  return endMinutes - startMinutes;
-}
-
 function readAllocationHoursScope(companyId: string): AllocationHoursScopeRow[] {
   return db.prepare(`
     select
@@ -330,42 +313,7 @@ function readAllocationHoursScope(companyId: string): AllocationHoursScopeRow[] 
 function allocationConfirmedHours(row: AllocationHoursScopeRow): number {
   if (!allocationStatusCountsInConfirmedHours(row.status)) return 0;
   const durationDays = Math.max(1, Number(row.duration_days || 1));
-  const startDay = Math.max(1, Number(row.entry_day || 1));
-
-  if ((row.period ?? 'Integral') !== 'Meio_periodo') {
-    return roundHours(durationDays * 8);
-  }
-
-  const scheduleRows = db.prepare(`
-    select day_index, start_time, end_time
-    from cohort_schedule_day
-    where cohort_id = ?
-      and day_index between ? and ?
-    order by day_index asc
-  `).all(row.cohort_id, startDay, startDay + durationDays - 1) as Array<{
-    day_index: number;
-    start_time: string | null;
-    end_time: string | null;
-  }>;
-  const scheduleByDay = new Map<number, { start_time: string | null; end_time: string | null }>();
-  scheduleRows.forEach((scheduleRow) => {
-    scheduleByDay.set(Number(scheduleRow.day_index), {
-      start_time: scheduleRow.start_time,
-      end_time: scheduleRow.end_time
-    });
-  });
-
-  let totalMinutes = 0;
-  for (let offset = 0; offset < durationDays; offset += 1) {
-    const dayIndex = startDay + offset;
-    const scheduled = scheduleByDay.get(dayIndex);
-    const slotStart = scheduled?.start_time ?? row.start_time ?? null;
-    const slotEnd = scheduled?.end_time ?? row.end_time ?? null;
-    const slotMinutes = allocationTimeRangeMinutes(slotStart, slotEnd);
-    totalMinutes += slotMinutes ?? (4 * 60);
-  }
-
-  return roundHours(totalMinutes / 60);
+  return roundHours(durationDays * 8);
 }
 
 function readAllocationCurrentConfirmedHours(companyId: string, allocationId: string): number {
@@ -618,7 +566,9 @@ export function readCompanyHoursModuleInsights(companyId: string): CompanyHoursM
   return scopedRows.map((row) => {
     const plannedHours = roundHours(Math.max(0, Number(row.duration_days || 0)) * 8);
     const internalEffortHours = roundHours(internalEffortByModule.get(row.module_id) ?? 0);
-    const projectedClientConsumed = plannedHours;
+    const projectedClientConsumed = row.delivery_mode === 'ministrado' && row.client_hours_policy === 'consome'
+      ? projectedClientConsumedHoursForModule(row, journeyByModule)
+      : plannedHours;
     const actualFromTraining = Math.max(0, roundHours(actualClientConsumptionByModule.get(row.module_id) ?? 0));
     const actualClientConsumed = row.delivery_mode === 'entregavel'
       ? roundHours(internalEffortHours + actualFromTraining)
