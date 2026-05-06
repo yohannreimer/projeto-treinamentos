@@ -2,6 +2,9 @@ import type {
   PortalAuthBranding,
   CreatePortalTicketPayload,
   PortalAuthedApi,
+  PortalCertificateEvaluation,
+  PortalCertificateEvaluationSubmitPayload,
+  PortalCertificateItem,
   PortalHoursSummary,
   PortalLoginPayload,
   PortalLoginResponse,
@@ -113,6 +116,19 @@ export const portalApi = {
     updateTicketWorkflow: (ticketId, payload) =>
       portalReq(`/portal/api/operator/tickets/${ticketId}/workflow`, {
         method: 'PATCH',
+        body: JSON.stringify(payload)
+      }, { token, onUnauthorized }),
+    certificates: () =>
+      portalReq<{ items: PortalCertificateItem[] }>('/portal/api/certificates', {}, { token, onUnauthorized }),
+    certificateEvaluation: (certificateId: string) =>
+      portalReq<PortalCertificateEvaluation>(
+        `/portal/api/certificates/${encodeURIComponent(certificateId)}/evaluation`,
+        {},
+        { token, onUnauthorized }
+      ),
+    submitCertificateEvaluation: (certificateId: string, payload: PortalCertificateEvaluationSubmitPayload) =>
+      portalReq<{ ok: boolean }>(`/portal/api/certificates/${encodeURIComponent(certificateId)}/evaluation`, {
+        method: 'POST',
         body: JSON.stringify(payload)
       }, { token, onUnauthorized }),
     tickets: () => portalReq<PortalTicketsResponse>('/portal/api/tickets', {}, { token, onUnauthorized }),

@@ -143,6 +143,39 @@ export type PortalTicketsResponse = {
   support_intro_text?: string | null;
 };
 
+export type PortalCertificateItem = {
+  certificate_id: string;
+  certificate_type: 'training' | 'deliverable';
+  company_id: string;
+  module_id: string;
+  module_code: string;
+  module_name: string;
+  cohort_id: string | null;
+  cohort_code: string | null;
+  cohort_name: string | null;
+  technician_name: string | null;
+  completed_at: string | null;
+  requires_evaluation: boolean;
+  evaluation_submitted: boolean;
+  download_available: boolean;
+  status_label: string;
+  download_url: string;
+  evaluation_url: string | null;
+};
+
+export type PortalCertificateEvaluation = {
+  certificate: PortalCertificateItem;
+  evaluation_submitted: boolean;
+  respondent_name: string | null;
+  answers: Record<string, string | number | boolean | null> | null;
+  submitted_at: string | null;
+};
+
+export type PortalCertificateEvaluationSubmitPayload = {
+  respondent_name: string;
+  answers: Record<string, string | number | boolean | null>;
+};
+
 export type CreatePortalTicketPayload = {
   title: string;
   description?: string | null;
@@ -221,6 +254,12 @@ export type PortalAuthedApi = {
     payload: { workflow_stage: 'Backlog' | 'A_fazer' | 'Em_andamento' | 'Concluido' }
   ) => Promise<{ ok: boolean; workflow_stage: string }>;
   tickets: () => Promise<PortalTicketsResponse>;
+  certificates: () => Promise<{ items: PortalCertificateItem[] }>;
+  certificateEvaluation: (certificateId: string) => Promise<PortalCertificateEvaluation>;
+  submitCertificateEvaluation: (
+    certificateId: string,
+    payload: PortalCertificateEvaluationSubmitPayload
+  ) => Promise<{ ok: boolean }>;
   ticketThread: (ticketId: string) => Promise<PortalTicketThreadResponse>;
   createTicket: (payload: CreatePortalTicketPayload) => Promise<{ id: string }>;
   createTicketMessage: (

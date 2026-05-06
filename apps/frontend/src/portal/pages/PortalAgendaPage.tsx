@@ -86,6 +86,7 @@ export function PortalAgendaPage({ api, isInternal }: PortalAgendaPageProps) {
   const [operatorDate, setOperatorDate] = useState('');
   const [operatorStatus, setOperatorStatus] = useState<'Planejada' | 'Em_andamento' | 'Concluida' | 'Cancelada'>('Planejada');
   const [operatorNotes, setOperatorNotes] = useState('');
+  const [selectedDate, setSelectedDate] = useState('');
 
   async function loadAgenda() {
     setLoading(true);
@@ -154,6 +155,43 @@ export function PortalAgendaPage({ api, isInternal }: PortalAgendaPageProps) {
   const pastItems = items
     .filter((item) => isPastAgendaItem(item, snapshot))
     .sort(agendaSortDesc);
+  const allItemsAsc = [...items].sort(agendaSortAsc);
+  const focusedDate = selectedDate || upcomingItems[0]?.start_date || allItemsAsc[0]?.start_date || snapshot.dateIso;
+  const focusedItems = allItemsAsc.filter((item) => item.start_date <= focusedDate && item.end_date >= focusedDate);
+  const monthAnchor = (() => {
+    const [year, month] = focusedDate.split('-').map(Number);
+    return new Date(year || new Date().getFullYear(), (month || (new Date().getMonth() + 1)) - 1, 1);
+  })();
+  const monthLabel = monthAnchor.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+  const monthYear = monthAnchor.getFullYear();
+  const monthIndex = monthAnchor.getMonth();
+  const firstWeekday = new Date(monthYear, monthIndex, 1).getDay();
+  const daysInMonth = new Date(monthYear, monthIndex + 1, 0).getDate();
+  const leadingBlanks = Array.from({ length: firstWeekday });
+  const monthDays = Array.from({ length: daysInMonth }).map((_, index) => {
+    const day = index + 1;
+    const dateIso = `${monthYear}-${String(monthIndex + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const dayItems = items.filter((item) => item.start_date <= dateIso && item.end_date >= dateIso);
+    return { day, dateIso, items: dayItems };
+  });
+
+  function calendarDayTone(dayItems: PortalAgendaItem[]) {
+    if (dayItems.some((item) => item.status === 'Cancelada')) return 'is-critical';
+    if (dayItems.some((item) => item.status === 'Concluida')) return 'is-success';
+    if (dayItems.some((item) => item.status === 'Em_andamento')) return 'is-warning';
+    if (dayItems.length > 0) return 'is-progress';
+    return '';
+  }
+
+  function previousMonth() {
+    const previous = new Date(monthYear, monthIndex - 1, 1);
+    setSelectedDate(`${previous.getFullYear()}-${String(previous.getMonth() + 1).padStart(2, '0')}-01`);
+  }
+
+  function nextMonth() {
+    const next = new Date(monthYear, monthIndex + 1, 1);
+    setSelectedDate(`${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-01`);
+  }
 
   function renderAgendaItem(item: PortalAgendaItem) {
     return (
@@ -243,35 +281,101 @@ export function PortalAgendaPage({ api, isInternal }: PortalAgendaPageProps) {
         </section>
       ) : null}
 
-      <section className="portal-agenda-section">
-        <div className="portal-agenda-section-head">
-          <h3>Próximos eventos</h3>
-          <span>{upcomingItems.length}</span>
-        </div>
-        <div className="portal-agenda-list">
-          {upcomingItems.length === 0 ? (
-            <div className="portal-empty-state">
-              <strong>Nenhuma atividade futura no momento.</strong>
-              <p>Novos eventos planejados aparecerão aqui automaticamente.</p>
-            </div>
-          ) : null}
-          {upcomingItems.map((item) => renderAgendaItem(item))}
-        </div>
-      </section>
+      <section className="portal-agenda-hybrid">
+        <aside className="portal-agenda-calendar-card" aria-label="Calendário compacto">
+          <div className="portal-agenda-calendar-head">
+            <button type="button" className="portal-secondary-btn" onClick={previousMonth} aria-label="Mês anterior">‹</button>
+            <strong>{monthLabel}</strong>
+            <button type="button" className="portal-secondary-btn" onClick={nextMonth} aria-label="Próximo mês">›</button>
+          </div>
+          <div className="portal-agenda-weekdays" aria-hidden="true">
+            <span>D</span>
+            <span>S</span>
+            <span>T</span>
+            <span>Q</span>
+            <span>Q</span>
+            <span>S</span>
+            <span>S</span>
+          </div>
+          <div className="portal-agenda-month-grid">
+            {leadingBlanks.map((_, index) => (
+              <span key={`blank-${index}`} className="portal-agenda-day is-empty" />
+            ))}
+            {monthDays.map((day) => (
+              <button
+                key={day.dateIso}
+                type="button"
+                className={`portal-agenda-day ${calendarDayTone(day.items)} ${day.dateIso === focusedDate ? 'is-selected' : ''}`}
+                onClick={() => setSelectedDate(day.dateIso)}
+              >
+                <span>{day.day}</span>
+              </button>
+            ))}
+          </div>
+          <div className="portal-agenda-calendar-legend">
+            <span><i className="is-progress" /> Planejado</span>
+            <span><i className="is-warning" /> Em andamento</span>
+            <span><i className="is-success" /> Concluído</span>
+          </div>
+        </aside>
 
-      <section className="portal-agenda-section">
-        <div className="portal-agenda-section-head">
-          <h3>Eventos concluídos</h3>
-          <span>{pastItems.length}</span>
-        </div>
-        <div className="portal-agenda-list">
-          {pastItems.length === 0 ? (
-            <div className="portal-empty-state">
-              <strong>Nenhum evento concluído para exibir.</strong>
-              <p>Conforme os encontros passarem, o histórico ficará disponível aqui.</p>
+        <div className="portal-agenda-timeline-area">
+          <section className="portal-agenda-section portal-agenda-focus-section">
+            <div className="portal-agenda-section-head">
+              <div>
+                <h3>{formatDateBr(focusedDate)}</h3>
+                <p>Eventos deste dia</p>
+              </div>
+              <span>{focusedItems.length}</span>
             </div>
-          ) : null}
-          {pastItems.map((item) => renderAgendaItem(item))}
+            <div className="portal-agenda-list">
+              {focusedItems.length === 0 ? (
+                <div className="portal-empty-state">
+                  <strong>Nenhuma atividade neste dia.</strong>
+                  <p>Selecione outra data no calendário para ver detalhes.</p>
+                </div>
+              ) : null}
+              {focusedItems.map((item) => renderAgendaItem(item))}
+            </div>
+          </section>
+
+          <section className="portal-agenda-section">
+            <div className="portal-agenda-section-head">
+              <div>
+                <h3>Próximos eventos</h3>
+                <p>Linha do tempo operacional</p>
+              </div>
+              <span>{upcomingItems.length}</span>
+            </div>
+            <div className="portal-agenda-list">
+              {upcomingItems.length === 0 ? (
+                <div className="portal-empty-state">
+                  <strong>Nenhuma atividade futura no momento.</strong>
+                  <p>Novos eventos planejados aparecerão aqui automaticamente.</p>
+                </div>
+              ) : null}
+              {upcomingItems.slice(0, 8).map((item) => renderAgendaItem(item))}
+            </div>
+          </section>
+
+          <section className="portal-agenda-section">
+            <div className="portal-agenda-section-head">
+              <div>
+                <h3>Eventos concluídos</h3>
+                <p>Histórico recente</p>
+              </div>
+              <span>{pastItems.length}</span>
+            </div>
+            <div className="portal-agenda-list">
+              {pastItems.length === 0 ? (
+                <div className="portal-empty-state">
+                  <strong>Nenhum evento concluído para exibir.</strong>
+                  <p>Conforme os encontros passarem, o histórico ficará disponível aqui.</p>
+                </div>
+              ) : null}
+              {pastItems.slice(0, 8).map((item) => renderAgendaItem(item))}
+            </div>
+          </section>
         </div>
       </section>
 

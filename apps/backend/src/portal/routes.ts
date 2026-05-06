@@ -1,5 +1,6 @@
 import express, { type Express } from 'express';
 import { z } from 'zod';
+import { buildCompanyModuleCertificate } from '../coreRoutes.js';
 import { db, uuid } from '../db.js';
 import { readCompanyHoursModuleInsights, reconcileCompanyHours } from '../hours/reconcile.js';
 import {
@@ -92,6 +93,37 @@ const realtimeHeartbeatSchema = z.object({
   active: z.boolean().optional(),
   is_typing: z.boolean().optional()
 });
+
+const certificateEvaluationSubmitSchema = z.object({
+  respondent_name: z.string().trim().min(2).max(160),
+  answers: z.record(z.union([z.string(), z.number(), z.boolean(), z.null()]))
+});
+
+type PortalCertificateKind = 'training' | 'deliverable';
+
+type PortalCertificateIdPayload = {
+  type: PortalCertificateKind;
+  cohortId?: string | null;
+  moduleId: string;
+};
+
+type PortalCertificateRecord = {
+  certificate_id: string;
+  certificate_type: PortalCertificateKind;
+  company_id: string;
+  module_id: string;
+  module_code: string;
+  module_name: string;
+  cohort_id: string | null;
+  cohort_code: string | null;
+  cohort_name: string | null;
+  technician_name: string | null;
+  completed_at: string | null;
+  requires_evaluation: boolean;
+  evaluation_submitted: boolean;
+  download_available: boolean;
+  status_label: string;
+};
 
 function buildLoginThrottleKey(ip: string, userAgent: string, slug: string, username: string) {
   return `${ip}::${userAgent}::${slug.trim().toLowerCase()}::${username.trim().toLowerCase()}`;
@@ -229,6 +261,230 @@ function consumeLoginAttempt(key: string, nowMs: number) {
 
   loginAttempts.set(key, existing);
   return { allowed: true as const, retryAfterSeconds: 0 };
+}
+
+function encodePortalCertificateId(payload: PortalCertificateIdPayload) {
+  return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+}
+
+function decodePortalCertificateId(value: string): PortalCertificateIdPayload | null {
+  try {
+    const raw = Buffer.from(value, 'base64url').toString('utf8');
+    const parsed = JSON.parse(raw) as Partial<PortalCertificateIdPayload>;
+    if ((parsed.type !== 'training' && parsed.type !== 'deliverable') || !parsed.moduleId?.trim()) {
+      return null;
+    }
+    return {
+      type: parsed.type,
+      cohortId: parsed.cohortId ?? null,
+      moduleId: parsed.moduleId
+    };
+  } catch {
+    return null;
+  }
+}
+
+function evaluationDocumentKey(companyId: string, cohortId: string | null, moduleId: string) {
+  return `PESQUISA_CERTIFICADO:${companyId}:${cohortId ?? 'sem-turma'}:${moduleId}`;
+}
+
+function upsertCertificateEvaluationDocument(args: {
+  documentKey: string;
+  companyName: string;
+  moduleName: string;
+  cohortLabel: string | null;
+  respondentName: string;
+  answers: Record<string, string | number | boolean | null>;
+}) {
+  const nowIso = new Date().toISOString();
+  const answerLines = Object.entries(args.answers)
+    .sort(([left], [right]) => left.localeCompare(right, 'pt-BR', { numeric: true }))
+    .map(([key, value]) => `${key}: ${value ?? ''}`);
+  const title = `Pesquisa - ${args.companyName} - ${args.moduleName}`;
+  const notes = [
+    '[PESQUISA_SATISFACAO_CERTIFICADO]',
+    `Chave: ${args.documentKey}`,
+    `Empresa: ${args.companyName}`,
+    args.cohortLabel ? `Turma: ${args.cohortLabel}` : 'Turma: Jornada do cliente',
+    `Módulo: ${args.moduleName}`,
+    `Respondido por: ${args.respondentName}`,
+    `Enviado em: ${nowIso}`,
+    '',
+    'Respostas:',
+    ...answerLines
+  ].join('\n');
+  const fileContent = `data:application/json;base64,${Buffer.from(JSON.stringify({
+    document_key: args.documentKey,
+    company_name: args.companyName,
+    cohort: args.cohortLabel,
+    module_name: args.moduleName,
+    respondent_name: args.respondentName,
+    submitted_at: nowIso,
+    answers: args.answers
+  }, null, 2), 'utf8').toString('base64')}`;
+  const existing = db.prepare(`
+    select id
+    from internal_document
+    where category = 'Pesquisas de Satisfação'
+      and notes like ?
+    limit 1
+  `).get(`%Chave: ${args.documentKey}%`) as { id: string } | undefined;
+
+  if (existing) {
+    db.prepare(`
+      update internal_document
+      set title = ?, category = ?, notes = ?, file_name = ?, mime_type = ?, file_data_base64 = ?, file_size_bytes = ?, updated_at = ?
+      where id = ?
+    `).run(
+      title,
+      'Pesquisas de Satisfação',
+      notes,
+      `${title}.json`,
+      'application/json',
+      fileContent,
+      Buffer.byteLength(fileContent),
+      nowIso,
+      existing.id
+    );
+    return;
+  }
+
+  db.prepare(`
+    insert into internal_document (
+      id, title, category, notes, file_name, mime_type, file_data_base64,
+      file_size_bytes, created_at, updated_at
+    )
+    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    uuid('doc'),
+    title,
+    'Pesquisas de Satisfação',
+    notes,
+    `${title}.json`,
+    'application/json',
+    fileContent,
+    Buffer.byteLength(fileContent),
+    nowIso,
+    nowIso
+  );
+}
+
+function readPortalCertificateRecords(companyId: string): PortalCertificateRecord[] {
+  const evaluationRows = db.prepare(`
+    select cohort_id, module_id
+    from portal_certificate_evaluation
+    where company_id = ?
+  `).all(companyId) as Array<{ cohort_id: string | null; module_id: string }>;
+  const evaluationKeys = new Set(evaluationRows.map((row) => `${row.cohort_id ?? 'sem-turma'}:${row.module_id}`));
+
+  const trainingRows = db.prepare(`
+    select
+      a.company_id,
+      a.cohort_id,
+      c.code as cohort_code,
+      c.name as cohort_name,
+      t.name as technician_name,
+      a.module_id,
+      mt.code as module_code,
+      mt.name as module_name,
+      coalesce(a.executed_at, cmp.completed_at, c.start_date) as completed_at
+    from cohort_allocation a
+    join cohort c on c.id = a.cohort_id
+    join module_template mt on mt.id = a.module_id
+    join company_module_progress cmp on cmp.company_id = a.company_id and cmp.module_id = a.module_id
+    left join technician t on t.id = c.technician_id
+    left join company_module_activation cma on cma.company_id = a.company_id and cma.module_id = a.module_id
+    where a.company_id = ?
+      and a.status <> 'Cancelado'
+      and cmp.status = 'Concluido'
+      and coalesce(mt.delivery_mode, 'ministrado') = 'ministrado'
+      and coalesce(cma.is_enabled, 1) = 1
+    order by date(coalesce(a.executed_at, cmp.completed_at, c.start_date)) desc, mt.name asc
+  `).all(companyId) as Array<{
+    company_id: string;
+    cohort_id: string;
+    cohort_code: string | null;
+    cohort_name: string | null;
+    technician_name: string | null;
+    module_id: string;
+    module_code: string;
+    module_name: string;
+    completed_at: string | null;
+  }>;
+
+  const deliverableRows = db.prepare(`
+    select
+      cmp.company_id,
+      cmp.module_id,
+      mt.code as module_code,
+      mt.name as module_name,
+      cmp.completed_at
+    from company_module_progress cmp
+    join module_template mt on mt.id = cmp.module_id
+    left join company_module_activation cma on cma.company_id = cmp.company_id and cma.module_id = cmp.module_id
+    where cmp.company_id = ?
+      and cmp.status = 'Concluido'
+      and coalesce(mt.delivery_mode, 'ministrado') = 'entregavel'
+      and coalesce(cma.is_enabled, 1) = 1
+    order by date(cmp.completed_at) desc, mt.name asc
+  `).all(companyId) as Array<{
+    company_id: string;
+    module_id: string;
+    module_code: string;
+    module_name: string;
+    completed_at: string | null;
+  }>;
+
+  const trainingRecords = trainingRows.map((row) => {
+    const evaluationSubmitted = evaluationKeys.has(`${row.cohort_id}:${row.module_id}`);
+    return {
+      certificate_id: encodePortalCertificateId({ type: 'training', cohortId: row.cohort_id, moduleId: row.module_id }),
+      certificate_type: 'training' as const,
+      company_id: row.company_id,
+      module_id: row.module_id,
+      module_code: row.module_code,
+      module_name: row.module_name,
+      cohort_id: row.cohort_id,
+      cohort_code: row.cohort_code,
+      cohort_name: row.cohort_name,
+      technician_name: row.technician_name,
+      completed_at: row.completed_at,
+      requires_evaluation: true,
+      evaluation_submitted: evaluationSubmitted,
+      download_available: evaluationSubmitted,
+      status_label: evaluationSubmitted ? 'Liberado' : 'Avaliação pendente'
+    };
+  });
+
+  const deliverableRecords = deliverableRows.map((row) => ({
+    certificate_id: encodePortalCertificateId({ type: 'deliverable', moduleId: row.module_id }),
+    certificate_type: 'deliverable' as const,
+    company_id: row.company_id,
+    module_id: row.module_id,
+    module_code: row.module_code,
+    module_name: row.module_name,
+    cohort_id: null,
+    cohort_code: null,
+    cohort_name: null,
+    technician_name: null,
+    completed_at: row.completed_at,
+    requires_evaluation: false,
+    evaluation_submitted: false,
+    download_available: true,
+    status_label: 'Liberado'
+  }));
+
+  return [...trainingRecords, ...deliverableRecords];
+}
+
+function resolvePortalCertificate(companyId: string, certificateId: string) {
+  const decoded = decodePortalCertificateId(certificateId);
+  if (!decoded) return null;
+  return readPortalCertificateRecords(companyId).find((item) => (
+    item.certificate_type === decoded.type
+    && item.module_id === decoded.moduleId
+    && (item.cohort_id ?? null) === (decoded.cohortId ?? null)
+  )) ?? null;
 }
 
 function clearLoginAttempts(key: string) {
@@ -1809,6 +2065,156 @@ export function registerPortalRoutes(app: Express) {
     });
 
     return res.status(200).json({ items });
+  });
+
+  router.get('/certificates', requirePortalAuth, (_req, res) => {
+    const context = getPortalContextOrNull(res);
+    if (!context) {
+      return res.status(401).json({ message: 'Sessão inválida ou expirada.' });
+    }
+
+    const items = readPortalCertificateRecords(context.company_id).map((item) => ({
+      ...item,
+      download_url: `/portal/api/certificates/${encodeURIComponent(item.certificate_id)}/download`,
+      evaluation_url: item.requires_evaluation
+        ? `/portal/${encodeURIComponent(context.slug)}/certificados/${encodeURIComponent(item.certificate_id)}/avaliacao`
+        : null
+    }));
+
+    return res.status(200).json({ items });
+  });
+
+  router.get('/certificates/:certificateId/evaluation', requirePortalAuth, (req, res) => {
+    const context = getPortalContextOrNull(res);
+    if (!context) {
+      return res.status(401).json({ message: 'Sessão inválida ou expirada.' });
+    }
+
+    const certificate = resolvePortalCertificate(context.company_id, req.params.certificateId);
+    if (!certificate) {
+      return res.status(404).json({ message: 'Certificado não encontrado.' });
+    }
+    if (!certificate.requires_evaluation) {
+      return res.status(400).json({ message: 'Este certificado não exige avaliação.' });
+    }
+
+    const existing = db.prepare(`
+      select respondent_name, answers_json, created_at
+      from portal_certificate_evaluation
+      where company_id = ? and cohort_id = ? and module_id = ?
+      limit 1
+    `).get(context.company_id, certificate.cohort_id, certificate.module_id) as
+      | { respondent_name: string; answers_json: string; created_at: string }
+      | undefined;
+
+    return res.status(200).json({
+      certificate,
+      evaluation_submitted: Boolean(existing),
+      respondent_name: existing?.respondent_name ?? null,
+      answers: existing ? JSON.parse(existing.answers_json) : null,
+      submitted_at: existing?.created_at ?? null
+    });
+  });
+
+  router.post('/certificates/:certificateId/evaluation', requirePortalAuth, (req, res) => {
+    const context = getPortalContextOrNull(res);
+    if (!context) {
+      return res.status(401).json({ message: 'Sessão inválida ou expirada.' });
+    }
+
+    const certificate = resolvePortalCertificate(context.company_id, req.params.certificateId);
+    if (!certificate) {
+      return res.status(404).json({ message: 'Certificado não encontrado.' });
+    }
+    if (!certificate.requires_evaluation) {
+      return res.status(400).json({ message: 'Este certificado não exige avaliação.' });
+    }
+
+    const parsed = certificateEvaluationSubmitSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+
+    const nowIso = new Date().toISOString();
+    const documentKey = evaluationDocumentKey(context.company_id, certificate.cohort_id, certificate.module_id);
+    const answersJson = JSON.stringify(parsed.data.answers);
+    const existing = db.prepare(`
+      select id
+      from portal_certificate_evaluation
+      where company_id = ? and cohort_id = ? and module_id = ?
+      limit 1
+    `).get(context.company_id, certificate.cohort_id, certificate.module_id) as { id: string } | undefined;
+
+    if (existing) {
+      db.prepare(`
+        update portal_certificate_evaluation
+        set respondent_name = ?, answers_json = ?, updated_at = ?
+        where id = ?
+      `).run(parsed.data.respondent_name, answersJson, nowIso, existing.id);
+    } else {
+      db.prepare(`
+        insert into portal_certificate_evaluation (
+          id, company_id, portal_client_id, cohort_id, module_id, respondent_name, answers_json, created_at, updated_at
+        )
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        uuid('pceval'),
+        context.company_id,
+        context.portal_client_id,
+        certificate.cohort_id,
+        certificate.module_id,
+        parsed.data.respondent_name,
+        answersJson,
+        nowIso,
+        nowIso
+      );
+    }
+
+    upsertCertificateEvaluationDocument({
+      documentKey,
+      companyName: context.company_name,
+      moduleName: certificate.module_name,
+      cohortLabel: certificate.cohort_code
+        ? `${certificate.cohort_code} · ${certificate.cohort_name ?? ''}`.trim()
+        : certificate.cohort_name,
+      respondentName: parsed.data.respondent_name,
+      answers: parsed.data.answers
+    });
+
+    return res.status(existing ? 200 : 201).json({ ok: true });
+  });
+
+  router.get('/certificates/:certificateId/download', requirePortalAuth, async (req, res) => {
+    const context = getPortalContextOrNull(res);
+    if (!context) {
+      return res.status(401).json({ message: 'Sessão inválida ou expirada.' });
+    }
+
+    const certificate = resolvePortalCertificate(context.company_id, req.params.certificateId);
+    if (!certificate) {
+      return res.status(404).json({ message: 'Certificado não encontrado.' });
+    }
+    if (!certificate.download_available) {
+      return res.status(403).json({ message: 'Responda a avaliação antes de baixar este certificado.' });
+    }
+
+    try {
+      const output = await buildCompanyModuleCertificate({
+        companyId: context.company_id,
+        moduleId: certificate.module_id,
+        cohortId: certificate.cohort_id,
+        format: 'pdf',
+        shouldDownload: true
+      });
+      res.setHeader('Content-Type', output.contentType);
+      res.setHeader('Content-Disposition', `${output.disposition}; filename*=UTF-8''${encodeURIComponent(output.fileName)}`);
+      return res.send(output.body);
+    } catch (error) {
+      return res.status(500).json({
+        message: 'Erro ao gerar certificado.',
+        detail: error instanceof Error ? error.message : String(error)
+      });
+    }
   });
 
   router.get('/operator/display-settings', requirePortalAuth, (_req, res) => {

@@ -1,16 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Navigate, NavLink, Route, Routes, useParams } from 'react-router-dom';
+import { Navigate, NavLink, Route, Routes, useLocation, useParams } from 'react-router-dom';
 import { portalApi } from './api';
 import { portalSessionStore } from './auth';
 import type { PortalMe, PortalSessionData } from './types';
 import { PortalAgendaPage } from './pages/PortalAgendaPage';
 import { PortalLoginPage } from './pages/PortalLoginPage';
+import { PortalCertificateEvaluationPage } from './pages/PortalCertificateEvaluationPage';
+import { PortalCertificatesPage } from './pages/PortalCertificatesPage';
 import { PortalPlanningPage } from './pages/PortalPlanningPage';
 import { PortalTicketsPage } from './pages/PortalTicketsPage';
 import holandHorizontalLogo from '../assets/holand-horizontal.svg';
 
 export function PortalShell() {
   const { slug = '' } = useParams();
+  const location = useLocation();
   const [session, setSession] = useState<PortalSessionData | null>(() => portalSessionStore.read(slug));
   const [profile, setProfile] = useState<PortalMe | null>(null);
   const [portalBrandCompanyName, setPortalBrandCompanyName] = useState<string>('');
@@ -89,6 +92,17 @@ export function PortalShell() {
     return <PortalLoginPage companyName={portalBrandCompanyName || null} onSubmit={handleLogin} />;
   }
 
+  const isEvaluationRoute = /\/certificados\/[^/]+\/avaliacao\/?$/.test(location.pathname);
+
+  if (isEvaluationRoute) {
+    return (
+      <Routes>
+        <Route path="certificados/:certificateId/avaliacao" element={<PortalCertificateEvaluationPage api={apiClient} />} />
+        <Route path="*" element={<Navigate to="certificados" replace />} />
+      </Routes>
+    );
+  }
+
   return (
     <div className="portal-shell">
       <aside className="portal-sidebar">
@@ -104,6 +118,7 @@ export function PortalShell() {
         <nav className="portal-nav">
           <NavLink to="planejamento" className={({ isActive }) => isActive ? 'is-active' : ''}>Planejamento</NavLink>
           <NavLink to="agenda" className={({ isActive }) => isActive ? 'is-active' : ''}>Agenda</NavLink>
+          <NavLink to="certificados" className={({ isActive }) => isActive ? 'is-active' : ''}>Certificados</NavLink>
           <NavLink to="suporte" className={({ isActive }) => isActive ? 'is-active' : ''}>Suporte</NavLink>
         </nav>
         <div className="portal-sidebar-footer">
@@ -128,6 +143,8 @@ export function PortalShell() {
           <Route index element={<Navigate to="agenda" replace />} />
           <Route path="planejamento" element={<PortalPlanningPage api={apiClient} isInternal={Boolean(profile?.is_internal)} />} />
           <Route path="agenda" element={<PortalAgendaPage api={apiClient} isInternal={Boolean(profile?.is_internal)} />} />
+          <Route path="certificados" element={<PortalCertificatesPage api={apiClient} sessionToken={session.token} />} />
+          <Route path="certificados/:certificateId/avaliacao" element={<PortalCertificateEvaluationPage api={apiClient} />} />
           <Route
             path="suporte"
             element={

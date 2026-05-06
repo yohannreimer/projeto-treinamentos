@@ -792,6 +792,222 @@ function upsertCertificateDocument(args: {
   );
 }
 
+export async function buildCompanyModuleCertificate(args: {
+  companyId: string;
+  moduleId: string;
+  cohortId?: string | null;
+  format?: 'pdf' | 'html';
+  shouldDownload?: boolean;
+}): Promise<{
+  body: Buffer | string;
+  contentType: string;
+  fileName: string;
+  disposition: 'attachment' | 'inline';
+}> {
+  const company = db.prepare(`
+    select id, name
+    from company
+    where id = ?
+  `).get(args.companyId) as { id: string; name: string } | undefined;
+
+  if (!company) {
+    throw new Error('Empresa não encontrada.');
+  }
+
+  const moduleRow = db.prepare(`
+    select
+      id,
+      code as module_code,
+      name as module_name,
+      duration_days,
+      coalesce(delivery_mode, 'ministrado') as delivery_mode
+    from module_template
+    where id = ?
+  `).get(args.moduleId) as {
+    id: string;
+    module_code: string;
+    module_name: string;
+    duration_days: number;
+    delivery_mode: 'ministrado' | 'entregavel';
+  } | undefined;
+
+  if (!moduleRow) {
+    throw new Error('Módulo não encontrado.');
+  }
+
+  if (!hasModuleEnabled(company.id, moduleRow.id)) {
+    throw new Error('Módulo está desativado para esta empresa.');
+  }
+
+  const progress = db.prepare(`
+    select status, completed_at
+    from company_module_progress
+    where company_id = ? and module_id = ?
+  `).get(company.id, moduleRow.id) as { status: ModuleProgressStatus; completed_at: string | null } | undefined;
+
+  if (progress?.status !== 'Concluido') {
+    throw new Error('Conclua o módulo na jornada antes de emitir o certificado.');
+  }
+
+  const isDeliverableCertificate = moduleRow.delivery_mode === 'entregavel';
+  const latestAllocation = !isDeliverableCertificate
+    ? db.prepare(`
+        select
+          a.cohort_id,
+          a.status as allocation_status,
+          a.executed_at,
+          c.code as cohort_code,
+          c.name as cohort_name,
+          c.status as cohort_status,
+          c.start_date,
+          c.technician_id,
+          t.name as technician_name,
+          coalesce(cmb.duration_days, ?) as duration_days
+        from cohort_allocation a
+        join cohort c on c.id = a.cohort_id
+        left join technician t on t.id = c.technician_id
+        left join cohort_module_block cmb on cmb.cohort_id = a.cohort_id and cmb.module_id = a.module_id
+        where a.company_id = ?
+          and a.module_id = ?
+          and a.status <> 'Cancelado'
+          and (? is null or a.cohort_id = ?)
+        order by
+          case when a.status = 'Executado' then 0 else 1 end asc,
+          date(coalesce(a.executed_at, c.start_date)) desc,
+          c.code desc
+        limit 1
+      `).get(
+        moduleRow.duration_days,
+        company.id,
+        moduleRow.id,
+        args.cohortId ?? null,
+        args.cohortId ?? null
+      ) as {
+        cohort_id: string;
+        allocation_status: string;
+        executed_at: string | null;
+        cohort_code: string;
+        cohort_name: string;
+        cohort_status: string;
+        start_date: string;
+        technician_id: string | null;
+        technician_name: string | null;
+        duration_days: number;
+      } | undefined
+    : undefined;
+
+  if (!isDeliverableCertificate && !latestAllocation) {
+    throw new Error('Nenhuma turma encontrada para emitir o certificado deste treinamento.');
+  }
+
+  const participants = latestAllocation
+    ? db.prepare(`
+        select cp.participant_name
+        from cohort_participant cp
+        join cohort_participant_module cpm on cpm.participant_id = cp.id
+        where cp.cohort_id = ? and cp.company_id = ? and cpm.module_id = ?
+        order by cp.participant_name asc
+      `).all(latestAllocation.cohort_id, company.id, moduleRow.id) as Array<{ participant_name: string }>
+    : [];
+
+  if (!isDeliverableCertificate && participants.length === 0) {
+    throw new Error('Nenhum participante desta empresa está vinculado ao módulo na turma encontrada.');
+  }
+
+  const issueDateIso = nowDateIso();
+  const trainingName = moduleShortLabel(moduleRow.module_name);
+  const deliverableLabels = deliverableCertificateLabels(moduleRow.module_name);
+  const certCode = [
+    'CERT',
+    normalizeCertToken(latestAllocation?.cohort_code || 'JORNADA'),
+    normalizeCertToken(company.name || 'EMPRESA'),
+    normalizeCertToken(moduleRow.module_code || moduleRow.module_name || moduleRow.id),
+    issueDateIso.replace(/-/g, '')
+  ].filter(Boolean).join('-');
+
+  const totalDays = Math.max(1, Number(latestAllocation?.duration_days ?? moduleRow.duration_days) || 1);
+  const totalHours = totalDays * 8;
+  const employeeCardsHtml = participants
+    .map((participant, index) => {
+      const position = String(index + 1).padStart(2, '0');
+      return `
+        <div class="employee-card">
+          <div class="employee-num">${position}</div>
+          <div class="employee-name">${escapeHtml(participant.participant_name)}</div>
+          <div class="employee-role">Participante</div>
+        </div>`;
+    })
+    .join('');
+
+  const template = isDeliverableCertificate ? readDeliverableCertificateTemplate() : readCertificateTemplate();
+  const html = replaceTemplateTokens(template, isDeliverableCertificate
+    ? [
+        ['COMPANY_NAME', escapeHtml(company.name)],
+        ['DELIVERABLE_NAME', escapeHtml(deliverableLabels.name)],
+        ['DELIVERABLE_SUBTITLE', escapeHtml(deliverableLabels.subtitle)],
+        ['EMIT_DATE', escapeHtml(formatLongDatePtBr(issueDateIso))],
+        ['CERT_CODE', escapeHtml(certCode)]
+      ]
+    : [
+        ['COMPANY_NAME', escapeHtml(company.name)],
+        ['COURSE_NAME', escapeHtml(trainingName)],
+        ['COURSE_HOURS', escapeHtml(`⏱ ${totalDays} diária(s) (${totalHours}h)`)],
+        ['EMPLOYEES_GRID', employeeCardsHtml],
+        ['TECHNICIAN_NAME', escapeHtml(latestAllocation?.technician_name ?? 'Sem técnico definido')],
+        ['EMIT_DATE', escapeHtml(formatLongDatePtBr(issueDateIso))],
+        ['CERT_CODE', escapeHtml(certCode)]
+      ]);
+
+  const moduleFileLabel = isDeliverableCertificate
+    ? `${deliverableLabels.name} - ${deliverableLabels.subtitle}`
+    : (trainingName || moduleRow.module_name);
+  const fileBase = `Certificado - ${normalizeFileLabelPart(company.name)} - ${normalizeFileLabelPart(moduleFileLabel)}`;
+  const format = args.format ?? 'pdf';
+  const disposition = args.shouldDownload === false ? 'inline' : 'attachment';
+
+  if (format === 'html') {
+    return {
+      body: html,
+      contentType: 'text/html; charset=utf-8',
+      fileName: `${fileBase}.html`,
+      disposition
+    };
+  }
+
+  const pdfBuffer = await renderPdfFromHtml(applyPdfLayoutOverrides(html));
+  const certificateDocumentKey = isDeliverableCertificate
+    ? `CERTIFICADO_CLIENTE_MODULO:${company.id}:${moduleRow.id}:entregavel`
+    : `CERTIFICADO_TURMA_MODULO:${latestAllocation?.cohort_id}:${company.id}:${moduleRow.id}`;
+  const certificateDocumentNotes = [
+    '[CERTIFICADO_AUTOMATICO]',
+    `Chave: ${certificateDocumentKey}`,
+    `Código: ${certCode}`,
+    `Tipo: ${isDeliverableCertificate ? 'Entregável' : 'Treinamento ministrado'}`,
+    latestAllocation ? `Turma: ${latestAllocation.cohort_code}` : 'Turma: Jornada do cliente',
+    `Empresa: ${company.name}`,
+    `Módulo: ${isDeliverableCertificate ? `${deliverableLabels.name} - ${deliverableLabels.subtitle}` : trainingName}`,
+    isDeliverableCertificate
+      ? 'Status: Concluído & Aprovado'
+      : `Participantes: ${participants.map((item) => item.participant_name).join(' | ')}`,
+    `Emitido em: ${formatLongDatePtBr(issueDateIso)}`
+  ].join('\n');
+
+  upsertCertificateDocument({
+    documentKey: certificateDocumentKey,
+    title: fileBase,
+    notes: certificateDocumentNotes,
+    fileBase,
+    pdfBuffer
+  });
+
+  return {
+    body: pdfBuffer,
+    contentType: 'application/pdf',
+    fileName: `${fileBase}.pdf`,
+    disposition
+  };
+}
+
 function hasDestructiveConfirmation(confirmationPhrase?: string): boolean {
   return confirmationPhrase?.trim() === DESTRUCTIVE_CONFIRMATION_PHRASE;
 }

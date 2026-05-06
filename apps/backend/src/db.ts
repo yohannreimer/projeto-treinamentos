@@ -333,6 +333,23 @@ export function initDb() {
       foreign key(portal_client_id) references portal_client(id) on delete cascade
     );
 
+    create table if not exists portal_certificate_evaluation (
+      id text primary key,
+      company_id text not null,
+      portal_client_id text not null,
+      cohort_id text,
+      module_id text not null,
+      respondent_name text not null,
+      answers_json text not null,
+      created_at text not null,
+      updated_at text not null,
+      unique(company_id, cohort_id, module_id),
+      foreign key(company_id) references company(id) on delete cascade,
+      foreign key(portal_client_id) references portal_client(id) on delete cascade,
+      foreign key(cohort_id) references cohort(id) on delete cascade,
+      foreign key(module_id) references module_template(id) on delete cascade
+    );
+
     create table if not exists financial_account (
       id text primary key,
       organization_id text not null,
@@ -2127,6 +2144,8 @@ export function initDb() {
     create index if not exists idx_portal_ticket_webhook_queue_pending
       on portal_ticket_webhook_queue(company_id, recipient_side, sent_at, suppressed_at, available_at, created_at);
     create index if not exists idx_portal_agenda_item_client_date on portal_agenda_item(portal_client_id, start_date, end_date);
+    create index if not exists idx_portal_certificate_evaluation_lookup
+      on portal_certificate_evaluation(company_id, cohort_id, module_id);
     create unique index if not exists idx_hours_event_store_idempotency_key on hours_event_store(idempotency_key);
     create index if not exists idx_internal_session_user on internal_session(internal_user_id);
     create index if not exists idx_internal_session_expires on internal_session(expires_at);
