@@ -351,6 +351,8 @@ export const api = {
     req<{ items: CompanyHoursModuleInsight[] }>(`/companies/${companyId}/hours/modules`),
   companyHoursLedger: (companyId: string) =>
     req<{ items: CompanyHoursLedgerItem[] }>(`/companies/${companyId}/hours/ledger`),
+  companyHoursModuleLedger: (companyId: string, moduleId: string) =>
+    req<{ items: CompanyHoursLedgerItem[] }>(`/companies/${companyId}/hours/modules/${moduleId}/ledger`),
   companyHoursPending: (companyId: string) =>
     req<{ items: CompanyHoursPendingItem[] }>(`/companies/${companyId}/hours/pending`),
   confirmCompanyHoursPending: (companyId: string, pendingId: string, payload?: { reason?: string }) =>

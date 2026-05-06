@@ -5764,6 +5764,233 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
     return res.json({ items });
   });
 
+  app.get('/companies/:id/hours/modules/:moduleId/ledger', (req, res) => {
+    const companyId = req.params.id;
+    const moduleId = req.params.moduleId;
+    if (!ensureCompanyExists(companyId)) {
+      return res.status(404).json({ message: 'Empresa nao encontrada' });
+    }
+
+    const moduleExists = db.prepare(`
+      select id
+      from module_template
+      where id = ?
+      limit 1
+    `).get(moduleId) as { id: string } | undefined;
+    if (!moduleExists) {
+      return res.status(404).json({ message: 'Módulo nao encontrado.' });
+    }
+
+    try {
+      syncConfirmedHoursFromAllocations(companyId);
+    } catch (error) {
+      console.error('Falha ao sincronizar extrato de horas do módulo:', errorMessage(error));
+    }
+
+    const rows = db.prepare(`
+      select
+        l.id,
+        l.company_id,
+        l.event_id,
+        l.event_type,
+        l.delta_hours,
+        l.balance_after,
+        l.payload_json,
+        l.created_at,
+        e.aggregate_type,
+        e.aggregate_id,
+        e.idempotency_key
+      from hours_projection_ledger l
+      join hours_event_store e on e.id = l.event_id
+      where l.company_id = ?
+      order by datetime(l.created_at) asc, l.id asc
+    `).all(companyId) as Array<{
+      id: string;
+      company_id: string;
+      event_id: string;
+      event_type: string;
+      delta_hours: number;
+      balance_after: number;
+      payload_json: string;
+      created_at: string;
+      aggregate_type: string;
+      aggregate_id: string;
+      idempotency_key: string | null;
+    }>;
+
+    function parseLedgerPayload(payloadJson: string) {
+      if (!payloadJson?.trim()) return null;
+      try {
+        return JSON.parse(payloadJson) as {
+          module_id?: string | null;
+          activity_id?: string | null;
+          encounter_id?: string | null;
+          reason?: string | null;
+        };
+      } catch {
+        return null;
+      }
+    }
+
+    function ledgerHoursImpact(row: { event_type: string; delta_hours: number; payload: ReturnType<typeof parseLedgerPayload> }) {
+      if (!row.payload) return Number(row.delta_hours ?? 0);
+      const payload = row.payload as {
+        hours_consumed?: number;
+        consumed_delta?: number;
+        minutes_logged?: number;
+      };
+      if (row.event_type === 'training_encounter_completed') {
+        const hoursConsumed = Number(payload.hours_consumed ?? 0);
+        return Number.isFinite(hoursConsumed) ? Math.abs(hoursConsumed) : 0;
+      }
+      if (row.event_type === 'hours_manual_adjustment_added') {
+        const consumedDelta = Number(payload.consumed_delta ?? 0);
+        if (Number.isFinite(consumedDelta) && Math.abs(consumedDelta) >= 0.0001) {
+          return consumedDelta;
+        }
+      }
+      if (row.event_type === 'deliverable_worklog_logged') {
+        const minutesLogged = Number(payload.minutes_logged ?? 0);
+        return Number.isFinite(minutesLogged) ? Math.round((minutesLogged / 60) * 100) / 100 : 0;
+      }
+      return Number(row.delta_hours ?? 0);
+    }
+
+    const moduleRows = rows
+      .map((row) => ({ ...row, payload: parseLedgerPayload(row.payload_json) }))
+      .filter((row) => row.payload?.module_id === moduleId);
+
+    const modernAllocationSyncKeys = new Set(
+      moduleRows
+        .filter((row) => row.idempotency_key?.startsWith('allocation-hours-sync:'))
+        .map((row) => `${row.aggregate_id}::${row.payload?.module_id ?? ''}`)
+    );
+
+    const allocationContextById = new Map<string, string>();
+    const activityContextById = new Map<string, string>();
+
+    function readAllocationSourceDetail(allocationId: string) {
+      if (allocationContextById.has(allocationId)) return allocationContextById.get(allocationId) ?? null;
+      const allocation = db.prepare(`
+        select
+          c.code as cohort_code,
+          c.name as cohort_name,
+          c.status as cohort_status,
+          a.entry_day,
+          a.status as allocation_status
+        from cohort_allocation a
+        join cohort c on c.id = a.cohort_id
+        where a.id = ?
+          and a.company_id = ?
+          and a.module_id = ?
+        limit 1
+      `).get(allocationId, companyId, moduleId) as
+        | {
+          cohort_code: string;
+          cohort_name: string;
+          cohort_status: string;
+          entry_day: number;
+          allocation_status: string;
+        }
+        | undefined;
+      const detail = allocation
+        ? `${allocation.cohort_code} - ${allocation.cohort_name} · Dia ${allocation.entry_day} · ${allocation.allocation_status}`
+        : `Alocação ${allocationId}`;
+      allocationContextById.set(allocationId, detail);
+      return detail;
+    }
+
+    function readActivitySourceDetail(activityId: string) {
+      if (activityContextById.has(activityId)) return activityContextById.get(activityId) ?? null;
+      const activity = db.prepare(`
+        select title, start_date, status
+        from calendar_activity
+        where id = ?
+          and company_id = ?
+        limit 1
+      `).get(activityId, companyId) as { title: string; start_date: string; status: string } | undefined;
+      const detail = activity
+        ? `Calendário: ${activity.title} · ${activity.start_date} · ${activity.status}`
+        : `Atividade ${activityId}`;
+      activityContextById.set(activityId, detail);
+      return detail;
+    }
+
+    const enrichedItems = moduleRows
+      .filter((row) => {
+        const isLegacyAllocationSync = row.idempotency_key?.startsWith('allocation-client-consumption:');
+        if (!isLegacyAllocationSync) return true;
+        return !modernAllocationSyncKeys.has(`${row.aggregate_id}::${row.payload?.module_id ?? ''}`);
+      })
+      .map(({ payload, aggregate_type, aggregate_id, idempotency_key, ...row }) => {
+        let sourceDetail: string | null = null;
+        if (payload?.activity_id) {
+          sourceDetail = readActivitySourceDetail(payload.activity_id);
+        } else if (payload?.encounter_id?.startsWith('allocation:')) {
+          sourceDetail = readAllocationSourceDetail(payload.encounter_id.replace('allocation:', ''));
+        } else if (aggregate_id?.startsWith('all-') || idempotency_key?.startsWith('allocation-')) {
+          sourceDetail = readAllocationSourceDetail(aggregate_id);
+        }
+
+        return {
+          ...row,
+          idempotency_key,
+          source_detail: sourceDetail
+        };
+      });
+
+    function allocationTraceKey(item: (typeof enrichedItems)[number]) {
+      const payload = parseLedgerPayload(item.payload_json);
+      const hoursImpact = ledgerHoursImpact({ ...item, payload });
+      const createdDay = item.created_at.slice(0, 10);
+      return `${createdDay}::${Math.abs(Math.round(hoursImpact * 100) / 100)}`;
+    }
+
+    const resolvedAllocationTraceKeys = new Set(
+      enrichedItems
+        .filter((item) => item.idempotency_key?.startsWith('allocation-hours-sync:'))
+        .filter((item) => item.source_detail && !item.source_detail.startsWith('Alocação '))
+        .map((item) => allocationTraceKey(item))
+    );
+
+    const traceableItems = enrichedItems.filter((item) => {
+      const isOrphanAllocationSync = item.idempotency_key?.startsWith('allocation-hours-sync:')
+        && item.source_detail?.startsWith('Alocação ');
+      if (!isOrphanAllocationSync) return true;
+      return !resolvedAllocationTraceKeys.has(allocationTraceKey(item));
+    });
+
+    const itemByDuplicateKey = new Map<string, (typeof enrichedItems)[number]>();
+    traceableItems.forEach((item) => {
+      const payload = parseLedgerPayload(item.payload_json);
+      const isAllocationSync = item.idempotency_key?.startsWith('allocation-hours-sync:');
+      const reason = isAllocationSync ? '' : (payload?.reason ?? '').trim().toLowerCase();
+      const hoursImpact = ledgerHoursImpact({ ...item, payload });
+      const createdDay = item.created_at.slice(0, 10);
+      const duplicateKey = [
+        item.event_type,
+        createdDay,
+        Math.round(hoursImpact * 100) / 100,
+        reason
+      ].join('::');
+      const existing = itemByDuplicateKey.get(duplicateKey);
+      if (!existing) {
+        itemByDuplicateKey.set(duplicateKey, item);
+        return;
+      }
+      const existingHasTrace = Boolean(existing.source_detail && !existing.source_detail.startsWith('Alocação '));
+      const nextHasTrace = Boolean(item.source_detail && !item.source_detail.startsWith('Alocação '));
+      if (!existingHasTrace && nextHasTrace) {
+        itemByDuplicateKey.set(duplicateKey, item);
+      }
+    });
+
+    const items = Array.from(itemByDuplicateKey.values())
+      .sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
+
+    return res.json({ items });
+  });
+
   app.get('/companies/:id/hours/pending', (req, res) => {
     const companyId = req.params.id;
     if (!ensureCompanyExists(companyId)) {

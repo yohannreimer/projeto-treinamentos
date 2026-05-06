@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import request from 'supertest';
 import { createApp } from '../app.js';
 import { db } from '../db.js';
+import { appendAndProject } from '../hours/service.js';
 import { assignTestDbPath } from '../test/testDb.js';
 import { hashPassword } from './auth.js';
 
@@ -143,6 +144,114 @@ test('portal planning applies admin curation (hidden modules + date override)', 
       | undefined;
     assert.ok(overridden);
     assert.deepEqual(overridden.next_dates, ['2026-06-20']);
+  } finally {
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('portal planning hours summary uses only real training consumption', async () => {
+  const { app, dbPath } = await createPortalReadModelsFixture('portal-readmodels-training-hours-summary');
+
+  try {
+    db.prepare(`delete from company_module_progress where company_id = ?`).run('comp-readmodels');
+
+    db.prepare(`
+      insert into module_template (
+        id, code, category, name, description, duration_days, profile, is_mandatory, delivery_mode, client_hours_policy
+      )
+      values (?, ?, ?, ?, ?, ?, null, 1, ?, ?)
+    `).run(
+      'mod-portal-training-summary',
+      'PTR-001',
+      'Treinamento',
+      'Treinamento Portal Resumo',
+      null,
+      2,
+      'ministrado',
+      'consome'
+    );
+    db.prepare(`
+      insert into module_template (
+        id, code, category, name, description, duration_days, profile, is_mandatory, delivery_mode, client_hours_policy
+      )
+      values (?, ?, ?, ?, ?, ?, null, 1, ?, ?)
+    `).run(
+      'mod-portal-deliverable-summary',
+      'PDL-001',
+      'Entregavel',
+      'Entregavel Interno Portal',
+      null,
+      3,
+      'entregavel',
+      'nao_consume'
+    );
+
+    db.prepare(`
+      insert into company_module_progress (id, company_id, module_id, status, completed_at)
+      values (?, ?, ?, 'Concluido', ?)
+    `).run(
+      'prog-portal-training-summary',
+      'comp-readmodels',
+      'mod-portal-training-summary',
+      '2026-05-01'
+    );
+    db.prepare(`
+      insert into company_module_progress (id, company_id, module_id, status, completed_at)
+      values (?, ?, ?, 'Concluido', ?)
+    `).run(
+      'prog-portal-deliverable-summary',
+      'comp-readmodels',
+      'mod-portal-deliverable-summary',
+      '2026-05-02'
+    );
+
+    appendAndProject({
+      aggregate_type: 'module_scope',
+      aggregate_id: 'alloc-portal-training-summary',
+      company_id: 'comp-readmodels',
+      event_type: 'training_encounter_completed',
+      payload: {
+        module_id: 'mod-portal-training-summary',
+        hours_consumed: 8,
+        reason: 'Encontro realizado para validação do resumo do portal.'
+      },
+      idempotency_key: 'portal-training-summary-training-8h',
+      actor_type: 'system'
+    });
+    appendAndProject({
+      aggregate_type: 'deliverable_worklog',
+      aggregate_id: 'worklog-portal-deliverable-summary',
+      company_id: 'comp-readmodels',
+      event_type: 'deliverable_worklog_logged',
+      payload: {
+        module_id: 'mod-portal-deliverable-summary',
+        minutes_logged: 1440,
+        reason: 'Horas internas de entregavel não devem entrar no portal.'
+      },
+      idempotency_key: 'portal-training-summary-deliverable-24h',
+      actor_type: 'operator'
+    });
+
+    const token = await loginPortal(app);
+    const planningRes = await request(app)
+      .get('/portal/api/planning')
+      .set('Authorization', `Bearer ${token}`);
+
+    assert.equal(planningRes.status, 200);
+    assert.equal(planningRes.body.items.length, 2);
+    assert.deepEqual(planningRes.body.hours_summary, {
+      available_hours: 16,
+      consumed_hours: 8,
+      balance_hours: 8,
+      remaining_diarias: 1
+    });
+
+    const overviewRes = await request(app)
+      .get('/portal/api/overview')
+      .set('Authorization', `Bearer ${token}`);
+
+    assert.equal(overviewRes.status, 200);
+    assert.deepEqual(overviewRes.body.hours_summary, planningRes.body.hours_summary);
   } finally {
     cleanupDbFiles(dbPath);
   }

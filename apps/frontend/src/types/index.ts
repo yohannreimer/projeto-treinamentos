@@ -66,6 +66,7 @@ export type CompanyHoursLedgerItem = {
   balance_after: number;
   payload_json: string;
   created_at: string;
+  source_detail?: string | null;
 };
 
 export type CompanyHoursPendingItem = {

@@ -200,6 +200,9 @@ export function ClientDetailPage() {
   const [savingHoursAdjustment, setSavingHoursAdjustment] = useState(false);
   const [showHoursHistory, setShowHoursHistory] = useState(false);
   const [hoursConsumptionBreakdownMode, setHoursConsumptionBreakdownMode] = useState<'projected' | 'confirmed' | null>(null);
+  const [expandedHoursModuleId, setExpandedHoursModuleId] = useState<string | null>(null);
+  const [loadingModuleLedgerId, setLoadingModuleLedgerId] = useState<string | null>(null);
+  const [moduleLedgerById, setModuleLedgerById] = useState<Record<string, CompanyHoursLedgerItem[]>>({});
 
   const [moduleEdits, setModuleEdits] = useState<Record<string, ModuleEdit>>({});
   const [savingCompany, setSavingCompany] = useState(false);
@@ -230,6 +233,31 @@ export function ClientDetailPage() {
     setHoursModuleInsights(moduleResponse.items ?? []);
     setHoursLedger(ledgerResponse.items ?? []);
     setHoursPending(pendingResponse.items ?? []);
+  }
+
+  async function toggleModuleHoursLedger(moduleId: string) {
+    if (!id) return;
+    if (expandedHoursModuleId === moduleId) {
+      setExpandedHoursModuleId(null);
+      return;
+    }
+
+    setExpandedHoursModuleId(moduleId);
+    if (moduleLedgerById[moduleId]) return;
+
+    setLoadingModuleLedgerId(moduleId);
+    try {
+      const response = await api.companyHoursModuleLedger(id, moduleId);
+      setModuleLedgerById((prev) => ({
+        ...prev,
+        [moduleId]: response.items ?? []
+      }));
+      setError('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Falha ao carregar rastreio de horas do módulo.');
+    } finally {
+      setLoadingModuleLedgerId(null);
+    }
   }
 
   function load() {
@@ -285,6 +313,9 @@ export function ClientDetailPage() {
     setShowOptionalsSection(true);
     setShowHistorySection(true);
     setShowHoursHistory(false);
+    setExpandedHoursModuleId(null);
+    setModuleLedgerById({});
+    setLoadingModuleLedgerId(null);
   }, [id]);
 
   useEffect(() => {
@@ -1569,6 +1600,25 @@ export function ClientDetailPage() {
                       custom_duration_days: ''
                     };
                     const canEmitCertificate = Boolean(moduleItem.is_enabled) && moduleItem.status === 'Concluido';
+                    const isHoursTraceOpen = expandedHoursModuleId === moduleItem.module_id;
+                    const moduleLedgerRows = (moduleLedgerById[moduleItem.module_id] ?? []).map((entry) => {
+                      const consumedDelta = extractLedgerConsumedDelta(entry);
+                      const worklogHours = entry.event_type === 'deliverable_worklog_logged'
+                        ? extractWorklogHours(entry.payload_json)
+                        : null;
+                      return {
+                        id: entry.id,
+                        created_at: entry.created_at,
+                        source_label: hoursEventLabel(entry.event_type),
+                        source_detail: entry.source_detail?.trim() || '-',
+                        reason: extractHoursPayloadReason(entry.payload_json) || '-',
+                        hours: consumedDelta ?? worklogHours ?? 0,
+                        impact_label: worklogHours !== null && consumedDelta === null
+                          ? 'Esforço interno'
+                          : 'Consumo cliente'
+                      };
+                    });
+                    const moduleLedgerTotal = roundHours(moduleLedgerRows.reduce((total, row) => total + row.hours, 0));
                     return (
                       <li key={moduleItem.module_id} className="timeline-item journey-module-card">
                         <div className="journey-module-head">
@@ -1691,12 +1741,67 @@ export function ClientDetailPage() {
                                   {emittingCertificateModuleId === moduleItem.module_id ? 'Gerando...' : 'Certificado PDF'}
                                 </button>
                               ) : null}
+                              <button
+                                type="button"
+                                onClick={() => void toggleModuleHoursLedger(moduleItem.module_id)}
+                                disabled={loadingModuleLedgerId === moduleItem.module_id}
+                              >
+                                {loadingModuleLedgerId === moduleItem.module_id
+                                  ? 'Carregando...'
+                                  : isHoursTraceOpen
+                                    ? 'Ocultar horas'
+                                    : 'Ver horas'}
+                              </button>
                               <button type="button" onClick={() => toggleModule(moduleItem.module_id, Boolean(moduleItem.is_enabled))}>
                                 {moduleItem.is_enabled ? 'Desativar módulo' : 'Ativar módulo'}
                               </button>
                             </div>
                           </div>
                           </div>
+                          {isHoursTraceOpen ? (
+                            <div className="journey-module-hours-trace">
+                              <div className="journey-module-hours-trace-head">
+                                <div>
+                                  <span>Rastreio do módulo</span>
+                                  <strong>{formatHoursValue(moduleLedgerTotal)} h líquidas registradas</strong>
+                                </div>
+                              </div>
+                              {loadingModuleLedgerId === moduleItem.module_id ? (
+                                <p className="muted">Carregando movimentações deste módulo...</p>
+                              ) : moduleLedgerRows.length === 0 ? (
+                                <p className="muted">Sem lançamentos de horas para este módulo.</p>
+                              ) : (
+                                <div className="journey-module-hours-table-wrap">
+                                  <table className="table table-tight">
+                                    <thead>
+                                      <tr>
+                                        <th>Data</th>
+                                        <th>Origem</th>
+                                        <th>Detalhe</th>
+                                        <th>Tipo</th>
+                                        <th>Horas</th>
+                                        <th>Motivo</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {moduleLedgerRows.map((row) => (
+                                        <tr key={`module-ledger-${row.id}`}>
+                                          <td>{formatDateTimeBr(row.created_at)}</td>
+                                          <td>{row.source_label}</td>
+                                          <td>{row.source_detail}</td>
+                                          <td>{row.impact_label}</td>
+                                          <td className={row.hours < 0 ? 'hours-negative' : 'hours-positive'}>
+                                            {row.hours > 0 ? '+' : ''}{formatHoursValue(row.hours)} h
+                                          </td>
+                                          <td>{row.reason}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              )}
+                            </div>
+                          ) : null}
                         </div>
                       </li>
                     );

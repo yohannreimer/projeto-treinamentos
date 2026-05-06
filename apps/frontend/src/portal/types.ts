@@ -61,6 +61,7 @@ export type PortalPlanningItem = {
   status: string;
   completed_at: string | null;
   delivery_mode?: 'ministrado' | 'entregavel';
+  client_hours_policy?: 'consome' | 'nao_consume';
   planned_diarias?: number;
   planned_hours?: number;
   actual_client_consumed_hours?: number;

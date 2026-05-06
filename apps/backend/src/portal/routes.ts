@@ -2,7 +2,7 @@ import express, { type Express } from 'express';
 import { z } from 'zod';
 import { buildCompanyModuleCertificate } from '../coreRoutes.js';
 import { db, uuid } from '../db.js';
-import { readCompanyHoursModuleInsights, reconcileCompanyHours } from '../hours/reconcile.js';
+import { readCompanyHoursModuleInsights } from '../hours/reconcile.js';
 import {
   createPortalSession,
   findPortalUserBySlugAndUsername,
@@ -1146,6 +1146,7 @@ function buildPortalPlanningItems(companyId: string, journeyModuleById: Map<stri
       mt.code as module_code,
       mt.name as module_name,
       coalesce(mt.delivery_mode, 'ministrado') as delivery_mode,
+      coalesce(mt.client_hours_policy, 'consome') as client_hours_policy,
       coalesce(cmp.custom_duration_days, mt.duration_days, 0) as duration_days,
       cmp.status,
       cmp.completed_at
@@ -1160,6 +1161,7 @@ function buildPortalPlanningItems(companyId: string, journeyModuleById: Map<stri
     module_code: string;
     module_name: string;
     delivery_mode: 'ministrado' | 'entregavel';
+    client_hours_policy: 'consome' | 'nao_consume';
     duration_days: number;
     status: string;
     completed_at: string | null;
@@ -1191,6 +1193,7 @@ function buildPortalPlanningItems(companyId: string, journeyModuleById: Map<stri
       next_dates: journey?.next_dates ?? [],
       current_cohort: journey?.current_cohort ?? null,
       delivery_mode: insight?.delivery_mode ?? row.delivery_mode ?? 'ministrado',
+      client_hours_policy: insight?.client_hours_policy ?? row.client_hours_policy ?? 'consome',
       planned_diarias: insight?.planned_diarias ?? (fallbackPlannedHours / 8),
       planned_hours: insight?.planned_hours ?? fallbackPlannedHours,
       actual_client_consumed_hours: insight?.actual_client_consumed_hours ?? 0
@@ -1214,6 +1217,7 @@ function buildPortalPlanningItems(companyId: string, journeyModuleById: Map<stri
       next_dates: journey.next_dates,
       current_cohort: journey.current_cohort,
       delivery_mode: insight?.delivery_mode ?? 'ministrado',
+      client_hours_policy: insight?.client_hours_policy ?? 'consome',
       planned_diarias: insight?.planned_diarias ?? (fallbackPlannedHours / 8),
       planned_hours: fallbackPlannedHours,
       actual_client_consumed_hours: insight?.actual_client_consumed_hours ?? 0
@@ -1221,6 +1225,30 @@ function buildPortalPlanningItems(companyId: string, journeyModuleById: Map<stri
   });
 
   return items.sort((a, b) => a.module_code.localeCompare(b.module_code));
+}
+
+function roundPortalHours(value: number) {
+  return Math.round(value * 100) / 100;
+}
+
+function buildPortalTrainingHoursSummary(items: ReturnType<typeof buildPortalPlanningItems>) {
+  const trainingItems = items.filter(
+    (item) => item.delivery_mode === 'ministrado' && item.client_hours_policy === 'consome'
+  );
+  const availableHours = roundPortalHours(
+    trainingItems.reduce((total, item) => total + Number(item.planned_hours ?? 0), 0)
+  );
+  const consumedHours = roundPortalHours(
+    trainingItems.reduce((total, item) => total + Number(item.actual_client_consumed_hours ?? 0), 0)
+  );
+  const balanceHours = roundPortalHours(availableHours - consumedHours);
+
+  return {
+    available_hours: availableHours,
+    consumed_hours: consumedHours,
+    balance_hours: balanceHours,
+    remaining_diarias: roundPortalHours(balanceHours / 8)
+  };
 }
 
 function applyPlanningDisplaySettings(
@@ -1892,12 +1920,12 @@ export function registerPortalRoutes(app: Express) {
     }
 
     const displaySettings = readPortalClientDisplaySettings(context.portal_client_id);
-    const hoursSummary = reconcileCompanyHours(context.company_id);
     const journeyReadModel = buildPortalJourneyReadModel(context.company_id);
     const planningItems = applyPlanningDisplaySettings(
       buildPortalPlanningItems(context.company_id, journeyReadModel.moduleById),
       displaySettings
     );
+    const hoursSummary = buildPortalTrainingHoursSummary(planningItems);
     const journeyAgendaItems = applyJourneyAgendaDisplaySettings(journeyReadModel.agendaItems, displaySettings);
     const planning = {
       total: planningItems.length,
@@ -1933,12 +1961,7 @@ export function registerPortalRoutes(app: Express) {
     return res.status(200).json({
       company_id: context.company_id,
       company_name: context.company_name,
-      hours_summary: {
-        available_hours: hoursSummary.available_hours,
-        consumed_hours: hoursSummary.consumed_hours,
-        balance_hours: hoursSummary.balance_hours,
-        remaining_diarias: hoursSummary.remaining_diarias
-      },
+      hours_summary: hoursSummary,
       planning: {
         total: planning.total,
         completed: planning.completed,
@@ -1959,7 +1982,6 @@ export function registerPortalRoutes(app: Express) {
     }
 
     const displaySettings = readPortalClientDisplaySettings(context.portal_client_id);
-    const hoursSummary = reconcileCompanyHours(context.company_id);
     const journeyReadModel = buildPortalJourneyReadModel(context.company_id);
     const effectiveSettings = context.is_internal
       ? { ...displaySettings, hiddenModuleIds: new Set<string>() }
@@ -1968,15 +1990,11 @@ export function registerPortalRoutes(app: Express) {
       buildPortalPlanningItems(context.company_id, journeyReadModel.moduleById),
       effectiveSettings
     );
+    const hoursSummary = buildPortalTrainingHoursSummary(items);
 
     return res.status(200).json({
       items,
-      hours_summary: {
-        available_hours: hoursSummary.available_hours,
-        consumed_hours: hoursSummary.consumed_hours,
-        balance_hours: hoursSummary.balance_hours,
-        remaining_diarias: hoursSummary.remaining_diarias
-      }
+      hours_summary: hoursSummary
     });
   });
 

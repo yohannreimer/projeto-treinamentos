@@ -233,6 +233,151 @@ test('manual adjustment deletion does not allow infinite delete loops', { concur
   }
 });
 
+test('GET /companies/:id/hours/modules/:moduleId/ledger returns only module movements', { concurrency: false }, async () => {
+  const dbPath = assignTestDbPath('hours-api-module-ledger-filter');
+  cleanupDbFiles(dbPath);
+
+  try {
+    const app = createApp({ forceDbRefresh: true, seedDb: false });
+    db.prepare(`
+      insert into company (id, name, status, notes, priority)
+      values ('comp-hours-api-module-ledger', 'Cliente Ledger Modulo', 'Ativo', null, 0)
+    `).run();
+    const insertModule = db.prepare(`
+      insert into module_template (
+        id, code, category, name, description, duration_days, profile, is_mandatory, delivery_mode, client_hours_policy
+      )
+      values (?, ?, 'Treinamento', ?, null, 1, null, 1, 'ministrado', 'consome')
+    `);
+    insertModule.run('mod-ledger-a', 'LED-A', 'Modulo Ledger A');
+    insertModule.run('mod-ledger-b', 'LED-B', 'Modulo Ledger B');
+    db.prepare(`
+      insert into cohort (
+        id, code, name, start_date, technician_id, status, capacity_companies, period, start_time, end_time, delivery_mode, notes
+      ) values ('coh-ledger-a', 'TUR-LED-001', 'Turma Ledger A', '2026-05-01', null, 'Confirmada', 5, 'Integral', '08:00', '17:00', 'Online', null)
+    `).run();
+    db.prepare(`
+      insert into cohort_module_block (id, cohort_id, module_id, order_in_cohort, start_day_offset, duration_days)
+      values ('cmb-ledger-a', 'coh-ledger-a', 'mod-ledger-a', 1, 1, 1)
+    `).run();
+    db.prepare(`
+      insert into cohort_allocation (id, cohort_id, company_id, module_id, entry_day, status, notes)
+      values ('alloc-ledger-a', 'coh-ledger-a', 'comp-hours-api-module-ledger', 'mod-ledger-a', 1, 'Confirmado', null)
+    `).run();
+    const insertProgress = db.prepare(`
+      insert into company_module_progress (company_id, module_id, status)
+      values (?, ?, 'Em_execucao')
+    `);
+    insertProgress.run('comp-hours-api-module-ledger', 'mod-ledger-a');
+    insertProgress.run('comp-hours-api-module-ledger', 'mod-ledger-b');
+
+    appendAndProject({
+      aggregate_type: 'module_scope',
+      aggregate_id: 'alloc-ledger-a',
+      company_id: 'comp-hours-api-module-ledger',
+      event_type: 'training_encounter_completed',
+      payload: {
+        module_id: 'mod-ledger-a',
+        hours_consumed: 4,
+        reason: 'Encontro do modulo A.'
+      },
+      idempotency_key: 'hours-module-ledger-a-training',
+      actor_type: 'system'
+    });
+    appendAndProject({
+      aggregate_type: 'company_hours_account',
+      aggregate_id: 'alloc-ledger-a',
+      company_id: 'comp-hours-api-module-ledger',
+      event_type: 'training_encounter_completed',
+      payload: {
+        module_id: 'mod-ledger-a',
+        hours_consumed: 4,
+        reason: 'Lançamento legado duplicado.'
+      },
+      idempotency_key: 'allocation-client-consumption:alloc-ledger-a:from-Confirmado:debit',
+      actor_type: 'system'
+    });
+    appendAndProject({
+      aggregate_type: 'company_hours_account',
+      aggregate_id: 'alloc-ledger-a',
+      company_id: 'comp-hours-api-module-ledger',
+      event_type: 'training_encounter_completed',
+      payload: {
+        module_id: 'mod-ledger-a',
+        hours_consumed: 4,
+        reason: 'Sincronização nova da mesma alocação.'
+      },
+      idempotency_key: 'allocation-hours-sync:alloc-ledger-a:target-4:debit',
+      actor_type: 'system'
+    });
+    appendAndProject({
+      aggregate_type: 'company_hours_account',
+      aggregate_id: 'alloc-ledger-orphan',
+      company_id: 'comp-hours-api-module-ledger',
+      event_type: 'training_encounter_completed',
+      payload: {
+        module_id: 'mod-ledger-a',
+        hours_consumed: 4,
+        reason: 'Sincronização nova da mesma alocação.'
+      },
+      idempotency_key: 'allocation-hours-sync:alloc-ledger-orphan:target-4:debit',
+      actor_type: 'system',
+      occurred_at: '2026-05-06T18:32:48.000Z',
+      created_at: '2026-05-06T18:32:48.000Z'
+    });
+    appendAndProject({
+      aggregate_type: 'module_scope',
+      aggregate_id: 'alloc-ledger-b',
+      company_id: 'comp-hours-api-module-ledger',
+      event_type: 'training_encounter_completed',
+      payload: {
+        module_id: 'mod-ledger-b',
+        hours_consumed: 8,
+        reason: 'Encontro do modulo B.'
+      },
+      idempotency_key: 'hours-module-ledger-b-training',
+      actor_type: 'system'
+    });
+    appendAndProject({
+      aggregate_type: 'company_hours_account',
+      aggregate_id: 'comp-hours-api-module-ledger',
+      company_id: 'comp-hours-api-module-ledger',
+      event_type: 'hours_manual_adjustment_added',
+      payload: {
+        delta_hours: 2,
+        consumed_delta: -2,
+        module_id: 'mod-ledger-a',
+        reason: 'Estorno parcial do modulo A.'
+      },
+      idempotency_key: 'hours-module-ledger-a-credit',
+      actor_type: 'operator'
+    });
+
+    const res = await request(app).get('/companies/comp-hours-api-module-ledger/hours/modules/mod-ledger-a/ledger');
+    assert.equal(res.status, 200);
+    assert.equal(Array.isArray(res.body.items), true);
+    assert.equal(res.body.items.length, 3);
+    assert.deepEqual(
+      res.body.items.map((item: { event_type: string }) => item.event_type).sort(),
+      ['hours_manual_adjustment_added', 'training_encounter_completed', 'training_encounter_completed']
+    );
+    assert.equal(
+      res.body.items.every((item: { payload_json: string }) => JSON.parse(item.payload_json).module_id === 'mod-ledger-a'),
+      true
+    );
+    assert.equal(
+      res.body.items.some((item: { source_detail?: string }) => item.source_detail?.includes('TUR-LED-001 - Turma Ledger A')),
+      true
+    );
+    assert.equal(
+      res.body.items.some((item: { source_detail?: string }) => item.source_detail?.includes('Lançamento legado')),
+      false
+    );
+  } finally {
+    cleanupDbFiles(dbPath);
+  }
+});
+
 test('POST /companies/:id/hours/pending/:pendingId/confirm resolves pending adjustment', { concurrency: false }, async () => {
   const dbPath = assignTestDbPath('hours-api-confirm-pending');
   cleanupDbFiles(dbPath);

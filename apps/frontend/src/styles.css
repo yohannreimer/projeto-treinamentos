@@ -1580,6 +1580,71 @@ button:focus-visible,
   color: #3f505f;
 }
 
+.journey-module-hours-trace {
+  grid-column: 1 / -1;
+  border: 1px solid #dbe4ec;
+  border-radius: 14px;
+  background: #fff;
+  overflow: hidden;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+.journey-module-hours-trace-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid #e4eaf0;
+  background: linear-gradient(180deg, #f8fafc 0%, #f2f6fa 100%);
+}
+
+.journey-module-hours-trace-head span {
+  display: block;
+  color: #607080;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.journey-module-hours-trace-head strong {
+  display: block;
+  margin-top: 3px;
+  color: #1f2d38;
+  font-size: 1rem;
+}
+
+.journey-module-hours-trace > .muted {
+  margin: 0;
+  padding: 14px;
+}
+
+.journey-module-hours-table-wrap {
+  max-height: 280px;
+  overflow: auto;
+}
+
+.journey-module-hours-table-wrap .table {
+  margin: 0;
+}
+
+.journey-module-hours-table-wrap .table th,
+.journey-module-hours-table-wrap .table td {
+  font-size: 0.84rem;
+  vertical-align: top;
+}
+
+.hours-positive {
+  color: #236c48;
+  font-weight: 800;
+}
+
+.hours-negative {
+  color: #a44536;
+  font-weight: 800;
+}
+
 .hours-bank-table-wrap .table td .muted {
   margin: 4px 0 0;
 }
