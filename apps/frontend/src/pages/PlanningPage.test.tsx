@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
@@ -398,7 +398,7 @@ describe('PlanningPage', () => {
 
     await user.click(await screen.findByRole('button', { name: /10:00 - 12:00/i }));
     await user.click(screen.getByRole('button', { name: 'Salvar encontro' }));
-    await user.click(screen.getByRole('button', { name: /14:00 - 12:00/i }));
+    fireEvent.click(screen.getByRole('button', { name: /14:00 - 12:00/i }));
 
     expect(screen.getByDisplayValue('Segundo encontro')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Salvar encontro' })).toBeEnabled();

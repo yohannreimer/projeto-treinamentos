@@ -210,7 +210,7 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
       <button
         className={`planning-encounter ${isSelected ? 'is-selected' : ''}`.trim()}
         key={encounter.id}
-        onClick={() => setSelectedEncounterId(encounter.id)}
+        onClick={() => selectEncounter(encounter.id)}
         type="button"
       >
         <strong>{encounter.day_date}</strong>
@@ -223,6 +223,11 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
   function selectWorkspace(workspaceId: string) {
     selectedWorkspaceIdRef.current = workspaceId;
     setSelectedWorkspaceId(workspaceId);
+  }
+
+  function selectEncounter(encounterId: string) {
+    selectedEncounterIdRef.current = encounterId;
+    setSelectedEncounterId(encounterId);
   }
 
   return (
