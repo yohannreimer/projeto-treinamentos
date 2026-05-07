@@ -10,7 +10,9 @@ vi.mock('../services/api', () => ({
   api: {
     planningWorkspaces: vi.fn(),
     planningWorkspace: vi.fn(),
-    updatePlanningEncounter: vi.fn()
+    updatePlanningEncounter: vi.fn(),
+    validatePlanningWorkspace: vi.fn(),
+    publishPlanningWorkspace: vi.fn()
   }
 }));
 
@@ -263,19 +265,84 @@ describe('PlanningPage', () => {
       { id: 'ple-1', time: '10:00', notes: 'Ajustar data' }
     ]));
     vi.mocked(api.updatePlanningEncounter).mockRejectedValue(new Error('Conflito de agenda'));
+    vi.mocked(api.validatePlanningWorkspace).mockResolvedValue({ ok: true, conflicts: [] });
+    vi.mocked(api.publishPlanningWorkspace).mockResolvedValue({
+      created_cohorts: 0,
+      updated_cohorts: 1,
+      encounter_count: 1,
+      version_number: 2
+    });
 
     render(<PlanningPage />);
 
-    await user.click(await screen.findByRole('button', { name: 'Validar e publicar' }));
-    expect(screen.getByRole('status')).toHaveTextContent('Validação será executada antes da publicação.');
+    await user.click(await screen.findByRole('button', { name: 'Publicar alterações válidas' }));
+    expect(await screen.findByRole('status')).toHaveTextContent('Publicado: 0 criada');
 
     await user.click(screen.getByRole('button', { name: /10:00 - 12:00/i }));
     await user.clear(screen.getByLabelText('Data'));
     await user.type(screen.getByLabelText('Data'), '2026-05-15');
     await user.click(screen.getByRole('button', { name: 'Salvar encontro' }));
 
-    expect(screen.queryByText('Validação será executada antes da publicação.')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Publicado: 0 criada/)).not.toBeInTheDocument();
     expect(await screen.findByRole('alert')).toHaveTextContent('Conflito de agenda');
+  });
+
+  test('validates and publishes current workspace', async () => {
+    const user = userEvent.setup();
+
+    vi.mocked(api.planningWorkspaces).mockResolvedValue({
+      workspaces: [{ id: 'pln-1', name: 'Carteira Maio', status: 'Rascunho', client_count: 1, encounter_count: 1 }]
+    });
+    vi.mocked(api.planningWorkspace).mockResolvedValue({
+      workspace: {
+        id: 'pln-1',
+        name: 'Carteira Maio',
+        status: 'Rascunho',
+        mode: 'Manual',
+        horizon_days: 60,
+        notes: null,
+        created_at: '2026-05-07',
+        updated_at: '2026-05-07',
+        published_at: null
+      },
+      clients: [],
+      cohorts: []
+    });
+    vi.mocked(api.validatePlanningWorkspace).mockResolvedValue({ ok: true, conflicts: [] });
+    vi.mocked(api.publishPlanningWorkspace).mockResolvedValue({
+      created_cohorts: 1,
+      updated_cohorts: 0,
+      encounter_count: 2,
+      version_number: 1
+    });
+
+    render(<PlanningPage />);
+
+    await screen.findByText('Carteira Maio');
+    await user.click(screen.getByRole('button', { name: 'Publicar alterações válidas' }));
+
+    expect(api.validatePlanningWorkspace).toHaveBeenCalledWith('pln-1');
+    expect(api.publishPlanningWorkspace).toHaveBeenCalledWith('pln-1');
+    expect(await screen.findByText(/Publicado: 1 criada/)).toBeInTheDocument();
+  });
+
+  test('shows validation conflicts before publishing workspace', async () => {
+    const user = userEvent.setup();
+
+    vi.mocked(api.planningWorkspaces).mockResolvedValue({
+      workspaces: [{ id: 'pln-1', name: 'Carteira Maio', status: 'Rascunho', client_count: 1, encounter_count: 1 }]
+    });
+    vi.mocked(api.planningWorkspace).mockResolvedValue(detail('pln-1', 'Carteira Maio', 'Delta Ferramentaria', [
+      { id: 'ple-1', time: '10:00', notes: 'Ajustar data' }
+    ]));
+    vi.mocked(api.validatePlanningWorkspace).mockResolvedValue({ ok: false, conflicts: [{ planning_encounter_id: 'ple-1' }] });
+
+    render(<PlanningPage />);
+
+    await user.click(await screen.findByRole('button', { name: 'Publicar alterações válidas' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Planejamento possui 1 conflito');
+    expect(api.publishPlanningWorkspace).not.toHaveBeenCalled();
   });
 
   test('ignores duplicate encounter saves while the first save is in flight', async () => {

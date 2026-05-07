@@ -38,6 +38,7 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
   const [encounterDraft, setEncounterDraft] = useState(emptyEncounterDraft);
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
   const [savingEncounter, setSavingEncounter] = useState<SavingEncounterState>(null);
+  const [publishingWorkspaceId, setPublishingWorkspaceId] = useState<string | null>(null);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const selectedEncounterIdRef = useRef<string | null>(null);
@@ -154,6 +155,7 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
   const selectedWorkspace = planningDetail?.workspace ?? null;
   const clients = planningDetail?.clients ?? [];
   const cohorts = planningDetail?.cohorts ?? [];
+  const isPublishingSelectedWorkspace = Boolean(planningDetail && publishingWorkspaceId === planningDetail.workspace.id);
   const isSavingSelectedEncounter = Boolean(
     savingEncounter &&
       planningDetail &&
@@ -203,6 +205,41 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
     }
   }
 
+  async function publishCurrentWorkspace() {
+    if (!planningDetail || isPublishingSelectedWorkspace) return;
+
+    const workspaceId = planningDetail.workspace.id;
+    try {
+      setPublishingWorkspaceId(workspaceId);
+      setError('');
+      setMessage('');
+      const validation = await api.validatePlanningWorkspace(workspaceId);
+      if (selectedWorkspaceIdRef.current !== workspaceId) return;
+      if (!validation.ok) {
+        setError(`Planejamento possui ${validation.conflicts.length} conflito(s).`);
+        return;
+      }
+
+      const result = await api.publishPlanningWorkspace(workspaceId);
+      const refreshed = await api.planningWorkspace(workspaceId);
+      if (selectedWorkspaceIdRef.current !== workspaceId) return;
+      const refreshedEncounters = refreshed.cohorts.flatMap((cohort) => cohort.encounters);
+      const nextSelectedEncounter =
+        refreshedEncounters.find((encounter) => encounter.id === selectedEncounterIdRef.current) ?? refreshedEncounters[0] ?? null;
+      setPlanningDetail(refreshed);
+      selectEncounter(nextSelectedEncounter?.id ?? '');
+      setMessage(
+        `Publicado: ${result.created_cohorts} criada(s), ${result.updated_cohorts} atualizada(s), ${result.encounter_count} encontro(s).`
+      );
+    } catch (requestError) {
+      if (selectedWorkspaceIdRef.current !== workspaceId) return;
+      setMessage('');
+      setError((requestError as Error).message || 'Falha ao publicar planejamento.');
+    } finally {
+      setPublishingWorkspaceId((currentWorkspaceId) => (currentWorkspaceId === workspaceId ? null : currentWorkspaceId));
+    }
+  }
+
   function renderEncounter(cohort: PlanningCohort, encounter: PlanningEncounter) {
     const isSelected = selectedEncounter?.id === encounter.id;
 
@@ -226,8 +263,8 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
   }
 
   function selectEncounter(encounterId: string) {
-    selectedEncounterIdRef.current = encounterId;
-    setSelectedEncounterId(encounterId);
+    selectedEncounterIdRef.current = encounterId || null;
+    setSelectedEncounterId(encounterId || null);
   }
 
   return (
@@ -303,8 +340,8 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
               <h2 id="planning-calendar-title">Agenda por horário</h2>
               <p>{isLoadingDetail ? 'Carregando grade' : selectedWorkspace ? `${selectedWorkspace.horizon_days} dias de horizonte` : 'Selecione um workspace'}</p>
             </div>
-            <button type="button" onClick={() => setMessage('Validação será executada antes da publicação.')}>
-              Validar e publicar
+            <button type="button" disabled={isPublishingSelectedWorkspace} onClick={publishCurrentWorkspace}>
+              {isPublishingSelectedWorkspace ? 'Publicando...' : 'Publicar alterações válidas'}
             </button>
           </div>
 
