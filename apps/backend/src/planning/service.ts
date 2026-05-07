@@ -197,10 +197,13 @@ export function publishPlanningWorkspace(workspaceId: string): {
   `).all(workspaceId) as PlanningCohortPublishRow[];
 
   const planningEncounters = db.prepare(`
-    select *
-    from planning_encounter
-    where workspace_id = ? and status <> 'Cancelado'
-    order by planning_cohort_id asc, encounter_index asc
+    select pe.*
+    from planning_encounter pe
+    join planning_cohort pc on pc.id = pe.planning_cohort_id
+    where pe.workspace_id = ?
+      and pe.status <> 'Cancelado'
+      and pc.status <> 'Cancelado'
+    order by pe.planning_cohort_id asc, pe.encounter_index asc
   `).all(workspaceId) as PlanningEncounterPublishRow[];
 
   const encountersByCohort = new Map<string, PlanningEncounterPublishRow[]>();
