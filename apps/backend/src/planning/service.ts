@@ -29,6 +29,11 @@ type PlanningEncounterPublishRow = {
   end_time: string;
 };
 
+function publishedBlockDurationDays(period: string, encounters: PlanningEncounterPublishRow[]): number {
+  const divisor = period === 'Meio_periodo' ? 2 : 1;
+  return Math.max(1, Math.ceil(encounters.length / divisor));
+}
+
 export function timeToMinutes(value: string | null | undefined): number | null {
   if (!value || !TIME_REGEX.test(value)) return null;
   const [hourRaw, minuteRaw] = value.split(':');
@@ -126,6 +131,7 @@ export function findPlanningEncounterConflicts(args: {
     where pe.technician_id = ?
       and pe.day_date = ?
       and pe.status <> 'Cancelado'
+      and pc.status <> 'Cancelado'
       and (? is null or pe.id <> ?)
   `).all(
     args.technician_id,
@@ -244,7 +250,6 @@ export function publishPlanningWorkspace(workspaceId: string): {
           set name = ?,
               start_date = ?,
               technician_id = ?,
-              status = 'Planejada',
               capacity_companies = 1,
               period = ?,
               start_time = ?,
@@ -296,7 +301,7 @@ export function publishPlanningWorkspace(workspaceId: string): {
       db.prepare(`
         insert into cohort_module_block (id, cohort_id, module_id, order_in_cohort, start_day_offset, duration_days)
         values (?, ?, ?, 1, 1, ?)
-      `).run(uuid('blk'), cohortId, cohort.module_id, encounters.length);
+      `).run(uuid('blk'), cohortId, cohort.module_id, publishedBlockDurationDays(cohort.period, encounters));
 
       db.prepare('delete from cohort_schedule_day where cohort_id = ?').run(cohortId);
       const insertScheduleDay = db.prepare(`
@@ -327,7 +332,10 @@ export function publishPlanningWorkspace(workspaceId: string): {
         on conflict(cohort_id, company_id, module_id)
         do update set
           entry_day = excluded.entry_day,
-          status = 'Previsto',
+          status = case
+            when cohort_allocation.status = 'Cancelado' then 'Previsto'
+            else cohort_allocation.status
+          end,
           notes = excluded.notes
       `).run(uuid('all'), cohortId, cohort.company_id, cohort.module_id);
 

@@ -297,7 +297,7 @@ test('planning publish creates real cohort with module block, schedule days and 
     }>;
     assert.equal(blocks.length, 1);
     assert.equal(blocks[0].module_id, 'mod-install');
-    assert.equal(blocks[0].duration_days, 2);
+    assert.equal(blocks[0].duration_days, 1);
 
     const scheduleDays = db.prepare(`
       select * from cohort_schedule_day where cohort_id = ? order by day_index asc
@@ -317,6 +317,146 @@ test('planning publish creates real cohort with module block, schedule days and 
     assert.ok(allocation);
     assert.equal(allocation.company_id, 'comp-delta');
     assert.equal(allocation.module_id, 'mod-install');
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('planning publish preserves operational status on republish', { concurrency: false }, async () => {
+  const dbPath = assignTestDbPath('planning-publish-republish-status');
+  cleanupDbFiles(dbPath);
+
+  try {
+    const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+    db.prepare('insert into company (id, name, status, notes, priority) values (?, ?, ?, null, 0)')
+      .run('comp-delta', 'Delta Ferramentaria', 'Ativo');
+    db.prepare(`
+      insert into module_template (
+        id, code, category, name, description, duration_days, profile, is_mandatory, delivery_mode, client_hours_policy
+      ) values (?, ?, ?, ?, null, ?, null, ?, ?, ?)
+    `).run('mod-install', 'MOD-01', 'Base', 'Instalação', 2, 1, 'ministrado', 'consome');
+    db.prepare('insert into technician (id, name) values (?, ?)')
+      .run('tech-ana', 'Ana Técnica');
+
+    const created = await request(app)
+      .post('/planning/workspaces')
+      .send({
+        name: 'Carteira Republicação',
+        mode: 'Manual',
+        horizon_days: 60,
+        company_ids: ['comp-delta']
+      });
+    const workspaceId = created.body.workspace.id as string;
+
+    await request(app)
+      .post(`/planning/workspaces/${workspaceId}/cohorts`)
+      .send({
+        company_id: 'comp-delta',
+        module_id: 'mod-install',
+        technician_id: 'tech-ana',
+        name: 'Delta · Instalação',
+        delivery_mode: 'Online',
+        period: 'Meio_periodo',
+        encounters: [
+          { day_date: '2026-05-11', start_time: '10:00', end_time: '14:00', status: 'Confirmado' },
+          { day_date: '2026-05-12', start_time: '10:00', end_time: '14:00', status: 'Confirmado' }
+        ]
+      });
+
+    const firstPublish = await request(app).post(`/planning/workspaces/${workspaceId}/publish`);
+    assert.equal(firstPublish.status, 200);
+
+    const cohort = db.prepare('select id from cohort where planning_workspace_id = ?').get(workspaceId) as { id: string };
+    db.prepare("update cohort set status = 'Aguardando_quorum' where id = ?").run(cohort.id);
+    db.prepare("update cohort_allocation set status = 'Executado', executed_at = ? where cohort_id = ?")
+      .run('2026-05-12T18:00:00.000Z', cohort.id);
+
+    const secondPublish = await request(app).post(`/planning/workspaces/${workspaceId}/publish`);
+    assert.equal(secondPublish.status, 200);
+    assert.equal(secondPublish.body.created_cohorts, 0);
+    assert.equal(secondPublish.body.updated_cohorts, 1);
+
+    const republishedCohort = db.prepare('select status from cohort where id = ?').get(cohort.id) as { status: string };
+    assert.equal(republishedCohort.status, 'Aguardando_quorum');
+
+    const allocation = db.prepare('select status, executed_at from cohort_allocation where cohort_id = ?').get(cohort.id) as {
+      status: string;
+      executed_at: string | null;
+    };
+    assert.equal(allocation.status, 'Executado');
+    assert.equal(allocation.executed_at, '2026-05-12T18:00:00.000Z');
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('planning publish ignores canceled cohort conflicts', { concurrency: false }, async () => {
+  const dbPath = assignTestDbPath('planning-publish-canceled-conflict');
+  cleanupDbFiles(dbPath);
+
+  try {
+    const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+    db.prepare('insert into company (id, name, status, notes, priority) values (?, ?, ?, null, 0)')
+      .run('comp-delta', 'Delta Ferramentaria', 'Ativo');
+    db.prepare(`
+      insert into module_template (
+        id, code, category, name, description, duration_days, profile, is_mandatory, delivery_mode, client_hours_policy
+      ) values (?, ?, ?, ?, null, ?, null, ?, ?, ?)
+    `).run('mod-install', 'MOD-01', 'Base', 'Instalação', 2, 1, 'ministrado', 'consome');
+    db.prepare('insert into technician (id, name) values (?, ?)')
+      .run('tech-ana', 'Ana Técnica');
+
+    const created = await request(app)
+      .post('/planning/workspaces')
+      .send({
+        name: 'Carteira Cancelados',
+        mode: 'Manual',
+        horizon_days: 60,
+        company_ids: ['comp-delta']
+      });
+    const workspaceId = created.body.workspace.id as string;
+
+    const active = await request(app)
+      .post(`/planning/workspaces/${workspaceId}/cohorts`)
+      .send({
+        company_id: 'comp-delta',
+        module_id: 'mod-install',
+        technician_id: 'tech-ana',
+        name: 'Delta · Instalação',
+        delivery_mode: 'Online',
+        period: 'Meio_periodo',
+        encounters: [
+          { day_date: '2026-05-11', start_time: '10:00', end_time: '14:00', status: 'Confirmado' },
+          { day_date: '2026-05-12', start_time: '10:00', end_time: '14:00', status: 'Confirmado' }
+        ]
+      });
+    assert.equal(active.status, 201);
+
+    const canceled = await request(app)
+      .post(`/planning/workspaces/${workspaceId}/cohorts`)
+      .send({
+        company_id: 'comp-delta',
+        module_id: 'mod-install',
+        technician_id: 'tech-ana',
+        name: 'Delta · Instalação cancelada',
+        delivery_mode: 'Online',
+        period: 'Meio_periodo',
+        encounters: [
+          { day_date: '2026-05-11', start_time: '10:00', end_time: '14:00', status: 'Confirmado' }
+        ]
+      });
+    assert.equal(canceled.status, 201);
+
+    db.prepare("update planning_cohort set status = 'Cancelado' where id = ?").run(canceled.body.cohort.id);
+
+    const published = await request(app).post(`/planning/workspaces/${workspaceId}/publish`);
+
+    assert.equal(published.status, 200);
+    assert.equal(published.body.created_cohorts, 1);
   } finally {
     db.close();
     cleanupDbFiles(dbPath);

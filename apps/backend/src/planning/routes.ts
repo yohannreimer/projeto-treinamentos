@@ -226,8 +226,8 @@ export function registerPlanningRoutes(app: Express) {
   app.post('/planning/workspaces/:workspaceId/validate', (req, res) => {
     const detail = readWorkspace(req.params.workspaceId);
     if (!detail) return res.status(404).json({ message: 'Planejamento não encontrado.' });
-    const conflicts = detail.cohorts.flatMap((cohort) => (
-      cohort.encounters.flatMap((encounter) => findPlanningEncounterConflicts({
+    const conflicts = detail.cohorts.filter((cohort) => cohort.status !== 'Cancelado').flatMap((cohort) => (
+      cohort.encounters.filter((encounter) => encounter.status !== 'Cancelado').flatMap((encounter) => findPlanningEncounterConflicts({
         technician_id: encounter.technician_id,
         day_date: encounter.day_date,
         start_time: encounter.start_time,
@@ -243,8 +243,8 @@ export function registerPlanningRoutes(app: Express) {
     const detail = readWorkspace(req.params.workspaceId);
     if (!detail) return res.status(404).json({ message: 'Planejamento não encontrado.' });
 
-    const conflicts = detail.cohorts.flatMap((cohort) => (
-      cohort.encounters.flatMap((encounter) => findPlanningEncounterConflicts({
+    const conflicts = detail.cohorts.filter((cohort) => cohort.status !== 'Cancelado').flatMap((cohort) => (
+      cohort.encounters.filter((encounter) => encounter.status !== 'Cancelado').flatMap((encounter) => findPlanningEncounterConflicts({
         technician_id: encounter.technician_id,
         day_date: encounter.day_date,
         start_time: encounter.start_time,
