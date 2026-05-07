@@ -63,6 +63,7 @@ type PlanningEncounterReadRow = {
 type PlanningEncounterUpdateRow = {
   id: string;
   workspace_id: string;
+  planning_cohort_id: string;
   technician_id: string | null;
   day_date: string;
   start_time: string;
@@ -258,6 +259,12 @@ export function registerPlanningRoutes(app: Express) {
     if (!existing) return res.status(404).json({ message: 'Encontro não encontrado.' });
 
     const payload = parsed.data;
+    const technicianWasProvided = Object.prototype.hasOwnProperty.call(payload, 'technician_id');
+    if (technicianWasProvided && payload.technician_id !== null) {
+      const technician = db.prepare('select id from technician where id = ?').get(payload.technician_id);
+      if (!technician) return res.status(404).json({ message: 'Técnico não encontrado.' });
+    }
+
     const next = {
       technician_id: payload.technician_id !== undefined ? payload.technician_id : existing.technician_id,
       day_date: payload.day_date ?? existing.day_date,
@@ -270,16 +277,57 @@ export function registerPlanningRoutes(app: Express) {
     const validation = validatePlanningEncounterPayload(next);
     if (!validation.ok) return res.status(400).json({ message: validation.message });
 
-    const conflicts = findPlanningEncounterConflicts({
-      technician_id: next.technician_id,
-      day_date: next.day_date,
-      start_time: next.start_time,
-      end_time: next.end_time,
-      exclude_planning_encounter_id: existing.id,
-      exclude_published_cohort_id: existing.published_cohort_id ?? undefined
-    });
-    if (conflicts.length > 0) {
-      return res.status(409).json({ message: 'Encontro possui conflito.', conflicts });
+    if (technicianWasProvided) {
+      const siblingRows = db.prepare(`
+        select id, day_date, start_time, end_time, status, published_cohort_id
+        from planning_encounter
+        where workspace_id = ?
+          and planning_cohort_id = ?
+          and (status <> 'Cancelado' or id = ?)
+      `).all(req.params.workspaceId, existing.planning_cohort_id, existing.id) as Array<{
+        id: string;
+        day_date: string;
+        start_time: string;
+        end_time: string;
+        status: string;
+        published_cohort_id: string | null;
+      }>;
+
+      const conflicts = siblingRows.flatMap((encounter) => {
+        const effective = encounter.id === existing.id
+          ? next
+          : {
+              technician_id: next.technician_id,
+              day_date: encounter.day_date,
+              start_time: encounter.start_time,
+              end_time: encounter.end_time,
+              status: encounter.status
+            };
+        if (effective.status === 'Cancelado') return [];
+        return findPlanningEncounterConflicts({
+          technician_id: next.technician_id,
+          day_date: effective.day_date,
+          start_time: effective.start_time,
+          end_time: effective.end_time,
+          exclude_planning_encounter_id: encounter.id,
+          exclude_published_cohort_id: encounter.published_cohort_id ?? undefined
+        }).map((conflict) => ({ planning_encounter_id: encounter.id, ...conflict }));
+      });
+      if (conflicts.length > 0) {
+        return res.status(409).json({ message: 'Encontro possui conflito.', conflicts });
+      }
+    } else if (next.status !== 'Cancelado') {
+      const conflicts = findPlanningEncounterConflicts({
+        technician_id: next.technician_id,
+        day_date: next.day_date,
+        start_time: next.start_time,
+        end_time: next.end_time,
+        exclude_planning_encounter_id: existing.id,
+        exclude_published_cohort_id: existing.published_cohort_id ?? undefined
+      });
+      if (conflicts.length > 0) {
+        return res.status(409).json({ message: 'Encontro possui conflito.', conflicts });
+      }
     }
 
     const now = nowDateIso();
@@ -309,10 +357,31 @@ export function registerPlanningRoutes(app: Express) {
       );
       db.prepare('update planning_workspace set status = ?, updated_at = ? where id = ?')
         .run(nextWorkspaceStatus, now, req.params.workspaceId);
+      if (technicianWasProvided) {
+        db.prepare(`
+          update planning_cohort
+          set technician_id = ?,
+              updated_at = ?
+          where id = ?
+            and workspace_id = ?
+        `).run(next.technician_id, now, existing.planning_cohort_id, req.params.workspaceId);
+        db.prepare(`
+          update planning_encounter
+          set technician_id = ?,
+              updated_at = ?
+          where workspace_id = ?
+            and planning_cohort_id = ?
+            and status <> 'Cancelado'
+        `).run(next.technician_id, now, req.params.workspaceId, existing.planning_cohort_id);
+      }
     });
 
-    tx();
-    return res.json(readWorkspace(req.params.workspaceId));
+    try {
+      tx();
+      return res.json(readWorkspace(req.params.workspaceId));
+    } catch (error) {
+      return res.status(400).json({ message: 'Não foi possível atualizar encontro.', detail: errorMessage(error) });
+    }
   });
 
   app.post('/planning/workspaces/:workspaceId/validate', (req, res) => {

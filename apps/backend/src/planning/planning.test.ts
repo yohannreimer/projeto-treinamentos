@@ -406,6 +406,194 @@ test('replanning updates a single published encounter and republishes cohort sch
   }
 });
 
+test('replanning rejects unknown technician with controlled response', { concurrency: false }, async () => {
+  const dbPath = assignTestDbPath('planning-replan-invalid-technician');
+  cleanupDbFiles(dbPath);
+
+  try {
+    const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+    db.prepare('insert into company (id, name, status, notes, priority) values (?, ?, ?, null, 0)')
+      .run('comp-delta', 'Delta Ferramentaria', 'Ativo');
+    db.prepare(`
+      insert into module_template (
+        id, code, category, name, description, duration_days, profile, is_mandatory, delivery_mode, client_hours_policy
+      ) values (?, ?, ?, ?, null, ?, null, ?, ?, ?)
+    `).run('mod-install', 'MOD-01', 'Base', 'Instalação', 1, 1, 'ministrado', 'consome');
+    db.prepare('insert into technician (id, name) values (?, ?)')
+      .run('tech-ana', 'Ana Técnica');
+
+    const created = await request(app).post('/planning/workspaces').send({
+      name: 'Carteira Técnico Inválido',
+      company_ids: ['comp-delta']
+    });
+    const workspaceId = created.body.workspace.id as string;
+
+    const plannedCohort = await request(app)
+      .post(`/planning/workspaces/${workspaceId}/cohorts`)
+      .send({
+        company_id: 'comp-delta',
+        module_id: 'mod-install',
+        technician_id: 'tech-ana',
+        name: 'Delta · Instalação',
+        encounters: [
+          { day_date: '2026-05-11', start_time: '10:00', end_time: '14:00', status: 'Confirmado' }
+        ]
+      });
+    const encounterId = plannedCohort.body.encounters[0].id as string;
+
+    const updated = await request(app)
+      .patch(`/planning/workspaces/${workspaceId}/encounters/${encounterId}`)
+      .send({ technician_id: 'tech-inexistente' });
+
+    assert.equal(updated.status, 404);
+    assert.equal(updated.body.message, 'Técnico não encontrado.');
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('replanning can cancel an encounter that currently has a conflict', { concurrency: false }, async () => {
+  const dbPath = assignTestDbPath('planning-replan-cancel-conflict');
+  cleanupDbFiles(dbPath);
+
+  try {
+    const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+    db.prepare('insert into company (id, name, status, notes, priority) values (?, ?, ?, null, 0)')
+      .run('comp-delta', 'Delta Ferramentaria', 'Ativo');
+    db.prepare(`
+      insert into module_template (
+        id, code, category, name, description, duration_days, profile, is_mandatory, delivery_mode, client_hours_policy
+      ) values (?, ?, ?, ?, null, ?, null, ?, ?, ?)
+    `).run('mod-install', 'MOD-01', 'Base', 'Instalação', 1, 1, 'ministrado', 'consome');
+    db.prepare('insert into technician (id, name) values (?, ?)')
+      .run('tech-ana', 'Ana Técnica');
+    db.prepare(`
+      insert into calendar_activity (
+        id, title, activity_type, start_date, end_date, selected_dates, hours_scope, all_day,
+        start_time, end_time, technician_id, status, created_at, updated_at
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'act-ana-1',
+      'Suporte Alfa',
+      'Suporte',
+      '2026-05-11',
+      '2026-05-11',
+      '2026-05-11',
+      'none',
+      0,
+      '10:00',
+      '12:00',
+      'tech-ana',
+      'Planejada',
+      '2026-05-07T10:00:00.000Z',
+      '2026-05-07T10:00:00.000Z'
+    );
+    db.prepare('insert into calendar_activity_technician (activity_id, technician_id) values (?, ?)')
+      .run('act-ana-1', 'tech-ana');
+    db.prepare(`
+      insert into calendar_activity_day (activity_id, day_date, all_day, start_time, end_time)
+      values (?, ?, ?, ?, ?)
+    `).run('act-ana-1', '2026-05-11', 0, '10:00', '12:00');
+
+    const created = await request(app).post('/planning/workspaces').send({
+      name: 'Carteira Cancelamento',
+      company_ids: ['comp-delta']
+    });
+    const workspaceId = created.body.workspace.id as string;
+
+    const plannedCohort = await request(app)
+      .post(`/planning/workspaces/${workspaceId}/cohorts`)
+      .send({
+        company_id: 'comp-delta',
+        module_id: 'mod-install',
+        technician_id: 'tech-ana',
+        name: 'Delta · Instalação',
+        encounters: [
+          { day_date: '2026-05-11', start_time: '10:00', end_time: '14:00', status: 'Confirmado' }
+        ]
+      });
+    const encounterId = plannedCohort.body.encounters[0].id as string;
+
+    const updated = await request(app)
+      .patch(`/planning/workspaces/${workspaceId}/encounters/${encounterId}`)
+      .send({ status: 'Cancelado' });
+
+    assert.equal(updated.status, 200);
+    assert.equal(updated.body.cohorts[0].encounters[0].status, 'Cancelado');
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('replanning technician change updates cohort technician before republish', { concurrency: false }, async () => {
+  const dbPath = assignTestDbPath('planning-replan-technician-cohort');
+  cleanupDbFiles(dbPath);
+
+  try {
+    const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+    db.prepare('insert into company (id, name, status, notes, priority) values (?, ?, ?, null, 0)')
+      .run('comp-delta', 'Delta Ferramentaria', 'Ativo');
+    db.prepare(`
+      insert into module_template (
+        id, code, category, name, description, duration_days, profile, is_mandatory, delivery_mode, client_hours_policy
+      ) values (?, ?, ?, ?, null, ?, null, ?, ?, ?)
+    `).run('mod-install', 'MOD-01', 'Base', 'Instalação', 2, 1, 'ministrado', 'consome');
+    db.prepare('insert into technician (id, name) values (?, ?), (?, ?)')
+      .run('tech-ana', 'Ana Técnica', 'tech-bruno', 'Bruno Técnico');
+
+    const created = await request(app).post('/planning/workspaces').send({
+      name: 'Carteira Técnico Cohort',
+      company_ids: ['comp-delta']
+    });
+    const workspaceId = created.body.workspace.id as string;
+
+    const plannedCohort = await request(app)
+      .post(`/planning/workspaces/${workspaceId}/cohorts`)
+      .send({
+        company_id: 'comp-delta',
+        module_id: 'mod-install',
+        technician_id: 'tech-ana',
+        name: 'Delta · Instalação',
+        delivery_mode: 'Online',
+        period: 'Meio_periodo',
+        encounters: [
+          { day_date: '2026-05-11', start_time: '10:00', end_time: '14:00', status: 'Confirmado' },
+          { day_date: '2026-05-12', start_time: '10:00', end_time: '14:00', status: 'Confirmado' }
+        ]
+      });
+    const encounterId = plannedCohort.body.encounters[0].id as string;
+
+    const published = await request(app).post(`/planning/workspaces/${workspaceId}/publish`);
+    assert.equal(published.status, 200);
+
+    const updated = await request(app)
+      .patch(`/planning/workspaces/${workspaceId}/encounters/${encounterId}`)
+      .send({ technician_id: 'tech-bruno' });
+    assert.equal(updated.status, 200);
+
+    const planningCohort = db.prepare('select technician_id from planning_cohort where workspace_id = ?').get(workspaceId) as {
+      technician_id: string | null;
+    };
+    assert.equal(planningCohort.technician_id, 'tech-bruno');
+
+    const republished = await request(app).post(`/planning/workspaces/${workspaceId}/publish`);
+    assert.equal(republished.status, 200);
+
+    const cohort = db.prepare('select technician_id from cohort where planning_workspace_id = ?').get(workspaceId) as {
+      technician_id: string | null;
+    };
+    assert.equal(cohort.technician_id, 'tech-bruno');
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
 test('planning publish preserves operational status on republish', { concurrency: false }, async () => {
   const dbPath = assignTestDbPath('planning-publish-republish-status');
   cleanupDbFiles(dbPath);
