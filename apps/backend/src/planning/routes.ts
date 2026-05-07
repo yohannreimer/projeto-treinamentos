@@ -23,6 +23,15 @@ const encounterInputSchema = z.object({
   notes: z.string().nullable().optional()
 });
 
+const updateEncounterSchema = z.object({
+  technician_id: z.string().nullable().optional(),
+  day_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  start_time: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+  end_time: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+  status: z.enum(planningEncounterStatusValues).optional(),
+  notes: z.string().nullable().optional()
+});
+
 const createPlanningCohortSchema = z.object({
   company_id: z.string(),
   module_id: z.string(),
@@ -50,6 +59,19 @@ type PlanningEncounterReadRow = {
   id: string;
   published_cohort_id: string | null;
 } & Record<string, unknown>;
+
+type PlanningEncounterUpdateRow = {
+  id: string;
+  workspace_id: string;
+  technician_id: string | null;
+  day_date: string;
+  start_time: string;
+  end_time: string;
+  status: string;
+  notes: string | null;
+  published_cohort_id: string | null;
+  workspace_status: string;
+};
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
@@ -221,6 +243,76 @@ export function registerPlanningRoutes(app: Express) {
     } catch (error) {
       return res.status(400).json({ message: 'Não foi possível criar turma planejada.', detail: errorMessage(error) });
     }
+  });
+
+  app.patch('/planning/workspaces/:workspaceId/encounters/:encounterId', (req, res) => {
+    const parsed = updateEncounterSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+
+    const existing = db.prepare(`
+      select pe.*, pw.status as workspace_status
+      from planning_encounter pe
+      join planning_workspace pw on pw.id = pe.workspace_id
+      where pe.id = ? and pe.workspace_id = ?
+    `).get(req.params.encounterId, req.params.workspaceId) as PlanningEncounterUpdateRow | undefined;
+    if (!existing) return res.status(404).json({ message: 'Encontro não encontrado.' });
+
+    const payload = parsed.data;
+    const next = {
+      technician_id: payload.technician_id !== undefined ? payload.technician_id : existing.technician_id,
+      day_date: payload.day_date ?? existing.day_date,
+      start_time: payload.start_time ?? existing.start_time,
+      end_time: payload.end_time ?? existing.end_time,
+      status: payload.status ?? existing.status,
+      notes: payload.notes !== undefined ? payload.notes : existing.notes
+    };
+
+    const validation = validatePlanningEncounterPayload(next);
+    if (!validation.ok) return res.status(400).json({ message: validation.message });
+
+    const conflicts = findPlanningEncounterConflicts({
+      technician_id: next.technician_id,
+      day_date: next.day_date,
+      start_time: next.start_time,
+      end_time: next.end_time,
+      exclude_planning_encounter_id: existing.id,
+      exclude_published_cohort_id: existing.published_cohort_id ?? undefined
+    });
+    if (conflicts.length > 0) {
+      return res.status(409).json({ message: 'Encontro possui conflito.', conflicts });
+    }
+
+    const now = nowDateIso();
+    const nextWorkspaceStatus = existing.workspace_status === 'Publicado'
+      ? 'Alteracao_pendente'
+      : existing.workspace_status;
+    const tx = db.transaction(() => {
+      db.prepare(`
+        update planning_encounter
+        set technician_id = ?,
+            day_date = ?,
+            start_time = ?,
+            end_time = ?,
+            status = ?,
+            notes = ?,
+            updated_at = ?
+        where id = ?
+      `).run(
+        next.technician_id,
+        next.day_date,
+        next.start_time,
+        next.end_time,
+        next.status,
+        next.notes,
+        now,
+        existing.id
+      );
+      db.prepare('update planning_workspace set status = ?, updated_at = ? where id = ?')
+        .run(nextWorkspaceStatus, now, req.params.workspaceId);
+    });
+
+    tx();
+    return res.json(readWorkspace(req.params.workspaceId));
   });
 
   app.post('/planning/workspaces/:workspaceId/validate', (req, res) => {

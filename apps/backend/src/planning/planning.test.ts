@@ -323,6 +323,89 @@ test('planning publish creates real cohort with module block, schedule days and 
   }
 });
 
+test('replanning updates a single published encounter and republishes cohort schedule', { concurrency: false }, async () => {
+  const dbPath = assignTestDbPath('planning-replan');
+  cleanupDbFiles(dbPath);
+
+  try {
+    const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+    db.prepare('insert into company (id, name, status, notes, priority) values (?, ?, ?, null, 0)')
+      .run('comp-delta', 'Delta Ferramentaria', 'Ativo');
+    db.prepare(`
+      insert into module_template (
+        id, code, category, name, description, duration_days, profile, is_mandatory, delivery_mode, client_hours_policy
+      ) values (?, ?, ?, ?, null, ?, null, ?, ?, ?)
+    `).run('mod-install', 'MOD-01', 'Base', 'Instalação', 2, 1, 'ministrado', 'consome');
+    db.prepare('insert into technician (id, name) values (?, ?)')
+      .run('tech-ana', 'Ana Técnica');
+
+    const created = await request(app)
+      .post('/planning/workspaces')
+      .send({
+        name: 'Carteira Replanejamento',
+        company_ids: ['comp-delta']
+      });
+
+    assert.equal(created.status, 201);
+    const workspaceId = created.body.workspace.id as string;
+
+    const plannedCohort = await request(app)
+      .post(`/planning/workspaces/${workspaceId}/cohorts`)
+      .send({
+        company_id: 'comp-delta',
+        module_id: 'mod-install',
+        technician_id: 'tech-ana',
+        name: 'Delta · Instalação',
+        delivery_mode: 'Online',
+        period: 'Meio_periodo',
+        encounters: [
+          { day_date: '2026-05-11', start_time: '10:00', end_time: '14:00', status: 'Confirmado' },
+          { day_date: '2026-05-12', start_time: '10:00', end_time: '14:00', status: 'Confirmado' }
+        ]
+      });
+
+    assert.equal(plannedCohort.status, 201);
+    const encounterId = plannedCohort.body.encounters[1].id as string;
+
+    const published = await request(app).post(`/planning/workspaces/${workspaceId}/publish`);
+    assert.equal(published.status, 200);
+
+    const updated = await request(app)
+      .patch(`/planning/workspaces/${workspaceId}/encounters/${encounterId}`)
+      .send({
+        day_date: '2026-05-15',
+        start_time: '11:00',
+        end_time: '14:00',
+        status: 'Confirmado'
+      });
+
+    assert.equal(updated.status, 200);
+    assert.equal(updated.body.workspace.status, 'Alteracao_pendente');
+
+    const republished = await request(app).post(`/planning/workspaces/${workspaceId}/publish`);
+    assert.equal(republished.status, 200);
+    assert.equal(republished.body.updated_cohorts, 1);
+
+    const cohort = db.prepare('select id from cohort where planning_workspace_id = ?').get(workspaceId) as {
+      id: string;
+    } | undefined;
+    assert.ok(cohort);
+
+    const scheduleDays = db.prepare(`
+      select * from cohort_schedule_day where cohort_id = ? order by day_index asc
+    `).all(cohort.id) as Array<{
+      day_date: string;
+      start_time: string | null;
+    }>;
+    assert.equal(scheduleDays[1].day_date, '2026-05-15');
+    assert.equal(scheduleDays[1].start_time, '11:00');
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
 test('planning publish preserves operational status on republish', { concurrency: false }, async () => {
   const dbPath = assignTestDbPath('planning-publish-republish-status');
   cleanupDbFiles(dbPath);
