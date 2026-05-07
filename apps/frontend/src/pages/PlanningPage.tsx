@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { api } from '../services/api';
 import type { PlanningCohort, PlanningEncounter, PlanningWorkspaceDetail } from '../types';
@@ -11,13 +11,24 @@ type WorkspaceSummary = {
   encounter_count: number;
 };
 
-export function PlanningPage() {
+type PlanningPageProps = {
+  detailReloadKey?: number;
+};
+
+export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
   const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState('');
   const [planningDetail, setPlanningDetail] = useState<PlanningWorkspaceDetail | null>(null);
-  const [selectedEncounter, setSelectedEncounter] = useState<PlanningEncounter | null>(null);
+  const [selectedEncounterId, setSelectedEncounterId] = useState<string | null>(null);
+  const [isLoadingDetail, setIsLoadingDetail] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const selectedEncounterIdRef = useRef<string | null>(null);
+  const detailWorkspaceIdRef = useRef('');
+
+  useEffect(() => {
+    selectedEncounterIdRef.current = selectedEncounterId;
+  }, [selectedEncounterId]);
 
   useEffect(() => {
     let isCurrent = true;
@@ -45,24 +56,40 @@ export function PlanningPage() {
   useEffect(() => {
     if (!selectedWorkspaceId) {
       setPlanningDetail(null);
-      setSelectedEncounter(null);
+      setSelectedEncounterId(null);
+      setIsLoadingDetail(false);
       return;
     }
 
     let isCurrent = true;
+    const isSameWorkspaceReload = detailWorkspaceIdRef.current === selectedWorkspaceId;
+    const encounterIdToPreserve = isSameWorkspaceReload ? selectedEncounterIdRef.current : null;
+    detailWorkspaceIdRef.current = selectedWorkspaceId;
+    setPlanningDetail(null);
+    setIsLoadingDetail(true);
+    if (!isSameWorkspaceReload) {
+      setSelectedEncounterId(null);
+      selectedEncounterIdRef.current = null;
+    }
 
     async function loadWorkspace() {
       try {
         setError('');
         const payload = await api.planningWorkspace(selectedWorkspaceId);
         if (!isCurrent) return;
+        const encounters = payload.cohorts.flatMap((cohort) => cohort.encounters);
+        const nextSelectedEncounter = encounters.find((encounter) => encounter.id === encounterIdToPreserve) ?? encounters[0] ?? null;
         setPlanningDetail(payload);
-        setSelectedEncounter(payload.cohorts[0]?.encounters[0] ?? null);
+        setSelectedEncounterId(nextSelectedEncounter?.id ?? null);
       } catch (requestError) {
         if (!isCurrent) return;
         setPlanningDetail(null);
-        setSelectedEncounter(null);
+        setSelectedEncounterId(null);
         setError((requestError as Error).message);
+      } finally {
+        if (isCurrent) {
+          setIsLoadingDetail(false);
+        }
       }
     }
 
@@ -71,7 +98,12 @@ export function PlanningPage() {
     return () => {
       isCurrent = false;
     };
-  }, [selectedWorkspaceId]);
+  }, [selectedWorkspaceId, detailReloadKey]);
+
+  const selectedEncounter = useMemo(() => {
+    if (!planningDetail || !selectedEncounterId) return null;
+    return planningDetail.cohorts.flatMap((cohort) => cohort.encounters).find((encounter) => encounter.id === selectedEncounterId) ?? null;
+  }, [planningDetail, selectedEncounterId]);
 
   const selectedCohort = useMemo(() => {
     if (!planningDetail || !selectedEncounter) return null;
@@ -89,7 +121,7 @@ export function PlanningPage() {
       <button
         className={`planning-encounter ${isSelected ? 'is-selected' : ''}`.trim()}
         key={encounter.id}
-        onClick={() => setSelectedEncounter(encounter)}
+        onClick={() => setSelectedEncounterId(encounter.id)}
         type="button"
       >
         <strong>{encounter.day_date}</strong>
@@ -122,8 +154,8 @@ export function PlanningPage() {
         </div>
       </header>
 
-      {message ? <p className="success">{message}</p> : null}
-      {error ? <p className="error">{error}</p> : null}
+      {message ? <p className="success" role="status" aria-live="polite">{message}</p> : null}
+      {error ? <p className="error" role="alert" aria-live="assertive">{error}</p> : null}
 
       <div className="planning-workbench">
         <aside className="planning-queue">
@@ -164,21 +196,21 @@ export function PlanningPage() {
           </div>
         </aside>
 
-        <main className="planning-calendar">
+        <section className="planning-calendar" aria-labelledby="planning-calendar-title">
           <div className="planning-panel-header">
             <div>
-              <h2>Agenda por horário</h2>
-              <p>{selectedWorkspace ? `${selectedWorkspace.horizon_days} dias de horizonte` : 'Carregando grade'}</p>
+              <h2 id="planning-calendar-title">Agenda por horário</h2>
+              <p>{isLoadingDetail ? 'Carregando grade' : selectedWorkspace ? `${selectedWorkspace.horizon_days} dias de horizonte` : 'Selecione um workspace'}</p>
             </div>
             <button type="button" onClick={() => setMessage('Validação será executada antes da publicação.')}>
               Validar e publicar
             </button>
           </div>
 
-          <div className="planning-zoom-tabs" aria-label="Escala da agenda">
-            <button className="is-selected" type="button">Semana</button>
-            <button type="button">Mês</button>
-            <button type="button">Lista</button>
+          <div className="planning-zoom-tabs" role="group" aria-label="Escala da agenda">
+            <button className="is-selected" type="button" aria-pressed="true">Semana</button>
+            <button type="button" aria-pressed="false">Mês</button>
+            <button type="button" aria-pressed="false">Lista</button>
           </div>
 
           <div className="planning-time-grid">
@@ -193,7 +225,7 @@ export function PlanningPage() {
               </section>
             ))}
           </div>
-        </main>
+        </section>
 
         <aside className="planning-context-panel">
           <div className="planning-panel-header">
