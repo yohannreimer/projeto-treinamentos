@@ -42,6 +42,12 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
     selectedEncounterIdRef.current = selectedEncounterId;
   }, [selectedEncounterId]);
 
+  const selectedWorkspaceIdRef = useRef('');
+
+  useEffect(() => {
+    selectedWorkspaceIdRef.current = selectedWorkspaceId;
+  }, [selectedWorkspaceId]);
+
   useEffect(() => {
     let isCurrent = true;
 
@@ -148,6 +154,8 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
       setIsSavingEncounter(true);
       setError('');
       setMessage('');
+      const savingWorkspaceId = planningDetail.workspace.id;
+      const savingEncounterId = selectedEncounter.id;
       const updatedDetail = await api.updatePlanningEncounter(planningDetail.workspace.id, selectedEncounter.id, {
         day_date: encounterDraft.day_date,
         start_time: encounterDraft.start_time,
@@ -157,8 +165,9 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
       });
       const updatedEncounter = updatedDetail.cohorts
         .flatMap((cohort) => cohort.encounters)
-        .find((encounter) => encounter.id === selectedEncounter.id);
+        .find((encounter) => encounter.id === savingEncounterId);
 
+      if (selectedWorkspaceIdRef.current !== savingWorkspaceId) return;
       setPlanningDetail(updatedDetail);
       setSelectedEncounterId(updatedEncounter?.id ?? null);
       setMessage('Encontro atualizado. Publique para sincronizar turmas e calendário.');
