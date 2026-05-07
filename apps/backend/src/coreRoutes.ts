@@ -2842,6 +2842,9 @@ function resolveRequiredPermissionsForRequest(req: Request): InternalPermissionK
   if (pathname.startsWith('/calendar')) {
     return ['calendar'];
   }
+  if (pathname.startsWith('/planning')) {
+    return ['calendar', 'cohorts'];
+  }
   if (pathname.startsWith('/cohorts') || pathname.startsWith('/allocations')) {
     return ['cohorts'];
   }

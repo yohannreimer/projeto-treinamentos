@@ -8,7 +8,7 @@ const planningCohortStatusValues = ['Rascunho', 'Pronto', 'Publicado', 'Cancelad
 const planningEncounterStatusValues = ['Rascunho', 'Confirmacao_cliente', 'Confirmado', 'Publicado', 'Cancelado'] as const;
 
 const createWorkspaceSchema = z.object({
-  name: z.string().min(3),
+  name: z.string().trim().min(3),
   mode: z.enum(planningModeValues).default('Manual'),
   horizon_days: z.number().int().min(7).max(120).default(60),
   notes: z.string().nullable().optional(),
@@ -27,7 +27,7 @@ const createPlanningCohortSchema = z.object({
   company_id: z.string(),
   module_id: z.string(),
   technician_id: z.string().nullable().optional(),
-  name: z.string().min(3),
+  name: z.string().trim().min(3),
   status: z.enum(planningCohortStatusValues).default('Rascunho'),
   delivery_mode: z.enum(['Online', 'Presencial', 'Hibrida']).default('Online'),
   period: z.enum(['Integral', 'Meio_periodo']).default('Meio_periodo'),

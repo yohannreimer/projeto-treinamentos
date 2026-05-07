@@ -5,6 +5,7 @@ import request from 'supertest';
 
 import { createApp } from '../app.js';
 import { db } from '../db.js';
+import { createInternalUser } from '../internalAuth.js';
 import { assignTestDbPath } from '../test/testDb.js';
 import { validatePlanningEncounterPayload, findPlanningEncounterConflicts } from './service.js';
 
@@ -12,6 +13,12 @@ function cleanupDbFiles(dbPath: string) {
   for (const suffix of ['', '-shm', '-wal']) {
     fs.rmSync(`${dbPath}${suffix}`, { force: true });
   }
+}
+
+async function loginInternalUser(app: ReturnType<typeof createApp>, username: string, password: string) {
+  const login = await request(app).post('/auth/login').send({ username, password });
+  assert.equal(login.status, 200);
+  return { Authorization: `Bearer ${login.body.token as string}` };
 }
 
 test('initDb creates planning tables and cohort planning link columns', { concurrency: false }, () => {
@@ -162,6 +169,61 @@ test('planning API creates workspace with clients, planned cohort and encounters
     assert.equal(detail.status, 200);
     assert.equal(detail.body.cohorts.length, 1);
     assert.equal(detail.body.cohorts[0].encounters.length, 2);
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('planning API requires calendar or cohorts internal permission when auth is enforced', { concurrency: false }, async () => {
+  const dbPath = assignTestDbPath('planning-api-permissions');
+  cleanupDbFiles(dbPath);
+
+  try {
+    const app = createApp({ forceDbRefresh: true, seedDb: false, enforceInternalAuth: true });
+
+    createInternalUser({
+      username: 'planning-docs-user',
+      password: 'senha-segura',
+      role: 'custom',
+      permissions: ['docs']
+    });
+    const docsAuthHeader = await loginInternalUser(app, 'planning-docs-user', 'senha-segura');
+
+    const denied = await request(app).get('/planning/workspaces').set(docsAuthHeader);
+
+    assert.equal(denied.status, 403);
+    assert.deepEqual(denied.body.required_permissions, ['calendar', 'cohorts']);
+
+    createInternalUser({
+      username: 'planning-calendar-user',
+      password: 'senha-segura',
+      role: 'custom',
+      permissions: ['calendar']
+    });
+    const calendarAuthHeader = await loginInternalUser(app, 'planning-calendar-user', 'senha-segura');
+
+    const allowed = await request(app).get('/planning/workspaces').set(calendarAuthHeader);
+
+    assert.equal(allowed.status, 200);
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('planning API rejects whitespace-only workspace names', { concurrency: false }, async () => {
+  const dbPath = assignTestDbPath('planning-api-whitespace-name');
+  cleanupDbFiles(dbPath);
+
+  try {
+    const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+    const response = await request(app)
+      .post('/planning/workspaces')
+      .send({ name: '   ', company_ids: [] });
+
+    assert.equal(response.status, 400);
   } finally {
     db.close();
     cleanupDbFiles(dbPath);
