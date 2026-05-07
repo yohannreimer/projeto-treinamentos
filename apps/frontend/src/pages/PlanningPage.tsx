@@ -153,12 +153,12 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
   async function saveSelectedEncounter() {
     if (isSavingEncounter || !planningDetail || !selectedEncounter) return;
 
+    const savingWorkspaceId = planningDetail.workspace.id;
+    const savingEncounterId = selectedEncounter.id;
     try {
       setIsSavingEncounter(true);
       setError('');
       setMessage('');
-      const savingWorkspaceId = planningDetail.workspace.id;
-      const savingEncounterId = selectedEncounter.id;
       const updatedDetail = await api.updatePlanningEncounter(planningDetail.workspace.id, selectedEncounter.id, {
         day_date: encounterDraft.day_date,
         start_time: encounterDraft.start_time,
@@ -175,6 +175,7 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
       setSelectedEncounterId(updatedEncounter?.id ?? null);
       setMessage('Encontro atualizado. Publique para sincronizar turmas e calendário.');
     } catch (requestError) {
+      if (selectedWorkspaceIdRef.current !== savingWorkspaceId) return;
       setMessage('');
       setError((requestError as Error).message || 'Falha ao atualizar encontro.');
     } finally {
