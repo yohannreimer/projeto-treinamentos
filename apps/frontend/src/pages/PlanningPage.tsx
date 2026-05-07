@@ -172,7 +172,9 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
           </div>
 
           <div className="planning-client-list">
-            {clients.map((client) => {
+            {isLoadingDetail ? <p>Carregando carteira de planejamento.</p> : null}
+            {!isLoadingDetail && clients.length === 0 ? <p>Nenhum cliente neste planejamento.</p> : null}
+            {!isLoadingDetail && clients.map((client) => {
               const clientCohorts = cohorts.filter((cohort) => cohort.company_id === client.company_id);
 
               return (
@@ -214,8 +216,9 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
           </div>
 
           <div className="planning-time-grid">
-            {cohorts.length === 0 ? <p>Nenhum encontro planejado para este workspace.</p> : null}
-            {cohorts.map((cohort) => (
+            {isLoadingDetail ? <p>Carregando encontros do planejamento.</p> : null}
+            {!isLoadingDetail && cohorts.length === 0 ? <p>Nenhum encontro planejado para este workspace.</p> : null}
+            {!isLoadingDetail && cohorts.map((cohort) => (
               <section key={cohort.id}>
                 <div className="planning-client-title">
                   <strong>{cohort.name}</strong>
@@ -236,7 +239,9 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
           </div>
 
           <div className="planning-editor-summary">
-            {selectedEncounter && selectedCohort ? (
+            {isLoadingDetail ? (
+              <p>Carregando painel contextual.</p>
+            ) : selectedEncounter && selectedCohort ? (
               <>
                 <dl>
                   <div>
