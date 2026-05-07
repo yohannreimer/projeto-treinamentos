@@ -380,4 +380,36 @@ describe('PlanningPage', () => {
     expect((await screen.findAllByText('Atlas Metalurgica')).length).toBeGreaterThan(0);
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
+
+  test('ignores late encounter save response after selecting another encounter', async () => {
+    const user = userEvent.setup();
+    const saveRequest = createDeferred<PlanningWorkspaceDetail>();
+
+    vi.mocked(api.planningWorkspaces).mockResolvedValue({
+      workspaces: [{ id: 'pln-1', name: 'Carteira Maio', status: 'Rascunho', client_count: 1, encounter_count: 2 }]
+    });
+    vi.mocked(api.planningWorkspace).mockResolvedValue(detail('pln-1', 'Carteira Maio', 'Delta Ferramentaria', [
+      { id: 'ple-1', time: '10:00', notes: 'Primeiro encontro' },
+      { id: 'ple-2', time: '14:00', notes: 'Segundo encontro' }
+    ]));
+    vi.mocked(api.updatePlanningEncounter).mockReturnValue(saveRequest.promise);
+
+    render(<PlanningPage />);
+
+    await user.click(await screen.findByRole('button', { name: /10:00 - 12:00/i }));
+    await user.click(screen.getByRole('button', { name: 'Salvar encontro' }));
+    await user.click(screen.getByRole('button', { name: /14:00 - 12:00/i }));
+
+    expect(screen.getByDisplayValue('Segundo encontro')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Salvar encontro' })).toBeEnabled();
+
+    saveRequest.resolve(detail('pln-1', 'Carteira Maio', 'Delta Ferramentaria', [
+      { id: 'ple-1', time: '10:00', notes: 'Resposta atrasada' },
+      { id: 'ple-2', time: '14:00', notes: 'Segundo encontro' }
+    ]));
+
+    await waitFor(() => expect(screen.queryByText('Resposta atrasada')).not.toBeInTheDocument());
+    expect(screen.getByDisplayValue('Segundo encontro')).toBeInTheDocument();
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
 });

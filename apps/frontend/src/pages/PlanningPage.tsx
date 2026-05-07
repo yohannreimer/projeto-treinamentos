@@ -182,12 +182,12 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
         .flatMap((cohort) => cohort.encounters)
         .find((encounter) => encounter.id === savingEncounterId);
 
-      if (selectedWorkspaceIdRef.current !== savingWorkspaceId) return;
+      if (selectedWorkspaceIdRef.current !== savingWorkspaceId || selectedEncounterIdRef.current !== savingEncounterId) return;
       setPlanningDetail(updatedDetail);
       setSelectedEncounterId(updatedEncounter?.id ?? null);
       setMessage('Encontro atualizado. Publique para sincronizar turmas e calendário.');
     } catch (requestError) {
-      if (selectedWorkspaceIdRef.current !== savingWorkspaceId) return;
+      if (selectedWorkspaceIdRef.current !== savingWorkspaceId || selectedEncounterIdRef.current !== savingEncounterId) return;
       setMessage('');
       setError((requestError as Error).message || 'Falha ao atualizar encontro.');
     } finally {
