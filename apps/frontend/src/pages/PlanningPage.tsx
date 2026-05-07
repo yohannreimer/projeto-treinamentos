@@ -15,6 +15,11 @@ type PlanningPageProps = {
   detailReloadKey?: number;
 };
 
+type SavingEncounterState = {
+  workspaceId: string;
+  encounterId: string;
+} | null;
+
 const emptyEncounterDraft = {
   day_date: '',
   start_time: '',
@@ -32,7 +37,7 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
   const [selectedEncounterId, setSelectedEncounterId] = useState<string | null>(null);
   const [encounterDraft, setEncounterDraft] = useState(emptyEncounterDraft);
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
-  const [isSavingEncounter, setIsSavingEncounter] = useState(false);
+  const [savingEncounter, setSavingEncounter] = useState<SavingEncounterState>(null);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const selectedEncounterIdRef = useRef<string | null>(null);
@@ -149,14 +154,21 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
   const selectedWorkspace = planningDetail?.workspace ?? null;
   const clients = planningDetail?.clients ?? [];
   const cohorts = planningDetail?.cohorts ?? [];
+  const isSavingSelectedEncounter = Boolean(
+    savingEncounter &&
+      planningDetail &&
+      selectedEncounter &&
+      savingEncounter.workspaceId === planningDetail.workspace.id &&
+      savingEncounter.encounterId === selectedEncounter.id
+  );
 
   async function saveSelectedEncounter() {
-    if (isSavingEncounter || !planningDetail || !selectedEncounter) return;
+    if (isSavingSelectedEncounter || !planningDetail || !selectedEncounter) return;
 
     const savingWorkspaceId = planningDetail.workspace.id;
     const savingEncounterId = selectedEncounter.id;
     try {
-      setIsSavingEncounter(true);
+      setSavingEncounter({ workspaceId: savingWorkspaceId, encounterId: savingEncounterId });
       setError('');
       setMessage('');
       const updatedDetail = await api.updatePlanningEncounter(planningDetail.workspace.id, selectedEncounter.id, {
@@ -179,7 +191,15 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
       setMessage('');
       setError((requestError as Error).message || 'Falha ao atualizar encontro.');
     } finally {
-      setIsSavingEncounter(false);
+      setSavingEncounter((currentSavingEncounter) => {
+        if (
+          currentSavingEncounter?.workspaceId === savingWorkspaceId &&
+          currentSavingEncounter.encounterId === savingEncounterId
+        ) {
+          return null;
+        }
+        return currentSavingEncounter;
+      });
     }
   }
 
@@ -385,8 +405,8 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
                     />
                   </label>
                 </div>
-                <button type="button" disabled={isSavingEncounter} onClick={saveSelectedEncounter}>
-                  {isSavingEncounter ? 'Salvando...' : 'Salvar encontro'}
+                <button type="button" disabled={isSavingSelectedEncounter} onClick={saveSelectedEncounter}>
+                  {isSavingSelectedEncounter ? 'Salvando...' : 'Salvar encontro'}
                 </button>
               </>
             ) : (

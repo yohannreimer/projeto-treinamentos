@@ -331,6 +331,10 @@ describe('PlanningPage', () => {
     await user.click(screen.getByRole('button', { name: 'Salvar encontro' }));
     await user.selectOptions(screen.getByLabelText(/workspace/i), 'pln-2');
 
+    expect((await screen.findAllByText('Atlas Metalurgica')).length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: 'Salvar encontro' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Salvando...' })).not.toBeInTheDocument();
+
     saveRequest.resolve(detail('pln-1', 'Carteira Maio', 'Delta Ferramentaria', [
       { id: 'ple-1', time: '10:00', notes: 'Resposta atrasada' }
     ]));
@@ -365,6 +369,10 @@ describe('PlanningPage', () => {
     await user.click(await screen.findByRole('button', { name: /10:00 - 12:00/i }));
     await user.click(screen.getByRole('button', { name: 'Salvar encontro' }));
     await user.selectOptions(screen.getByLabelText(/workspace/i), 'pln-2');
+
+    expect((await screen.findAllByText('Atlas Metalurgica')).length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: 'Salvar encontro' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Salvando...' })).not.toBeInTheDocument();
 
     saveRequest.reject(new Error('Erro atrasado'));
 
