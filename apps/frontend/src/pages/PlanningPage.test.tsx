@@ -9,7 +9,8 @@ import type { PlanningWorkspaceDetail } from '../types';
 vi.mock('../services/api', () => ({
   api: {
     planningWorkspaces: vi.fn(),
-    planningWorkspace: vi.fn()
+    planningWorkspace: vi.fn(),
+    updatePlanningEncounter: vi.fn()
   }
 }));
 
@@ -171,5 +172,92 @@ describe('PlanningPage', () => {
 
     expect(await screen.findByText('Segundo encontro atualizado')).toBeInTheDocument();
     expect(screen.queryByText('Primeiro encontro atualizado')).not.toBeInTheDocument();
+  });
+
+  test('updates selected encounter from context panel', async () => {
+    const user = userEvent.setup();
+
+    vi.mocked(api.planningWorkspaces).mockResolvedValue({
+      workspaces: [{ id: 'pln-1', name: 'Carteira Maio', status: 'Publicado', client_count: 1, encounter_count: 1 }]
+    });
+    vi.mocked(api.planningWorkspace).mockResolvedValue({
+      workspace: {
+        id: 'pln-1',
+        name: 'Carteira Maio',
+        status: 'Publicado',
+        mode: 'Manual',
+        horizon_days: 60,
+        notes: null,
+        created_at: '2026-05-07',
+        updated_at: '2026-05-07',
+        published_at: '2026-05-07'
+      },
+      clients: [{ company_id: 'comp-delta', company_name: 'Delta Ferramentaria', priority: 0 }],
+      cohorts: [
+        {
+          id: 'cohort-1',
+          workspace_id: 'pln-1',
+          company_id: 'comp-delta',
+          company_name: 'Delta Ferramentaria',
+          module_id: 'module-1',
+          module_code: 'NR-10',
+          module_name: 'Seguranca eletrica',
+          technician_id: 'tech-1',
+          technician_name: 'Ana',
+          published_cohort_id: null,
+          name: 'Delta Ferramentaria NR-10',
+          status: 'Publicado',
+          delivery_mode: 'Online',
+          period: 'Integral',
+          notes: null,
+          encounters: [
+            {
+              id: 'ple-1',
+              workspace_id: 'pln-1',
+              planning_cohort_id: 'cohort-1',
+              company_id: 'comp-delta',
+              module_id: 'module-1',
+              technician_id: 'tech-1',
+              technician_name: 'Ana',
+              encounter_index: 0,
+              day_date: '2026-05-08',
+              start_time: '10:00',
+              end_time: '14:00',
+              status: 'Publicado',
+              notes: null,
+              published_cohort_id: null
+            }
+          ]
+        }
+      ]
+    });
+    vi.mocked(api.updatePlanningEncounter).mockResolvedValue({
+      workspace: {
+        id: 'pln-1',
+        name: 'Carteira Maio',
+        status: 'Alteracao_pendente',
+        mode: 'Manual',
+        horizon_days: 60,
+        notes: null,
+        created_at: '2026-05-07',
+        updated_at: '2026-05-07',
+        published_at: '2026-05-07'
+      },
+      clients: [],
+      cohorts: []
+    });
+
+    render(<PlanningPage />);
+
+    await user.click(await screen.findByRole('button', { name: /10:00 - 14:00/i }));
+    await user.clear(screen.getByLabelText('Data'));
+    await user.type(screen.getByLabelText('Data'), '2026-05-15');
+    await user.click(screen.getByRole('button', { name: 'Salvar encontro' }));
+
+    expect(api.updatePlanningEncounter).toHaveBeenCalledWith(
+      'pln-1',
+      'ple-1',
+      expect.objectContaining({ day_date: '2026-05-15' })
+    );
   });
 });

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { api } from '../services/api';
-import type { PlanningCohort, PlanningEncounter, PlanningWorkspaceDetail } from '../types';
+import type { PlanningCohort, PlanningEncounter, PlanningEncounterStatus, PlanningWorkspaceDetail } from '../types';
 
 type WorkspaceSummary = {
   id: string;
@@ -15,11 +15,22 @@ type PlanningPageProps = {
   detailReloadKey?: number;
 };
 
+const emptyEncounterDraft = {
+  day_date: '',
+  start_time: '',
+  end_time: '',
+  status: 'Rascunho' as PlanningEncounterStatus,
+  notes: ''
+};
+
+const encounterStatuses: PlanningEncounterStatus[] = ['Rascunho', 'Confirmacao_cliente', 'Confirmado', 'Publicado', 'Cancelado'];
+
 export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
   const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState('');
   const [planningDetail, setPlanningDetail] = useState<PlanningWorkspaceDetail | null>(null);
   const [selectedEncounterId, setSelectedEncounterId] = useState<string | null>(null);
+  const [encounterDraft, setEncounterDraft] = useState(emptyEncounterDraft);
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -105,6 +116,21 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
     return planningDetail.cohorts.flatMap((cohort) => cohort.encounters).find((encounter) => encounter.id === selectedEncounterId) ?? null;
   }, [planningDetail, selectedEncounterId]);
 
+  useEffect(() => {
+    if (!selectedEncounter) {
+      setEncounterDraft(emptyEncounterDraft);
+      return;
+    }
+
+    setEncounterDraft({
+      day_date: selectedEncounter.day_date,
+      start_time: selectedEncounter.start_time,
+      end_time: selectedEncounter.end_time,
+      status: selectedEncounter.status,
+      notes: selectedEncounter.notes ?? ''
+    });
+  }, [selectedEncounter]);
+
   const selectedCohort = useMemo(() => {
     if (!planningDetail || !selectedEncounter) return null;
     return planningDetail.cohorts.find((cohort) => cohort.id === selectedEncounter.planning_cohort_id) ?? null;
@@ -113,6 +139,30 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
   const selectedWorkspace = planningDetail?.workspace ?? null;
   const clients = planningDetail?.clients ?? [];
   const cohorts = planningDetail?.cohorts ?? [];
+
+  async function saveSelectedEncounter() {
+    if (!planningDetail || !selectedEncounter) return;
+
+    try {
+      setError('');
+      const updatedDetail = await api.updatePlanningEncounter(planningDetail.workspace.id, selectedEncounter.id, {
+        day_date: encounterDraft.day_date,
+        start_time: encounterDraft.start_time,
+        end_time: encounterDraft.end_time,
+        status: encounterDraft.status,
+        notes: encounterDraft.notes || null
+      });
+      const updatedEncounter = updatedDetail.cohorts
+        .flatMap((cohort) => cohort.encounters)
+        .find((encounter) => encounter.id === selectedEncounter.id);
+
+      setPlanningDetail(updatedDetail);
+      setSelectedEncounterId(updatedEncounter?.id ?? null);
+      setMessage('Encontro atualizado. Publique para sincronizar turmas e calendário.');
+    } catch (requestError) {
+      setError((requestError as Error).message || 'Falha ao atualizar encontro.');
+    }
+  }
 
   function renderEncounter(cohort: PlanningCohort, encounter: PlanningEncounter) {
     const isSelected = selectedEncounter?.id === encounter.id;
@@ -234,7 +284,7 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
           <div className="planning-panel-header">
             <div>
               <h2>Painel contextual</h2>
-              <p>Resumo somente leitura do item selecionado</p>
+              <p>Resumo e edição do item selecionado</p>
             </div>
           </div>
 
@@ -265,7 +315,53 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
                     <dd>{selectedEncounter.status}</dd>
                   </div>
                 </dl>
-                {selectedEncounter.notes ? <p>{selectedEncounter.notes}</p> : null}
+                <div className="planning-editor-grid">
+                  <label>
+                    Data
+                    <input
+                      type="date"
+                      value={encounterDraft.day_date}
+                      onChange={(event) => setEncounterDraft((draft) => ({ ...draft, day_date: event.target.value }))}
+                    />
+                  </label>
+                  <label>
+                    Início
+                    <input
+                      type="time"
+                      value={encounterDraft.start_time}
+                      onChange={(event) => setEncounterDraft((draft) => ({ ...draft, start_time: event.target.value }))}
+                    />
+                  </label>
+                  <label>
+                    Fim
+                    <input
+                      type="time"
+                      value={encounterDraft.end_time}
+                      onChange={(event) => setEncounterDraft((draft) => ({ ...draft, end_time: event.target.value }))}
+                    />
+                  </label>
+                  <label>
+                    Status
+                    <select
+                      value={encounterDraft.status}
+                      onChange={(event) => setEncounterDraft((draft) => ({ ...draft, status: event.target.value as PlanningEncounterStatus }))}
+                    >
+                      {encounterStatuses.map((status) => (
+                        <option key={status} value={status}>
+                          {status}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Observações
+                    <textarea
+                      value={encounterDraft.notes}
+                      onChange={(event) => setEncounterDraft((draft) => ({ ...draft, notes: event.target.value }))}
+                    />
+                  </label>
+                </div>
+                <button type="button" onClick={saveSelectedEncounter}>Salvar encontro</button>
               </>
             ) : (
               <p>Selecione um encontro para revisar cliente, módulo, técnico e horário antes da publicação.</p>
