@@ -7204,4 +7204,263 @@ button:focus-visible,
   }
 }
 
+/* Planejamento */
+.planning-page-header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.planning-workspace-switcher label {
+  min-width: 260px;
+  display: grid;
+  gap: var(--space-1);
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.success {
+  color: var(--color-success);
+  font-weight: 600;
+  background: #edf8f2;
+  border: 1px solid #cce8d7;
+  padding: 8px 10px;
+  border-radius: 10px;
+}
+
+.planning-workbench {
+  display: grid;
+  grid-template-columns: minmax(240px, 280px) minmax(420px, 1fr) minmax(260px, 300px);
+  gap: 10px;
+  align-items: start;
+}
+
+.planning-queue,
+.planning-calendar,
+.planning-context-panel {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-soft);
+  padding: var(--space-3);
+}
+
+.planning-panel-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.planning-panel-header h2 {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.2;
+}
+
+.planning-panel-header p {
+  margin: 4px 0 0;
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+}
+
+.planning-filter-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.planning-zoom-tabs {
+  display: inline-flex;
+  width: fit-content;
+  gap: var(--space-1);
+  padding: 3px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface-soft);
+}
+
+.planning-zoom-tabs button {
+  min-height: 30px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  padding: 5px 10px;
+  font-size: 0.78rem;
+  box-shadow: none;
+}
+
+.planning-zoom-tabs button.is-selected {
+  background: var(--color-surface);
+  color: var(--color-primary-strong);
+  box-shadow: 0 1px 4px rgba(21, 28, 34, 0.12);
+}
+
+.planning-client-list,
+.planning-time-grid,
+.planning-editor-summary {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.planning-client-block {
+  display: grid;
+  gap: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-soft);
+  padding: var(--space-2);
+}
+
+.planning-client-block p,
+.planning-time-grid p,
+.planning-editor-summary p {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.planning-client-title {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.planning-client-title strong {
+  font-size: 0.9rem;
+  line-height: 1.25;
+}
+
+.planning-client-title small {
+  flex: 0 0 auto;
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.planning-module-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 2px var(--space-2);
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--space-2);
+}
+
+.planning-module-row strong {
+  font-size: 0.78rem;
+}
+
+.planning-module-row span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 0.82rem;
+}
+
+.planning-module-row small {
+  grid-column: 2;
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+}
+
+.planning-time-grid {
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+}
+
+.planning-time-grid > section {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-2);
+  align-content: start;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-soft);
+  padding: var(--space-2);
+}
+
+.planning-encounter {
+  width: 100%;
+  display: grid;
+  gap: 3px;
+  text-align: left;
+  border-color: var(--color-border);
+  background: var(--color-surface);
+  padding: var(--space-2);
+}
+
+.planning-encounter.is-selected {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+
+.planning-encounter strong,
+.planning-encounter span,
+.planning-encounter small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.planning-encounter strong {
+  font-size: 0.86rem;
+}
+
+.planning-encounter span,
+.planning-encounter small {
+  color: var(--color-text-muted);
+  font-size: 0.76rem;
+}
+
+.planning-editor-summary dl {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.planning-editor-summary dl > div {
+  display: grid;
+  gap: 2px;
+  border-bottom: 1px solid var(--color-border);
+  padding-bottom: var(--space-2);
+}
+
+.planning-editor-summary dt {
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.planning-editor-summary dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 0.86rem;
+}
+
+@media (max-width: 1160px) {
+  .planning-page-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .planning-workspace-switcher label {
+    min-width: 0;
+  }
+
+  .planning-workbench {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ─── Finance visual port ─────────────────────────────────── */
