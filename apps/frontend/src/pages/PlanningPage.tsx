@@ -155,7 +155,7 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
   const selectedWorkspace = planningDetail?.workspace ?? null;
   const clients = planningDetail?.clients ?? [];
   const cohorts = planningDetail?.cohorts ?? [];
-  const isPublishingSelectedWorkspace = Boolean(planningDetail && publishingWorkspaceId === planningDetail.workspace.id);
+  const isPublishingWorkspace = publishingWorkspaceId !== null;
   const isSavingSelectedEncounter = Boolean(
     savingEncounter &&
       planningDetail &&
@@ -206,7 +206,7 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
   }
 
   async function publishCurrentWorkspace() {
-    if (!planningDetail || isPublishingSelectedWorkspace) return;
+    if (!planningDetail || isPublishingWorkspace) return;
 
     const workspaceId = planningDetail.workspace.id;
     try {
@@ -221,6 +221,7 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
       }
 
       const result = await api.publishPlanningWorkspace(workspaceId);
+      if (selectedWorkspaceIdRef.current !== workspaceId) return;
       const refreshed = await api.planningWorkspace(workspaceId);
       if (selectedWorkspaceIdRef.current !== workspaceId) return;
       const refreshedEncounters = refreshed.cohorts.flatMap((cohort) => cohort.encounters);
@@ -340,8 +341,8 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
               <h2 id="planning-calendar-title">Agenda por horário</h2>
               <p>{isLoadingDetail ? 'Carregando grade' : selectedWorkspace ? `${selectedWorkspace.horizon_days} dias de horizonte` : 'Selecione um workspace'}</p>
             </div>
-            <button type="button" disabled={isPublishingSelectedWorkspace} onClick={publishCurrentWorkspace}>
-              {isPublishingSelectedWorkspace ? 'Publicando...' : 'Publicar alterações válidas'}
+            <button type="button" disabled={isPublishingWorkspace} onClick={publishCurrentWorkspace}>
+              {isPublishingWorkspace ? 'Publicando...' : 'Publicar alterações válidas'}
             </button>
           </div>
 

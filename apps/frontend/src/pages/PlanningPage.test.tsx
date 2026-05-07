@@ -289,25 +289,29 @@ describe('PlanningPage', () => {
 
   test('validates and publishes current workspace', async () => {
     const user = userEvent.setup();
+    const initialDetail = detail('pln-1', 'Carteira Maio', 'Delta Ferramentaria', [
+      { id: 'ple-1', time: '10:00', notes: 'Antes de publicar' }
+    ]);
+    const refreshedDetail = {
+      ...initialDetail,
+      workspace: { ...initialDetail.workspace, status: 'Publicado' as const, published_at: '2026-05-08' },
+      cohorts: initialDetail.cohorts.map((cohort) => ({
+        ...cohort,
+        status: 'Publicado',
+        encounters: cohort.encounters.map((encounter) => ({
+          ...encounter,
+          status: 'Publicado' as const,
+          notes: 'Depois de publicar'
+        }))
+      }))
+    };
 
     vi.mocked(api.planningWorkspaces).mockResolvedValue({
       workspaces: [{ id: 'pln-1', name: 'Carteira Maio', status: 'Rascunho', client_count: 1, encounter_count: 1 }]
     });
-    vi.mocked(api.planningWorkspace).mockResolvedValue({
-      workspace: {
-        id: 'pln-1',
-        name: 'Carteira Maio',
-        status: 'Rascunho',
-        mode: 'Manual',
-        horizon_days: 60,
-        notes: null,
-        created_at: '2026-05-07',
-        updated_at: '2026-05-07',
-        published_at: null
-      },
-      clients: [],
-      cohorts: []
-    });
+    vi.mocked(api.planningWorkspace)
+      .mockResolvedValueOnce(initialDetail)
+      .mockResolvedValueOnce(refreshedDetail);
     vi.mocked(api.validatePlanningWorkspace).mockResolvedValue({ ok: true, conflicts: [] });
     vi.mocked(api.publishPlanningWorkspace).mockResolvedValue({
       created_cohorts: 1,
@@ -319,11 +323,50 @@ describe('PlanningPage', () => {
     render(<PlanningPage />);
 
     await screen.findByText('Carteira Maio');
+    expect(await screen.findByDisplayValue('Antes de publicar')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Publicar alterações válidas' }));
 
     expect(api.validatePlanningWorkspace).toHaveBeenCalledWith('pln-1');
     expect(api.publishPlanningWorkspace).toHaveBeenCalledWith('pln-1');
+    expect(api.planningWorkspace).toHaveBeenCalledTimes(2);
     expect(await screen.findByText(/Publicado: 1 criada/)).toBeInTheDocument();
+    expect(screen.getByDisplayValue('Depois de publicar')).toBeInTheDocument();
+  });
+
+  test('blocks duplicate workspace publish while another publish is in flight', async () => {
+    const user = userEvent.setup();
+    const publishRequest = createDeferred<{
+      created_cohorts: number;
+      updated_cohorts: number;
+      encounter_count: number;
+      version_number: number;
+    }>();
+
+    vi.mocked(api.planningWorkspaces).mockResolvedValue({
+      workspaces: [
+        { id: 'pln-1', name: 'Carteira Maio', status: 'Rascunho', client_count: 1, encounter_count: 1 },
+        { id: 'pln-2', name: 'Carteira Junho', status: 'Rascunho', client_count: 1, encounter_count: 1 }
+      ]
+    });
+    vi.mocked(api.planningWorkspace)
+      .mockResolvedValueOnce(detail('pln-1', 'Carteira Maio', 'Delta Ferramentaria', [
+        { id: 'ple-1', time: '10:00', notes: 'Workspace A' }
+      ]))
+      .mockResolvedValueOnce(detail('pln-2', 'Carteira Junho', 'Atlas Metalurgica', [
+        { id: 'ple-2', time: '09:00', notes: 'Workspace B' }
+      ]));
+    vi.mocked(api.validatePlanningWorkspace).mockResolvedValue({ ok: true, conflicts: [] });
+    vi.mocked(api.publishPlanningWorkspace).mockReturnValue(publishRequest.promise);
+
+    render(<PlanningPage />);
+
+    await user.click(await screen.findByRole('button', { name: 'Publicar alterações válidas' }));
+    await user.selectOptions(screen.getByLabelText(/workspace/i), 'pln-2');
+
+    expect(await screen.findByRole('button', { name: 'Publicando...' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: 'Publicando...' }));
+
+    expect(api.publishPlanningWorkspace).toHaveBeenCalledTimes(1);
   });
 
   test('shows validation conflicts before publishing workspace', async () => {
