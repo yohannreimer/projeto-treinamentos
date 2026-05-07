@@ -336,6 +336,10 @@ export function publishPlanningWorkspace(workspaceId: string): {
             when cohort_allocation.status = 'Cancelado' then 'Previsto'
             else cohort_allocation.status
           end,
+          executed_at = case
+            when cohort_allocation.status = 'Cancelado' then null
+            else cohort_allocation.executed_at
+          end,
           notes = excluded.notes
       `).run(uuid('all'), cohortId, cohort.company_id, cohort.module_id);
 

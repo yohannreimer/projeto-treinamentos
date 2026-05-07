@@ -387,6 +387,19 @@ test('planning publish preserves operational status on republish', { concurrency
     };
     assert.equal(allocation.status, 'Executado');
     assert.equal(allocation.executed_at, '2026-05-12T18:00:00.000Z');
+
+    db.prepare("update cohort_allocation set status = 'Cancelado', executed_at = ? where cohort_id = ?")
+      .run('2026-05-12T18:00:00.000Z', cohort.id);
+
+    const thirdPublish = await request(app).post(`/planning/workspaces/${workspaceId}/publish`);
+    assert.equal(thirdPublish.status, 200);
+
+    const revivedAllocation = db.prepare('select status, executed_at from cohort_allocation where cohort_id = ?').get(cohort.id) as {
+      status: string;
+      executed_at: string | null;
+    };
+    assert.equal(revivedAllocation.status, 'Previsto');
+    assert.equal(revivedAllocation.executed_at, null);
   } finally {
     db.close();
     cleanupDbFiles(dbPath);
