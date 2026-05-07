@@ -1,7 +1,13 @@
 import type { Express } from 'express';
 import { z } from 'zod';
 import { db, nowDateIso, uuid } from '../db.js';
-import { findPlanningEncounterConflicts, publishPlanningWorkspace, slotsOverlap, validatePlanningEncounterPayload } from './service.js';
+import {
+  findPlanningEncounterConflicts,
+  publishPlanningWorkspace,
+  slotsOverlap,
+  suggestPlanningWindows,
+  validatePlanningEncounterPayload
+} from './service.js';
 
 const planningModeValues = ['Manual', 'Assistido', 'Automatico'] as const;
 const planningCohortStatusValues = ['Rascunho', 'Pronto', 'Publicado', 'Cancelado'] as const;
@@ -42,6 +48,15 @@ const createPlanningCohortSchema = z.object({
   period: z.enum(['Integral', 'Meio_periodo']).default('Meio_periodo'),
   notes: z.string().nullable().optional(),
   encounters: z.array(encounterInputSchema).default([])
+});
+
+const suggestionSchema = z.object({
+  module_id: z.string(),
+  technician_ids: z.array(z.string()).min(1),
+  date_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  date_to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  duration_minutes: z.number().int().min(30).max(600),
+  max_results: z.number().int().min(1).max(30).optional()
 });
 
 type WorkspaceReadModel = {
@@ -119,6 +134,12 @@ function readWorkspace(workspaceId: string): WorkspaceReadModel | null {
 }
 
 export function registerPlanningRoutes(app: Express) {
+  app.post('/planning/suggestions', (req, res) => {
+    const parsed = suggestionSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+    return res.json({ suggestions: suggestPlanningWindows(parsed.data) });
+  });
+
   app.get('/planning/workspaces', (_req, res) => {
     const rows = db.prepare(`
       select pw.*,

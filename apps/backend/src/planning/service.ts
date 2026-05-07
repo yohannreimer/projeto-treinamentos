@@ -375,3 +375,54 @@ export function publishPlanningWorkspace(workspaceId: string): {
     version_number: versionNumber
   };
 }
+
+function addDays(dateIso: string, diff: number): string {
+  const [year, month, day] = dateIso.split('-').map(Number);
+  const date = new Date(year, month - 1, day);
+  date.setDate(date.getDate() + diff);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function formatTime(minuteOfDay: number): string {
+  return `${String(Math.floor(minuteOfDay / 60)).padStart(2, '0')}:${String(minuteOfDay % 60).padStart(2, '0')}`;
+}
+
+export function suggestPlanningWindows(args: {
+  technician_ids: string[];
+  date_from: string;
+  date_to: string;
+  duration_minutes: number;
+  max_results?: number;
+}) {
+  const suggestions: Array<{ technician_id: string; day_date: string; start_time: string; end_time: string }> = [];
+  const startMinute = 8 * 60;
+  const endMinute = 18 * 60;
+  const maxResults = args.max_results ?? 10;
+
+  let cursor = args.date_from;
+  while (cursor <= args.date_to && suggestions.length < maxResults) {
+    for (const technicianId of args.technician_ids) {
+      for (let minute = startMinute; minute + args.duration_minutes <= endMinute; minute += 30) {
+        const startTime = formatTime(minute);
+        const endTime = formatTime(minute + args.duration_minutes);
+        const conflicts = findPlanningEncounterConflicts({
+          technician_id: technicianId,
+          day_date: cursor,
+          start_time: startTime,
+          end_time: endTime
+        });
+
+        if (conflicts.length === 0) {
+          suggestions.push({ technician_id: technicianId, day_date: cursor, start_time: startTime, end_time: endTime });
+          break;
+        }
+      }
+
+      if (suggestions.length >= maxResults) break;
+    }
+
+    cursor = addDays(cursor, 1);
+  }
+
+  return suggestions;
+}

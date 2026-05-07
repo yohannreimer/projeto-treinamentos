@@ -807,3 +807,40 @@ test('planning publish ignores canceled cohort conflicts', { concurrency: false 
     cleanupDbFiles(dbPath);
   }
 });
+
+test('planning suggestions return conflict-free technician windows', { concurrency: false }, async () => {
+  const dbPath = assignTestDbPath('planning-suggestions');
+  cleanupDbFiles(dbPath);
+
+  try {
+    const app = createApp({ forceDbRefresh: true, seedDb: false });
+    db.prepare('insert into company (id, name, status, notes, priority) values (?, ?, ?, null, 0)')
+      .run('comp-delta', 'Delta Ferramentaria', 'Ativo');
+    db.prepare(`
+      insert into module_template (
+        id, code, category, name, description, duration_days, profile, is_mandatory, delivery_mode, client_hours_policy
+      ) values (?, ?, ?, ?, null, ?, null, ?, ?, ?)
+    `).run('mod-install', 'MOD-01', 'Base', 'Instalação', 2, 1, 'ministrado', 'consome');
+    db.prepare('insert into technician (id, name) values (?, ?)')
+      .run('tech-ana', 'Ana Técnica');
+
+    const response = await request(app)
+      .post('/planning/suggestions')
+      .send({
+        module_id: 'mod-install',
+        technician_ids: ['tech-ana'],
+        date_from: '2026-05-11',
+        date_to: '2026-05-15',
+        duration_minutes: 240
+      });
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.suggestions[0].technician_id, 'tech-ana');
+    assert.equal(response.body.suggestions[0].day_date, '2026-05-11');
+    assert.equal(response.body.suggestions[0].start_time, '08:00');
+    assert.equal(response.body.suggestions[0].end_time, '12:00');
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
