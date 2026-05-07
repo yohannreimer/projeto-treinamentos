@@ -594,6 +594,67 @@ test('replanning technician change updates cohort technician before republish', 
   }
 });
 
+test('replanning technician change rejects same-cohort future overlap', { concurrency: false }, async () => {
+  const dbPath = assignTestDbPath('planning-replan-technician-overlap');
+  cleanupDbFiles(dbPath);
+
+  try {
+    const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+    db.prepare('insert into company (id, name, status, notes, priority) values (?, ?, ?, null, 0)')
+      .run('comp-delta', 'Delta Ferramentaria', 'Ativo');
+    db.prepare(`
+      insert into module_template (
+        id, code, category, name, description, duration_days, profile, is_mandatory, delivery_mode, client_hours_policy
+      ) values (?, ?, ?, ?, null, ?, null, ?, ?, ?)
+    `).run('mod-install', 'MOD-01', 'Base', 'Instalação', 2, 1, 'ministrado', 'consome');
+    db.prepare('insert into technician (id, name) values (?, ?), (?, ?)')
+      .run('tech-ana', 'Ana Técnica', 'tech-bruno', 'Bruno Técnico');
+
+    const created = await request(app).post('/planning/workspaces').send({
+      name: 'Carteira Sobreposição',
+      company_ids: ['comp-delta']
+    });
+    const workspaceId = created.body.workspace.id as string;
+
+    const plannedCohort = await request(app)
+      .post(`/planning/workspaces/${workspaceId}/cohorts`)
+      .send({
+        company_id: 'comp-delta',
+        module_id: 'mod-install',
+        technician_id: 'tech-ana',
+        name: 'Delta · Instalação',
+        delivery_mode: 'Online',
+        period: 'Meio_periodo',
+        encounters: [
+          { day_date: '2026-05-11', start_time: '10:00', end_time: '14:00', status: 'Confirmado' },
+          { day_date: '2026-05-12', start_time: '10:00', end_time: '14:00', status: 'Confirmado' }
+        ]
+      });
+    const encounterId = plannedCohort.body.encounters[0].id as string;
+
+    const updated = await request(app)
+      .patch(`/planning/workspaces/${workspaceId}/encounters/${encounterId}`)
+      .send({
+        technician_id: 'tech-bruno',
+        day_date: '2026-05-12',
+        start_time: '11:00',
+        end_time: '13:00'
+      });
+
+    assert.equal(updated.status, 409);
+    assert.equal(updated.body.message, 'Encontro possui conflito.');
+
+    const planningCohort = db.prepare('select technician_id from planning_cohort where workspace_id = ?').get(workspaceId) as {
+      technician_id: string | null;
+    };
+    assert.equal(planningCohort.technician_id, 'tech-ana');
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
 test('planning publish preserves operational status on republish', { concurrency: false }, async () => {
   const dbPath = assignTestDbPath('planning-publish-republish-status');
   cleanupDbFiles(dbPath);

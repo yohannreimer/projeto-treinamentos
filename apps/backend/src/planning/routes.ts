@@ -1,7 +1,7 @@
 import type { Express } from 'express';
 import { z } from 'zod';
 import { db, nowDateIso, uuid } from '../db.js';
-import { findPlanningEncounterConflicts, publishPlanningWorkspace, validatePlanningEncounterPayload } from './service.js';
+import { findPlanningEncounterConflicts, publishPlanningWorkspace, slotsOverlap, validatePlanningEncounterPayload } from './service.js';
 
 const planningModeValues = ['Manual', 'Assistido', 'Automatico'] as const;
 const planningCohortStatusValues = ['Rascunho', 'Pronto', 'Publicado', 'Cancelado'] as const;
@@ -293,22 +293,61 @@ export function registerPlanningRoutes(app: Express) {
         published_cohort_id: string | null;
       }>;
 
-      const conflicts = siblingRows.flatMap((encounter) => {
-        const effective = encounter.id === existing.id
-          ? next
-          : {
-              technician_id: next.technician_id,
-              day_date: encounter.day_date,
-              start_time: encounter.start_time,
-              end_time: encounter.end_time,
-              status: encounter.status
-            };
-        if (effective.status === 'Cancelado') return [];
-        return findPlanningEncounterConflicts({
+      const futureEncounters = siblingRows.map((encounter) => {
+        if (encounter.id === existing.id) {
+          return {
+            id: encounter.id,
+            technician_id: next.technician_id,
+            day_date: next.day_date,
+            start_time: next.start_time,
+            end_time: next.end_time,
+            status: next.status,
+            published_cohort_id: encounter.published_cohort_id
+          };
+        }
+        return {
+          id: encounter.id,
           technician_id: next.technician_id,
-          day_date: effective.day_date,
-          start_time: effective.start_time,
-          end_time: effective.end_time,
+          day_date: encounter.day_date,
+          start_time: encounter.start_time,
+          end_time: encounter.end_time,
+          status: encounter.status,
+          published_cohort_id: encounter.published_cohort_id
+        };
+      }).filter((encounter) => encounter.status !== 'Cancelado');
+
+      const internalConflicts = futureEncounters.flatMap((encounter, index) => (
+        futureEncounters.slice(index + 1).flatMap((other) => {
+          if (
+            encounter.technician_id &&
+            other.technician_id &&
+            encounter.technician_id === other.technician_id &&
+            encounter.day_date === other.day_date &&
+            slotsOverlap(encounter.start_time, encounter.end_time, other.start_time, other.end_time)
+          ) {
+            return [{
+              planning_encounter_id: encounter.id,
+              source_type: 'planning_encounter' as const,
+              source_id: other.id,
+              title: 'Encontro da mesma turma planejada',
+              day_date: other.day_date,
+              start_time: other.start_time,
+              end_time: other.end_time
+            }];
+          }
+          return [];
+        })
+      ));
+      if (internalConflicts.length > 0) {
+        return res.status(409).json({ message: 'Encontro possui conflito.', conflicts: internalConflicts });
+      }
+
+      const conflicts = futureEncounters.flatMap((encounter) => {
+        return findPlanningEncounterConflicts({
+          technician_id: encounter.technician_id,
+          day_date: encounter.day_date,
+          start_time: encounter.start_time,
+          end_time: encounter.end_time,
           exclude_planning_encounter_id: encounter.id,
           exclude_published_cohort_id: encounter.published_cohort_id ?? undefined
         }).map((conflict) => ({ planning_encounter_id: encounter.id, ...conflict }));
