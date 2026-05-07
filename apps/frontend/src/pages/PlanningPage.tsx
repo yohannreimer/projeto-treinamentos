@@ -55,7 +55,7 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
   const [selectedEncounterId, setSelectedEncounterId] = useState<string | null>(null);
   const [encounterDraft, setEncounterDraft] = useState(emptyEncounterDraft);
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
-  const [savingEncounter, setSavingEncounter] = useState<SavingEncounterState>(null);
+  const [savingEncounters, setSavingEncounters] = useState<NonNullable<SavingEncounterState>[]>([]);
   const [publishingWorkspaceId, setPublishingWorkspaceId] = useState<string | null>(null);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -177,24 +177,30 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
     () => cohorts.flatMap((cohort) => cohort.encounters.map((encounter) => ({ cohort, encounter }))),
     [cohorts]
   );
-  const hasPendingEncounterSave = savingEncounter !== null;
+  const hasPendingWorkspaceEncounterSave = Boolean(
+    planningDetail && savingEncounters.some((encounter) => encounter.workspaceId === planningDetail.workspace.id)
+  );
   const isPublishingWorkspace = publishingWorkspaceId !== null;
-  const isPublishBlocked = isPublishingWorkspace || hasPendingEncounterSave;
+  const isPublishBlocked = isPublishingWorkspace || hasPendingWorkspaceEncounterSave;
   const isSavingSelectedEncounter = Boolean(
-    savingEncounter &&
+    savingEncounters.some((savingEncounter) => (
       planningDetail &&
       selectedEncounter &&
       savingEncounter.workspaceId === planningDetail.workspace.id &&
       savingEncounter.encounterId === selectedEncounter.id
+    ))
   );
 
   async function saveSelectedEncounter() {
-    if (isSavingSelectedEncounter || !planningDetail || !selectedEncounter) return;
+    if (hasPendingWorkspaceEncounterSave || !planningDetail || !selectedEncounter) return;
 
     const savingWorkspaceId = planningDetail.workspace.id;
     const savingEncounterId = selectedEncounter.id;
     try {
-      setSavingEncounter({ workspaceId: savingWorkspaceId, encounterId: savingEncounterId });
+      setSavingEncounters((currentSavingEncounters) => [
+        ...currentSavingEncounters,
+        { workspaceId: savingWorkspaceId, encounterId: savingEncounterId }
+      ]);
       setError('');
       setMessage('');
       const updatedDetail = await api.updatePlanningEncounter(planningDetail.workspace.id, selectedEncounter.id, {
@@ -217,15 +223,10 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
       setMessage('');
       setError((requestError as Error).message || 'Falha ao atualizar encontro.');
     } finally {
-      setSavingEncounter((currentSavingEncounter) => {
-        if (
-          currentSavingEncounter?.workspaceId === savingWorkspaceId &&
-          currentSavingEncounter.encounterId === savingEncounterId
-        ) {
-          return null;
-        }
-        return currentSavingEncounter;
-      });
+      setSavingEncounters((currentSavingEncounters) => currentSavingEncounters.filter((currentSavingEncounter) => (
+        currentSavingEncounter.workspaceId !== savingWorkspaceId ||
+        currentSavingEncounter.encounterId !== savingEncounterId
+      )));
     }
   }
 
@@ -367,7 +368,7 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
               <p>{isLoadingDetail ? 'Carregando grade' : selectedWorkspace ? `${selectedWorkspace.horizon_days} dias de horizonte` : 'Selecione um workspace'}</p>
             </div>
             <button type="button" disabled={isPublishBlocked} onClick={publishCurrentWorkspace}>
-              {isPublishingWorkspace ? 'Publicando...' : hasPendingEncounterSave ? 'Aguardando salvamento' : 'Publicar alterações válidas'}
+              {isPublishingWorkspace ? 'Publicando...' : hasPendingWorkspaceEncounterSave ? 'Aguardando salvamento' : 'Publicar alterações válidas'}
             </button>
           </div>
 
@@ -474,8 +475,8 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
                     />
                   </label>
                 </div>
-                <button type="button" disabled={isSavingSelectedEncounter} onClick={saveSelectedEncounter}>
-                  {isSavingSelectedEncounter ? 'Salvando...' : 'Salvar encontro'}
+                <button type="button" disabled={hasPendingWorkspaceEncounterSave} onClick={saveSelectedEncounter}>
+                  {isSavingSelectedEncounter ? 'Salvando...' : hasPendingWorkspaceEncounterSave ? 'Aguardando salvamento' : 'Salvar encontro'}
                 </button>
               </>
             ) : (

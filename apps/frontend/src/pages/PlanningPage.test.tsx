@@ -544,7 +544,11 @@ describe('PlanningPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /14:00 - 12:00/i }));
 
     expect(screen.getByDisplayValue('Segundo encontro')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Salvar encontro' })).toBeEnabled();
+    const blockedButtons = screen.getAllByRole('button', { name: 'Aguardando salvamento' });
+    expect(blockedButtons).toHaveLength(2);
+    blockedButtons.forEach((button) => expect(button).toBeDisabled());
+    await user.click(blockedButtons[1]);
+    expect(api.updatePlanningEncounter).toHaveBeenCalledTimes(1);
 
     saveRequest.resolve(detail('pln-1', 'Carteira Maio', 'Delta Ferramentaria', [
       { id: 'ple-1', time: '10:00', notes: 'Resposta atrasada' },
