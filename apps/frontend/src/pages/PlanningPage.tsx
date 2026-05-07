@@ -177,7 +177,9 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
     () => cohorts.flatMap((cohort) => cohort.encounters.map((encounter) => ({ cohort, encounter }))),
     [cohorts]
   );
+  const hasPendingEncounterSave = savingEncounter !== null;
   const isPublishingWorkspace = publishingWorkspaceId !== null;
+  const isPublishBlocked = isPublishingWorkspace || hasPendingEncounterSave;
   const isSavingSelectedEncounter = Boolean(
     savingEncounter &&
       planningDetail &&
@@ -228,7 +230,7 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
   }
 
   async function publishCurrentWorkspace() {
-    if (!planningDetail || isPublishingWorkspace) return;
+    if (!planningDetail || isPublishBlocked) return;
 
     const workspaceId = planningDetail.workspace.id;
     try {
@@ -364,8 +366,8 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
               <h2 id="planning-calendar-title">Agenda por horário</h2>
               <p>{isLoadingDetail ? 'Carregando grade' : selectedWorkspace ? `${selectedWorkspace.horizon_days} dias de horizonte` : 'Selecione um workspace'}</p>
             </div>
-            <button type="button" disabled={isPublishingWorkspace} onClick={publishCurrentWorkspace}>
-              {isPublishingWorkspace ? 'Publicando...' : 'Publicar alterações válidas'}
+            <button type="button" disabled={isPublishBlocked} onClick={publishCurrentWorkspace}>
+              {isPublishingWorkspace ? 'Publicando...' : hasPendingEncounterSave ? 'Aguardando salvamento' : 'Publicar alterações válidas'}
             </button>
           </div>
 
@@ -425,6 +427,7 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
                   <label>
                     Data
                     <input
+                      disabled={isSavingSelectedEncounter}
                       type="date"
                       value={encounterDraft.day_date}
                       onChange={(event) => setEncounterDraft((draft) => ({ ...draft, day_date: event.target.value }))}
@@ -433,6 +436,7 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
                   <label>
                     Início
                     <input
+                      disabled={isSavingSelectedEncounter}
                       type="time"
                       value={encounterDraft.start_time}
                       onChange={(event) => setEncounterDraft((draft) => ({ ...draft, start_time: event.target.value }))}
@@ -441,6 +445,7 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
                   <label>
                     Fim
                     <input
+                      disabled={isSavingSelectedEncounter}
                       type="time"
                       value={encounterDraft.end_time}
                       onChange={(event) => setEncounterDraft((draft) => ({ ...draft, end_time: event.target.value }))}
@@ -449,6 +454,7 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
                   <label>
                     Status
                     <select
+                      disabled={isSavingSelectedEncounter}
                       value={encounterDraft.status}
                       onChange={(event) => setEncounterDraft((draft) => ({ ...draft, status: event.target.value as PlanningEncounterStatus }))}
                     >
@@ -462,6 +468,7 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
                   <label>
                     Observações
                     <textarea
+                      disabled={isSavingSelectedEncounter}
                       value={encounterDraft.notes}
                       onChange={(event) => setEncounterDraft((draft) => ({ ...draft, notes: event.target.value }))}
                     />

@@ -416,6 +416,39 @@ describe('PlanningPage', () => {
     expect(await screen.findByRole('status')).toHaveTextContent('Encontro atualizado');
   });
 
+  test('locks selected encounter editing and publishing while save is in flight', async () => {
+    const user = userEvent.setup();
+    const saveRequest = createDeferred<PlanningWorkspaceDetail>();
+
+    vi.mocked(api.planningWorkspaces).mockResolvedValue({
+      workspaces: [{ id: 'pln-1', name: 'Carteira Maio', status: 'Rascunho', client_count: 1, encounter_count: 1 }]
+    });
+    vi.mocked(api.planningWorkspace).mockResolvedValue(detail('pln-1', 'Carteira Maio', 'Delta Ferramentaria', [
+      { id: 'ple-1', time: '10:00', notes: 'Ajustar data' }
+    ]));
+    vi.mocked(api.updatePlanningEncounter).mockReturnValue(saveRequest.promise);
+
+    render(<PlanningPage />);
+
+    await user.click(await screen.findByRole('button', { name: /10:00 - 12:00/i }));
+    await user.click(screen.getByRole('button', { name: 'Salvar encontro' }));
+
+    expect(screen.getByLabelText('Data')).toBeDisabled();
+    expect(screen.getByLabelText('Início')).toBeDisabled();
+    expect(screen.getByLabelText('Fim')).toBeDisabled();
+    expect(screen.getByLabelText('Status')).toBeDisabled();
+    expect(screen.getByLabelText('Observações')).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Aguardando salvamento' })).toBeDisabled();
+
+    await user.click(screen.getByRole('button', { name: 'Aguardando salvamento' }));
+    expect(api.validatePlanningWorkspace).not.toHaveBeenCalled();
+
+    saveRequest.resolve(detail('pln-1', 'Carteira Maio', 'Delta Ferramentaria', [
+      { id: 'ple-1', time: '10:00', notes: 'Salvo', dayDate: '2026-05-08' }
+    ]));
+    expect(await screen.findByRole('status')).toHaveTextContent('Encontro atualizado');
+  });
+
   test('ignores late encounter save response after workspace switch', async () => {
     const user = userEvent.setup();
     const saveRequest = createDeferred<PlanningWorkspaceDetail>();
