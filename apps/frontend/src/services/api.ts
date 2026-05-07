@@ -2,7 +2,8 @@ import type {
   CompanyHoursLedgerItem,
   CompanyHoursModuleInsight,
   CompanyHoursPendingItem,
-  CompanyHoursSummary
+  CompanyHoursSummary,
+  PlanningWorkspaceDetail
 } from '../types';
 import { internalSessionStore, type InternalPermission, type InternalRole, type InternalSessionUser } from '../auth/session';
 
@@ -123,6 +124,64 @@ export const api = {
   dashboard: () => req('/dashboard'),
   calendar: () => req('/calendar/cohorts'),
   calendarActivities: () => req('/calendar/activities'),
+  planningWorkspaces: () =>
+    req<{ workspaces: Array<{ id: string; name: string; status: string; client_count: number; encounter_count: number }> }>('/planning/workspaces'),
+  planningWorkspace: (id: string) =>
+    req<PlanningWorkspaceDetail>(`/planning/workspaces/${id}`),
+  createPlanningWorkspace: (payload: {
+    name: string;
+    mode?: 'Manual' | 'Assistido' | 'Automatico';
+    horizon_days?: number;
+    notes?: string | null;
+    company_ids?: string[];
+  }) =>
+    req<PlanningWorkspaceDetail>('/planning/workspaces', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  createPlanningCohort: (workspaceId: string, payload: {
+    company_id: string;
+    module_id: string;
+    technician_id?: string | null;
+    name: string;
+    status?: string;
+    delivery_mode?: 'Online' | 'Presencial' | 'Hibrida';
+    period?: 'Integral' | 'Meio_periodo';
+    notes?: string | null;
+    encounters: Array<{
+      day_date: string;
+      start_time: string;
+      end_time: string;
+      status?: string;
+      notes?: string | null;
+    }>;
+  }) =>
+    req(`/planning/workspaces/${workspaceId}/cohorts`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  updatePlanningEncounter: (workspaceId: string, encounterId: string, payload: {
+    technician_id?: string | null;
+    day_date?: string;
+    start_time?: string;
+    end_time?: string;
+    status?: string;
+    notes?: string | null;
+  }) =>
+    req<PlanningWorkspaceDetail>(`/planning/workspaces/${workspaceId}/encounters/${encounterId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload)
+    }),
+  validatePlanningWorkspace: (workspaceId: string) =>
+    req<{ ok: boolean; conflicts: unknown[] }>(`/planning/workspaces/${workspaceId}/validate`, {
+      method: 'POST',
+      body: JSON.stringify({})
+    }),
+  publishPlanningWorkspace: (workspaceId: string) =>
+    req<{ created_cohorts: number; updated_cohorts: number; encounter_count: number; version_number: number }>(
+      `/planning/workspaces/${workspaceId}/publish`,
+      { method: 'POST', body: JSON.stringify({}) }
+    ),
   createCalendarActivity: (payload: CalendarActivityUpsertPayload) =>
     req('/calendar/activities', {
       method: 'POST',

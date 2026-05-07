@@ -4,6 +4,7 @@ import { Layout } from './components/Layout';
 import { PortalShell } from './portal/PortalShell';
 import { DashboardPage } from './pages/DashboardPage';
 import { CalendarPage } from './pages/CalendarPage';
+import { PlanningPage } from './pages/PlanningPage';
 import { CohortsPage } from './pages/CohortsPage';
 import { CohortDetailPage } from './pages/CohortDetailPage';
 import { ClientsPage } from './pages/ClientsPage';
@@ -120,6 +121,14 @@ function OperationsRoutes({ user, defaultRoute }: { user: InternalSessionUser; d
         element={(
           <ProtectedRoute user={user} permissions={['calendar']} fallback={defaultRoute}>
             <CalendarPage />
+          </ProtectedRoute>
+        )}
+      />
+      <Route
+        path="/planejar"
+        element={(
+          <ProtectedRoute user={user} permissions={['calendar', 'cohorts']} fallback={defaultRoute}>
+            <PlanningPage />
           </ProtectedRoute>
         )}
       />

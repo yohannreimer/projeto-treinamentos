@@ -16,6 +16,13 @@ const viewModes = ['operational', 'management'] as const;
 const densityModes = ['compact', 'comfortable'] as const;
 
 function topbarContext(pathname: string) {
+  if (pathname.startsWith('/planejar')) {
+    return {
+      title: 'Planejamento de Agenda',
+      subtitle: 'Monte turmas por cliente, módulo, técnico e horário real antes de publicar.',
+      badge: 'Rascunhos e capacidade'
+    };
+  }
   if (pathname.startsWith('/calendario')) {
     return {
       title: 'Calendário de Execução',

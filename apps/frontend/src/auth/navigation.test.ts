@@ -25,3 +25,16 @@ test('finance navigation is visible only for supremo users', () => {
   expect(canAccessPath(financeIntermediario, '/financeiro/reports')).toBe(false);
   expect(canAccessPath(financeSupremo, '/financeiro/reports')).toBe(true);
 });
+
+test('planning nav item is visible to calendar or cohort operators', () => {
+  const user = {
+    id: 'user-planejar',
+    username: 'planner',
+    display_name: 'Planner',
+    role: 'custom',
+    permissions: ['calendar', 'cohorts']
+  } as const;
+
+  expect(visibleNavItemsForUser(user).some((item) => item.to === '/planejar')).toBe(true);
+  expect(canAccessPath(user, '/planejar')).toBe(true);
+});
