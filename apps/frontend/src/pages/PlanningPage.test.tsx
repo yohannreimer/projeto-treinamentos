@@ -29,7 +29,7 @@ function detail(
   workspaceId: string,
   workspaceName: string,
   clientName: string,
-  encounters: Array<{ id: string; time: string; notes: string }>
+  encounters: Array<{ id: string; time: string; notes: string; dayDate?: string }>
 ): PlanningWorkspaceDetail {
   return {
     workspace: {
@@ -70,7 +70,7 @@ function detail(
           technician_id: null,
           technician_name: null,
           encounter_index: index,
-          day_date: '2026-05-08',
+          day_date: encounter.dayDate ?? '2026-05-08',
           start_time: encounter.time,
           end_time: '12:00',
           status: 'Rascunho',
@@ -174,7 +174,7 @@ describe('PlanningPage', () => {
     expect(screen.queryByText('Primeiro encontro atualizado')).not.toBeInTheDocument();
   });
 
-  test('updates selected encounter from context panel', async () => {
+  test('updates selected encounter from context panel and syncs returned detail', async () => {
     const user = userEvent.setup();
 
     vi.mocked(api.planningWorkspaces).mockResolvedValue({
@@ -231,21 +231,9 @@ describe('PlanningPage', () => {
         }
       ]
     });
-    vi.mocked(api.updatePlanningEncounter).mockResolvedValue({
-      workspace: {
-        id: 'pln-1',
-        name: 'Carteira Maio',
-        status: 'Alteracao_pendente',
-        mode: 'Manual',
-        horizon_days: 60,
-        notes: null,
-        created_at: '2026-05-07',
-        updated_at: '2026-05-07',
-        published_at: '2026-05-07'
-      },
-      clients: [],
-      cohorts: []
-    });
+    vi.mocked(api.updatePlanningEncounter).mockResolvedValue(detail('pln-1', 'Carteira Maio', 'Delta Ferramentaria', [
+      { id: 'ple-1', time: '10:00', notes: 'Data ajustada pelo retorno', dayDate: '2026-05-15' }
+    ]));
 
     render(<PlanningPage />);
 
@@ -259,5 +247,62 @@ describe('PlanningPage', () => {
       'ple-1',
       expect.objectContaining({ day_date: '2026-05-15' })
     );
+    expect(await screen.findByRole('status')).toHaveTextContent('Encontro atualizado');
+    expect(screen.getByLabelText('Data')).toHaveValue('2026-05-15');
+    expect(screen.getByText('Data ajustada pelo retorno')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /10:00 - 12:00/i })).toHaveClass('is-selected');
+  });
+
+  test('clears stale message and shows error when encounter update fails', async () => {
+    const user = userEvent.setup();
+
+    vi.mocked(api.planningWorkspaces).mockResolvedValue({
+      workspaces: [{ id: 'pln-1', name: 'Carteira Maio', status: 'Rascunho', client_count: 1, encounter_count: 1 }]
+    });
+    vi.mocked(api.planningWorkspace).mockResolvedValue(detail('pln-1', 'Carteira Maio', 'Delta Ferramentaria', [
+      { id: 'ple-1', time: '10:00', notes: 'Ajustar data' }
+    ]));
+    vi.mocked(api.updatePlanningEncounter).mockRejectedValue(new Error('Conflito de agenda'));
+
+    render(<PlanningPage />);
+
+    await user.click(await screen.findByRole('button', { name: 'Validar e publicar' }));
+    expect(screen.getByRole('status')).toHaveTextContent('Validação será executada antes da publicação.');
+
+    await user.click(screen.getByRole('button', { name: /10:00 - 12:00/i }));
+    await user.clear(screen.getByLabelText('Data'));
+    await user.type(screen.getByLabelText('Data'), '2026-05-15');
+    await user.click(screen.getByRole('button', { name: 'Salvar encontro' }));
+
+    expect(screen.queryByText('Validação será executada antes da publicação.')).not.toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent('Conflito de agenda');
+  });
+
+  test('ignores duplicate encounter saves while the first save is in flight', async () => {
+    const user = userEvent.setup();
+    const saveRequest = createDeferred<PlanningWorkspaceDetail>();
+
+    vi.mocked(api.planningWorkspaces).mockResolvedValue({
+      workspaces: [{ id: 'pln-1', name: 'Carteira Maio', status: 'Rascunho', client_count: 1, encounter_count: 1 }]
+    });
+    vi.mocked(api.planningWorkspace).mockResolvedValue(detail('pln-1', 'Carteira Maio', 'Delta Ferramentaria', [
+      { id: 'ple-1', time: '10:00', notes: 'Ajustar data' }
+    ]));
+    vi.mocked(api.updatePlanningEncounter).mockReturnValue(saveRequest.promise);
+
+    render(<PlanningPage />);
+
+    await user.click(await screen.findByRole('button', { name: /10:00 - 12:00/i }));
+    const saveButton = screen.getByRole('button', { name: 'Salvar encontro' });
+    await user.dblClick(saveButton);
+
+    expect(api.updatePlanningEncounter).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: 'Salvando...' })).toBeDisabled();
+
+    saveRequest.resolve(detail('pln-1', 'Carteira Maio', 'Delta Ferramentaria', [
+      { id: 'ple-1', time: '10:00', notes: 'Salvo', dayDate: '2026-05-08' }
+    ]));
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Encontro atualizado');
   });
 });

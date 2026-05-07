@@ -32,6 +32,7 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
   const [selectedEncounterId, setSelectedEncounterId] = useState<string | null>(null);
   const [encounterDraft, setEncounterDraft] = useState(emptyEncounterDraft);
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
+  const [isSavingEncounter, setIsSavingEncounter] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const selectedEncounterIdRef = useRef<string | null>(null);
@@ -141,10 +142,12 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
   const cohorts = planningDetail?.cohorts ?? [];
 
   async function saveSelectedEncounter() {
-    if (!planningDetail || !selectedEncounter) return;
+    if (isSavingEncounter || !planningDetail || !selectedEncounter) return;
 
     try {
+      setIsSavingEncounter(true);
       setError('');
+      setMessage('');
       const updatedDetail = await api.updatePlanningEncounter(planningDetail.workspace.id, selectedEncounter.id, {
         day_date: encounterDraft.day_date,
         start_time: encounterDraft.start_time,
@@ -160,7 +163,10 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
       setSelectedEncounterId(updatedEncounter?.id ?? null);
       setMessage('Encontro atualizado. Publique para sincronizar turmas e calendário.');
     } catch (requestError) {
+      setMessage('');
       setError((requestError as Error).message || 'Falha ao atualizar encontro.');
+    } finally {
+      setIsSavingEncounter(false);
     }
   }
 
@@ -361,7 +367,9 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
                     />
                   </label>
                 </div>
-                <button type="button" onClick={saveSelectedEncounter}>Salvar encontro</button>
+                <button type="button" disabled={isSavingEncounter} onClick={saveSelectedEncounter}>
+                  {isSavingEncounter ? 'Salvando...' : 'Salvar encontro'}
+                </button>
               </>
             ) : (
               <p>Selecione um encontro para revisar cliente, módulo, técnico e horário antes da publicação.</p>
