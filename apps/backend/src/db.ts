@@ -1159,6 +1159,85 @@ export function initDb() {
       foreign key(activity_id) references calendar_activity(id) on delete cascade
     );
 
+    create table if not exists planning_workspace (
+      id text primary key,
+      name text not null,
+      status text not null default 'Rascunho',
+      mode text not null default 'Manual',
+      horizon_days integer not null default 60,
+      notes text,
+      created_at text not null,
+      updated_at text not null,
+      published_at text
+    );
+
+    create table if not exists planning_workspace_client (
+      workspace_id text not null,
+      company_id text not null,
+      priority integer not null default 0,
+      created_at text not null,
+      primary key (workspace_id, company_id),
+      foreign key(workspace_id) references planning_workspace(id) on delete cascade,
+      foreign key(company_id) references company(id) on delete cascade
+    );
+
+    create table if not exists planning_cohort (
+      id text primary key,
+      workspace_id text not null,
+      company_id text not null,
+      module_id text not null,
+      technician_id text,
+      published_cohort_id text,
+      name text not null,
+      status text not null default 'Rascunho',
+      delivery_mode text not null default 'Online',
+      period text not null default 'Meio_periodo',
+      notes text,
+      created_at text not null,
+      updated_at text not null,
+      foreign key(workspace_id) references planning_workspace(id) on delete cascade,
+      foreign key(company_id) references company(id) on delete cascade,
+      foreign key(module_id) references module_template(id) on delete cascade,
+      foreign key(technician_id) references technician(id) on delete set null,
+      foreign key(published_cohort_id) references cohort(id) on delete set null
+    );
+
+    create table if not exists planning_encounter (
+      id text primary key,
+      workspace_id text not null,
+      planning_cohort_id text not null,
+      company_id text not null,
+      module_id text not null,
+      technician_id text,
+      encounter_index integer not null,
+      day_date text not null,
+      start_time text not null,
+      end_time text not null,
+      status text not null default 'Rascunho',
+      notes text,
+      published_cohort_id text,
+      created_at text not null,
+      updated_at text not null,
+      unique(planning_cohort_id, encounter_index),
+      foreign key(workspace_id) references planning_workspace(id) on delete cascade,
+      foreign key(planning_cohort_id) references planning_cohort(id) on delete cascade,
+      foreign key(company_id) references company(id) on delete cascade,
+      foreign key(module_id) references module_template(id) on delete cascade,
+      foreign key(technician_id) references technician(id) on delete set null,
+      foreign key(published_cohort_id) references cohort(id) on delete set null
+    );
+
+    create table if not exists planning_version (
+      id text primary key,
+      workspace_id text not null,
+      version_number integer not null,
+      action text not null,
+      summary_json text not null default '{}',
+      created_at text not null,
+      unique(workspace_id, version_number),
+      foreign key(workspace_id) references planning_workspace(id) on delete cascade
+    );
+
     create table if not exists internal_document (
       id text primary key,
       title text not null,
@@ -1269,6 +1348,16 @@ export function initDb() {
   ensureColumn('cohort', 'start_time', 'start_time text');
   ensureColumn('cohort', 'end_time', 'end_time text');
   ensureColumn('cohort', 'delivery_mode', "delivery_mode text not null default 'Online'");
+  ensureColumn(
+    'cohort',
+    'planning_workspace_id',
+    'planning_workspace_id text references planning_workspace(id) on delete set null'
+  );
+  ensureColumn(
+    'cohort',
+    'planning_cohort_id',
+    'planning_cohort_id text references planning_cohort(id) on delete set null'
+  );
   ensureColumn(
     'cohort_allocation',
     'override_installation_prereq',
@@ -2150,6 +2239,13 @@ export function initDb() {
     create index if not exists idx_portal_certificate_evaluation_lookup
       on portal_certificate_evaluation(company_id, cohort_id, module_id);
     create unique index if not exists idx_hours_event_store_idempotency_key on hours_event_store(idempotency_key);
+    create index if not exists idx_planning_workspace_status on planning_workspace(status, updated_at desc);
+    create index if not exists idx_planning_workspace_client_company on planning_workspace_client(company_id);
+    create index if not exists idx_planning_cohort_workspace on planning_cohort(workspace_id, status);
+    create index if not exists idx_planning_cohort_company_module on planning_cohort(company_id, module_id);
+    create index if not exists idx_planning_encounter_workspace_date on planning_encounter(workspace_id, day_date);
+    create index if not exists idx_planning_encounter_technician_date on planning_encounter(technician_id, day_date);
+    create index if not exists idx_cohort_planning_links on cohort(planning_workspace_id, planning_cohort_id);
     create index if not exists idx_internal_session_user on internal_session(internal_user_id);
     create index if not exists idx_internal_session_expires on internal_session(expires_at);
     create index if not exists idx_internal_audit_created on internal_audit_log(created_at desc);
