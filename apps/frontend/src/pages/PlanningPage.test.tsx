@@ -331,13 +331,13 @@ describe('PlanningPage', () => {
     await user.click(screen.getByRole('button', { name: 'Salvar encontro' }));
     await user.selectOptions(screen.getByLabelText(/workspace/i), 'pln-2');
 
-    expect((await screen.findAllByText('Atlas Metalurgica')).length).toBeGreaterThan(0);
-
     saveRequest.resolve(detail('pln-1', 'Carteira Maio', 'Delta Ferramentaria', [
       { id: 'ple-1', time: '10:00', notes: 'Resposta atrasada' }
     ]));
 
     await waitFor(() => expect(screen.queryByText('Resposta atrasada')).not.toBeInTheDocument());
+
+    expect((await screen.findAllByText('Atlas Metalurgica')).length).toBeGreaterThan(0);
     expect((screen.getAllByText('Atlas Metalurgica')).length).toBeGreaterThan(0);
   });
 });

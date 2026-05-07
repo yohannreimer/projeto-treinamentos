@@ -36,13 +36,12 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const selectedEncounterIdRef = useRef<string | null>(null);
+  const selectedWorkspaceIdRef = useRef('');
   const detailWorkspaceIdRef = useRef('');
 
   useEffect(() => {
     selectedEncounterIdRef.current = selectedEncounterId;
   }, [selectedEncounterId]);
-
-  const selectedWorkspaceIdRef = useRef('');
 
   useEffect(() => {
     selectedWorkspaceIdRef.current = selectedWorkspaceId;
@@ -57,7 +56,11 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
         const payload = await api.planningWorkspaces();
         if (!isCurrent) return;
         setWorkspaces(payload.workspaces);
-        setSelectedWorkspaceId((currentId) => currentId || payload.workspaces[0]?.id || '');
+        setSelectedWorkspaceId((currentId) => {
+          const nextWorkspaceId = currentId || payload.workspaces[0]?.id || '';
+          selectedWorkspaceIdRef.current = nextWorkspaceId;
+          return nextWorkspaceId;
+        });
       } catch (requestError) {
         if (!isCurrent) return;
         setError((requestError as Error).message);
@@ -196,6 +199,11 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
     );
   }
 
+  function selectWorkspace(workspaceId: string) {
+    selectedWorkspaceIdRef.current = workspaceId;
+    setSelectedWorkspaceId(workspaceId);
+  }
+
   return (
     <div className="page planning-page">
       <header className="page-header planning-page-header">
@@ -207,7 +215,7 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
         <div className="planning-workspace-switcher">
           <label>
             Workspace
-            <select value={selectedWorkspaceId} onChange={(event) => setSelectedWorkspaceId(event.target.value)}>
+            <select value={selectedWorkspaceId} onChange={(event) => selectWorkspace(event.target.value)}>
               {workspaces.length === 0 ? <option value="">Nenhum workspace</option> : null}
               {workspaces.map((workspace) => (
                 <option key={workspace.id} value={workspace.id}>
