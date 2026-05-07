@@ -229,3 +229,96 @@ test('planning API rejects whitespace-only workspace names', { concurrency: fals
     cleanupDbFiles(dbPath);
   }
 });
+
+test('planning publish creates real cohort with module block, schedule days and allocation', { concurrency: false }, async () => {
+  const dbPath = assignTestDbPath('planning-publish');
+  cleanupDbFiles(dbPath);
+
+  try {
+    const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+    db.prepare('insert into company (id, name, status, notes, priority) values (?, ?, ?, null, 0)')
+      .run('comp-delta', 'Delta Ferramentaria', 'Ativo');
+    db.prepare(`
+      insert into module_template (
+        id, code, category, name, description, duration_days, profile, is_mandatory, delivery_mode, client_hours_policy
+      ) values (?, ?, ?, ?, null, ?, null, ?, ?, ?)
+    `).run('mod-install', 'MOD-01', 'Base', 'Instalação', 2, 1, 'ministrado', 'consome');
+    db.prepare('insert into technician (id, name) values (?, ?)')
+      .run('tech-ana', 'Ana Técnica');
+
+    const created = await request(app)
+      .post('/planning/workspaces')
+      .send({
+        name: 'Carteira Publicação',
+        mode: 'Manual',
+        horizon_days: 60,
+        company_ids: ['comp-delta']
+      });
+
+    assert.equal(created.status, 201);
+    const workspaceId = created.body.workspace.id as string;
+
+    const plannedCohort = await request(app)
+      .post(`/planning/workspaces/${workspaceId}/cohorts`)
+      .send({
+        company_id: 'comp-delta',
+        module_id: 'mod-install',
+        technician_id: 'tech-ana',
+        name: 'Delta · Instalação',
+        delivery_mode: 'Online',
+        period: 'Meio_periodo',
+        encounters: [
+          { day_date: '2026-05-11', start_time: '10:00', end_time: '14:00', status: 'Confirmado' },
+          { day_date: '2026-05-12', start_time: '10:00', end_time: '14:00', status: 'Confirmado' }
+        ]
+      });
+
+    assert.equal(plannedCohort.status, 201);
+
+    const published = await request(app).post(`/planning/workspaces/${workspaceId}/publish`);
+
+    assert.equal(published.status, 200);
+    assert.equal(published.body.created_cohorts, 1);
+    assert.equal(published.body.updated_cohorts, 0);
+
+    const cohort = db.prepare('select * from cohort where planning_workspace_id = ?').get(workspaceId) as {
+      id: string;
+      technician_id: string | null;
+      period: string;
+    } | undefined;
+    assert.ok(cohort);
+    assert.equal(cohort.technician_id, 'tech-ana');
+    assert.equal(cohort.period, 'Meio_periodo');
+
+    const blocks = db.prepare('select * from cohort_module_block where cohort_id = ?').all(cohort.id) as Array<{
+      module_id: string;
+      duration_days: number;
+    }>;
+    assert.equal(blocks.length, 1);
+    assert.equal(blocks[0].module_id, 'mod-install');
+    assert.equal(blocks[0].duration_days, 2);
+
+    const scheduleDays = db.prepare(`
+      select * from cohort_schedule_day where cohort_id = ? order by day_index asc
+    `).all(cohort.id) as Array<{
+      day_date: string;
+      start_time: string | null;
+      end_time: string | null;
+    }>;
+    assert.equal(scheduleDays.length, 2);
+    assert.equal(scheduleDays[0].day_date, '2026-05-11');
+    assert.equal(scheduleDays[0].start_time, '10:00');
+
+    const allocation = db.prepare('select * from cohort_allocation where cohort_id = ?').get(cohort.id) as {
+      company_id: string;
+      module_id: string;
+    } | undefined;
+    assert.ok(allocation);
+    assert.equal(allocation.company_id, 'comp-delta');
+    assert.equal(allocation.module_id, 'mod-install');
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});

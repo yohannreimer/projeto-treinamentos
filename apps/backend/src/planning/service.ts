@@ -1,8 +1,33 @@
-import { db } from '../db.js';
+import { db, nowDateIso, uuid } from '../db.js';
 import type { PlanningConflict, PlanningEncounterPayload } from './types.js';
 
 const ISO_DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_REGEX = /^\d{2}:\d{2}$/;
+
+type PlanningCohortPublishRow = {
+  id: string;
+  workspace_id: string;
+  company_id: string;
+  module_id: string;
+  technician_id: string | null;
+  published_cohort_id: string | null;
+  name: string;
+  delivery_mode: string;
+  period: string;
+  notes: string | null;
+};
+
+type PlanningEncounterPublishRow = {
+  id: string;
+  planning_cohort_id: string;
+  company_id: string;
+  module_id: string;
+  technician_id: string | null;
+  encounter_index: number;
+  day_date: string;
+  start_time: string;
+  end_time: string;
+};
 
 export function timeToMinutes(value: string | null | undefined): number | null {
   if (!value || !TIME_REGEX.test(value)) return null;
@@ -151,4 +176,187 @@ export function findPlanningEncounterConflicts(args: {
   });
 
   return conflicts;
+}
+
+export function publishPlanningWorkspace(workspaceId: string): {
+  created_cohorts: number;
+  updated_cohorts: number;
+  encounter_count: number;
+  version_number: number;
+} {
+  const workspace = db.prepare('select id from planning_workspace where id = ?').get(workspaceId);
+  if (!workspace) {
+    throw new Error('Planejamento não encontrado.');
+  }
+
+  const planningCohorts = db.prepare(`
+    select *
+    from planning_cohort
+    where workspace_id = ? and status <> 'Cancelado'
+    order by created_at asc, id asc
+  `).all(workspaceId) as PlanningCohortPublishRow[];
+
+  const planningEncounters = db.prepare(`
+    select *
+    from planning_encounter
+    where workspace_id = ? and status <> 'Cancelado'
+    order by planning_cohort_id asc, encounter_index asc
+  `).all(workspaceId) as PlanningEncounterPublishRow[];
+
+  const encountersByCohort = new Map<string, PlanningEncounterPublishRow[]>();
+  planningEncounters.forEach((encounter) => {
+    const cohortEncounters = encountersByCohort.get(encounter.planning_cohort_id) ?? [];
+    cohortEncounters.push(encounter);
+    encountersByCohort.set(encounter.planning_cohort_id, cohortEncounters);
+  });
+
+  const versionRow = db.prepare(`
+    select coalesce(max(version_number), 0) + 1 as version_number
+    from planning_version
+    where workspace_id = ?
+  `).get(workspaceId) as { version_number: number };
+  const versionNumber = versionRow.version_number;
+
+  let createdCohorts = 0;
+  let updatedCohorts = 0;
+  const now = nowDateIso();
+
+  const tx = db.transaction(() => {
+    planningCohorts.forEach((cohort, cohortIndex) => {
+      const encounters = encountersByCohort.get(cohort.id) ?? [];
+      if (encounters.length === 0) {
+        throw new Error(`Turma planejada ${cohort.name} não possui encontros para publicar.`);
+      }
+
+      const firstEncounter = encounters[0];
+      const cohortId = cohort.published_cohort_id ?? uuid('coh');
+      const isExistingCohort = Boolean(cohort.published_cohort_id);
+      const cohortCode = `PLAN-${workspaceId.slice(-5).toUpperCase()}-${String(cohortIndex + 1).padStart(2, '0')}`;
+      const startTime = cohort.period === 'Meio_periodo' ? firstEncounter.start_time : null;
+      const endTime = cohort.period === 'Meio_periodo' ? firstEncounter.end_time : null;
+
+      if (isExistingCohort) {
+        db.prepare(`
+          update cohort
+          set name = ?,
+              start_date = ?,
+              technician_id = ?,
+              status = 'Planejada',
+              capacity_companies = 1,
+              period = ?,
+              start_time = ?,
+              end_time = ?,
+              delivery_mode = ?,
+              notes = ?,
+              planning_workspace_id = ?,
+              planning_cohort_id = ?
+          where id = ?
+        `).run(
+          cohort.name,
+          firstEncounter.day_date,
+          cohort.technician_id,
+          cohort.period,
+          startTime,
+          endTime,
+          cohort.delivery_mode,
+          cohort.notes,
+          workspaceId,
+          cohort.id,
+          cohortId
+        );
+        updatedCohorts += 1;
+      } else {
+        db.prepare(`
+          insert into cohort (
+            id, code, name, start_date, technician_id, status, capacity_companies,
+            period, start_time, end_time, delivery_mode, notes, planning_workspace_id, planning_cohort_id
+          ) values (?, ?, ?, ?, ?, 'Planejada', 1, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          cohortId,
+          cohortCode,
+          cohort.name,
+          firstEncounter.day_date,
+          cohort.technician_id,
+          cohort.period,
+          startTime,
+          endTime,
+          cohort.delivery_mode,
+          cohort.notes,
+          workspaceId,
+          cohort.id
+        );
+        db.prepare('update planning_cohort set published_cohort_id = ? where id = ?').run(cohortId, cohort.id);
+        createdCohorts += 1;
+      }
+
+      db.prepare('delete from cohort_module_block where cohort_id = ?').run(cohortId);
+      db.prepare(`
+        insert into cohort_module_block (id, cohort_id, module_id, order_in_cohort, start_day_offset, duration_days)
+        values (?, ?, ?, 1, 1, ?)
+      `).run(uuid('blk'), cohortId, cohort.module_id, encounters.length);
+
+      db.prepare('delete from cohort_schedule_day where cohort_id = ?').run(cohortId);
+      const insertScheduleDay = db.prepare(`
+        insert into cohort_schedule_day (id, cohort_id, day_index, day_date, start_time, end_time)
+        values (?, ?, ?, ?, ?, ?)
+      `);
+      encounters.forEach((encounter, encounterIndex) => {
+        insertScheduleDay.run(
+          uuid('csd'),
+          cohortId,
+          encounterIndex + 1,
+          encounter.day_date,
+          encounter.start_time,
+          encounter.end_time
+        );
+      });
+
+      const updateEncounter = db.prepare(`
+        update planning_encounter
+        set status = 'Publicado', published_cohort_id = ?, updated_at = ?
+        where id = ?
+      `);
+      encounters.forEach((encounter) => updateEncounter.run(cohortId, now, encounter.id));
+
+      db.prepare(`
+        insert into cohort_allocation (id, cohort_id, company_id, module_id, entry_day, status, notes)
+        values (?, ?, ?, ?, 1, 'Previsto', 'Criado via aba Planejar.')
+        on conflict(cohort_id, company_id, module_id)
+        do update set
+          entry_day = excluded.entry_day,
+          status = 'Previsto',
+          notes = excluded.notes
+      `).run(uuid('all'), cohortId, cohort.company_id, cohort.module_id);
+
+      db.prepare(`
+        update planning_cohort
+        set status = 'Publicado', updated_at = ?
+        where id = ?
+      `).run(now, cohort.id);
+    });
+
+    db.prepare(`
+      update planning_workspace
+      set status = 'Publicado', published_at = ?, updated_at = ?
+      where id = ?
+    `).run(now, now, workspaceId);
+
+    db.prepare(`
+      insert into planning_version (id, workspace_id, version_number, action, summary_json, created_at)
+      values (?, ?, ?, 'publish', ?, ?)
+    `).run(uuid('plv'), workspaceId, versionNumber, JSON.stringify({
+      created_cohorts: createdCohorts,
+      updated_cohorts: updatedCohorts,
+      encounter_count: planningEncounters.length
+    }), now);
+  });
+
+  tx();
+
+  return {
+    created_cohorts: createdCohorts,
+    updated_cohorts: updatedCohorts,
+    encounter_count: planningEncounters.length,
+    version_number: versionNumber
+  };
 }

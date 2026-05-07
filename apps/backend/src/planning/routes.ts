@@ -1,7 +1,7 @@
 import type { Express } from 'express';
 import { z } from 'zod';
 import { db, nowDateIso, uuid } from '../db.js';
-import { findPlanningEncounterConflicts, validatePlanningEncounterPayload } from './service.js';
+import { findPlanningEncounterConflicts, publishPlanningWorkspace, validatePlanningEncounterPayload } from './service.js';
 
 const planningModeValues = ['Manual', 'Assistido', 'Automatico'] as const;
 const planningCohortStatusValues = ['Rascunho', 'Pronto', 'Publicado', 'Cancelado'] as const;
@@ -237,5 +237,33 @@ export function registerPlanningRoutes(app: Express) {
       }).map((conflict) => ({ planning_encounter_id: encounter.id, ...conflict })))
     ));
     return res.json({ ok: conflicts.length === 0, conflicts });
+  });
+
+  app.post('/planning/workspaces/:workspaceId/publish', (req, res) => {
+    const detail = readWorkspace(req.params.workspaceId);
+    if (!detail) return res.status(404).json({ message: 'Planejamento não encontrado.' });
+
+    const conflicts = detail.cohorts.flatMap((cohort) => (
+      cohort.encounters.flatMap((encounter) => findPlanningEncounterConflicts({
+        technician_id: encounter.technician_id,
+        day_date: encounter.day_date,
+        start_time: encounter.start_time,
+        end_time: encounter.end_time,
+        exclude_planning_encounter_id: encounter.id,
+        exclude_published_cohort_id: encounter.published_cohort_id ?? undefined
+      }).map((conflict) => ({ planning_encounter_id: encounter.id, ...conflict })))
+    ));
+    if (conflicts.length > 0) {
+      return res.status(409).json({ message: 'Planejamento possui conflitos.', conflicts });
+    }
+
+    try {
+      return res.json(publishPlanningWorkspace(req.params.workspaceId));
+    } catch (error) {
+      return res.status(400).json({
+        message: 'Não foi possível publicar planejamento.',
+        detail: errorMessage(error)
+      });
+    }
   });
 }
