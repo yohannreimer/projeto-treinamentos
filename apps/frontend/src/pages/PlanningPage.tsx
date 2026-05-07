@@ -30,6 +30,24 @@ const emptyEncounterDraft = {
 
 const encounterStatuses: PlanningEncounterStatus[] = ['Rascunho', 'Confirmacao_cliente', 'Confirmado', 'Publicado', 'Cancelado'];
 
+function minutes(value: string) {
+  const [hour, minute] = value.split(':').map(Number);
+  return hour * 60 + minute;
+}
+
+export function encounterGridStyle(startTime: string, endTime: string): { top: string; height: string } {
+  const dayStart = 8 * 60;
+  const dayEnd = 18 * 60;
+  const total = dayEnd - dayStart;
+  const start = Math.max(dayStart, Math.min(dayEnd, minutes(startTime)));
+  const end = Math.max(start + 15, Math.min(dayEnd, minutes(endTime)));
+
+  return {
+    top: `${Math.round(((start - dayStart) / total) * 100)}%`,
+    height: `${Math.round(((end - start) / total) * 100)}%`
+  };
+}
+
 export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
   const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState('');
@@ -155,6 +173,10 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
   const selectedWorkspace = planningDetail?.workspace ?? null;
   const clients = planningDetail?.clients ?? [];
   const cohorts = planningDetail?.cohorts ?? [];
+  const plannedEncounters = useMemo(
+    () => cohorts.flatMap((cohort) => cohort.encounters.map((encounter) => ({ cohort, encounter }))),
+    [cohorts]
+  );
   const isPublishingWorkspace = publishingWorkspaceId !== null;
   const isSavingSelectedEncounter = Boolean(
     savingEncounter &&
@@ -246,14 +268,15 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
 
     return (
       <button
-        className={`planning-encounter ${isSelected ? 'is-selected' : ''}`.trim()}
+        className={`planning-encounter planning-encounter--${encounter.status.toLowerCase()} ${isSelected ? 'is-selected' : ''}`.trim()}
         key={encounter.id}
         onClick={() => selectEncounter(encounter.id)}
+        style={encounterGridStyle(encounter.start_time, encounter.end_time)}
         type="button"
       >
-        <strong>{encounter.day_date}</strong>
-        <span>{encounter.start_time} - {encounter.end_time}</span>
-        <small>{cohort.company_name} · {cohort.module_code}</small>
+        <strong>{encounter.start_time} - {encounter.end_time}</strong>
+        <span>{cohort.company_name} · {cohort.module_code}</span>
+        <small>{encounter.day_date} · {encounter.technician_name ?? cohort.technician_name ?? 'Sem técnico'}</small>
       </button>
     );
   }
@@ -354,16 +377,12 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
 
           <div className="planning-time-grid">
             {isLoadingDetail ? <p>Carregando encontros do planejamento.</p> : null}
-            {!isLoadingDetail && cohorts.length === 0 ? <p>Nenhum encontro planejado para este workspace.</p> : null}
-            {!isLoadingDetail && cohorts.map((cohort) => (
-              <section key={cohort.id}>
-                <div className="planning-client-title">
-                  <strong>{cohort.name}</strong>
-                  <small>{cohort.delivery_mode} · {cohort.period}</small>
-                </div>
-                {cohort.encounters.map((encounter) => renderEncounter(cohort, encounter))}
-              </section>
-            ))}
+            {!isLoadingDetail && plannedEncounters.length === 0 ? <p>Nenhum encontro planejado para este workspace.</p> : null}
+            {!isLoadingDetail && plannedEncounters.length > 0 ? (
+              <div className="planning-hour-board">
+                {plannedEncounters.map(({ cohort, encounter }) => renderEncounter(cohort, encounter))}
+              </div>
+            ) : null}
           </div>
         </section>
 

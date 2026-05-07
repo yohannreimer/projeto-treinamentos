@@ -7376,28 +7376,40 @@ button:focus-visible,
 }
 
 .planning-time-grid {
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  display: block;
+  padding: 10px;
 }
 
-.planning-time-grid > section {
-  min-width: 0;
-  display: grid;
-  gap: var(--space-2);
-  align-content: start;
+.planning-hour-board {
+  position: relative;
+  min-height: 560px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
-  background: var(--color-surface-soft);
-  padding: var(--space-2);
+  background:
+    repeating-linear-gradient(
+      to bottom,
+      var(--color-surface) 0,
+      var(--color-surface) 55px,
+      var(--color-surface-soft) 56px,
+      var(--color-surface-soft) 112px
+    );
+  overflow: hidden;
 }
 
 .planning-encounter {
-  width: 100%;
-  display: grid;
-  gap: 3px;
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  min-height: 44px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
   text-align: left;
-  border-color: var(--color-border);
-  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface-soft);
   padding: var(--space-2);
+  overflow: hidden;
 }
 
 .planning-encounter.is-selected {

@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { api } from '../services/api';
-import { PlanningPage } from './PlanningPage';
+import { encounterGridStyle, PlanningPage } from './PlanningPage';
 import type { PlanningWorkspaceDetail } from '../types';
 
 vi.mock('../services/api', () => ({
@@ -521,5 +521,12 @@ describe('PlanningPage', () => {
     await waitFor(() => expect(screen.queryByText('Resposta atrasada')).not.toBeInTheDocument());
     expect(screen.getByDisplayValue('Segundo encontro')).toBeInTheDocument();
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
+  test('encounterGridStyle maps real time to vertical layout', () => {
+    expect(encounterGridStyle('10:00', '14:00')).toEqual({
+      top: '20%',
+      height: '40%'
+    });
   });
 });
