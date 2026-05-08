@@ -7212,6 +7212,12 @@ button:focus-visible,
   gap: var(--space-4);
 }
 
+.planning-page {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
 .planning-workspace-switcher label {
   min-width: 280px;
   display: grid;
@@ -7232,7 +7238,7 @@ button:focus-visible,
 
 .planning-control-strip {
   display: grid;
-  grid-template-columns: minmax(280px, 0.75fr) minmax(620px, 1.8fr);
+  grid-template-columns: 1fr;
   gap: 10px;
   margin-bottom: 10px;
 }
@@ -7250,11 +7256,11 @@ button:focus-visible,
 }
 
 .planning-control-card--workspace {
-  grid-template-columns: minmax(150px, 1fr) minmax(96px, 0.55fr) 84px 74px;
+  grid-template-columns: minmax(180px, 1fr) minmax(120px, 0.4fr) 96px auto;
 }
 
 .planning-control-card--cohort {
-  grid-template-columns: minmax(150px, 1.1fr) minmax(180px, 1.25fr) minmax(150px, 1fr) 128px 156px 82px 116px 116px 1fr auto auto;
+  grid-template-columns: repeat(3, minmax(128px, 1fr));
 }
 
 .planning-control-title {
@@ -7300,7 +7306,8 @@ button:focus-visible,
 }
 
 .planning-technician-pool {
-  min-width: 210px;
+  grid-column: 1 / -1;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -7334,9 +7341,12 @@ button:focus-visible,
 
 .planning-workbench {
   display: grid;
-  grid-template-columns: minmax(230px, 280px) minmax(580px, 1fr) minmax(260px, 320px);
+  grid-template-columns: minmax(230px, 270px) minmax(0, 1fr) minmax(280px, 310px);
   gap: 10px;
   align-items: start;
+  max-width: 100%;
+  overflow: hidden;
+  contain: inline-size;
 }
 
 .planning-queue,
@@ -7352,6 +7362,20 @@ button:focus-visible,
   padding: var(--space-3);
 }
 
+.planning-calendar,
+.planning-context-panel {
+  overflow: hidden;
+}
+
+.planning-calendar {
+  contain: inline-size;
+}
+
+.planning-context-panel {
+  position: relative;
+  z-index: 2;
+}
+
 .planning-panel-header {
   display: flex;
   align-items: start;
@@ -7359,6 +7383,13 @@ button:focus-visible,
   gap: var(--space-3);
   padding-bottom: var(--space-2);
   border-bottom: 1px solid var(--color-border);
+}
+
+.planning-panel-header > button {
+  flex: 0 1 auto;
+  max-width: 150px;
+  min-height: 34px;
+  white-space: normal;
 }
 
 .planning-panel-header h2 {
@@ -7384,15 +7415,20 @@ button:focus-visible,
 }
 
 .planning-calendar-tools {
-  display: grid;
-  grid-template-columns: auto auto minmax(120px, 1fr) minmax(120px, 1fr);
+  display: flex;
+  flex-wrap: wrap;
   align-items: end;
   gap: 8px;
+}
+
+.planning-calendar-tools label {
+  flex: 1 1 112px;
 }
 
 .planning-zoom-tabs,
 .planning-range-controls {
   display: inline-flex;
+  flex: 0 1 auto;
   width: fit-content;
   gap: var(--space-1);
   padding: 3px;
@@ -7507,13 +7543,17 @@ button:focus-visible,
 .planning-time-grid {
   display: block;
   padding: 2px;
+  min-width: 0;
+  max-width: 100%;
   overflow-x: auto;
+  overscroll-behavior-x: contain;
 }
 
 .planning-week-board {
-  min-width: 880px;
+  width: max-content;
+  min-width: 100%;
   display: grid;
-  grid-template-columns: repeat(7, minmax(118px, 1fr));
+  grid-template-columns: repeat(7, minmax(104px, 1fr));
   gap: 6px;
 }
 
@@ -7553,7 +7593,7 @@ button:focus-visible,
 
 .planning-day-hours {
   position: relative;
-  min-height: 560px;
+  min-height: 500px;
   background:
     repeating-linear-gradient(
       to bottom,
@@ -7566,9 +7606,9 @@ button:focus-visible,
 }
 
 .planning-range-board {
-  min-width: 1560px;
+  width: max-content;
+  min-width: 100%;
   display: grid;
-  grid-template-columns: repeat(30, minmax(104px, 1fr));
   gap: 6px;
 }
 
@@ -7595,12 +7635,11 @@ button:focus-visible,
   gap: 3px;
   text-align: left;
   border: 1px solid var(--color-border-strong);
-  border-left: 3px solid var(--color-primary);
   border-radius: 7px;
   background: #f8fbff;
   padding: 7px;
   overflow: hidden;
-  box-shadow: 0 5px 14px rgba(21, 28, 34, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(239, 47, 15, 0.16), 0 5px 14px rgba(21, 28, 34, 0.08);
 }
 
 .planning-encounter--compact {
@@ -7611,12 +7650,12 @@ button:focus-visible,
 }
 
 .planning-encounter--publicado {
-  border-left-color: var(--color-success);
+  box-shadow: inset 0 0 0 1px rgba(12, 126, 72, 0.22), 0 5px 14px rgba(21, 28, 34, 0.08);
 }
 
 .planning-encounter--confirmacao_cliente,
 .planning-encounter--confirmado {
-  border-left-color: #d58910;
+  box-shadow: inset 0 0 0 1px rgba(213, 137, 16, 0.24), 0 5px 14px rgba(21, 28, 34, 0.08);
 }
 
 .planning-encounter.is-selected {
@@ -7648,6 +7687,7 @@ button:focus-visible,
 }
 
 .planning-list-row {
+  min-width: 760px;
   display: grid;
   grid-template-columns: 76px 96px minmax(140px, 1fr) minmax(82px, 0.7fr) minmax(120px, 0.8fr) 120px;
   align-items: center;
@@ -7709,7 +7749,7 @@ button:focus-visible,
 
 @media (max-width: 1440px) {
   .planning-control-card--cohort {
-    grid-template-columns: repeat(4, minmax(130px, 1fr));
+    grid-template-columns: repeat(3, minmax(130px, 1fr));
   }
 
   .planning-technician-pool {

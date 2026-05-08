@@ -837,11 +837,21 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
               </label>
             ))}
           </div>
-          <button type="button" disabled={isSuggesting || !cohortDraft.moduleId || technicians.length === 0} onClick={suggestFirstWindow}>
-            {isSuggesting ? 'Buscando...' : 'Sistema alocar'}
+          <button
+            aria-label="Sistema alocar"
+            type="button"
+            disabled={isSuggesting || !cohortDraft.moduleId || technicians.length === 0}
+            onClick={suggestFirstWindow}
+          >
+            {isSuggesting ? 'Buscando...' : 'Alocar'}
           </button>
-          <button type="button" disabled={isCreatingCohort || !canCreateCohort} onClick={createPlannedCohort}>
-            {isCreatingCohort ? 'Adicionando...' : 'Adicionar turma'}
+          <button
+            aria-label="Adicionar turma"
+            type="button"
+            disabled={isCreatingCohort || !canCreateCohort}
+            onClick={createPlannedCohort}
+          >
+            {isCreatingCohort ? 'Adicionando...' : 'Adicionar'}
           </button>
         </div>
       </section>
@@ -898,8 +908,19 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
               <h2 id="planning-calendar-title">Agenda por horário</h2>
               <p>{isLoadingDetail ? 'Carregando grade' : selectedWorkspace ? `${selectedWorkspace.horizon_days} dias de horizonte` : 'Crie um planejamento'}</p>
             </div>
-            <button type="button" disabled={isPublishBlocked} onClick={publishCurrentWorkspace}>
-              {isPublishingWorkspace ? 'Publicando...' : hasPendingWorkspaceEncounterSave ? 'Aguardando salvamento' : 'Publicar alterações válidas'}
+            <button
+              aria-label={
+                isPublishingWorkspace
+                  ? 'Publicando...'
+                  : hasPendingWorkspaceEncounterSave
+                    ? 'Aguardando salvamento'
+                    : 'Publicar alterações válidas'
+              }
+              type="button"
+              disabled={isPublishBlocked}
+              onClick={publishCurrentWorkspace}
+            >
+              {isPublishingWorkspace ? 'Publicando...' : hasPendingWorkspaceEncounterSave ? 'Aguardando' : 'Publicar'}
             </button>
           </div>
 
