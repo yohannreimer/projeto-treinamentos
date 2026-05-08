@@ -8,8 +8,14 @@ import type { PlanningWorkspaceDetail } from '../types';
 
 vi.mock('../services/api', () => ({
   api: {
+    companies: vi.fn(),
+    modules: vi.fn(),
+    technicians: vi.fn(),
     planningWorkspaces: vi.fn(),
     planningWorkspace: vi.fn(),
+    createPlanningWorkspace: vi.fn(),
+    createPlanningCohort: vi.fn(),
+    planningSuggestions: vi.fn(),
     updatePlanningEncounter: vi.fn(),
     validatePlanningWorkspace: vi.fn(),
     publishPlanningWorkspace: vi.fn()
@@ -87,6 +93,9 @@ function detail(
 describe('PlanningPage', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    vi.mocked(api.companies).mockResolvedValue([]);
+    vi.mocked(api.modules).mockResolvedValue([]);
+    vi.mocked(api.technicians).mockResolvedValue([]);
   });
 
   test('renders workspace list and selected planning columns', async () => {
@@ -112,7 +121,7 @@ describe('PlanningPage', () => {
     render(<PlanningPage />);
 
     expect(await screen.findByText('Carteira Maio')).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByText('Delta Ferramentaria')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getAllByText('Delta Ferramentaria').length).toBeGreaterThan(0));
     expect(screen.getByText('Agenda por horário')).toBeInTheDocument();
     expect(screen.getByText('Painel contextual')).toBeInTheDocument();
   });

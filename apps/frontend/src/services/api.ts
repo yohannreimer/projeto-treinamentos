@@ -3,6 +3,8 @@ import type {
   CompanyHoursModuleInsight,
   CompanyHoursPendingItem,
   CompanyHoursSummary,
+  PlanningCohort,
+  PlanningEncounter,
   PlanningWorkspaceDetail
 } from '../types';
 import { internalSessionStore, type InternalPermission, type InternalRole, type InternalSessionUser } from '../auth/session';
@@ -156,7 +158,19 @@ export const api = {
       notes?: string | null;
     }>;
   }) =>
-    req(`/planning/workspaces/${workspaceId}/cohorts`, {
+    req<{ cohort: PlanningCohort; encounters: PlanningEncounter[] }>(`/planning/workspaces/${workspaceId}/cohorts`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  planningSuggestions: (payload: {
+    module_id: string;
+    technician_ids: string[];
+    date_from: string;
+    date_to: string;
+    duration_minutes: number;
+    max_results?: number;
+  }) =>
+    req<{ suggestions: Array<{ technician_id: string; day_date: string; start_time: string; end_time: string }> }>('/planning/suggestions', {
       method: 'POST',
       body: JSON.stringify(payload)
     }),

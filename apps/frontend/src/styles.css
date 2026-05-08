@@ -7213,12 +7213,12 @@ button:focus-visible,
 }
 
 .planning-workspace-switcher label {
-  min-width: 260px;
+  min-width: 280px;
   display: grid;
   gap: var(--space-1);
   color: var(--color-text-muted);
-  font-size: 0.8rem;
-  font-weight: 700;
+  font-size: 0.78rem;
+  font-weight: 800;
 }
 
 .success {
@@ -7227,12 +7227,114 @@ button:focus-visible,
   background: #edf8f2;
   border: 1px solid #cce8d7;
   padding: 8px 10px;
-  border-radius: 10px;
+  border-radius: 8px;
+}
+
+.planning-control-strip {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.75fr) minmax(620px, 1.8fr);
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.planning-control-card {
+  min-width: 0;
+  display: grid;
+  align-items: end;
+  gap: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-soft);
+  padding: 12px;
+}
+
+.planning-control-card--workspace {
+  grid-template-columns: minmax(150px, 1fr) minmax(96px, 0.55fr) 84px 74px;
+}
+
+.planning-control-card--cohort {
+  grid-template-columns: minmax(150px, 1.1fr) minmax(180px, 1.25fr) minmax(150px, 1fr) 128px 156px 82px 116px 116px 1fr auto auto;
+}
+
+.planning-control-title {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--color-text-muted);
+  font-size: 0.76rem;
+}
+
+.planning-control-title strong {
+  color: var(--color-text);
+  font-size: 0.92rem;
+}
+
+.planning-control-card label,
+.planning-calendar-tools label,
+.planning-editor-grid label {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.planning-control-card input,
+.planning-control-card select,
+.planning-calendar-tools input,
+.planning-calendar-tools select,
+.planning-editor-grid input,
+.planning-editor-grid select,
+.planning-editor-grid textarea {
+  min-width: 0;
+}
+
+.planning-time-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
+.planning-technician-pool {
+  min-width: 210px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 6px;
+  white-space: nowrap;
+}
+
+.planning-technician-pool > span {
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.planning-technician-pool button {
+  min-height: 26px;
+  padding: 3px 8px;
+  font-size: 0.74rem;
+}
+
+.planning-technician-pool label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-text);
+  font-size: 0.74rem;
+  font-weight: 700;
 }
 
 .planning-workbench {
   display: grid;
-  grid-template-columns: minmax(240px, 280px) minmax(420px, 1fr) minmax(260px, 300px);
+  grid-template-columns: minmax(230px, 280px) minmax(580px, 1fr) minmax(260px, 320px);
   gap: 10px;
   align-items: start;
 }
@@ -7281,7 +7383,15 @@ button:focus-visible,
   font-weight: 700;
 }
 
-.planning-zoom-tabs {
+.planning-calendar-tools {
+  display: grid;
+  grid-template-columns: auto auto minmax(120px, 1fr) minmax(120px, 1fr);
+  align-items: end;
+  gap: 8px;
+}
+
+.planning-zoom-tabs,
+.planning-range-controls {
   display: inline-flex;
   width: fit-content;
   gap: var(--space-1);
@@ -7291,14 +7401,27 @@ button:focus-visible,
   background: var(--color-surface-soft);
 }
 
-.planning-zoom-tabs button {
+.planning-range-controls {
+  border-radius: 8px;
+}
+
+.planning-zoom-tabs button,
+.planning-range-controls button {
   min-height: 30px;
   border: 0;
   border-radius: 999px;
   background: transparent;
   padding: 5px 10px;
-  font-size: 0.78rem;
+  font-size: 0.76rem;
   box-shadow: none;
+}
+
+.planning-range-controls input {
+  width: 132px;
+  min-height: 30px;
+  border: 0;
+  background: transparent;
+  padding: 4px 2px;
 }
 
 .planning-zoom-tabs button.is-selected {
@@ -7352,11 +7475,17 @@ button:focus-visible,
 }
 
 .planning-module-row {
+  width: 100%;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   gap: 2px var(--space-2);
+  border: 0;
   border-top: 1px solid var(--color-border);
-  padding-top: var(--space-2);
+  border-radius: 0;
+  background: transparent;
+  padding: var(--space-2) 0 0;
+  text-align: left;
+  box-shadow: none;
 }
 
 .planning-module-row strong {
@@ -7377,14 +7506,54 @@ button:focus-visible,
 
 .planning-time-grid {
   display: block;
-  padding: 10px;
+  padding: 2px;
+  overflow-x: auto;
 }
 
-.planning-hour-board {
+.planning-week-board {
+  min-width: 880px;
+  display: grid;
+  grid-template-columns: repeat(7, minmax(118px, 1fr));
+  gap: 6px;
+}
+
+.planning-day-lane,
+.planning-range-day {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+  overflow: hidden;
+}
+
+.planning-day-lane > header,
+.planning-range-day > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface-soft);
+  padding: 7px 8px;
+}
+
+.planning-day-lane > header strong,
+.planning-range-day > header strong {
+  font-size: 0.78rem;
+}
+
+.planning-day-lane > header span,
+.planning-range-day > header span {
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.planning-day-hours {
   position: relative;
   min-height: 560px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
   background:
     repeating-linear-gradient(
       to bottom,
@@ -7396,20 +7565,58 @@ button:focus-visible,
   overflow: hidden;
 }
 
+.planning-range-board {
+  min-width: 1560px;
+  display: grid;
+  grid-template-columns: repeat(30, minmax(104px, 1fr));
+  gap: 6px;
+}
+
+.planning-range-day {
+  align-content: start;
+  min-height: 170px;
+  padding-bottom: 6px;
+}
+
+.planning-empty-day {
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+  padding: 0 8px;
+}
+
 .planning-encounter {
   position: absolute;
-  left: 10px;
-  right: 10px;
+  left: 6px;
+  right: 6px;
   min-height: 44px;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 4px;
+  gap: 3px;
   text-align: left;
   border: 1px solid var(--color-border-strong);
-  background: var(--color-surface-soft);
-  padding: var(--space-2);
+  border-left: 3px solid var(--color-primary);
+  border-radius: 7px;
+  background: #f8fbff;
+  padding: 7px;
   overflow: hidden;
+  box-shadow: 0 5px 14px rgba(21, 28, 34, 0.08);
+}
+
+.planning-encounter--compact {
+  position: static;
+  margin: 0 6px;
+  min-height: 0;
+  padding: 6px;
+}
+
+.planning-encounter--publicado {
+  border-left-color: var(--color-success);
+}
+
+.planning-encounter--confirmacao_cliente,
+.planning-encounter--confirmado {
+  border-left-color: #d58910;
 }
 
 .planning-encounter.is-selected {
@@ -7421,17 +7628,47 @@ button:focus-visible,
 .planning-encounter span,
 .planning-encounter small {
   min-width: 0;
+  max-width: 100%;
   overflow-wrap: anywhere;
 }
 
 .planning-encounter strong {
-  font-size: 0.86rem;
+  font-size: 0.8rem;
 }
 
 .planning-encounter span,
 .planning-encounter small {
   color: var(--color-text-muted);
-  font-size: 0.76rem;
+  font-size: 0.7rem;
+}
+
+.planning-list-table {
+  display: grid;
+  gap: 4px;
+}
+
+.planning-list-row {
+  display: grid;
+  grid-template-columns: 76px 96px minmax(140px, 1fr) minmax(82px, 0.7fr) minmax(120px, 0.8fr) 120px;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+  padding: 8px;
+  text-align: left;
+  box-shadow: none;
+}
+
+.planning-list-row.is-selected {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+
+.planning-list-row span,
+.planning-list-row small {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .planning-editor-summary dl {
@@ -7460,6 +7697,26 @@ button:focus-visible,
   font-size: 0.86rem;
 }
 
+.planning-editor-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.planning-editor-grid label:last-child {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 1440px) {
+  .planning-control-card--cohort {
+    grid-template-columns: repeat(4, minmax(130px, 1fr));
+  }
+
+  .planning-technician-pool {
+    grid-column: 1 / -1;
+  }
+}
+
 @media (max-width: 1160px) {
   .planning-page-header {
     align-items: stretch;
@@ -7470,8 +7727,15 @@ button:focus-visible,
     min-width: 0;
   }
 
-  .planning-workbench {
+  .planning-control-strip,
+  .planning-workbench,
+  .planning-calendar-tools {
     grid-template-columns: 1fr;
+  }
+
+  .planning-control-card--workspace,
+  .planning-control-card--cohort {
+    grid-template-columns: 1fr 1fr;
   }
 }
 
