@@ -1312,8 +1312,14 @@ function applyPlanningDisplaySettings(
           status: overrideStatus
         };
       }
-      if (!overrideDate || nextItem.status === 'Concluido') {
+      if (!overrideDate) {
         return nextItem;
+      }
+      if (nextItem.status === 'Concluido') {
+        return {
+          ...nextItem,
+          completed_at: overrideDate
+        };
       }
       const nextDates = [overrideDate, ...(nextItem.next_dates ?? []).filter((value) => value !== overrideDate)].slice(0, 3);
       return {

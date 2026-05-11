@@ -26,6 +26,7 @@ async function createPortalReadModelsFixture(testName: string) {
 
   const app = createApp({ forceDbRefresh: true });
   const nowIso = new Date().toISOString();
+  const todayIso = nowIso.slice(0, 10);
   const passwordHash = await hashPassword('123456');
 
   db.prepare(`
@@ -63,19 +64,52 @@ async function createPortalReadModelsFixture(testName: string) {
     insert into calendar_activity (
       id, title, activity_type, start_date, end_date, all_day, company_id, status, notes, created_at, updated_at
     ) values (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
-  `).run('cal-comp-readmodels-a', 'Kickoff Planejamento', 'Implementacao', '2026-05-10', '2026-05-10', 'comp-readmodels', 'Planejada', null, nowIso, nowIso);
+  `).run(
+    'cal-comp-readmodels-a',
+    'Kickoff Planejamento',
+    'Implementacao',
+    shiftIsoDate(todayIso, 1),
+    shiftIsoDate(todayIso, 1),
+    'comp-readmodels',
+    'Planejada',
+    null,
+    nowIso,
+    nowIso
+  );
 
   db.prepare(`
     insert into calendar_activity (
       id, title, activity_type, start_date, end_date, all_day, company_id, status, notes, created_at, updated_at
     ) values (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
-  `).run('cal-comp-readmodels-b', 'Revisão Técnica', 'Suporte', '2026-05-12', '2026-05-12', 'comp-readmodels', 'Planejada', null, nowIso, nowIso);
+  `).run(
+    'cal-comp-readmodels-b',
+    'Revisão Técnica',
+    'Suporte',
+    shiftIsoDate(todayIso, 3),
+    shiftIsoDate(todayIso, 3),
+    'comp-readmodels',
+    'Planejada',
+    null,
+    nowIso,
+    nowIso
+  );
 
   db.prepare(`
     insert into calendar_activity (
       id, title, activity_type, start_date, end_date, all_day, company_id, status, notes, created_at, updated_at
     ) values (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
-  `).run('cal-comp-02', 'Atividade Outro Tenant', 'Suporte', '2026-05-11', '2026-05-11', 'comp-02', 'Planejada', null, nowIso, nowIso);
+  `).run(
+    'cal-comp-02',
+    'Atividade Outro Tenant',
+    'Suporte',
+    shiftIsoDate(todayIso, 2),
+    shiftIsoDate(todayIso, 2),
+    'comp-02',
+    'Planejada',
+    null,
+    nowIso,
+    nowIso
+  );
 
   return { app, dbPath };
 }
@@ -127,7 +161,7 @@ test('portal planning applies admin curation (hidden modules + date override)', 
       where id = ?
     `).run(
       JSON.stringify(['mod-03']),
-      JSON.stringify({ 'mod-02': '2026-06-20' }),
+      JSON.stringify({ 'mod-01': '2026-03-18', 'mod-02': '2026-06-20' }),
       'portal-client-readmodels'
     );
 
@@ -144,6 +178,11 @@ test('portal planning applies admin curation (hidden modules + date override)', 
       | undefined;
     assert.ok(overridden);
     assert.deepEqual(overridden.next_dates, ['2026-06-20']);
+    const completedOverride = planningRes.body.items.find((item: { module_id: string }) => item.module_id === 'mod-01') as
+      | { module_id: string; completed_at?: string }
+      | undefined;
+    assert.ok(completedOverride);
+    assert.equal(completedOverride.completed_at, '2026-03-18');
   } finally {
     cleanupDbFiles(dbPath);
   }
