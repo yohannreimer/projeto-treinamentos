@@ -175,6 +175,191 @@ test('planning API creates workspace with clients, planned cohort and encounters
   }
 });
 
+test('planning API exposes only client modules that still need planning', { concurrency: false }, async () => {
+  const dbPath = assignTestDbPath('planning-client-pending-modules');
+  cleanupDbFiles(dbPath);
+
+  try {
+    const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+    db.prepare('insert into company (id, name, status, notes, priority) values (?, ?, ?, null, 0)')
+      .run('comp-delta', 'Delta Ferramentaria', 'Ativo');
+    db.prepare(`
+      insert into module_template (
+        id, code, category, name, description, duration_days, profile, is_mandatory, delivery_mode, client_hours_policy
+      ) values (?, ?, ?, ?, null, ?, null, ?, ?, ?)
+    `).run('mod-basic', 'MOD-01', 'Base', 'Básico', 1, 1, 'ministrado', 'consome');
+    db.prepare(`
+      insert into module_template (
+        id, code, category, name, description, duration_days, profile, is_mandatory, delivery_mode, client_hours_policy
+      ) values (?, ?, ?, ?, null, ?, null, ?, ?, ?)
+    `).run('mod-mount', 'MOD-02', 'Base', 'Montagem', 1, 1, 'ministrado', 'consome');
+    db.prepare(`
+      insert into module_template (
+        id, code, category, name, description, duration_days, profile, is_mandatory, delivery_mode, client_hours_policy
+      ) values (?, ?, ?, ?, null, ?, null, ?, ?, ?)
+    `).run('mod-cam', 'MOD-03', 'Base', 'Fresamento 2D', 1, 1, 'ministrado', 'consome');
+    db.prepare(`
+      insert into company_module_progress (id, company_id, module_id, status, completed_at)
+      values (?, ?, ?, 'Concluido', ?)
+    `).run('prog-basic', 'comp-delta', 'mod-basic', '2026-05-01');
+    db.prepare(`
+      insert into cohort (id, code, name, start_date, technician_id, status, capacity_companies, period, delivery_mode)
+      values (?, ?, ?, ?, null, 'Planejada', 1, 'Meio_periodo', 'Online')
+    `).run('coh-mount', 'TUR-MOUNT', 'Turma Montagem', '2026-05-20');
+    db.prepare(`
+      insert into cohort_allocation (id, cohort_id, company_id, module_id, entry_day, status, notes)
+      values (?, ?, ?, ?, 1, 'Previsto', null)
+    `).run('all-mount', 'coh-mount', 'comp-delta', 'mod-mount');
+
+    const created = await request(app)
+      .post('/planning/workspaces')
+      .send({ name: 'Carteira Pendências', company_ids: ['comp-delta'] });
+
+    assert.equal(created.status, 201);
+    assert.deepEqual(created.body.clients[0].available_module_ids, ['mod-cam']);
+
+    const blocked = await request(app)
+      .post(`/planning/workspaces/${created.body.workspace.id}/cohorts`)
+      .send({
+        company_id: 'comp-delta',
+        module_id: 'mod-basic',
+        name: 'Delta · Básico',
+        encounters: [
+          { day_date: '2026-05-11', start_time: '08:00', end_time: '12:00' }
+        ]
+      });
+
+    assert.equal(blocked.status, 409);
+    assert.equal(blocked.body.message, 'Este cliente já tem esse módulo concluído ou vinculado a outra turma. Escolha outro módulo pendente.');
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('planning API can add clients to an existing empty workspace', { concurrency: false }, async () => {
+  const dbPath = assignTestDbPath('planning-api-add-clients');
+  cleanupDbFiles(dbPath);
+
+  try {
+    const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+    db.prepare('insert into company (id, name, status, notes, priority) values (?, ?, ?, null, 0)')
+      .run('comp-delta', 'Delta Ferramentaria', 'Ativo');
+
+    const created = await request(app)
+      .post('/planning/workspaces')
+      .send({ name: 'Carteira Vazia', company_ids: [] });
+
+    assert.equal(created.status, 201);
+    assert.equal(created.body.clients.length, 0);
+
+    const workspaceId = created.body.workspace.id as string;
+    const updated = await request(app)
+      .post(`/planning/workspaces/${workspaceId}/clients`)
+      .send({ company_ids: ['comp-delta'] });
+
+    assert.equal(updated.status, 200);
+    assert.deepEqual(updated.body.clients.map((client: { company_id: string }) => client.company_id), ['comp-delta']);
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('planning API can remove a client without deleting other workspace clients', { concurrency: false }, async () => {
+  const dbPath = assignTestDbPath('planning-api-remove-client');
+  cleanupDbFiles(dbPath);
+
+  try {
+    const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+    db.prepare('insert into company (id, name, status, notes, priority) values (?, ?, ?, null, 0)')
+      .run('comp-delta', 'Delta Ferramentaria', 'Ativo');
+    db.prepare('insert into company (id, name, status, notes, priority) values (?, ?, ?, null, 0)')
+      .run('comp-omega', 'Omega Moldes', 'Ativo');
+
+    const created = await request(app)
+      .post('/planning/workspaces')
+      .send({ name: 'Carteira Clientes', company_ids: ['comp-delta', 'comp-omega'] });
+
+    assert.equal(created.status, 201);
+    assert.equal(created.body.clients.length, 2);
+
+    const workspaceId = created.body.workspace.id as string;
+    const updated = await request(app)
+      .delete(`/planning/workspaces/${workspaceId}/clients/comp-delta`);
+
+    assert.equal(updated.status, 200);
+    assert.deepEqual(updated.body.clients.map((client: { company_id: string }) => client.company_id), ['comp-omega']);
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('planning API rejects creating overlapping planned encounters for the same technician', { concurrency: false }, async () => {
+  const dbPath = assignTestDbPath('planning-api-create-conflict');
+  cleanupDbFiles(dbPath);
+
+  try {
+    const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+    db.prepare('insert into company (id, name, status, notes, priority) values (?, ?, ?, null, 0)')
+      .run('comp-delta', 'Delta Ferramentaria', 'Ativo');
+    db.prepare(`
+      insert into module_template (
+        id, code, category, name, description, duration_days, profile, is_mandatory, delivery_mode, client_hours_policy
+      ) values (?, ?, ?, ?, null, ?, null, ?, ?, ?)
+    `).run('mod-install', 'MOD-01', 'Base', 'Instalação', 1, 1, 'ministrado', 'consome');
+    db.prepare(`
+      insert into module_template (
+        id, code, category, name, description, duration_days, profile, is_mandatory, delivery_mode, client_hours_policy
+      ) values (?, ?, ?, ?, null, ?, null, ?, ?, ?)
+    `).run('mod-advanced', 'MOD-02', 'Base', 'Avançado', 1, 1, 'ministrado', 'consome');
+    db.prepare('insert into technician (id, name) values (?, ?)')
+      .run('tech-ana', 'Ana Técnica');
+
+    const created = await request(app)
+      .post('/planning/workspaces')
+      .send({ name: 'Carteira Conflito', company_ids: ['comp-delta'] });
+    const workspaceId = created.body.workspace.id as string;
+
+    const first = await request(app)
+      .post(`/planning/workspaces/${workspaceId}/cohorts`)
+      .send({
+        company_id: 'comp-delta',
+        module_id: 'mod-install',
+        technician_id: 'tech-ana',
+        name: 'Delta · Instalação',
+        encounters: [
+          { day_date: '2026-05-11', start_time: '08:00', end_time: '12:00' }
+        ]
+      });
+    assert.equal(first.status, 201);
+
+    const conflicting = await request(app)
+      .post(`/planning/workspaces/${workspaceId}/cohorts`)
+      .send({
+        company_id: 'comp-delta',
+        module_id: 'mod-advanced',
+        technician_id: 'tech-ana',
+        name: 'Delta · Avançado',
+        encounters: [
+          { day_date: '2026-05-11', start_time: '10:00', end_time: '17:00' }
+        ]
+      });
+
+    assert.equal(conflicting.status, 409);
+    assert.equal(conflicting.body.message, 'Turma planejada possui conflito.');
+    assert.equal(conflicting.body.conflicts[0].source_type, 'planning_encounter');
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
 test('planning API requires calendar or cohorts internal permission when auth is enforced', { concurrency: false }, async () => {
   const dbPath = assignTestDbPath('planning-api-permissions');
   cleanupDbFiles(dbPath);
@@ -317,6 +502,165 @@ test('planning publish creates real cohort with module block, schedule days and 
     assert.ok(allocation);
     assert.equal(allocation.company_id, 'comp-delta');
     assert.equal(allocation.module_id, 'mod-install');
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('planning publish uses a free code when the default planning code already exists', { concurrency: false }, async () => {
+  const dbPath = assignTestDbPath('planning-publish-code-collision');
+  cleanupDbFiles(dbPath);
+
+  try {
+    const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+    db.prepare('insert into company (id, name, status, notes, priority) values (?, ?, ?, null, 0)')
+      .run('comp-delta', 'Delta Ferramentaria', 'Ativo');
+    db.prepare(`
+      insert into module_template (
+        id, code, category, name, description, duration_days, profile, is_mandatory, delivery_mode, client_hours_policy
+      ) values (?, ?, ?, ?, null, ?, null, ?, ?, ?)
+    `).run('mod-install', 'MOD-01', 'Base', 'Instalação', 1, 1, 'ministrado', 'consome');
+    db.prepare('insert into technician (id, name) values (?, ?)')
+      .run('tech-ana', 'Ana Técnica');
+
+    const created = await request(app)
+      .post('/planning/workspaces')
+      .send({
+        name: 'Carteira Código Livre',
+        mode: 'Manual',
+        horizon_days: 60,
+        company_ids: ['comp-delta']
+      });
+
+    assert.equal(created.status, 201);
+    const workspaceId = created.body.workspace.id as string;
+    const defaultCode = `PLAN-${workspaceId.slice(-5).toUpperCase()}-01`;
+    db.prepare(`
+      insert into cohort (id, code, name, start_date, technician_id, status, capacity_companies, period, delivery_mode)
+      values (?, ?, ?, ?, null, 'Planejada', 1, 'Meio_periodo', 'Online')
+    `).run('coh-existing-code', defaultCode, 'Turma antiga com código igual', '2026-05-01');
+
+    const plannedCohort = await request(app)
+      .post(`/planning/workspaces/${workspaceId}/cohorts`)
+      .send({
+        company_id: 'comp-delta',
+        module_id: 'mod-install',
+        technician_id: 'tech-ana',
+        name: 'Delta · Instalação',
+        delivery_mode: 'Online',
+        period: 'Meio_periodo',
+        encounters: [
+          { day_date: '2026-05-11', start_time: '10:00', end_time: '14:00', status: 'Confirmado' }
+        ]
+      });
+
+    assert.equal(plannedCohort.status, 201);
+
+    const published = await request(app).post(`/planning/workspaces/${workspaceId}/publish`);
+
+    assert.equal(published.status, 200);
+    assert.equal(published.body.created_cohorts, 1);
+
+    const cohort = db.prepare('select code from cohort where planning_workspace_id = ?').get(workspaceId) as { code: string } | undefined;
+    assert.ok(cohort);
+    assert.equal(cohort.code, `${defaultCode}-2`);
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('planning publish relinks legacy published cohort for the same client module', { concurrency: false }, async () => {
+  const dbPath = assignTestDbPath('planning-publish-relink-legacy');
+  cleanupDbFiles(dbPath);
+
+  try {
+    const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+    db.prepare('insert into company (id, name, status, notes, priority) values (?, ?, ?, null, 0)')
+      .run('comp-delta', 'Delta Ferramentaria', 'Ativo');
+    db.prepare(`
+      insert into module_template (
+        id, code, category, name, description, duration_days, profile, is_mandatory, delivery_mode, client_hours_policy
+      ) values (?, ?, ?, ?, null, ?, null, ?, ?, ?)
+    `).run('mod-install', 'MOD-01', 'Base', 'Instalação', 1, 1, 'ministrado', 'consome');
+    db.prepare('insert into technician (id, name) values (?, ?)')
+      .run('tech-ana', 'Ana Técnica');
+
+    const created = await request(app)
+      .post('/planning/workspaces')
+      .send({
+        name: 'Carteira Legada',
+        mode: 'Manual',
+        horizon_days: 60,
+        company_ids: ['comp-delta']
+      });
+
+    assert.equal(created.status, 201);
+    const workspaceId = created.body.workspace.id as string;
+    const defaultCode = `PLAN-${workspaceId.slice(-5).toUpperCase()}-01`;
+
+    db.prepare(`
+      insert into cohort (
+        id, code, name, start_date, technician_id, status, capacity_companies,
+        period, delivery_mode, planning_workspace_id, planning_cohort_id
+      ) values (?, ?, ?, ?, ?, 'Planejada', 1, 'Meio_periodo', 'Online', ?, null)
+    `).run('coh-legacy-plan', defaultCode, 'Turma criada antes do vínculo completo', '2026-05-01', 'tech-ana', workspaceId);
+    db.prepare(`
+      insert into cohort_allocation (id, cohort_id, company_id, module_id, entry_day, status, notes)
+      values (?, ?, ?, ?, 1, 'Previsto', null)
+    `).run('all-legacy-plan', 'coh-legacy-plan', 'comp-delta', 'mod-install');
+
+    const planningCohortId = 'plc-relink-plan';
+    db.prepare(`
+      insert into planning_cohort (
+        id, workspace_id, company_id, module_id, technician_id, published_cohort_id, name, status,
+        delivery_mode, period, notes, created_at, updated_at
+      ) values (?, ?, ?, ?, ?, null, ?, 'Rascunho', 'Online', 'Meio_periodo', null, ?, ?)
+    `).run(planningCohortId, workspaceId, 'comp-delta', 'mod-install', 'tech-ana', 'Delta · Instalação', '2026-05-10', '2026-05-10');
+    db.prepare(`
+      insert into planning_encounter (
+        id, workspace_id, planning_cohort_id, company_id, module_id, technician_id,
+        encounter_index, day_date, start_time, end_time, status, notes, created_at, updated_at
+      ) values (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, 'Confirmado', null, ?, ?)
+    `).run(
+      'ple-relink-plan-1',
+      workspaceId,
+      planningCohortId,
+      'comp-delta',
+      'mod-install',
+      'tech-ana',
+      '2026-05-11',
+      '10:00',
+      '14:00',
+      '2026-05-10',
+      '2026-05-10'
+    );
+
+    const published = await request(app).post(`/planning/workspaces/${workspaceId}/publish`);
+
+    assert.equal(published.status, 200);
+    assert.equal(published.body.created_cohorts, 0);
+    assert.equal(published.body.updated_cohorts, 1);
+
+    const cohorts = db.prepare('select id, code, name, planning_cohort_id from cohort where planning_workspace_id = ?').all(workspaceId) as Array<{
+      id: string;
+      code: string;
+      name: string;
+      planning_cohort_id: string | null;
+    }>;
+    assert.equal(cohorts.length, 1);
+    assert.equal(cohorts[0].id, 'coh-legacy-plan');
+    assert.equal(cohorts[0].code, defaultCode);
+    assert.equal(cohorts[0].name, 'Delta · Instalação');
+    assert.equal(cohorts[0].planning_cohort_id, planningCohortId);
+
+    const planned = db.prepare('select published_cohort_id from planning_cohort where id = ?').get(planningCohortId) as {
+      published_cohort_id: string | null;
+    };
+    assert.equal(planned.published_cohort_id, 'coh-legacy-plan');
   } finally {
     db.close();
     cleanupDbFiles(dbPath);
@@ -470,6 +814,25 @@ test('replanning can cancel an encounter that currently has a conflict', { concu
     `).run('mod-install', 'MOD-01', 'Base', 'Instalação', 1, 1, 'ministrado', 'consome');
     db.prepare('insert into technician (id, name) values (?, ?)')
       .run('tech-ana', 'Ana Técnica');
+    const created = await request(app).post('/planning/workspaces').send({
+      name: 'Carteira Cancelamento',
+      company_ids: ['comp-delta']
+    });
+    const workspaceId = created.body.workspace.id as string;
+
+    const plannedCohort = await request(app)
+      .post(`/planning/workspaces/${workspaceId}/cohorts`)
+      .send({
+        company_id: 'comp-delta',
+        module_id: 'mod-install',
+        technician_id: 'tech-ana',
+        name: 'Delta · Instalação',
+        encounters: [
+          { day_date: '2026-05-11', start_time: '10:00', end_time: '14:00', status: 'Confirmado' }
+        ]
+      });
+    const encounterId = plannedCohort.body.encounters[0].id as string;
+
     db.prepare(`
       insert into calendar_activity (
         id, title, activity_type, start_date, end_date, selected_dates, hours_scope, all_day,
@@ -498,25 +861,6 @@ test('replanning can cancel an encounter that currently has a conflict', { concu
       values (?, ?, ?, ?, ?)
     `).run('act-ana-1', '2026-05-11', 0, '10:00', '12:00');
 
-    const created = await request(app).post('/planning/workspaces').send({
-      name: 'Carteira Cancelamento',
-      company_ids: ['comp-delta']
-    });
-    const workspaceId = created.body.workspace.id as string;
-
-    const plannedCohort = await request(app)
-      .post(`/planning/workspaces/${workspaceId}/cohorts`)
-      .send({
-        company_id: 'comp-delta',
-        module_id: 'mod-install',
-        technician_id: 'tech-ana',
-        name: 'Delta · Instalação',
-        encounters: [
-          { day_date: '2026-05-11', start_time: '10:00', end_time: '14:00', status: 'Confirmado' }
-        ]
-      });
-    const encounterId = plannedCohort.body.encounters[0].id as string;
-
     const updated = await request(app)
       .patch(`/planning/workspaces/${workspaceId}/encounters/${encounterId}`)
       .send({ status: 'Cancelado' });
@@ -529,7 +873,7 @@ test('replanning can cancel an encounter that currently has a conflict', { concu
   }
 });
 
-test('replanning technician change updates cohort technician before republish', { concurrency: false }, async () => {
+test('replanning technician change updates only one planning encounter before republish', { concurrency: false }, async () => {
   const dbPath = assignTestDbPath('planning-replan-technician-cohort');
   cleanupDbFiles(dbPath);
 
@@ -579,7 +923,15 @@ test('replanning technician change updates cohort technician before republish', 
     const planningCohort = db.prepare('select technician_id from planning_cohort where workspace_id = ?').get(workspaceId) as {
       technician_id: string | null;
     };
-    assert.equal(planningCohort.technician_id, 'tech-bruno');
+    assert.equal(planningCohort.technician_id, null);
+
+    const encounterTechnicians = db.prepare(`
+      select technician_id
+      from planning_encounter
+      where planning_cohort_id = ?
+      order by encounter_index asc
+    `).all(plannedCohort.body.cohort.id) as Array<{ technician_id: string | null }>;
+    assert.deepEqual(encounterTechnicians.map((encounter) => encounter.technician_id), ['tech-bruno', 'tech-ana']);
 
     const republished = await request(app).post(`/planning/workspaces/${workspaceId}/publish`);
     assert.equal(republished.status, 200);
@@ -632,6 +984,21 @@ test('replanning technician change rejects same-cohort future overlap', { concur
         ]
       });
     const encounterId = plannedCohort.body.encounters[0].id as string;
+
+    const blockerCohort = await request(app)
+      .post(`/planning/workspaces/${workspaceId}/cohorts`)
+      .send({
+        company_id: 'comp-delta',
+        module_id: 'mod-install',
+        technician_id: 'tech-bruno',
+        name: 'Delta · Instalação Bruno',
+        delivery_mode: 'Online',
+        period: 'Meio_periodo',
+        encounters: [
+          { day_date: '2026-05-12', start_time: '10:00', end_time: '14:00', status: 'Confirmado' }
+        ]
+      });
+    assert.equal(blockerCohort.status, 201);
 
     const updated = await request(app)
       .patch(`/planning/workspaces/${workspaceId}/encounters/${encounterId}`)
@@ -791,12 +1158,13 @@ test('planning publish ignores canceled cohort conflicts', { concurrency: false 
         delivery_mode: 'Online',
         period: 'Meio_periodo',
         encounters: [
-          { day_date: '2026-05-11', start_time: '10:00', end_time: '14:00', status: 'Confirmado' }
+          { day_date: '2026-05-13', start_time: '10:00', end_time: '14:00', status: 'Confirmado' }
         ]
       });
     assert.equal(canceled.status, 201);
 
     db.prepare("update planning_cohort set status = 'Cancelado' where id = ?").run(canceled.body.cohort.id);
+    db.prepare("update planning_encounter set day_date = '2026-05-11' where planning_cohort_id = ?").run(canceled.body.cohort.id);
 
     const published = await request(app).post(`/planning/workspaces/${workspaceId}/publish`);
 
@@ -839,6 +1207,37 @@ test('planning suggestions return conflict-free technician windows', { concurren
     assert.equal(response.body.suggestions[0].day_date, '2026-05-11');
     assert.equal(response.body.suggestions[0].start_time, '08:00');
     assert.equal(response.body.suggestions[0].end_time, '12:00');
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('planning suggestions skip weekends by default', { concurrency: false }, async () => {
+  const dbPath = assignTestDbPath('planning-suggestions-weekdays');
+  cleanupDbFiles(dbPath);
+
+  try {
+    const app = createApp({ forceDbRefresh: true, seedDb: false });
+    db.prepare('insert into technician (id, name) values (?, ?)')
+      .run('tech-ana', 'Ana Técnica');
+
+    const response = await request(app)
+      .post('/planning/suggestions')
+      .send({
+        module_id: 'mod-install',
+        technician_ids: ['tech-ana'],
+        date_from: '2026-05-09',
+        date_to: '2026-05-12',
+        duration_minutes: 240,
+        max_results: 2
+      });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(
+      response.body.suggestions.map((suggestion: { day_date: string }) => suggestion.day_date),
+      ['2026-05-11', '2026-05-12']
+    );
   } finally {
     db.close();
     cleanupDbFiles(dbPath);

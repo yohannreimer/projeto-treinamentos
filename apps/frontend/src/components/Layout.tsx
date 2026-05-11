@@ -15,6 +15,16 @@ const DENSITY_MODE_STORAGE_KEY = 'orquestrador_density_mode_v1';
 const viewModes = ['operational', 'management'] as const;
 const densityModes = ['compact', 'comfortable'] as const;
 
+function readStorageItem(key: string) {
+  if (typeof window === 'undefined' || typeof window.localStorage?.getItem !== 'function') return null;
+  return window.localStorage.getItem(key);
+}
+
+function writeStorageItem(key: string, value: string) {
+  if (typeof window === 'undefined' || typeof window.localStorage?.setItem !== 'function') return;
+  window.localStorage.setItem(key, value);
+}
+
 function topbarContext(pathname: string) {
   if (pathname.startsWith('/planejar')) {
     return {
@@ -75,12 +85,14 @@ function topbarContext(pathname: string) {
 export function Layout({ children, loggedUser, navItems, onLogout }: LayoutProps) {
   const location = useLocation();
   const context = topbarContext(location.pathname);
+  const isPlanningRoute = location.pathname.startsWith('/planejar');
+  const [isPlanningNavExpanded, setIsPlanningNavExpanded] = useState(false);
   const [viewMode, setViewMode] = useState<(typeof viewModes)[number]>(() => {
-    const saved = window.localStorage.getItem(VIEW_MODE_STORAGE_KEY);
+    const saved = readStorageItem(VIEW_MODE_STORAGE_KEY);
     return saved === 'management' ? 'management' : 'operational';
   });
   const [densityMode, setDensityMode] = useState<(typeof densityModes)[number]>(() => {
-    const saved = window.localStorage.getItem(DENSITY_MODE_STORAGE_KEY);
+    const saved = readStorageItem(DENSITY_MODE_STORAGE_KEY);
     return saved === 'comfortable' ? 'comfortable' : 'compact';
   });
   const todayLabel = new Date().toLocaleDateString('pt-BR', {
@@ -90,14 +102,32 @@ export function Layout({ children, loggedUser, navItems, onLogout }: LayoutProps
   });
 
   useEffect(() => {
-    window.localStorage.setItem(VIEW_MODE_STORAGE_KEY, viewMode);
+    writeStorageItem(VIEW_MODE_STORAGE_KEY, viewMode);
   }, [viewMode]);
   useEffect(() => {
-    window.localStorage.setItem(DENSITY_MODE_STORAGE_KEY, densityMode);
+    writeStorageItem(DENSITY_MODE_STORAGE_KEY, densityMode);
   }, [densityMode]);
 
+  useEffect(() => {
+    if (isPlanningRoute) {
+      setIsPlanningNavExpanded(false);
+    }
+  }, [isPlanningRoute]);
+
+  const isNavCollapsed = isPlanningRoute && !isPlanningNavExpanded;
+
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${isPlanningRoute ? 'is-planning-focus' : ''} ${isNavCollapsed ? 'is-nav-collapsed' : ''}`.trim()}>
+      {isPlanningRoute ? (
+        <button
+          className="planning-nav-toggle"
+          type="button"
+          aria-label={isPlanningNavExpanded ? 'Minimizar navegação' : 'Expandir navegação'}
+          onClick={() => setIsPlanningNavExpanded((current) => !current)}
+        >
+          {isPlanningNavExpanded ? '‹' : '☰'}
+        </button>
+      ) : null}
       <aside className="sidebar">
         <Link to="/calendario" className="logo">
           <img className="logo-brand-image" src={holandHorizontalLogo} alt="Holand" />

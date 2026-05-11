@@ -66,6 +66,8 @@ type AllocationHoursScopeRow = {
   start_time: string | null;
   end_time: string | null;
   duration_days: number;
+  delivery_mode: 'ministrado' | 'entregavel';
+  client_hours_policy: 'consome' | 'nao_consume';
 };
 
 function roundHours(value: number) {
@@ -107,6 +109,34 @@ function addBusinessDays(dateIso: string, offset: number): string {
     if (!isWeekend(date)) moved += 1;
   }
   return isoDate(date);
+}
+
+function parseDeliveryModeOverrides(raw: string | null | undefined) {
+  const overrides = new Map<string, 'ministrado' | 'entregavel'>();
+  if (!raw?.trim()) return overrides;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return overrides;
+    Object.entries(parsed as Record<string, unknown>).forEach(([moduleId, deliveryMode]) => {
+      const normalizedModuleId = moduleId.trim();
+      if (!normalizedModuleId) return;
+      if (deliveryMode !== 'ministrado' && deliveryMode !== 'entregavel') return;
+      overrides.set(normalizedModuleId, deliveryMode);
+    });
+  } catch {
+    return overrides;
+  }
+  return overrides;
+}
+
+function readDeliveryModeOverrides(companyId: string) {
+  const row = db.prepare(`
+    select module_delivery_mode_overrides_json
+    from portal_client
+    where company_id = ?
+    limit 1
+  `).get(companyId) as { module_delivery_mode_overrides_json: string | null } | undefined;
+  return parseDeliveryModeOverrides(row?.module_delivery_mode_overrides_json);
 }
 
 function currentLocalSnapshot() {
@@ -245,7 +275,8 @@ function readJourneyProgressByModule(companyId: string) {
 }
 
 function readActiveModuleHoursScope(companyId: string): ModuleHoursScopeRow[] {
-  return db.prepare(`
+  const overrides = readDeliveryModeOverrides(companyId);
+  const rows = db.prepare(`
     select
       mt.id as module_id,
       mt.code,
@@ -264,6 +295,13 @@ function readActiveModuleHoursScope(companyId: string): ModuleHoursScopeRow[] {
     where coalesce(cma.is_enabled, 1) = 1
     order by mt.code asc
   `).all(companyId, companyId) as ModuleHoursScopeRow[];
+  return rows.map((row) => ({
+    ...row,
+    delivery_mode: overrides.get(row.module_id) ?? row.delivery_mode,
+    client_hours_policy: overrides.get(row.module_id)
+      ? (overrides.get(row.module_id) === 'ministrado' ? 'consome' : 'nao_consume')
+      : row.client_hours_policy
+  }));
 }
 
 function projectedClientConsumedHoursForModule(row: ModuleHoursScopeRow, journeyByModule: Map<string, JourneySnapshot>) {
@@ -283,7 +321,8 @@ function projectedClientConsumedHoursForModule(row: ModuleHoursScopeRow, journey
 }
 
 function readAllocationHoursScope(companyId: string): AllocationHoursScopeRow[] {
-  return db.prepare(`
+  const overrides = readDeliveryModeOverrides(companyId);
+  const rows = db.prepare(`
     select
       a.id as allocation_id,
       a.module_id,
@@ -294,16 +333,23 @@ function readAllocationHoursScope(companyId: string): AllocationHoursScopeRow[] 
       c.period,
       c.start_time,
       c.end_time,
-      coalesce(cmp.custom_duration_days, cmb.duration_days, mt.duration_days, 1) as duration_days
+      coalesce(cmp.custom_duration_days, cmb.duration_days, mt.duration_days, 1) as duration_days,
+      coalesce(mt.delivery_mode, 'ministrado') as delivery_mode,
+      coalesce(mt.client_hours_policy, 'consome') as client_hours_policy
     from cohort_allocation a
     join cohort c on c.id = a.cohort_id
     join module_template mt on mt.id = a.module_id
     left join cohort_module_block cmb on cmb.cohort_id = a.cohort_id and cmb.module_id = a.module_id
     left join company_module_progress cmp on cmp.company_id = a.company_id and cmp.module_id = a.module_id
     where a.company_id = ?
-      and coalesce(mt.delivery_mode, 'ministrado') = 'ministrado'
-      and coalesce(mt.client_hours_policy, 'consome') = 'consome'
   `).all(companyId) as AllocationHoursScopeRow[];
+  return rows.filter((row) => {
+    const override = overrides.get(row.module_id);
+    const effectivePolicy = override
+      ? (override === 'ministrado' ? 'consome' : 'nao_consume')
+      : row.client_hours_policy;
+    return (override ?? row.delivery_mode) === 'ministrado' && effectivePolicy === 'consome';
+  });
 }
 
 function allocationConfirmedHours(row: AllocationHoursScopeRow): number {

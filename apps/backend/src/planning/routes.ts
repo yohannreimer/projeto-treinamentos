@@ -21,6 +21,10 @@ const createWorkspaceSchema = z.object({
   company_ids: z.array(z.string()).default([])
 });
 
+const addWorkspaceClientsSchema = z.object({
+  company_ids: z.array(z.string()).min(1)
+});
+
 const encounterInputSchema = z.object({
   day_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   start_time: z.string().regex(/^\d{2}:\d{2}$/),
@@ -36,6 +40,11 @@ const updateEncounterSchema = z.object({
   end_time: z.string().regex(/^\d{2}:\d{2}$/).optional(),
   status: z.enum(planningEncounterStatusValues).optional(),
   notes: z.string().nullable().optional()
+});
+
+const addPlanningEncountersSchema = z.object({
+  technician_id: z.string().nullable().optional(),
+  encounters: z.array(encounterInputSchema).min(1)
 });
 
 const createPlanningCohortSchema = z.object({
@@ -61,7 +70,7 @@ const suggestionSchema = z.object({
 
 type WorkspaceReadModel = {
   workspace: unknown;
-  clients: unknown[];
+  clients: Array<Record<string, unknown>>;
   cohorts: Array<{ id: string; encounters: PlanningEncounterReadRow[] } & Record<string, unknown>>;
 };
 
@@ -89,8 +98,91 @@ type PlanningEncounterUpdateRow = {
   workspace_status: string;
 };
 
+type PlanningEncounterConflictCheckRow = {
+  id: string;
+  day_date: string;
+  start_time: string;
+  end_time: string;
+  status: string;
+  technician_id: string | null;
+  published_cohort_id: string | null;
+};
+
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isModuleAlreadyCoveredForCompany(args: {
+  companyId: string;
+  moduleId: string;
+  workspaceId?: string;
+  planningCohortId?: string | null;
+  publishedCohortId?: string | null;
+}): boolean {
+  const completed = db.prepare(`
+    select 1 as ok
+    from company_module_progress
+    where company_id = ?
+      and module_id = ?
+      and status = 'Concluido'
+    limit 1
+  `).get(args.companyId, args.moduleId) as { ok: number } | undefined;
+  if (completed?.ok) return true;
+
+  const existingAllocation = db.prepare(`
+    select 1 as ok
+    from cohort_allocation ca
+    join cohort c on c.id = ca.cohort_id
+    where ca.company_id = ?
+      and ca.module_id = ?
+      and ca.status <> 'Cancelado'
+      and c.status <> 'Cancelada'
+      and (? is null or c.id <> ?)
+      and (? is null or c.planning_workspace_id is null or c.planning_workspace_id <> ?)
+    limit 1
+  `).get(
+    args.companyId,
+    args.moduleId,
+    args.publishedCohortId ?? null,
+    args.publishedCohortId ?? null,
+    args.workspaceId ?? null,
+    args.workspaceId ?? null
+  ) as { ok: number } | undefined;
+
+  return Boolean(existingAllocation?.ok);
+}
+
+function readAvailableModuleIdsForClient(companyId: string, workspaceId: string): string[] {
+  const rows = db.prepare(`
+    select mt.id
+    from module_template mt
+    left join company_module_progress cmp on cmp.company_id = ? and cmp.module_id = mt.id
+    left join company_module_activation cma on cma.company_id = ? and cma.module_id = mt.id
+    where coalesce(cma.is_enabled, 1) = 1
+      and (
+        coalesce(cmp.status, 'Nao_iniciado') <> 'Concluido'
+        or exists (
+          select 1
+          from planning_cohort pc_done
+          where pc_done.workspace_id = ?
+            and pc_done.company_id = ?
+            and pc_done.module_id = mt.id
+            and pc_done.status <> 'Cancelado'
+        )
+      )
+      and not exists (
+        select 1
+        from cohort_allocation ca
+        join cohort c on c.id = ca.cohort_id
+        where ca.company_id = ?
+          and ca.module_id = mt.id
+          and ca.status <> 'Cancelado'
+          and c.status <> 'Cancelada'
+          and (c.planning_workspace_id is null or c.planning_workspace_id <> ?)
+      )
+    order by mt.code asc
+  `).all(companyId, companyId, workspaceId, companyId, companyId, workspaceId) as Array<{ id: string }>;
+  return rows.map((row) => row.id);
 }
 
 function readWorkspace(workspaceId: string): WorkspaceReadModel | null {
@@ -103,7 +195,7 @@ function readWorkspace(workspaceId: string): WorkspaceReadModel | null {
     join company c on c.id = pwc.company_id
     where pwc.workspace_id = ?
     order by pwc.priority desc, c.name asc
-  `).all(workspaceId);
+  `).all(workspaceId) as Array<Record<string, unknown> & { company_id: string }>;
 
   const cohorts = db.prepare(`
     select pc.*, c.name as company_name, mt.code as module_code, mt.name as module_name, t.name as technician_name
@@ -125,7 +217,10 @@ function readWorkspace(workspaceId: string): WorkspaceReadModel | null {
 
   return {
     workspace,
-    clients,
+    clients: clients.map((client) => ({
+      ...client,
+      available_module_ids: readAvailableModuleIdsForClient(client.company_id, workspaceId)
+    })),
     cohorts: cohorts.map((cohort) => ({
       ...cohort,
       encounters: encounterRows.filter((encounter) => encounter.planning_cohort_id === cohort.id)
@@ -188,6 +283,63 @@ export function registerPlanningRoutes(app: Express) {
     return res.json(result);
   });
 
+  app.post('/planning/workspaces/:workspaceId/clients', (req, res) => {
+    const parsed = addWorkspaceClientsSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+
+    const workspace = db.prepare('select id from planning_workspace where id = ?').get(req.params.workspaceId);
+    if (!workspace) return res.status(404).json({ message: 'Planejamento não encontrado.' });
+
+    const now = nowDateIso();
+    const uniqueCompanyIds = Array.from(new Set(parsed.data.company_ids));
+    const missingCompany = uniqueCompanyIds.find((companyId) => !db.prepare('select id from company where id = ?').get(companyId));
+    if (missingCompany) return res.status(404).json({ message: 'Cliente não encontrado.' });
+
+    const tx = db.transaction(() => {
+      const insertClient = db.prepare(`
+        insert or ignore into planning_workspace_client (workspace_id, company_id, priority, created_at)
+        values (?, ?, 0, ?)
+      `);
+      uniqueCompanyIds.forEach((companyId) => insertClient.run(req.params.workspaceId, companyId, now));
+      db.prepare('update planning_workspace set updated_at = ? where id = ?').run(now, req.params.workspaceId);
+    });
+
+    try {
+      tx();
+      return res.json(readWorkspace(req.params.workspaceId));
+    } catch (error) {
+      return res.status(400).json({ message: 'Não foi possível adicionar cliente.', detail: errorMessage(error) });
+    }
+  });
+
+  app.delete('/planning/workspaces/:workspaceId/clients/:companyId', (req, res) => {
+    const workspace = db.prepare('select id from planning_workspace where id = ?').get(req.params.workspaceId);
+    if (!workspace) return res.status(404).json({ message: 'Planejamento não encontrado.' });
+
+    const link = db.prepare(`
+      select workspace_id, company_id
+      from planning_workspace_client
+      where workspace_id = ? and company_id = ?
+    `).get(req.params.workspaceId, req.params.companyId);
+    if (!link) return res.status(404).json({ message: 'Cliente não está neste planejamento.' });
+
+    const now = nowDateIso();
+    const tx = db.transaction(() => {
+      db.prepare('delete from planning_cohort where workspace_id = ? and company_id = ?')
+        .run(req.params.workspaceId, req.params.companyId);
+      db.prepare('delete from planning_workspace_client where workspace_id = ? and company_id = ?')
+        .run(req.params.workspaceId, req.params.companyId);
+      db.prepare('update planning_workspace set updated_at = ? where id = ?').run(now, req.params.workspaceId);
+    });
+
+    try {
+      tx();
+      return res.json(readWorkspace(req.params.workspaceId));
+    } catch (error) {
+      return res.status(400).json({ message: 'Não foi possível remover cliente.', detail: errorMessage(error) });
+    }
+  });
+
   app.post('/planning/workspaces/:workspaceId/cohorts', (req, res) => {
     const parsed = createPlanningCohortSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json(parsed.error.flatten());
@@ -199,9 +351,52 @@ export function registerPlanningRoutes(app: Express) {
     const now = nowDateIso();
     const planningCohortId = uuid('plc');
 
+    if (isModuleAlreadyCoveredForCompany({
+      companyId: payload.company_id,
+      moduleId: payload.module_id,
+      workspaceId: req.params.workspaceId
+    })) {
+      return res.status(409).json({
+        message: 'Este cliente já tem esse módulo concluído ou vinculado a outra turma. Escolha outro módulo pendente.'
+      });
+    }
+
     for (const encounter of payload.encounters) {
       const validation = validatePlanningEncounterPayload(encounter);
       if (!validation.ok) return res.status(400).json({ message: validation.message });
+    }
+
+    const internalConflicts = payload.encounters.flatMap((encounter, index) => (
+      payload.encounters.slice(index + 1).flatMap((other) => {
+        if (
+          payload.technician_id &&
+          encounter.day_date === other.day_date &&
+          slotsOverlap(encounter.start_time, encounter.end_time, other.start_time, other.end_time)
+        ) {
+          return [{
+            source_type: 'planning_encounter' as const,
+            source_id: 'new-planning-encounter',
+            title: 'Encontro da mesma turma planejada',
+            day_date: other.day_date,
+            start_time: other.start_time,
+            end_time: other.end_time
+          }];
+        }
+        return [];
+      })
+    ));
+    if (internalConflicts.length > 0) {
+      return res.status(409).json({ message: 'Turma planejada possui conflito.', conflicts: internalConflicts });
+    }
+
+    const conflicts = payload.encounters.flatMap((encounter) => findPlanningEncounterConflicts({
+      technician_id: payload.technician_id,
+      day_date: encounter.day_date,
+      start_time: encounter.start_time,
+      end_time: encounter.end_time
+    }));
+    if (conflicts.length > 0) {
+      return res.status(409).json({ message: 'Turma planejada possui conflito.', conflicts });
     }
 
     const tx = db.transaction(() => {
@@ -267,6 +462,125 @@ export function registerPlanningRoutes(app: Express) {
     }
   });
 
+  app.post('/planning/workspaces/:workspaceId/cohorts/:cohortId/encounters', (req, res) => {
+    const parsed = addPlanningEncountersSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+
+    const cohort = db.prepare(`
+      select *
+      from planning_cohort
+      where id = ?
+        and workspace_id = ?
+        and status <> 'Cancelado'
+    `).get(req.params.cohortId, req.params.workspaceId) as {
+      id: string;
+      company_id: string;
+      module_id: string;
+      technician_id: string | null;
+    } | undefined;
+    if (!cohort) return res.status(404).json({ message: 'Turma planejada não encontrada.' });
+
+    const payload = parsed.data;
+    const technicianId = payload.technician_id ?? null;
+    if (technicianId) {
+      const technician = db.prepare('select id from technician where id = ?').get(technicianId);
+      if (!technician) return res.status(404).json({ message: 'Técnico não encontrado.' });
+    }
+
+    for (const encounter of payload.encounters) {
+      const validation = validatePlanningEncounterPayload(encounter);
+      if (!validation.ok) return res.status(400).json({ message: validation.message });
+    }
+
+    const internalConflicts = payload.encounters.flatMap((encounter, index) => (
+      payload.encounters.slice(index + 1).flatMap((other) => {
+        if (
+          technicianId &&
+          encounter.day_date === other.day_date &&
+          slotsOverlap(encounter.start_time, encounter.end_time, other.start_time, other.end_time)
+        ) {
+          return [{
+            source_type: 'planning_encounter' as const,
+            source_id: 'new-planning-encounter',
+            title: 'Encontro da mesma turma planejada',
+            day_date: other.day_date,
+            start_time: other.start_time,
+            end_time: other.end_time
+          }];
+        }
+        return [];
+      })
+    ));
+    if (internalConflicts.length > 0) {
+      return res.status(409).json({ message: 'Encontro possui conflito.', conflicts: internalConflicts });
+    }
+
+    const conflicts = payload.encounters.flatMap((encounter) => findPlanningEncounterConflicts({
+      technician_id: technicianId,
+      day_date: encounter.day_date,
+      start_time: encounter.start_time,
+      end_time: encounter.end_time
+    }));
+    if (conflicts.length > 0) {
+      return res.status(409).json({ message: 'Encontro possui conflito.', conflicts });
+    }
+
+    const now = nowDateIso();
+    const maxIndex = db.prepare(`
+      select coalesce(max(encounter_index), 0) as max_index
+      from planning_encounter
+      where workspace_id = ?
+        and planning_cohort_id = ?
+    `).get(req.params.workspaceId, cohort.id) as { max_index: number };
+
+    const tx = db.transaction(() => {
+      const insertEncounter = db.prepare(`
+        insert into planning_encounter (
+          id, workspace_id, planning_cohort_id, company_id, module_id, technician_id,
+          encounter_index, day_date, start_time, end_time, status, notes, created_at, updated_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      payload.encounters.forEach((encounter, index) => {
+        insertEncounter.run(
+          uuid('ple'),
+          req.params.workspaceId,
+          cohort.id,
+          cohort.company_id,
+          cohort.module_id,
+          technicianId,
+          maxIndex.max_index + index + 1,
+          encounter.day_date,
+          encounter.start_time,
+          encounter.end_time,
+          encounter.status,
+          encounter.notes ?? null,
+          now,
+          now
+        );
+      });
+
+      const activeTechnicians = db.prepare(`
+        select distinct technician_id
+        from planning_encounter
+        where workspace_id = ?
+          and planning_cohort_id = ?
+          and status <> 'Cancelado'
+          and technician_id is not null
+      `).all(req.params.workspaceId, cohort.id) as Array<{ technician_id: string }>;
+      const nextCohortTechnicianId = activeTechnicians.length === 1 ? activeTechnicians[0].technician_id : null;
+      db.prepare('update planning_cohort set technician_id = ?, updated_at = ? where id = ?')
+        .run(nextCohortTechnicianId, now, cohort.id);
+      db.prepare('update planning_workspace set updated_at = ? where id = ?').run(now, req.params.workspaceId);
+    });
+
+    try {
+      tx();
+      return res.status(201).json(readWorkspace(req.params.workspaceId));
+    } catch (error) {
+      return res.status(400).json({ message: 'Não foi possível adicionar encontros.', detail: errorMessage(error) });
+    }
+  });
+
   app.patch('/planning/workspaces/:workspaceId/encounters/:encounterId', (req, res) => {
     const parsed = updateEncounterSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json(parsed.error.flatten());
@@ -298,21 +612,14 @@ export function registerPlanningRoutes(app: Express) {
     const validation = validatePlanningEncounterPayload(next);
     if (!validation.ok) return res.status(400).json({ message: validation.message });
 
-    if (technicianWasProvided) {
+    if (next.technician_id && next.status !== 'Cancelado') {
       const siblingRows = db.prepare(`
-        select id, day_date, start_time, end_time, status, published_cohort_id
+        select id, day_date, start_time, end_time, status, technician_id, published_cohort_id
         from planning_encounter
         where workspace_id = ?
           and planning_cohort_id = ?
           and (status <> 'Cancelado' or id = ?)
-      `).all(req.params.workspaceId, existing.planning_cohort_id, existing.id) as Array<{
-        id: string;
-        day_date: string;
-        start_time: string;
-        end_time: string;
-        status: string;
-        published_cohort_id: string | null;
-      }>;
+      `).all(req.params.workspaceId, existing.planning_cohort_id, existing.id) as PlanningEncounterConflictCheckRow[];
 
       const futureEncounters = siblingRows.map((encounter) => {
         if (encounter.id === existing.id) {
@@ -328,7 +635,7 @@ export function registerPlanningRoutes(app: Express) {
         }
         return {
           id: encounter.id,
-          technician_id: next.technician_id,
+          technician_id: encounter.technician_id,
           day_date: encounter.day_date,
           start_time: encounter.start_time,
           end_time: encounter.end_time,
@@ -417,23 +724,22 @@ export function registerPlanningRoutes(app: Express) {
       );
       db.prepare('update planning_workspace set status = ?, updated_at = ? where id = ?')
         .run(nextWorkspaceStatus, now, req.params.workspaceId);
-      if (technicianWasProvided) {
-        db.prepare(`
-          update planning_cohort
-          set technician_id = ?,
-              updated_at = ?
-          where id = ?
-            and workspace_id = ?
-        `).run(next.technician_id, now, existing.planning_cohort_id, req.params.workspaceId);
-        db.prepare(`
-          update planning_encounter
-          set technician_id = ?,
-              updated_at = ?
-          where workspace_id = ?
-            and planning_cohort_id = ?
-            and status <> 'Cancelado'
-        `).run(next.technician_id, now, req.params.workspaceId, existing.planning_cohort_id);
-      }
+      const activeTechnicians = db.prepare(`
+        select distinct technician_id
+        from planning_encounter
+        where workspace_id = ?
+          and planning_cohort_id = ?
+          and status <> 'Cancelado'
+          and technician_id is not null
+      `).all(req.params.workspaceId, existing.planning_cohort_id) as Array<{ technician_id: string }>;
+      const nextCohortTechnicianId = activeTechnicians.length === 1 ? activeTechnicians[0].technician_id : null;
+      db.prepare(`
+        update planning_cohort
+        set technician_id = ?,
+            updated_at = ?
+        where id = ?
+          and workspace_id = ?
+      `).run(nextCohortTechnicianId, now, existing.planning_cohort_id, req.params.workspaceId);
     });
 
     try {
@@ -447,6 +753,11 @@ export function registerPlanningRoutes(app: Express) {
   app.post('/planning/workspaces/:workspaceId/validate', (req, res) => {
     const detail = readWorkspace(req.params.workspaceId);
     if (!detail) return res.status(404).json({ message: 'Planejamento não encontrado.' });
+    const unallocated = detail.cohorts.filter((cohort) => cohort.status !== 'Cancelado').flatMap((cohort) => (
+      cohort.encounters
+        .filter((encounter) => encounter.status !== 'Cancelado' && !encounter.technician_id)
+        .map((encounter) => ({ planning_encounter_id: encounter.id, reason: 'sem_tecnico' }))
+    ));
     const conflicts = detail.cohorts.filter((cohort) => cohort.status !== 'Cancelado').flatMap((cohort) => (
       cohort.encounters.filter((encounter) => encounter.status !== 'Cancelado').flatMap((encounter) => findPlanningEncounterConflicts({
         technician_id: encounter.technician_id,
@@ -457,12 +768,21 @@ export function registerPlanningRoutes(app: Express) {
         exclude_published_cohort_id: encounter.published_cohort_id ?? undefined
       }).map((conflict) => ({ planning_encounter_id: encounter.id, ...conflict })))
     ));
-    return res.json({ ok: conflicts.length === 0, conflicts });
+    return res.json({ ok: conflicts.length === 0 && unallocated.length === 0, conflicts, unallocated });
   });
 
   app.post('/planning/workspaces/:workspaceId/publish', (req, res) => {
     const detail = readWorkspace(req.params.workspaceId);
     if (!detail) return res.status(404).json({ message: 'Planejamento não encontrado.' });
+
+    const unallocated = detail.cohorts.filter((cohort) => cohort.status !== 'Cancelado').flatMap((cohort) => (
+      cohort.encounters
+        .filter((encounter) => encounter.status !== 'Cancelado' && !encounter.technician_id)
+        .map((encounter) => ({ planning_encounter_id: encounter.id, reason: 'sem_tecnico' }))
+    ));
+    if (unallocated.length > 0) {
+      return res.status(409).json({ message: 'Planejamento possui encontros sem técnico.', unallocated });
+    }
 
     const conflicts = detail.cohorts.filter((cohort) => cohort.status !== 'Cancelado').flatMap((cohort) => (
       cohort.encounters.filter((encounter) => encounter.status !== 'Cancelado').flatMap((encounter) => findPlanningEncounterConflicts({

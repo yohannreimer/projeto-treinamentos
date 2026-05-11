@@ -217,6 +217,7 @@ export function initDb() {
       hidden_module_ids_json text not null default '[]',
       module_date_overrides_json text not null default '{}',
       module_status_overrides_json text not null default '{}',
+      module_delivery_mode_overrides_json text not null default '{}',
       created_at text not null,
       updated_at text not null,
       unique(id, company_id),
@@ -1400,6 +1401,7 @@ export function initDb() {
   ensureColumn('portal_client', 'hidden_module_ids_json', "hidden_module_ids_json text not null default '[]'");
   ensureColumn('portal_client', 'module_date_overrides_json', "module_date_overrides_json text not null default '{}'");
   ensureColumn('portal_client', 'module_status_overrides_json', "module_status_overrides_json text not null default '{}'");
+  ensureColumn('portal_client', 'module_delivery_mode_overrides_json', "module_delivery_mode_overrides_json text not null default '{}'");
   ensureColumn('financial_transaction', 'is_deleted', 'is_deleted integer not null default 0');
   ensureColumn(
     'financial_account',

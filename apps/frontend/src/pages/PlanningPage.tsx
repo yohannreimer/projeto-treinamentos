@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { CSSProperties } from 'react';
 
-import { api } from '../services/api';
-import type { Module, PlanningCohort, PlanningEncounter, PlanningEncounterStatus, PlanningMode, PlanningWorkspaceDetail } from '../types';
+import { ApiRequestError, api } from '../services/api';
+import type { Module, PlanningCohort, PlanningEncounter, PlanningEncounterStatus, PlanningWorkspaceDetail } from '../types';
 
 type WorkspaceSummary = {
   id: string;
@@ -31,19 +32,71 @@ type SavingEncounterState = {
   encounterId: string;
 } | null;
 
-type PlanningViewMode = 'week' | 'month' | 'range' | 'list';
+type PlanningViewMode = 'week' | 'month' | 'range' | 'quarter' | 'list';
 
-type CohortDraft = {
-  companyId: string;
-  moduleId: string;
+type ModuleComposer = {
+  encounterCount: number;
+  period: 'Meio_periodo' | 'Integral';
   technicianId: string;
   startDate: string;
   startTime: string;
   endTime: string;
-  encounterCount: number;
   cadence: 'daily' | 'twice_week' | 'weekly';
   deliveryMode: 'Online' | 'Presencial' | 'Hibrida';
-  notes: string;
+};
+
+type PlanningActivity = {
+  id: string;
+  title: string;
+  activity_type: string;
+  status: string;
+  company_id: string | null;
+  company_name: string | null;
+  technician_ids: string[];
+  technician_names: string[];
+  occurrences: Array<{
+    day_date: string;
+    all_day: boolean;
+    start_time: string | null;
+    end_time: string | null;
+  }>;
+};
+
+type PlanningCalendarCohort = {
+  id: string;
+  code: string;
+  name: string;
+  status: string;
+  technician_id: string | null;
+  technician_name: string | null;
+  company_ids: string[];
+  company_names: string[];
+  module_names: string[];
+  occurrences: Array<{
+    day_index: number;
+    day_date: string;
+    start_time: string | null;
+    end_time: string | null;
+  }>;
+};
+
+type PublishIssue = {
+  cohortId: string;
+  message: string;
+};
+
+type CohortVisual = {
+  index: number;
+  color: string;
+  softColor: string;
+};
+
+type PlanningConflictPayload = {
+  source_type?: string;
+  title?: string;
+  day_date?: string;
+  start_time?: string | null;
+  end_time?: string | null;
 };
 
 const emptyEncounterDraft = {
@@ -56,12 +109,22 @@ const emptyEncounterDraft = {
 };
 
 const encounterStatuses: PlanningEncounterStatus[] = ['Rascunho', 'Confirmacao_cliente', 'Confirmado', 'Publicado', 'Cancelado'];
-const planningModes: PlanningMode[] = ['Manual', 'Assistido', 'Automatico'];
 const viewModes: Array<{ id: PlanningViewMode; label: string; days: number }> = [
   { id: 'week', label: 'Semana', days: 7 },
   { id: 'month', label: '30 dias', days: 30 },
   { id: 'range', label: '60 dias', days: 60 },
+  { id: 'quarter', label: '90 dias', days: 90 },
   { id: 'list', label: 'Lista', days: 60 }
+];
+const cohortPalette: Array<{ color: string; softColor: string }> = [
+  { color: '#ef2f0f', softColor: '#fff0ec' },
+  { color: '#1f8a5b', softColor: '#eaf8f0' },
+  { color: '#2458d3', softColor: '#edf3ff' },
+  { color: '#b56b00', softColor: '#fff5df' },
+  { color: '#7a4cc2', softColor: '#f4efff' },
+  { color: '#087b8f', softColor: '#e8f8fb' },
+  { color: '#bf2f65', softColor: '#fff0f6' },
+  { color: '#59611f', softColor: '#f5f7df' }
 ];
 
 function todayIso() {
@@ -93,6 +156,85 @@ function buildDateRange(startDate: string, days: number) {
   return Array.from({ length: days }, (_, index) => addDaysIso(startDate, index));
 }
 
+function splitPipeList(value: string) {
+  return value.split('|').map((item) => item.trim()).filter(Boolean);
+}
+
+function normalizeActivityRows(rows: Array<Record<string, unknown>>): PlanningActivity[] {
+  return rows.map((row) => {
+    const selectedDates = splitPipeList(String(row.selected_dates_raw ?? ''));
+    const daySchedules = String(row.day_schedules_raw ?? '').split(' || ').map((schedule) => schedule.trim()).filter(Boolean).map((schedule) => {
+      const parts = schedule.includes('::') ? schedule.split('::') : schedule.split('|');
+      const [dayDate, allDayRaw, startTime, endTime] = parts;
+      return {
+        day_date: dayDate,
+        all_day: allDayRaw === '1',
+        start_time: startTime || null,
+        end_time: endTime || null
+      };
+    }).filter((schedule) => schedule.day_date);
+    const fallbackDates = selectedDates.length > 0
+      ? selectedDates
+      : buildDateRange(String(row.start_date), Math.max(1, Math.floor((Date.parse(String(row.end_date || row.start_date)) - Date.parse(String(row.start_date))) / 86400000) + 1));
+
+    return {
+      id: String(row.id),
+      title: String(row.title ?? 'Atividade'),
+      activity_type: String(row.activity_type ?? 'Outro'),
+      status: String(row.status ?? 'Planejada'),
+      company_id: String(row.company_id ?? '').trim() || null,
+      company_name: String(row.company_name ?? '').trim() || null,
+      technician_ids: splitPipeList(String(row.technician_ids_raw ?? '')),
+      technician_names: splitPipeList(String(row.technician_names ?? '')),
+      occurrences: fallbackDates.map((date) => {
+        const daySchedule = daySchedules.find((schedule) => schedule.day_date === date);
+        return {
+          day_date: date,
+          all_day: daySchedule?.all_day ?? Number(row.all_day) === 1,
+          start_time: daySchedule?.start_time ?? (String(row.start_time ?? '').trim() || null),
+          end_time: daySchedule?.end_time ?? (String(row.end_time ?? '').trim() || null)
+        };
+      })
+    };
+  }).filter((activity) => activity.status !== 'Cancelada');
+}
+
+function normalizeCalendarCohortRows(rows: Array<Record<string, unknown>>): PlanningCalendarCohort[] {
+  return rows.map((row) => {
+    const rawSchedule = String(row.schedule_days_raw ?? '');
+    const scheduleOccurrences = rawSchedule.split(' || ').map((entry) => entry.trim()).filter(Boolean).map((entry) => {
+      const parts = entry.includes('::') ? entry.split('::') : entry.split('|');
+      const [dayIndexRaw, dayDate, startTime, endTime] = parts;
+      return {
+        day_index: Number(dayIndexRaw) || 0,
+        day_date: dayDate,
+        start_time: startTime || String(row.start_time ?? '').trim() || null,
+        end_time: endTime || String(row.end_time ?? '').trim() || null
+      };
+    }).filter((occurrence) => occurrence.day_date);
+    const fallbackDuration = Math.max(1, Number(row.total_duration_days ?? 1) || 1);
+    const fallbackOccurrences = buildDateRange(String(row.start_date), fallbackDuration).map((dayDate, index) => ({
+      day_index: index,
+      day_date: dayDate,
+      start_time: String(row.start_time ?? '').trim() || null,
+      end_time: String(row.end_time ?? '').trim() || null
+    }));
+
+    return {
+      id: String(row.id),
+      code: String(row.code ?? ''),
+      name: String(row.name ?? 'Turma'),
+      status: String(row.status ?? ''),
+      technician_id: String(row.technician_id ?? '').trim() || null,
+      technician_name: String(row.technician_name ?? '').trim() || null,
+      company_ids: splitPipeList(String(row.company_ids ?? '')),
+      company_names: splitPipeList(String(row.company_names ?? row.participant_names ?? '')),
+      module_names: splitPipeList(String(row.module_names ?? '')),
+      occurrences: scheduleOccurrences.length > 0 ? scheduleOccurrences : fallbackOccurrences
+    };
+  }).filter((cohort) => !['Cancelado', 'Cancelada'].includes(cohort.status));
+}
+
 function sortEncounterPairs(pairs: Array<{ cohort: PlanningCohort; encounter: PlanningEncounter }>) {
   return [...pairs].sort((left, right) => (
     `${left.encounter.day_date} ${left.encounter.start_time} ${left.cohort.company_name}`.localeCompare(
@@ -101,10 +243,102 @@ function sortEncounterPairs(pairs: Array<{ cohort: PlanningCohort; encounter: Pl
   ));
 }
 
-function nextCadenceDate(currentDate: string, cadence: CohortDraft['cadence'], index: number) {
-  if (cadence === 'weekly') return addDaysIso(currentDate, 7);
-  if (cadence === 'twice_week') return addDaysIso(currentDate, index % 2 === 0 ? 2 : 5);
-  return addDaysIso(currentDate, 1);
+function defaultEncounterCount(module: Module | undefined, period: ModuleComposer['period']) {
+  const days = Math.max(1, module?.duration_days ?? 1);
+  return period === 'Meio_periodo' ? days * 2 : days;
+}
+
+function moduleDisplayLabel(moduleName: string) {
+  const afterDash = moduleName.split(' - ').pop()?.trim();
+  if (afterDash && afterDash !== moduleName) return afterDash;
+  const normalized = moduleName.trim();
+  if (/^implantação/i.test(normalized)) return 'Implantação';
+  if (/^acompanhamento/i.test(normalized)) return 'Acompanhamento';
+  const words = normalized.split(/\s+/).filter(Boolean);
+  return words.slice(Math.max(0, words.length - 2)).join(' ') || normalized;
+}
+
+function formatConflictTime(conflict: PlanningConflictPayload) {
+  const dateLabel = conflict.day_date ? shortDateLabel(conflict.day_date) : 'data selecionada';
+  if (!conflict.start_time || !conflict.end_time) return `${dateLabel}, dia inteiro`;
+  return `${dateLabel}, das ${conflict.start_time} às ${conflict.end_time}`;
+}
+
+function conflictMessage(conflict: PlanningConflictPayload) {
+  const title = conflict.title?.trim();
+  const timeLabel = formatConflictTime(conflict);
+  if (conflict.source_type === 'calendar_activity') {
+    return `Esse técnico já tem a atividade "${title || 'atividade do calendário'}" em ${timeLabel}.`;
+  }
+  if (conflict.source_type === 'cohort') {
+    return `Esse técnico já tem a turma "${title || 'turma publicada'}" em ${timeLabel}.`;
+  }
+  if (conflict.source_type === 'planning_encounter') {
+    return `Esse técnico já tem outro encontro planejado em ${timeLabel}.`;
+  }
+  return `Esse horário já está ocupado em ${timeLabel}.`;
+}
+
+function planningErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof ApiRequestError) {
+    const body = error.body as {
+      message?: string;
+      detail?: string;
+      conflicts?: PlanningConflictPayload[];
+      unallocated?: unknown[];
+    };
+    const conflicts = Array.isArray(body.conflicts) ? body.conflicts : [];
+    if (conflicts.length > 0) {
+      const firstConflict = conflictMessage(conflicts[0]);
+      return conflicts.length === 1
+        ? firstConflict
+        : `${firstConflict} Há mais ${conflicts.length - 1} conflito(s) nesse planejamento.`;
+    }
+    if (Array.isArray(body.unallocated) && body.unallocated.length > 0) {
+      return body.unallocated.length === 1
+        ? 'Ainda existe um encontro sem técnico. Encaixe no mapa ou escolha um técnico antes de publicar.'
+        : `Ainda existem ${body.unallocated.length} encontros sem técnico. Encaixe todos no mapa antes de publicar.`;
+    }
+    const detail = body.detail ?? error.message;
+    if (/UNIQUE constraint failed: cohort\.code/i.test(detail)) {
+      return 'Já existe uma turma publicada com uma identificação igual. Publique novamente para gerar uma identificação livre.';
+    }
+    if (body.message === 'Não foi possível publicar planejamento.') {
+      return body.detail ? `Não foi possível criar as turmas agora. ${body.detail}` : 'Não foi possível criar as turmas agora.';
+    }
+    return body.message || fallback;
+  }
+
+  if (error instanceof Error) {
+    if (/^\s*\{/.test(error.message)) return fallback;
+    return error.message || fallback;
+  }
+  return fallback;
+}
+
+function encounterHasAllocation(cohort: PlanningCohort, encounter: PlanningEncounter) {
+  void cohort;
+  return Boolean(encounter.technician_id);
+}
+
+function cohortStyle(visual: CohortVisual): CSSProperties {
+  return {
+    '--planning-accent': visual.color,
+    '--planning-accent-soft': visual.softColor
+  } as CSSProperties;
+}
+
+function emptyComposer(module?: Module): ModuleComposer {
+  return {
+    encounterCount: defaultEncounterCount(module, 'Meio_periodo'),
+    period: 'Meio_periodo',
+    technicianId: '',
+    startDate: todayIso(),
+    startTime: '08:00',
+    endTime: '12:00',
+    cadence: 'daily',
+    deliveryMode: 'Online'
+  };
 }
 
 export function encounterGridStyle(startTime: string, endTime: string): { top: string; height: string } {
@@ -137,32 +371,24 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
   const [companies, setCompanies] = useState<CatalogCompany[]>([]);
   const [modules, setModules] = useState<Module[]>([]);
   const [technicians, setTechnicians] = useState<CatalogTechnician[]>([]);
-  const [viewMode, setViewMode] = useState<PlanningViewMode>('week');
+  const [activities, setActivities] = useState<PlanningActivity[]>([]);
+  const [externalCohorts, setExternalCohorts] = useState<PlanningCalendarCohort[]>([]);
+  const [viewMode, setViewMode] = useState<PlanningViewMode>('range');
   const [rangeStartDate, setRangeStartDate] = useState(todayIso());
   const [technicianFilterId, setTechnicianFilterId] = useState('');
   const [clientFilterId, setClientFilterId] = useState('');
-  const [technicianPoolIds, setTechnicianPoolIds] = useState<string[]>([]);
-  const [workspaceDraft, setWorkspaceDraft] = useState({
-    name: `Planejamento ${shortDateLabel(todayIso())}`,
-    mode: 'Manual' as PlanningMode,
-    horizonDays: 60,
-    notes: ''
-  });
-  const [cohortDraft, setCohortDraft] = useState<CohortDraft>({
-    companyId: '',
-    moduleId: '',
-    technicianId: '',
-    startDate: todayIso(),
-    startTime: '08:00',
-    endTime: '12:00',
-    encounterCount: 2,
-    cadence: 'daily',
-    deliveryMode: 'Online',
-    notes: ''
-  });
+  const [expandedClientId, setExpandedClientId] = useState('');
+  const [isClientPickerOpen, setIsClientPickerOpen] = useState(false);
+  const [addingClientIds, setAddingClientIds] = useState<string[]>([]);
+  const [removingClientIds, setRemovingClientIds] = useState<string[]>([]);
+  const [activeModule, setActiveModule] = useState<{ companyId: string; moduleId: string } | null>(null);
+  const [composer, setComposer] = useState<ModuleComposer>(() => emptyComposer());
+  const [isPublishConfirmOpen, setIsPublishConfirmOpen] = useState(false);
+  const [workspaceDraftName, setWorkspaceDraftName] = useState(`Planejamento ${shortDateLabel(todayIso())}`);
   const selectedEncounterIdRef = useRef<string | null>(null);
   const selectedWorkspaceIdRef = useRef('');
   const detailWorkspaceIdRef = useRef('');
+  const autoExpandedWorkspaceIdRef = useRef('');
 
   useEffect(() => {
     selectedEncounterIdRef.current = selectedEncounterId;
@@ -173,24 +399,39 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
   }, [selectedWorkspaceId]);
 
   useEffect(() => {
+    if (!message && !error) return undefined;
+    const timeoutId = window.setTimeout(() => {
+      setMessage('');
+      setError('');
+    }, error ? 9000 : 5000);
+    return () => window.clearTimeout(timeoutId);
+  }, [error, message]);
+
+  useEffect(() => {
     let isCurrent = true;
 
     async function loadCatalogs() {
       try {
-        const [companyRows, moduleRows, technicianRows] = await Promise.all([
+        const [companyRows, moduleRows, technicianRows, activityRows, calendarCohortRows] = await Promise.all([
           api.companies() as Promise<CatalogCompany[]>,
           api.modules() as Promise<Module[]>,
-          api.technicians() as Promise<CatalogTechnician[]>
+          api.technicians() as Promise<CatalogTechnician[]>,
+          api.calendarActivities() as Promise<Array<Record<string, unknown>>>,
+          api.calendar() as Promise<Array<Record<string, unknown>>>
         ]);
         if (!isCurrent) return;
         setCompanies(companyRows ?? []);
         setModules((moduleRows ?? []).filter((module) => module.delivery_mode !== 'entregavel'));
         setTechnicians(technicianRows ?? []);
+        setActivities(normalizeActivityRows(activityRows ?? []));
+        setExternalCohorts(normalizeCalendarCohortRows(calendarCohortRows ?? []));
       } catch {
         if (!isCurrent) return;
         setCompanies([]);
         setModules([]);
         setTechnicians([]);
+        setActivities([]);
+        setExternalCohorts([]);
       }
     }
 
@@ -231,7 +472,7 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
         });
       } catch (requestError) {
         if (!isCurrent) return;
-        setError((requestError as Error).message);
+        setError(planningErrorMessage(requestError, 'Falha ao carregar planejamentos.'));
       }
     }
 
@@ -257,6 +498,9 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
     if (!isSameWorkspaceReload) {
       setSelectedEncounterId(null);
       selectedEncounterIdRef.current = null;
+      setExpandedClientId('');
+      setActiveModule(null);
+      setIsPublishConfirmOpen(false);
     }
 
     async function loadWorkspace() {
@@ -270,14 +514,11 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
         const nextSelectedEncounter = encounters.find((encounter) => encounter.id === encounterIdToPreserve) ?? encounters[0] ?? null;
         setPlanningDetail(payload);
         setSelectedEncounterId(nextSelectedEncounter?.id ?? null);
-        if (encounters.length > 0 && !encounterIdToPreserve) {
-          setRangeStartDate(encounters[0].day_date);
-        }
       } catch (requestError) {
         if (!isCurrent) return;
         setPlanningDetail(null);
         setSelectedEncounterId(null);
-        setError((requestError as Error).message);
+        setError(planningErrorMessage(requestError, 'Falha ao carregar o planejamento.'));
       } finally {
         if (isCurrent) {
           setIsLoadingDetail(false);
@@ -291,6 +532,13 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
       isCurrent = false;
     };
   }, [selectedWorkspaceId, detailReloadKey]);
+
+  useEffect(() => {
+    if (!planningDetail || expandedClientId || autoExpandedWorkspaceIdRef.current === planningDetail.workspace.id) return;
+    const firstClientId = planningDetail.clients[0]?.company_id || '';
+    autoExpandedWorkspaceIdRef.current = planningDetail.workspace.id;
+    if (firstClientId) setExpandedClientId(firstClientId);
+  }, [expandedClientId, planningDetail]);
 
   const selectedEncounter = useMemo(() => {
     if (!planningDetail || !selectedEncounterId) return null;
@@ -321,28 +569,88 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
   const selectedWorkspace = planningDetail?.workspace ?? null;
   const clients = planningDetail?.clients ?? [];
   const cohorts = planningDetail?.cohorts ?? [];
+  const clientRows = useMemo(() => {
+    const byId = new Map<string, CatalogCompany>();
+    clients.forEach((client) => {
+      const catalogCompany = companies.find((company) => company.id === client.company_id);
+      byId.set(client.company_id, catalogCompany ?? { id: client.company_id, name: client.company_name });
+    });
+    return [...byId.values()].sort((left, right) => left.name.localeCompare(right.name));
+  }, [clients, companies]);
+  const availableClientRows = useMemo(() => {
+    const selectedClientIds = new Set(clients.map((client) => client.company_id));
+    return companies
+      .filter((company) => !selectedClientIds.has(company.id))
+      .sort((left, right) => left.name.localeCompare(right.name));
+  }, [clients, companies]);
   const plannedEncounters = useMemo(
     () => sortEncounterPairs(cohorts.flatMap((cohort) => cohort.encounters
       .filter((encounter) => encounter.status !== 'Cancelado')
       .map((encounter) => ({ cohort, encounter })))),
     [cohorts]
   );
+  const allocatedEncounterPairs = useMemo(
+    () => plannedEncounters.filter(({ cohort, encounter }) => encounterHasAllocation(cohort, encounter)),
+    [plannedEncounters]
+  );
+  const pendingEncounterPairs = useMemo(
+    () => plannedEncounters.filter(({ cohort, encounter }) => !encounterHasAllocation(cohort, encounter)),
+    [plannedEncounters]
+  );
+  const cohortVisuals = useMemo(() => {
+    const visuals = new Map<string, CohortVisual>();
+    cohorts.forEach((cohort, index) => {
+      const palette = cohortPalette[index % cohortPalette.length];
+      visuals.set(cohort.id, {
+        index: index + 1,
+        color: palette.color,
+        softColor: palette.softColor
+      });
+    });
+    return visuals;
+  }, [cohorts]);
+  const linkedPublishedCohortIds = useMemo(() => new Set(cohorts
+    .map((cohort) => cohort.published_cohort_id)
+    .filter((publishedCohortId): publishedCohortId is string => Boolean(publishedCohortId))
+  ), [cohorts]);
   const activeView = viewModes.find((mode) => mode.id === viewMode) ?? viewModes[0];
   const visibleDates = useMemo(() => buildDateRange(rangeStartDate, activeView.days), [activeView.days, rangeStartDate]);
   const visibleEncounterPairs = useMemo(() => {
     const endDate = addDaysIso(rangeStartDate, activeView.days - 1);
-    return plannedEncounters.filter(({ cohort, encounter }) => (
+    return allocatedEncounterPairs.filter(({ cohort, encounter }) => (
       encounter.day_date >= rangeStartDate &&
       encounter.day_date <= endDate &&
-      (!technicianFilterId || encounter.technician_id === technicianFilterId || cohort.technician_id === technicianFilterId) &&
+      (!technicianFilterId || encounter.technician_id === technicianFilterId) &&
       (!clientFilterId || cohort.company_id === clientFilterId)
     ));
-  }, [activeView.days, clientFilterId, plannedEncounters, rangeStartDate, technicianFilterId]);
+  }, [activeView.days, allocatedEncounterPairs, clientFilterId, rangeStartDate, technicianFilterId]);
+  const visibleActivityOccurrences = useMemo(() => {
+    const endDate = addDaysIso(rangeStartDate, activeView.days - 1);
+    return activities.flatMap((activity) => activity.occurrences.map((occurrence) => ({ activity, occurrence }))).filter(({ activity, occurrence }) => (
+      occurrence.day_date >= rangeStartDate &&
+      occurrence.day_date <= endDate &&
+      (!technicianFilterId || activity.technician_ids.includes(technicianFilterId)) &&
+      (!clientFilterId || !activity.company_id || activity.company_id === clientFilterId)
+    ));
+  }, [activeView.days, activities, clientFilterId, rangeStartDate, technicianFilterId]);
+  const visibleExternalCohortOccurrences = useMemo(() => {
+    const endDate = addDaysIso(rangeStartDate, activeView.days - 1);
+    return externalCohorts
+      .filter((externalCohort) => !linkedPublishedCohortIds.has(externalCohort.id))
+      .flatMap((externalCohort) => externalCohort.occurrences.map((occurrence) => ({ externalCohort, occurrence })))
+      .filter(({ externalCohort, occurrence }) => (
+        occurrence.day_date >= rangeStartDate &&
+        occurrence.day_date <= endDate &&
+        (!technicianFilterId || externalCohort.technician_id === technicianFilterId) &&
+        (!clientFilterId || externalCohort.company_ids.includes(clientFilterId))
+      ));
+  }, [activeView.days, clientFilterId, externalCohorts, linkedPublishedCohortIds, rangeStartDate, technicianFilterId]);
   const hasPendingWorkspaceEncounterSave = Boolean(
     planningDetail && savingEncounters.some((encounter) => encounter.workspaceId === planningDetail.workspace.id)
   );
+  const workspaceConflictCount = allocatedEncounterPairs.filter(({ cohort, encounter }) => hasEncounterConflict(cohort, encounter)).length;
   const isPublishingWorkspace = publishingWorkspaceId !== null;
-  const isPublishBlocked = isPublishingWorkspace || hasPendingWorkspaceEncounterSave || !planningDetail;
+  const isPublishBlocked = isPublishingWorkspace || hasPendingWorkspaceEncounterSave || workspaceConflictCount > 0 || !planningDetail;
   const isSavingSelectedEncounter = Boolean(
     savingEncounters.some((savingEncounter) => (
       planningDetail &&
@@ -351,107 +659,216 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
       savingEncounter.encounterId === selectedEncounter.id
     ))
   );
-  const selectedCompany = companies.find((company) => company.id === cohortDraft.companyId);
-  const selectedModule = modules.find((module) => module.id === cohortDraft.moduleId);
-  const chosenTechnicianIds = technicianPoolIds.length > 0 ? technicianPoolIds : technicians.map((technician) => technician.id);
-  const canCreateCohort = Boolean(
-    selectedWorkspace &&
-    cohortDraft.companyId &&
-    cohortDraft.moduleId &&
-    cohortDraft.startDate &&
-    cohortDraft.startTime &&
-    cohortDraft.endTime &&
-    minutes(cohortDraft.endTime) > minutes(cohortDraft.startTime) &&
-    cohortDraft.encounterCount > 0
+  const activeModuleTemplate = activeModule ? modules.find((module) => module.id === activeModule.moduleId) : undefined;
+  const activeCompany = activeModule ? clientRows.find((company) => company.id === activeModule.companyId) : undefined;
+  const selectedTechnician = technicians.find((technician) => technician.id === technicianFilterId);
+  const isSelectedEncounterAllocated = Boolean(
+    selectedEncounter && selectedCohort && encounterHasAllocation(selectedCohort, selectedEncounter)
   );
 
-  function buildDraftEncounters() {
-    const encounters: Array<{ day_date: string; start_time: string; end_time: string; status: PlanningEncounterStatus; notes: string | null }> = [];
-    let date = cohortDraft.startDate;
-
-    for (let index = 0; index < cohortDraft.encounterCount; index += 1) {
-      encounters.push({
-        day_date: date,
-        start_time: cohortDraft.startTime,
-        end_time: cohortDraft.endTime,
-        status: 'Rascunho',
-        notes: cohortDraft.notes || null
-      });
-      date = nextCadenceDate(date, cohortDraft.cadence, index);
+  useEffect(() => {
+    function handleDeleteSelectedEncounter(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null;
+      const tagName = target?.tagName?.toLowerCase();
+      const isEditingText = tagName === 'input' || tagName === 'textarea' || tagName === 'select' || target?.isContentEditable;
+      if (isEditingText || (event.key !== 'Delete' && event.key !== 'Backspace') || !isSelectedEncounterAllocated) return;
+      event.preventDefault();
+      void unassignSelectedEncounter();
     }
 
-    return encounters;
+    window.addEventListener('keydown', handleDeleteSelectedEncounter);
+    return () => window.removeEventListener('keydown', handleDeleteSelectedEncounter);
+  }, [isSelectedEncounterAllocated, planningDetail, selectedEncounter, selectedCohort, hasPendingWorkspaceEncounterSave]);
+
+  function expectedEncounterCountForCohort(cohort: PlanningCohort) {
+    const module = modules.find((item) => item.id === cohort.module_id);
+    return defaultEncounterCount(module, cohort.period);
+  }
+
+  const publishIssues = useMemo<PublishIssue[]>(() => {
+    return cohorts.flatMap((cohort) => {
+      if (cohort.status === 'Cancelado') return [];
+      const expectedCount = expectedEncounterCountForCohort(cohort);
+      const activeEncounters = cohort.encounters.filter((encounter) => encounter.status !== 'Cancelado');
+      const actualCount = activeEncounters.length;
+      if (actualCount >= expectedCount) return [];
+      return [{
+        cohortId: cohort.id,
+        message: `${cohort.company_name} · ${moduleDisplayLabel(cohort.module_name)}: falta ${expectedCount - actualCount} encontro(s)`
+      }];
+    }).concat(cohorts.flatMap((cohort) => {
+      if (cohort.status === 'Cancelado') return [];
+      const pendingCount = cohort.encounters.filter((encounter) => (
+        encounter.status !== 'Cancelado' && !encounterHasAllocation(cohort, encounter)
+      )).length;
+      if (pendingCount === 0) return [];
+      return [{
+        cohortId: `${cohort.id}-pending`,
+        message: `${cohort.company_name} · ${moduleDisplayLabel(cohort.module_name)}: ${pendingCount} encontro(s) sem encaixe no calendário`
+      }];
+    }));
+  }, [cohorts, modules]);
+  const publishReadyCohorts = cohorts.filter((cohort) => cohort.status !== 'Cancelado' && cohort.encounters.some((encounter) => encounter.status !== 'Cancelado'));
+
+  function buildPendingDraftEncounters(source = composer) {
+    return Array.from({ length: source.encounterCount }, () => ({
+      day_date: rangeStartDate,
+      start_time: source.startTime,
+      end_time: source.endTime,
+      status: 'Rascunho' as PlanningEncounterStatus,
+      notes: null
+    }));
+  }
+
+  function selectModule(companyId: string, moduleId: string) {
+    const module = modules.find((item) => item.id === moduleId);
+    setExpandedClientId(companyId);
+    setActiveModule({ companyId, moduleId });
+    setComposer(emptyComposer(module));
+    const plannedCohort = cohorts.find((cohort) => cohort.company_id === companyId && cohort.module_id === moduleId);
+    const firstEncounter = plannedCohort?.encounters.find((encounter) => encounter.status !== 'Cancelado');
+    if (firstEncounter) selectEncounter(firstEncounter.id);
+  }
+
+  function updateComposerPeriod(period: ModuleComposer['period']) {
+    setComposer((current) => ({
+      ...current,
+      period,
+      encounterCount: defaultEncounterCount(activeModuleTemplate, period),
+      startTime: period === 'Integral' ? '08:00' : current.startTime,
+      endTime: period === 'Integral' ? '17:00' : current.endTime
+    }));
   }
 
   async function createWorkspace() {
-    if (!workspaceDraft.name.trim()) return;
+    if (!workspaceDraftName.trim()) return;
 
     try {
       setIsCreatingWorkspace(true);
       setError('');
       setMessage('');
       const detail = await api.createPlanningWorkspace({
-        name: workspaceDraft.name.trim(),
-        mode: workspaceDraft.mode,
-        horizon_days: workspaceDraft.horizonDays,
-        notes: workspaceDraft.notes || null,
-        company_ids: cohortDraft.companyId ? [cohortDraft.companyId] : []
+        name: workspaceDraftName.trim(),
+        mode: 'Manual',
+        horizon_days: 60,
+        notes: null,
+        company_ids: []
       });
       await reloadWorkspaceList(detail.workspace.id);
       setPlanningDetail(detail);
       setSelectedWorkspaceId(detail.workspace.id);
       setSelectedEncounterId(detail.cohorts[0]?.encounters[0]?.id ?? null);
-      setMessage('Planejamento criado. Agora adicione clientes, módulos e encontros.');
+      setMessage('Planejamento criado.');
     } catch (requestError) {
       setMessage('');
-      setError((requestError as Error).message || 'Falha ao criar planejamento.');
+      setError(planningErrorMessage(requestError, 'Falha ao criar planejamento.'));
     } finally {
       setIsCreatingWorkspace(false);
     }
   }
 
-  async function suggestFirstWindow() {
-    if (!cohortDraft.moduleId || technicians.length === 0) return;
+  async function addClientToWorkspace(companyId: string) {
+    if (!planningDetail) return;
+
+    const workspaceId = planningDetail.workspace.id;
+    try {
+      setAddingClientIds((current) => [...current, companyId]);
+      setError('');
+      setMessage('');
+      const detail = await api.addPlanningWorkspaceClients(workspaceId, [companyId]);
+      if (selectedWorkspaceIdRef.current !== workspaceId) return;
+      await reloadWorkspaceList(workspaceId);
+      setPlanningDetail(detail);
+      setExpandedClientId(companyId);
+      setIsClientPickerOpen(false);
+      setMessage('Cliente adicionado ao planejamento.');
+    } catch (requestError) {
+      setMessage('');
+      setError(planningErrorMessage(requestError, 'Falha ao adicionar cliente.'));
+    } finally {
+      setAddingClientIds((current) => current.filter((id) => id !== companyId));
+    }
+  }
+
+  async function removeClientFromWorkspace(companyId: string) {
+    if (!planningDetail) return;
+
+    const workspaceId = planningDetail.workspace.id;
+    const companyName = clients.find((client) => client.company_id === companyId)?.company_name ?? 'cliente';
+    try {
+      setRemovingClientIds((current) => [...current, companyId]);
+      setError('');
+      setMessage('');
+      const detail = await api.removePlanningWorkspaceClient(workspaceId, companyId);
+      if (selectedWorkspaceIdRef.current !== workspaceId) return;
+      await reloadWorkspaceList(workspaceId);
+      setPlanningDetail(detail);
+      if (expandedClientId === companyId) setExpandedClientId('');
+      if (activeModule?.companyId === companyId) setActiveModule(null);
+      const nextSelectedEncounterStillExists = detail.cohorts.some((cohort) => (
+        cohort.encounters.some((encounter) => encounter.id === selectedEncounterIdRef.current)
+      ));
+      if (!nextSelectedEncounterStillExists) selectEncounter(detail.cohorts[0]?.encounters[0]?.id ?? '');
+      setMessage('Cliente removido do planejamento.');
+    } catch (requestError) {
+      setMessage('');
+      setError(planningErrorMessage(requestError, `Falha ao remover ${companyName}.`));
+    } finally {
+      setRemovingClientIds((current) => current.filter((id) => id !== companyId));
+    }
+  }
+
+  async function autoAllocateAndCreateModule() {
+    if (!activeModule || !activeCompany || !activeModuleTemplate || technicians.length === 0) return;
 
     try {
       setIsSuggesting(true);
       setError('');
       setMessage('');
-      const duration = minutes(cohortDraft.endTime) > minutes(cohortDraft.startTime)
-        ? minutes(cohortDraft.endTime) - minutes(cohortDraft.startTime)
+      const candidateTechnicianIds = composer.technicianId ? [composer.technicianId] : technicians.map((technician) => technician.id);
+      const duration = minutes(composer.endTime) > minutes(composer.startTime)
+        ? minutes(composer.endTime) - minutes(composer.startTime)
         : 240;
       const suggestions = await api.planningSuggestions({
-        module_id: cohortDraft.moduleId,
-        technician_ids: chosenTechnicianIds,
-        date_from: cohortDraft.startDate,
-        date_to: addDaysIso(cohortDraft.startDate, selectedWorkspace?.horizon_days ?? 60),
+        module_id: activeModule.moduleId,
+        technician_ids: candidateTechnicianIds,
+        date_from: rangeStartDate,
+        date_to: addDaysIso(rangeStartDate, selectedWorkspace?.horizon_days ?? 60),
         duration_minutes: duration,
-        max_results: 1
+        max_results: composer.encounterCount
       });
-      const suggestion = suggestions.suggestions[0];
-      if (!suggestion) {
-        setError('Nenhuma janela livre encontrada para os técnicos escolhidos.');
+      const selectedSuggestions = suggestions.suggestions.slice(0, composer.encounterCount);
+      if (selectedSuggestions.length < composer.encounterCount) {
+        setError(`Sistema encontrou ${selectedSuggestions.length} janela(s), mas este módulo precisa de ${composer.encounterCount}.`);
         return;
       }
-      setCohortDraft((draft) => ({
-        ...draft,
-        technicianId: suggestion.technician_id,
-        startDate: suggestion.day_date,
-        startTime: suggestion.start_time,
-        endTime: suggestion.end_time
-      }));
-      setRangeStartDate(suggestion.day_date);
-      setMessage('Sistema encontrou a primeira janela livre para este módulo.');
+      const firstSuggestion = selectedSuggestions[0];
+      const nextComposer = {
+        ...composer,
+        technicianId: firstSuggestion.technician_id,
+        startDate: firstSuggestion.day_date,
+        startTime: firstSuggestion.start_time,
+        endTime: firstSuggestion.end_time
+      };
+      setComposer(nextComposer);
+      setTechnicianFilterId(firstSuggestion.technician_id);
+      await createPlannedCohort(nextComposer, selectedSuggestions.map((suggestion) => ({
+        day_date: suggestion.day_date,
+        start_time: suggestion.start_time,
+        end_time: suggestion.end_time,
+        status: 'Rascunho' as PlanningEncounterStatus,
+        notes: null
+      })), true);
     } catch (requestError) {
       setMessage('');
-      setError((requestError as Error).message || 'Falha ao buscar encaixe.');
+      setError(planningErrorMessage(requestError, 'Falha ao autoalocar módulo.'));
     } finally {
       setIsSuggesting(false);
     }
   }
 
-  async function createPlannedCohort() {
-    if (!planningDetail || !canCreateCohort || !selectedCompany || !selectedModule) return;
+  async function createPlannedCohort(source = composer, encounters = buildPendingDraftEncounters(source), allocateOnCalendar = false) {
+    if (!planningDetail || !activeModule || !activeCompany || !activeModuleTemplate) return;
 
     const workspaceId = planningDetail.workspace.id;
     try {
@@ -459,25 +876,57 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
       setError('');
       setMessage('');
       const created = await api.createPlanningCohort(workspaceId, {
-        company_id: cohortDraft.companyId,
-        module_id: cohortDraft.moduleId,
-        technician_id: cohortDraft.technicianId || null,
-        name: `${selectedCompany.name} · ${selectedModule.code}`,
-        delivery_mode: cohortDraft.deliveryMode,
-        period: minutes(cohortDraft.endTime) - minutes(cohortDraft.startTime) >= 420 ? 'Integral' : 'Meio_periodo',
-        notes: cohortDraft.notes || null,
-        encounters: buildDraftEncounters()
+        company_id: activeModule.companyId,
+        module_id: activeModule.moduleId,
+        technician_id: allocateOnCalendar ? source.technicianId || null : null,
+        name: `${activeCompany.name} · ${activeModuleTemplate.code}`,
+        delivery_mode: source.deliveryMode,
+        period: source.period,
+        notes: null,
+        encounters
       });
       const refreshed = await api.planningWorkspace(workspaceId);
       await reloadWorkspaceList(workspaceId);
       setPlanningDetail(refreshed);
-      const nextEncounterId = created.encounters[0]?.id ?? refreshed.cohorts.at(-1)?.encounters[0]?.id ?? null;
+      const nextEncounterId = created.encounters[0]?.id ?? refreshed.cohorts[refreshed.cohorts.length - 1]?.encounters[0]?.id ?? null;
       selectEncounter(nextEncounterId ?? '');
-      setRangeStartDate(cohortDraft.startDate);
-      setMessage('Turma planejada criada. Revise bloco por bloco antes de publicar.');
+      setMessage(allocateOnCalendar
+        ? 'Encontros autoalocados. Ajuste algum bloco se precisar.'
+        : 'Encontros pendentes gerados. Arraste cada bloco para o calendário.');
     } catch (requestError) {
       setMessage('');
-      setError((requestError as Error).message || 'Falha ao criar turma planejada.');
+      setError(planningErrorMessage(requestError, 'Falha ao criar turma planejada.'));
+    } finally {
+      setIsCreatingCohort(false);
+    }
+  }
+
+  async function addMissingPendingEncounters(cohort: PlanningCohort) {
+    if (!planningDetail) return;
+
+    const missingCount = Math.max(0, expectedEncounterCountForCohort(cohort) - cohort.encounters.filter((encounter) => encounter.status !== 'Cancelado').length);
+    if (missingCount === 0) return;
+
+    const workspaceId = planningDetail.workspace.id;
+    try {
+      setIsCreatingCohort(true);
+      setError('');
+      setMessage('');
+      const detail = await api.addPlanningCohortEncounters(workspaceId, cohort.id, {
+        technician_id: null,
+        encounters: buildPendingDraftEncounters({ ...composer, encounterCount: missingCount })
+      });
+      if (selectedWorkspaceIdRef.current !== workspaceId) return;
+      await reloadWorkspaceList(workspaceId);
+      setPlanningDetail(detail);
+      const nextPending = detail.cohorts
+        .find((item) => item.id === cohort.id)
+        ?.encounters.find((encounter) => encounter.status !== 'Cancelado' && !encounter.technician_id);
+      selectEncounter(nextPending?.id ?? selectedEncounterIdRef.current ?? '');
+      setMessage(`${missingCount} encontro(s) pendente(s) gerado(s).`);
+    } catch (requestError) {
+      setMessage('');
+      setError(planningErrorMessage(requestError, 'Falha ao gerar encontros pendentes.'));
     } finally {
       setIsCreatingCohort(false);
     }
@@ -510,18 +959,102 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
       if (selectedWorkspaceIdRef.current !== savingWorkspaceId || selectedEncounterIdRef.current !== savingEncounterId) return;
       setPlanningDetail(updatedDetail);
       setSelectedEncounterId(updatedEncounter?.id ?? null);
-      setRangeStartDate(updatedEncounter?.day_date ?? rangeStartDate);
-      setMessage('Encontro atualizado. Publique para sincronizar turmas e calendário.');
+      setMessage('Encontro atualizado.');
     } catch (requestError) {
       if (selectedWorkspaceIdRef.current !== savingWorkspaceId || selectedEncounterIdRef.current !== savingEncounterId) return;
       setMessage('');
-      setError((requestError as Error).message || 'Falha ao atualizar encontro.');
+      setError(planningErrorMessage(requestError, 'Falha ao atualizar encontro.'));
     } finally {
       setSavingEncounters((currentSavingEncounters) => currentSavingEncounters.filter((currentSavingEncounter) => (
         currentSavingEncounter.workspaceId !== savingWorkspaceId ||
         currentSavingEncounter.encounterId !== savingEncounterId
       )));
     }
+  }
+
+  async function moveEncounterToDate(encounterId: string, dayDate: string, technicianId?: string | null) {
+    if (hasPendingWorkspaceEncounterSave || !planningDetail) return;
+
+    const cohort = planningDetail.cohorts.find((item) => item.encounters.some((encounter) => encounter.id === encounterId));
+    const encounter = cohort?.encounters.find((item) => item.id === encounterId);
+    if (!cohort || !encounter) return;
+    const nextTechnicianId = technicianId !== undefined ? technicianId : (encounter.technician_id ?? null);
+    if (encounter.day_date === dayDate && encounter.technician_id === nextTechnicianId) return;
+
+    const savingWorkspaceId = planningDetail.workspace.id;
+    try {
+      selectEncounter(encounter.id);
+      setSavingEncounters((currentSavingEncounters) => [
+        ...currentSavingEncounters,
+        { workspaceId: savingWorkspaceId, encounterId: encounter.id }
+      ]);
+      setError('');
+      setMessage('');
+      const updatedDetail = await api.updatePlanningEncounter(savingWorkspaceId, encounter.id, {
+        technician_id: nextTechnicianId,
+        day_date: dayDate,
+        start_time: encounter.start_time,
+        end_time: encounter.end_time,
+        status: encounter.status,
+        notes: encounter.notes ?? null
+      });
+      if (selectedWorkspaceIdRef.current !== savingWorkspaceId) return;
+      setPlanningDetail(updatedDetail);
+      selectEncounter(encounter.id);
+      setMessage('Encontro encaixado no calendário.');
+    } catch (requestError) {
+      if (selectedWorkspaceIdRef.current !== savingWorkspaceId) return;
+      setMessage('');
+      setError(planningErrorMessage(requestError, 'Falha ao mover encontro.'));
+    } finally {
+      setSavingEncounters((currentSavingEncounters) => currentSavingEncounters.filter((currentSavingEncounter) => (
+        currentSavingEncounter.workspaceId !== savingWorkspaceId ||
+        currentSavingEncounter.encounterId !== encounter.id
+      )));
+    }
+  }
+
+  async function unassignSelectedEncounter() {
+    if (hasPendingWorkspaceEncounterSave || !planningDetail || !selectedEncounter || !selectedCohort) return;
+
+    const savingWorkspaceId = planningDetail.workspace.id;
+    const savingEncounterId = selectedEncounter.id;
+    try {
+      setSavingEncounters((currentSavingEncounters) => [
+        ...currentSavingEncounters,
+        { workspaceId: savingWorkspaceId, encounterId: savingEncounterId }
+      ]);
+      setError('');
+      setMessage('');
+      const updatedDetail = await api.updatePlanningEncounter(savingWorkspaceId, savingEncounterId, {
+        technician_id: null,
+        day_date: selectedEncounter.day_date,
+        start_time: selectedEncounter.start_time,
+        end_time: selectedEncounter.end_time,
+        status: 'Rascunho',
+        notes: selectedEncounter.notes ?? null
+      });
+      if (selectedWorkspaceIdRef.current !== savingWorkspaceId) return;
+      setPlanningDetail(updatedDetail);
+      selectEncounter(savingEncounterId);
+      setMessage('Encontro voltou para pendentes.');
+    } catch (requestError) {
+      if (selectedWorkspaceIdRef.current !== savingWorkspaceId) return;
+      setMessage('');
+      setError(planningErrorMessage(requestError, 'Falha ao tirar encontro do mapa.'));
+    } finally {
+      setSavingEncounters((currentSavingEncounters) => currentSavingEncounters.filter((currentSavingEncounter) => (
+        currentSavingEncounter.workspaceId !== savingWorkspaceId ||
+        currentSavingEncounter.encounterId !== savingEncounterId
+      )));
+    }
+  }
+
+  function openPublishConfirmation() {
+    if (!planningDetail || hasPendingWorkspaceEncounterSave || workspaceConflictCount > 0) return;
+    setMessage('');
+    setError('');
+    setIsPublishConfirmOpen(true);
   }
 
   async function publishCurrentWorkspace() {
@@ -535,7 +1068,7 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
       const validation = await api.validatePlanningWorkspace(workspaceId);
       if (selectedWorkspaceIdRef.current !== workspaceId) return;
       if (!validation.ok) {
-        setError(`Planejamento possui ${validation.conflicts.length} conflito(s).`);
+        setError(planningErrorMessage(new ApiRequestError('Planejamento possui conflitos.', 409, validation), 'Planejamento possui conflitos.'));
         return;
       }
 
@@ -548,34 +1081,17 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
         refreshedEncounters.find((encounter) => encounter.id === selectedEncounterIdRef.current) ?? refreshedEncounters[0] ?? null;
       setPlanningDetail(refreshed);
       selectEncounter(nextSelectedEncounter?.id ?? '');
+      setIsPublishConfirmOpen(false);
       setMessage(
         `Publicado: ${result.created_cohorts} criada(s), ${result.updated_cohorts} atualizada(s), ${result.encounter_count} encontro(s).`
       );
     } catch (requestError) {
       if (selectedWorkspaceIdRef.current !== workspaceId) return;
       setMessage('');
-      setError((requestError as Error).message || 'Falha ao publicar planejamento.');
+      setError(planningErrorMessage(requestError, 'Falha ao publicar planejamento.'));
     } finally {
       setPublishingWorkspaceId((currentWorkspaceId) => (currentWorkspaceId === workspaceId ? null : currentWorkspaceId));
     }
-  }
-
-  function renderEncounter(cohort: PlanningCohort, encounter: PlanningEncounter, compact = false) {
-    const isSelected = selectedEncounter?.id === encounter.id;
-
-    return (
-      <button
-        className={`planning-encounter planning-encounter--${encounter.status.toLowerCase()} ${compact ? 'planning-encounter--compact' : ''} ${isSelected ? 'is-selected' : ''}`.trim()}
-        key={encounter.id}
-        onClick={() => selectEncounter(encounter.id)}
-        style={compact ? undefined : encounterGridStyle(encounter.start_time, encounter.end_time)}
-        type="button"
-      >
-        <strong>{encounter.start_time} - {encounter.end_time}</strong>
-        <span>{cohort.company_name} · {cohort.module_code}</span>
-        <small>{encounter.technician_name ?? cohort.technician_name ?? 'Sem técnico'}</small>
-      </button>
-    );
   }
 
   function selectWorkspace(workspaceId: string) {
@@ -592,75 +1108,164 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
     setRangeStartDate((currentDate) => addDaysIso(currentDate, amount));
   }
 
-  function toggleTechnicianPool(technicianId: string) {
-    setTechnicianPoolIds((currentIds) => (
-      currentIds.includes(technicianId)
-        ? currentIds.filter((id) => id !== technicianId)
-        : [...currentIds, technicianId]
+  function timeSlotsOverlap(leftStart: string, leftEnd: string, rightStart: string | null, rightEnd: string | null) {
+    if (!rightStart || !rightEnd) return true;
+    return minutes(leftStart) < minutes(rightEnd) && minutes(rightStart) < minutes(leftEnd);
+  }
+
+  function hasEncounterConflict(cohort: PlanningCohort, encounter: PlanningEncounter) {
+    const technicianId = encounter.technician_id;
+    if (!technicianId || encounter.status === 'Cancelado') return false;
+
+    const planningConflict = plannedEncounters.some(({ cohort: otherCohort, encounter: otherEncounter }) => {
+      if (otherEncounter.id === encounter.id || otherEncounter.status === 'Cancelado') return false;
+      void otherCohort;
+      const otherTechnicianId = otherEncounter.technician_id;
+      return (
+        otherTechnicianId === technicianId &&
+        otherEncounter.day_date === encounter.day_date &&
+        timeSlotsOverlap(encounter.start_time, encounter.end_time, otherEncounter.start_time, otherEncounter.end_time)
+      );
+    });
+    if (planningConflict) return true;
+
+    const externalCohortConflict = externalCohorts.some((externalCohort) => (
+      externalCohort.id !== cohort.published_cohort_id &&
+      externalCohort.technician_id === technicianId &&
+      externalCohort.occurrences.some((occurrence) => (
+        occurrence.day_date === encounter.day_date &&
+        timeSlotsOverlap(encounter.start_time, encounter.end_time, occurrence.start_time, occurrence.end_time)
+      ))
+    ));
+    if (externalCohortConflict) return true;
+
+    return activities.some((activity) => (
+      activity.technician_ids.includes(technicianId) &&
+      activity.occurrences.some((occurrence) => (
+        occurrence.day_date === encounter.day_date &&
+        (occurrence.all_day || timeSlotsOverlap(encounter.start_time, encounter.end_time, occurrence.start_time, occurrence.end_time))
+      ))
     ));
   }
 
-  function renderCalendarBody() {
-    if (isLoadingDetail) return <p>Carregando encontros do planejamento.</p>;
-    if (visibleEncounterPairs.length === 0) return <p>Nenhum encontro neste recorte. Ajuste período, técnico ou cliente.</p>;
-
-    if (viewMode === 'list') {
-      return (
-        <div className="planning-list-table">
-          {visibleEncounterPairs.map(({ cohort, encounter }) => (
-            <button
-              className={`planning-list-row ${selectedEncounter?.id === encounter.id ? 'is-selected' : ''}`.trim()}
-              key={encounter.id}
-              onClick={() => selectEncounter(encounter.id)}
-              type="button"
-            >
-              <span>{shortDateLabel(encounter.day_date)}</span>
-              <strong>{encounter.start_time} - {encounter.end_time}</strong>
-              <span>{cohort.company_name}</span>
-              <span>{cohort.module_code}</span>
-              <span>{encounter.technician_name ?? cohort.technician_name ?? 'Sem técnico'}</span>
-              <small>{encounter.status}</small>
-            </button>
-          ))}
-        </div>
-      );
-    }
-
-    if (viewMode === 'week') {
-      return (
-        <div className="planning-week-board">
-          {visibleDates.map((date) => {
-            const dayPairs = visibleEncounterPairs.filter(({ encounter }) => encounter.day_date === date);
-
-            return (
-              <section className="planning-day-lane" key={date}>
-                <header>
-                  <strong>{weekdayLabel(date)}</strong>
-                  <span>{shortDateLabel(date)}</span>
-                </header>
-                <div className="planning-day-hours">
-                  {dayPairs.map(({ cohort, encounter }) => renderEncounter(cohort, encounter))}
-                </div>
-              </section>
-            );
-          })}
-        </div>
-      );
-    }
+  function renderActivity(activity: PlanningActivity, occurrence: PlanningActivity['occurrences'][number], compact = false) {
+    const startTime = occurrence.all_day ? '08:00' : occurrence.start_time ?? '08:00';
+    const endTime = occurrence.all_day ? '18:00' : occurrence.end_time ?? '18:00';
 
     return (
-      <div className="planning-range-board" style={{ gridTemplateColumns: `repeat(${visibleDates.length}, minmax(104px, 1fr))` }}>
-        {visibleDates.map((date) => {
-          const dayPairs = visibleEncounterPairs.filter(({ encounter }) => encounter.day_date === date);
+      <button
+        className={`planning-blocker ${compact ? 'planning-blocker--compact' : ''}`.trim()}
+        key={`${activity.id}-${occurrence.day_date}`}
+        style={compact ? undefined : encounterGridStyle(startTime, endTime)}
+        type="button"
+      >
+        <strong>Atividade · {startTime} - {endTime}</strong>
+        <span>{activity.title}</span>
+        <small>{activity.technician_names.join(', ') || 'técnico vinculado'}</small>
+      </button>
+    );
+  }
+
+  function renderExternalCohort(
+    externalCohort: PlanningCalendarCohort,
+    occurrence: PlanningCalendarCohort['occurrences'][number],
+    compact = false
+  ) {
+    const startTime = occurrence.start_time ?? '08:00';
+    const endTime = occurrence.end_time ?? '18:00';
+    const companyLabel = externalCohort.company_names.join(', ') || 'cliente vinculado';
+    const moduleLabel = externalCohort.module_names[0] ? moduleDisplayLabel(externalCohort.module_names[0]) : externalCohort.name || 'Turma publicada';
+
+    return (
+      <button
+        className={`planning-external-blocker ${compact ? 'planning-external-blocker--compact' : ''}`.trim()}
+        key={`${externalCohort.id}-${occurrence.day_index}-${occurrence.day_date}`}
+        onClick={() => setMessage(`Turma já criada: ${companyLabel} · ${moduleLabel} · ${shortDateLabel(occurrence.day_date)} ${startTime}-${endTime}`)}
+        style={compact ? undefined : encounterGridStyle(startTime, endTime)}
+        type="button"
+      >
+        <strong>Turma · {startTime} - {endTime}</strong>
+        <span>{companyLabel}</span>
+        <small>{moduleLabel} · {externalCohort.technician_name ?? 'sem técnico'}</small>
+      </button>
+    );
+  }
+
+  function renderEncounter(cohort: PlanningCohort, encounter: PlanningEncounter, compact = false) {
+    const isSelected = selectedEncounter?.id === encounter.id;
+    const isInSelectedCohort = selectedCohort?.id === cohort.id;
+    const isConflicted = hasEncounterConflict(cohort, encounter);
+    const moduleLabel = moduleDisplayLabel(cohort.module_name);
+    const visual = cohortVisuals.get(cohort.id) ?? { index: 0, color: '#ef2f0f', softColor: '#fff0ec' };
+
+    return (
+      <button
+        className={`planning-piece planning-piece--${encounter.status.toLowerCase()} ${compact ? 'planning-piece--compact' : ''} ${isSelected ? 'is-selected' : ''} ${isInSelectedCohort ? 'is-cohort-selected' : ''} ${isConflicted ? 'is-conflicted' : ''}`.trim()}
+        draggable
+        key={encounter.id}
+        onClick={() => selectEncounter(encounter.id)}
+        onDragStart={(event) => {
+          event.dataTransfer.effectAllowed = 'move';
+          event.dataTransfer.setData('text/planning-encounter-id', encounter.id);
+        }}
+        style={compact ? cohortStyle(visual) : { ...encounterGridStyle(encounter.start_time, encounter.end_time), ...cohortStyle(visual) }}
+        type="button"
+      >
+        <em>{visual.index}</em>
+        <strong>{encounter.start_time} - {encounter.end_time}</strong>
+        <span>{cohort.company_name}</span>
+        <small>{moduleLabel} · {encounter.technician_name ?? 'sem técnico'}</small>
+      </button>
+    );
+  }
+
+  function renderClientModuleList(company: CatalogCompany) {
+    const client = planningDetail?.clients.find((item) => item.company_id === company.id);
+    const availableModuleIds = new Set(client?.available_module_ids ?? modules.map((module) => module.id));
+    const plannedByModule = new Map(cohorts
+      .filter((cohort) => cohort.company_id === company.id)
+      .map((cohort) => [cohort.module_id, cohort]));
+    const visibleModules = modules.filter((module) => {
+      const plannedCohort = plannedByModule.get(module.id);
+      return availableModuleIds.has(module.id) || Boolean(plannedCohort?.published_cohort_id);
+    });
+
+    return (
+      <div className="planning-module-stack">
+        {visibleModules.length === 0 ? (
+          <p className="planning-empty-modules">Sem módulos pendentes para este cliente.</p>
+        ) : null}
+        {visibleModules.map((module) => {
+          const plannedCohort = plannedByModule.get(module.id);
+          const isActive = activeModule?.companyId === company.id && activeModule.moduleId === module.id;
+          const visual = plannedCohort
+            ? cohortVisuals.get(plannedCohort.id) ?? { index: 0, color: '#ef2f0f', softColor: '#fff0ec' }
+            : null;
+          const pendingCount = plannedCohort?.encounters.filter((encounter) => (
+            encounter.status !== 'Cancelado' && !encounterHasAllocation(plannedCohort, encounter)
+          )).length ?? 0;
 
           return (
-            <section className="planning-range-day" key={date}>
-              <header>
-                <strong>{shortDateLabel(date)}</strong>
-                <span>{weekdayLabel(date)}</span>
-              </header>
-              {dayPairs.length === 0 ? <small className="planning-empty-day">Livre</small> : null}
-              {dayPairs.map(({ cohort, encounter }) => renderEncounter(cohort, encounter, true))}
+            <section
+              className={`planning-module-card ${plannedCohort ? 'is-planned' : ''} ${pendingCount > 0 ? 'has-pending' : ''} ${isActive ? 'is-active' : ''}`.trim()}
+              key={module.id}
+              style={visual ? cohortStyle(visual) : undefined}
+            >
+              <button
+                className={`planning-module-card-main ${visual ? 'has-badge' : ''}`.trim()}
+                type="button"
+                onClick={() => selectModule(company.id, module.id)}
+              >
+                {visual ? <em>{visual.index}</em> : null}
+                <span className="planning-module-copy">
+                  <span>{moduleDisplayLabel(module.name)}</span>
+                  <small>
+                    {plannedCohort
+                      ? `${plannedCohort.encounters.filter((encounter) => encounter.status !== 'Cancelado').length} encontro(s) · ${pendingCount} pendente(s)`
+                      : `${defaultEncounterCount(module, 'Meio_periodo')} meio-periodos sugeridos`}
+                  </small>
+                </span>
+              </button>
             </section>
           );
         })}
@@ -668,128 +1273,38 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
     );
   }
 
-  return (
-    <div className="page planning-page">
-      <header className="page-header planning-page-header">
-        <div>
-          <h1>Planejar</h1>
-          <p>Monte clientes, módulos, técnicos e horários reais antes de publicar turmas na agenda.</p>
-        </div>
+  function renderModuleWorkbench() {
+    if (!activeModule || !activeCompany || !activeModuleTemplate) return null;
 
-        <div className="planning-workspace-switcher">
-          <label>
-            Workspace
-            <select value={selectedWorkspaceId} onChange={(event) => selectWorkspace(event.target.value)}>
-              {workspaces.length === 0 ? <option value="">Nenhum workspace</option> : null}
-              {workspaces.map((workspace) => (
-                <option key={workspace.id} value={workspace.id}>
-                  {workspace.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-      </header>
+    const plannedCohort = cohorts.find((cohort) => (
+      cohort.company_id === activeModule.companyId &&
+      cohort.module_id === activeModule.moduleId
+    ));
+    const validEncounters = plannedCohort?.encounters.filter((encounter) => encounter.status !== 'Cancelado') ?? [];
+    const missingEncounterCount = plannedCohort ? Math.max(0, expectedEncounterCountForCohort(plannedCohort) - validEncounters.length) : 0;
+    const visual = plannedCohort
+      ? cohortVisuals.get(plannedCohort.id) ?? { index: 0, color: '#ef2f0f', softColor: '#fff0ec' }
+      : null;
 
-      {message ? <p className="success" role="status" aria-live="polite">{message}</p> : null}
-      {error ? <p className="error" role="alert" aria-live="assertive">{error}</p> : null}
-
-      <section className="planning-control-strip" aria-label="Criacao de planejamento e turmas">
-        <div className="planning-control-card planning-control-card--workspace">
-          <div className="planning-control-title">
-            <strong>Novo planejamento</strong>
-            <span>{workspaces.length} salvo(s)</span>
+    return (
+      <section className="planning-module-workbench" role="dialog" aria-label="Configurar módulo" style={visual ? cohortStyle(visual) : undefined}>
+        <header className="planning-module-workbench-header">
+          <div>
+            <strong>Montar encontros</strong>
+            <span>{activeCompany.name} · {activeModuleTemplate.name}</span>
           </div>
-          <label>
-            Nome
-            <input
-              value={workspaceDraft.name}
-              onChange={(event) => setWorkspaceDraft((draft) => ({ ...draft, name: event.target.value }))}
-            />
-          </label>
-          <label>
-            Modo
-            <select
-              value={workspaceDraft.mode}
-              onChange={(event) => setWorkspaceDraft((draft) => ({ ...draft, mode: event.target.value as PlanningMode }))}
-            >
-              {planningModes.map((mode) => <option key={mode} value={mode}>{mode}</option>)}
-            </select>
-          </label>
-          <label>
-            Horizonte
-            <input
-              min={7}
-              max={120}
-              type="number"
-              value={workspaceDraft.horizonDays}
-              onChange={(event) => setWorkspaceDraft((draft) => ({ ...draft, horizonDays: Number(event.target.value) }))}
-            />
-          </label>
-          <button type="button" disabled={isCreatingWorkspace || !workspaceDraft.name.trim()} onClick={createWorkspace}>
-            {isCreatingWorkspace ? 'Criando...' : 'Criar'}
+          <button type="button" aria-label="Fechar configuração do módulo" onClick={() => setActiveModule(null)}>
+            Fechar
           </button>
-        </div>
+        </header>
 
-        <div className="planning-control-card planning-control-card--cohort">
-          <div className="planning-control-title">
-            <strong>Montar turma</strong>
-            <span>{selectedWorkspace ? selectedWorkspace.mode : 'Escolha um workspace'}</span>
-          </div>
+        <div className="planning-module-workbench-body">
           <label>
-            Cliente
-            <select
-              value={cohortDraft.companyId}
-              onChange={(event) => setCohortDraft((draft) => ({ ...draft, companyId: event.target.value }))}
-            >
-              <option value="">Selecionar</option>
-              {companies.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
+            Período
+            <select value={composer.period} onChange={(event) => updateComposerPeriod(event.target.value as ModuleComposer['period'])}>
+              <option value="Meio_periodo">Meio período</option>
+              <option value="Integral">Integral</option>
             </select>
-          </label>
-          <label>
-            Módulo
-            <select
-              value={cohortDraft.moduleId}
-              onChange={(event) => setCohortDraft((draft) => ({ ...draft, moduleId: event.target.value }))}
-            >
-              <option value="">Selecionar</option>
-              {modules.map((module) => <option key={module.id} value={module.id}>{module.code} · {module.name}</option>)}
-            </select>
-          </label>
-          <label>
-            Técnico final
-            <select
-              value={cohortDraft.technicianId}
-              onChange={(event) => setCohortDraft((draft) => ({ ...draft, technicianId: event.target.value }))}
-            >
-              <option value="">Sistema escolhe/manual depois</option>
-              {technicians.map((technician) => <option key={technician.id} value={technician.id}>{technician.name}</option>)}
-            </select>
-          </label>
-          <label>
-            Data inicial
-            <input
-              type="date"
-              value={cohortDraft.startDate}
-              onChange={(event) => setCohortDraft((draft) => ({ ...draft, startDate: event.target.value }))}
-            />
-          </label>
-          <label>
-            Hora
-            <span className="planning-time-pair">
-              <input
-                aria-label="Início da turma"
-                type="time"
-                value={cohortDraft.startTime}
-                onChange={(event) => setCohortDraft((draft) => ({ ...draft, startTime: event.target.value }))}
-              />
-              <input
-                aria-label="Fim da turma"
-                type="time"
-                value={cohortDraft.endTime}
-                onChange={(event) => setCohortDraft((draft) => ({ ...draft, endTime: event.target.value }))}
-              />
-            </span>
           </label>
           <label>
             Encontros
@@ -797,134 +1312,475 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
               min={1}
               max={80}
               type="number"
-              value={cohortDraft.encounterCount}
-              onChange={(event) => setCohortDraft((draft) => ({ ...draft, encounterCount: Number(event.target.value) }))}
+              value={composer.encounterCount}
+              onChange={(event) => setComposer((current) => ({ ...current, encounterCount: Number(event.target.value) }))}
+            />
+          </label>
+          <label>
+            Técnico
+            <select value={composer.technicianId} onChange={(event) => setComposer((current) => ({ ...current, technicianId: event.target.value }))}>
+              <option value="">Escolher depois</option>
+              {technicians.map((technician) => <option key={technician.id} value={technician.id}>{technician.name}</option>)}
+            </select>
+          </label>
+          <label>
+            Data
+            <input
+              type="date"
+              value={composer.startDate}
+              onChange={(event) => setComposer((current) => ({ ...current, startDate: event.target.value }))}
+            />
+          </label>
+          <label>
+            Início
+            <input
+              type="time"
+              value={composer.startTime}
+              onChange={(event) => setComposer((current) => ({ ...current, startTime: event.target.value }))}
+            />
+          </label>
+          <label>
+            Fim
+            <input
+              type="time"
+              value={composer.endTime}
+              onChange={(event) => setComposer((current) => ({ ...current, endTime: event.target.value }))}
             />
           </label>
           <label>
             Ritmo
-            <select
-              value={cohortDraft.cadence}
-              onChange={(event) => setCohortDraft((draft) => ({ ...draft, cadence: event.target.value as CohortDraft['cadence'] }))}
-            >
+            <select value={composer.cadence} onChange={(event) => setComposer((current) => ({ ...current, cadence: event.target.value as ModuleComposer['cadence'] }))}>
               <option value="daily">Dias seguidos</option>
               <option value="twice_week">2x por semana</option>
               <option value="weekly">1x por semana</option>
             </select>
           </label>
           <label>
-            Modalidade
-            <select
-              value={cohortDraft.deliveryMode}
-              onChange={(event) => setCohortDraft((draft) => ({ ...draft, deliveryMode: event.target.value as CohortDraft['deliveryMode'] }))}
-            >
+            Formato
+            <select value={composer.deliveryMode} onChange={(event) => setComposer((current) => ({ ...current, deliveryMode: event.target.value as ModuleComposer['deliveryMode'] }))}>
               <option value="Online">Online</option>
               <option value="Presencial">Presencial</option>
               <option value="Hibrida">Híbrida</option>
             </select>
           </label>
-          <div className="planning-technician-pool">
-            <span>Técnicos candidatos</span>
-            <button type="button" onClick={() => setTechnicianPoolIds([])}>Todos</button>
-            {technicians.slice(0, 6).map((technician) => (
-              <label key={technician.id}>
-                <input
-                  checked={technicianPoolIds.includes(technician.id)}
-                  type="checkbox"
-                  onChange={() => toggleTechnicianPool(technician.id)}
-                />
-                {technician.name}
-              </label>
-            ))}
-          </div>
-          <button
-            aria-label="Sistema alocar"
-            type="button"
-            disabled={isSuggesting || !cohortDraft.moduleId || technicians.length === 0}
-            onClick={suggestFirstWindow}
-          >
-            {isSuggesting ? 'Buscando...' : 'Alocar'}
+        </div>
+
+        <div className="planning-module-actions planning-module-workbench-actions">
+          <button type="button" disabled={isSuggesting || isCreatingCohort || technicians.length === 0 || !planningDetail} onClick={autoAllocateAndCreateModule}>
+            {isSuggesting ? 'Autoalocando...' : 'Autoalocar e gerar'}
           </button>
           <button
-            aria-label="Adicionar turma"
             type="button"
-            disabled={isCreatingCohort || !canCreateCohort}
-            onClick={createPlannedCohort}
+            disabled={isCreatingCohort || !planningDetail}
+            onClick={() => plannedCohort && missingEncounterCount > 0 ? void addMissingPendingEncounters(plannedCohort) : void createPlannedCohort()}
           >
-            {isCreatingCohort ? 'Adicionando...' : 'Adicionar'}
+            {isCreatingCohort ? 'Gerando...' : plannedCohort && missingEncounterCount > 0 ? `Gerar ${missingEncounterCount} pendente(s)` : plannedCohort ? 'Gerar outra turma' : 'Gerar encontros'}
           </button>
         </div>
+
+        {validEncounters.length > 0 ? (
+          <div className="planning-module-encounters">
+            <strong>Encontros deste módulo</strong>
+            {validEncounters.map((encounter) => {
+              const isAllocated = plannedCohort ? encounterHasAllocation(plannedCohort, encounter) : false;
+              return (
+              <button
+                className={isAllocated ? 'is-allocated' : 'is-pending'}
+                draggable
+                type="button"
+                key={encounter.id}
+                onClick={() => selectEncounter(encounter.id)}
+                onDragStart={(event) => {
+                  event.dataTransfer.effectAllowed = 'move';
+                  event.dataTransfer.setData('text/planning-encounter-id', encounter.id);
+                }}
+              >
+                {isAllocated ? `${shortDateLabel(encounter.day_date)} · ` : 'Pendente · '}
+                {encounter.start_time}-{encounter.end_time}
+              </button>
+              );
+            })}
+          </div>
+        ) : null}
       </section>
+    );
+  }
 
-      <div className="planning-workbench">
-        <aside className="planning-queue">
-          <div className="planning-panel-header">
-            <div>
-              <h2>Fila de planejamento</h2>
-              <p>{selectedWorkspace ? `${selectedWorkspace.status} · ${selectedWorkspace.mode}` : 'Crie ou selecione um workspace'}</p>
+  function renderWeekBoard() {
+    return (
+      <div className="planning-week-board planning-week-board--studio">
+        {visibleDates.map((date) => {
+          const dayPairs = visibleEncounterPairs.filter(({ encounter }) => encounter.day_date === date);
+          const dayActivities = visibleActivityOccurrences.filter(({ occurrence }) => occurrence.day_date === date);
+          const dayExternalCohorts = visibleExternalCohortOccurrences.filter(({ occurrence }) => occurrence.day_date === date);
+
+          return (
+            <section
+              aria-label={`Dia ${weekdayLabel(date)} ${shortDateLabel(date)}`}
+              className={`planning-day-lane ${date === todayIso() ? 'is-today' : ''}`.trim()}
+              key={date}
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={(event) => {
+                event.preventDefault();
+                const draggedEncounterId = event.dataTransfer.getData('text/planning-encounter-id');
+                if (draggedEncounterId) {
+                  const targetTechnicianId = technicianFilterId || undefined;
+                  void moveEncounterToDate(draggedEncounterId, date, targetTechnicianId || undefined);
+                }
+              }}
+            >
+              <header>
+                <strong>{weekdayLabel(date)}</strong>
+                <span>{shortDateLabel(date)}</span>
+              </header>
+              <div className="planning-day-hours">
+                {dayActivities.map(({ activity, occurrence }) => renderActivity(activity, occurrence))}
+                {dayExternalCohorts.map(({ externalCohort, occurrence }) => renderExternalCohort(externalCohort, occurrence))}
+                {dayPairs.map(({ cohort, encounter }) => renderEncounter(cohort, encounter))}
+              </div>
+            </section>
+          );
+        })}
+      </div>
+    );
+  }
+
+  function renderMacroBoard() {
+    if (!technicianFilterId) {
+      return (
+        <div className="planning-range-board">
+          <section className="planning-range-tech-section planning-range-tech-section--unified">
+            <header>
+              <strong>Equipe toda</strong>
+              <span>{activeView.days} dias · turmas e atividades de todos os técnicos</span>
+            </header>
+            <div className="planning-range-days">
+              {visibleDates.map((date) => {
+                const dayPairs = visibleEncounterPairs.filter(({ encounter }) => encounter.day_date === date);
+                const dayActivities = visibleActivityOccurrences.filter(({ occurrence }) => occurrence.day_date === date);
+                const dayExternalCohorts = visibleExternalCohortOccurrences.filter(({ occurrence }) => occurrence.day_date === date);
+
+                return (
+                  <section
+                    aria-label={`Dia ${weekdayLabel(date)} ${shortDateLabel(date)}`}
+                    className={`planning-range-day ${dayPairs.length || dayActivities.length || dayExternalCohorts.length ? 'has-events' : ''} ${date === todayIso() ? 'is-today' : ''}`.trim()}
+                    key={`team-${date}`}
+                    onDragOver={(event) => event.preventDefault()}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      const draggedEncounterId = event.dataTransfer.getData('text/planning-encounter-id');
+                      if (!draggedEncounterId) return;
+                      void moveEncounterToDate(draggedEncounterId, date);
+                    }}
+                  >
+                    <button
+                      className="planning-range-day-header"
+                      type="button"
+                      onClick={() => {
+                        setViewMode('week');
+                        setRangeStartDate(date);
+                        setTechnicianFilterId('');
+                      }}
+                    >
+                      <strong>{shortDateLabel(date)}</strong>
+                      <span>{weekdayLabel(date)}</span>
+                    </button>
+                    <div className="planning-range-day-events">
+                      {dayActivities.map(({ activity, occurrence }) => renderActivity(activity, occurrence, true))}
+                      {dayExternalCohorts.map(({ externalCohort, occurrence }) => renderExternalCohort(externalCohort, occurrence, true))}
+                      {dayPairs.map(({ cohort, encounter }) => renderEncounter(cohort, encounter, true))}
+                      {dayPairs.length === 0 && dayActivities.length === 0 && dayExternalCohorts.length === 0 ? <span>Livre</span> : null}
+                    </div>
+                  </section>
+                );
+              })}
             </div>
-          </div>
+          </section>
+        </div>
+      );
+    }
 
-          <div className="planning-filter-row">
-            <span>{clients.length} clientes</span>
-            <span>{cohorts.length} turmas</span>
-          </div>
+    const rowMap = new Map<string, { id: string; name: string }>();
+    technicians.forEach((technician) => {
+      if (!technicianFilterId || technician.id === technicianFilterId) {
+        rowMap.set(technician.id, technician);
+      }
+    });
+    visibleEncounterPairs.forEach(({ cohort, encounter }) => {
+      const id = encounter.technician_id ?? '__none__';
+      if (technicianFilterId && id !== technicianFilterId) return;
+      if (!rowMap.has(id)) {
+        rowMap.set(id, {
+          id,
+          name: encounter.technician_name ?? 'Sem técnico'
+        });
+      }
+    });
+    visibleActivityOccurrences.forEach(({ activity }) => {
+      activity.technician_ids.forEach((id, index) => {
+        if (technicianFilterId && id !== technicianFilterId) return;
+        if (!rowMap.has(id)) {
+          rowMap.set(id, {
+            id,
+            name: activity.technician_names[index] ?? 'Técnico'
+          });
+        }
+      });
+    });
+    visibleExternalCohortOccurrences.forEach(({ externalCohort }) => {
+      const id = externalCohort.technician_id ?? '__none__';
+      if (technicianFilterId && id !== technicianFilterId) return;
+      if (!rowMap.has(id)) {
+        rowMap.set(id, {
+          id,
+          name: externalCohort.technician_name ?? 'Sem técnico'
+        });
+      }
+    });
+    if (rowMap.size === 0) {
+      rowMap.set('__none__', { id: '__none__', name: 'Sem técnico' });
+    }
+    const technicianRows = [...rowMap.values()];
 
-          <div className="planning-client-list">
-            {isLoadingDetail ? <p>Carregando carteira de planejamento.</p> : null}
-            {!isLoadingDetail && clients.length === 0 ? <p>Nenhum cliente neste planejamento. Use "Montar turma" para adicionar o primeiro módulo.</p> : null}
-            {!isLoadingDetail && clients.map((client) => {
-              const clientCohorts = cohorts.filter((cohort) => cohort.company_id === client.company_id);
+    return (
+      <div className="planning-range-board">
+        {technicianRows.map((technician) => (
+          <section className="planning-range-tech-section" key={technician.id}>
+            <header>
+              <strong>{technician.name}</strong>
+              <span>{activeView.days} dias</span>
+            </header>
+            <div className="planning-range-days">
+              {visibleDates.map((date) => {
+                const dayPairs = visibleEncounterPairs.filter(({ encounter, cohort }) => (
+                  encounter.day_date === date &&
+                  (technician.id === '__none__'
+                    ? !encounter.technician_id
+                    : encounter.technician_id === technician.id)
+                ));
+                const dayActivities = visibleActivityOccurrences.filter(({ activity, occurrence }) => (
+                  occurrence.day_date === date &&
+                  activity.technician_ids.includes(technician.id)
+                ));
+                const dayExternalCohorts = visibleExternalCohortOccurrences.filter(({ externalCohort, occurrence }) => (
+                  occurrence.day_date === date &&
+                  (technician.id === '__none__'
+                    ? !externalCohort.technician_id
+                    : externalCohort.technician_id === technician.id)
+                ));
+
+                return (
+                  <section
+                    aria-label={`Dia ${weekdayLabel(date)} ${shortDateLabel(date)}`}
+                    className={`planning-range-day ${dayPairs.length || dayActivities.length || dayExternalCohorts.length ? 'has-events' : ''} ${date === todayIso() ? 'is-today' : ''}`.trim()}
+                    key={`${technician.id}-${date}`}
+                    onDragOver={(event) => event.preventDefault()}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      const draggedEncounterId = event.dataTransfer.getData('text/planning-encounter-id');
+                      if (draggedEncounterId) void moveEncounterToDate(draggedEncounterId, date, technician.id === '__none__' ? null : technician.id);
+                    }}
+                  >
+                    <button
+                      className="planning-range-day-header"
+                      type="button"
+                      onClick={() => {
+                        setViewMode('week');
+                        setRangeStartDate(date);
+                        setTechnicianFilterId(technician.id === '__none__' ? '' : technician.id);
+                      }}
+                    >
+                      <strong>{shortDateLabel(date)}</strong>
+                      <span>{weekdayLabel(date)}</span>
+                    </button>
+                    <div className="planning-range-day-events">
+                      {dayActivities.map(({ activity, occurrence }) => renderActivity(activity, occurrence, true))}
+                      {dayExternalCohorts.map(({ externalCohort, occurrence }) => renderExternalCohort(externalCohort, occurrence, true))}
+                      {dayPairs.map(({ cohort, encounter }) => renderEncounter(cohort, encounter, true))}
+                      {dayPairs.length === 0 && dayActivities.length === 0 && dayExternalCohorts.length === 0 ? <span>Livre</span> : null}
+                    </div>
+                  </section>
+                );
+              })}
+            </div>
+          </section>
+        ))}
+      </div>
+    );
+  }
+  function renderListBoard() {
+    return (
+      <div className="planning-list-table">
+        {visibleExternalCohortOccurrences.map(({ externalCohort, occurrence }) => (
+          <button
+            className="planning-list-row planning-list-row--external"
+            key={`${externalCohort.id}-${occurrence.day_index}-${occurrence.day_date}`}
+            onClick={() => setMessage(`Turma já criada: ${externalCohort.company_names.join(', ') || 'Cliente'} · ${shortDateLabel(occurrence.day_date)}`)}
+            type="button"
+          >
+            <span>{shortDateLabel(occurrence.day_date)}</span>
+            <strong>{occurrence.start_time ?? '08:00'} - {occurrence.end_time ?? '18:00'}</strong>
+            <span>{externalCohort.company_names.join(', ') || 'Cliente'}</span>
+            <span>{externalCohort.module_names[0] ? moduleDisplayLabel(externalCohort.module_names[0]) : externalCohort.name || 'Turma publicada'}</span>
+            <span>{externalCohort.technician_name ?? 'Sem técnico'}</span>
+            <small>Turma já criada</small>
+          </button>
+        ))}
+        {visibleEncounterPairs.map(({ cohort, encounter }) => (
+          <button
+            className={`planning-list-row ${selectedEncounter?.id === encounter.id ? 'is-selected' : ''}`.trim()}
+            key={encounter.id}
+            onClick={() => selectEncounter(encounter.id)}
+            type="button"
+          >
+            <span>{shortDateLabel(encounter.day_date)}</span>
+            <strong>{encounter.start_time} - {encounter.end_time}</strong>
+            <span>{cohort.company_name}</span>
+            <span>{moduleDisplayLabel(cohort.module_name)}</span>
+            <span>{encounter.technician_name ?? 'Sem técnico'}</span>
+            <small>{encounter.status}</small>
+          </button>
+        ))}
+      </div>
+    );
+  }
+
+  function renderCalendarBody() {
+    if (isLoadingDetail) return <p>Carregando encontros do planejamento.</p>;
+    if (visibleEncounterPairs.length === 0 && visibleExternalCohortOccurrences.length === 0 && viewMode === 'list') {
+      return <p>Nenhum encontro neste recorte. Selecione um módulo à esquerda e gere encontros.</p>;
+    }
+    if (viewMode === 'list') return renderListBoard();
+    if (viewMode === 'week') return renderWeekBoard();
+    return renderMacroBoard();
+  }
+
+  return (
+    <div className="planning-studio">
+      {message ? (
+        <p className="success planning-toast" role="status" aria-live="polite">
+          <span>{message}</span>
+          <button type="button" aria-label="Fechar mensagem" onClick={() => setMessage('')}>×</button>
+        </p>
+      ) : null}
+      {error ? (
+        <p className="error planning-toast" role="alert" aria-live="assertive">
+          <span>{error}</span>
+          <button type="button" aria-label="Fechar erro" onClick={() => setError('')}>×</button>
+        </p>
+      ) : null}
+
+      <aside className="planning-client-rail" aria-label="Clientes e módulos">
+        <div className="planning-rail-header">
+          <div>
+            <strong>Clientes</strong>
+            <span>{clientRows.length} na carteira · {cohorts.length} turma(s)</span>
+          </div>
+          <label>
+            Planejamento
+            <select value={selectedWorkspaceId} onChange={(event) => selectWorkspace(event.target.value)}>
+              {workspaces.length === 0 ? <option value="">Nenhum planejamento</option> : null}
+              {workspaces.map((workspace) => (
+                <option key={workspace.id} value={workspace.id}>
+                  {workspace.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="planning-new-workspace">
+            <input
+              aria-label="Nome do novo planejamento"
+              value={workspaceDraftName}
+              onChange={(event) => setWorkspaceDraftName(event.target.value)}
+            />
+            <button type="button" disabled={isCreatingWorkspace || !workspaceDraftName.trim()} onClick={createWorkspace}>
+              {isCreatingWorkspace ? 'Criando...' : 'Novo'}
+            </button>
+          </div>
+          <button
+            className="planning-add-client-button"
+            type="button"
+            disabled={!planningDetail || availableClientRows.length === 0}
+            onClick={() => setIsClientPickerOpen(true)}
+          >
+            Adicionar cliente
+          </button>
+        </div>
+
+        <div className="planning-rail-body">
+          <div className="planning-client-stack">
+            {clientRows.length === 0 ? (
+              <p className="planning-empty-clients">Nenhum cliente neste planejamento. Use Adicionar cliente para montar a carteira.</p>
+            ) : null}
+            {clientRows.map((company) => {
+              const isExpanded = expandedClientId === company.id;
+              const clientCohorts = cohorts.filter((cohort) => cohort.company_id === company.id);
 
               return (
-                <section className="planning-client-block" key={client.company_id}>
-                  <div className="planning-client-title">
-                    <strong>{client.company_name}</strong>
-                    <small>{clientCohorts.length} turma(s)</small>
-                  </div>
-
-                  {clientCohorts.length === 0 ? <p>Nenhuma turma rascunhada.</p> : null}
-                  {clientCohorts.map((cohort) => (
+                <section className={`planning-client-dossier ${isExpanded ? 'is-expanded' : ''}`.trim()} key={company.id}>
+                  <div className="planning-client-dossier-header">
                     <button
-                      className="planning-module-row"
-                      key={cohort.id}
-                      onClick={() => selectEncounter(cohort.encounters[0]?.id ?? '')}
                       type="button"
+                      className="planning-client-dossier-toggle"
+                      aria-expanded={isExpanded}
+                      aria-label={`${isExpanded ? 'Recolher' : 'Expandir'} ${company.name}`}
+                      onClick={() => {
+                        setExpandedClientId(isExpanded ? '' : company.id);
+                        if (isExpanded && activeModule?.companyId === company.id) setActiveModule(null);
+                      }}
                     >
-                      <strong>{cohort.module_code}</strong>
-                      <span>{cohort.module_name}</span>
-                      <small>{cohort.encounters.filter((encounter) => encounter.status !== 'Cancelado').length} encontros · {cohort.technician_name ?? 'sem técnico'}</small>
+                      <strong>{company.name}</strong>
+                      <span>{clientCohorts.length} turma(s)</span>
                     </button>
-                  ))}
+                    <button
+                      type="button"
+                      className="planning-client-remove"
+                      aria-label={`Remover ${company.name} do planejamento`}
+                      disabled={removingClientIds.includes(company.id)}
+                      onClick={() => void removeClientFromWorkspace(company.id)}
+                    >
+                      ×
+                    </button>
+                  </div>
+                  {isExpanded ? renderClientModuleList(company) : null}
                 </section>
               );
             })}
           </div>
-        </aside>
+          {isClientPickerOpen ? (
+            <section className="planning-client-picker" role="dialog" aria-label="Selecionar clientes">
+              <header>
+                <strong>Selecionar clientes</strong>
+                <button type="button" onClick={() => setIsClientPickerOpen(false)}>Fechar</button>
+              </header>
+              <div className="planning-client-picker-list">
+                {availableClientRows.length === 0 ? <p>Todos os clientes já estão no planejamento.</p> : null}
+                {availableClientRows.map((company) => (
+                  <button
+                    type="button"
+                    key={company.id}
+                    disabled={addingClientIds.includes(company.id)}
+                    onClick={() => void addClientToWorkspace(company.id)}
+                  >
+                    {addingClientIds.includes(company.id) ? 'Adicionando...' : `Adicionar ${company.name}`}
+                  </button>
+                ))}
+              </div>
+            </section>
+          ) : null}
+          {activeModule ? renderModuleWorkbench() : null}
+        </div>
+      </aside>
 
-        <section className="planning-calendar" aria-labelledby="planning-calendar-title">
-          <div className="planning-panel-header">
-            <div>
-              <h2 id="planning-calendar-title">Agenda por horário</h2>
-              <p>{isLoadingDetail ? 'Carregando grade' : selectedWorkspace ? `${selectedWorkspace.horizon_days} dias de horizonte` : 'Crie um planejamento'}</p>
-            </div>
-            <button
-              aria-label={
-                isPublishingWorkspace
-                  ? 'Publicando...'
-                  : hasPendingWorkspaceEncounterSave
-                    ? 'Aguardando salvamento'
-                    : 'Publicar alterações válidas'
-              }
-              type="button"
-              disabled={isPublishBlocked}
-              onClick={publishCurrentWorkspace}
-            >
-              {isPublishingWorkspace ? 'Publicando...' : hasPendingWorkspaceEncounterSave ? 'Aguardando' : 'Publicar'}
-            </button>
+      <section className="planning-board" aria-label="Calendário de planejamento">
+        <header className="planning-board-toolbar">
+          <div>
+            <strong>{viewMode === 'quarter' ? 'Mapa 90 dias' : viewMode === 'range' ? 'Mapa 60 dias' : viewMode === 'month' ? 'Mapa 30 dias' : 'Agenda por horário'}</strong>
+            <span>
+              {selectedTechnician ? selectedTechnician.name : 'Equipe toda'} · {shortDateLabel(rangeStartDate)} a {shortDateLabel(addDaysIso(rangeStartDate, activeView.days - 1))}
+            </span>
           </div>
-
-          <div className="planning-calendar-tools">
+          <div className="planning-board-actions">
             <div className="planning-zoom-tabs" role="group" aria-label="Escala da agenda">
               {viewModes.map((mode) => (
                 <button
@@ -938,144 +1794,173 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
                 </button>
               ))}
             </div>
-            <div className="planning-range-controls">
-              <button type="button" onClick={() => moveRange(-activeView.days)}>Anterior</button>
-              <input
-                aria-label="Data inicial da agenda"
-                type="date"
-                value={rangeStartDate}
-                onChange={(event) => setRangeStartDate(event.target.value)}
-              />
-              <button type="button" onClick={() => moveRange(activeView.days)}>Próximo</button>
-            </div>
+            <button type="button" onClick={() => moveRange(-activeView.days)}>Anterior</button>
+            <input
+              aria-label="Data inicial da agenda"
+              type="date"
+              value={rangeStartDate}
+              onChange={(event) => setRangeStartDate(event.target.value)}
+            />
+            <button type="button" onClick={() => moveRange(activeView.days)}>Próximo</button>
+            <select aria-label="Filtrar cliente" value={clientFilterId} onChange={(event) => setClientFilterId(event.target.value)}>
+              <option value="">Todos os clientes</option>
+              {clients.map((client) => <option key={client.company_id} value={client.company_id}>{client.company_name}</option>)}
+            </select>
+            <select aria-label="Filtrar técnico" value={technicianFilterId} onChange={(event) => setTechnicianFilterId(event.target.value)}>
+              <option value="">Equipe toda</option>
+              {technicians.map((technician) => <option key={technician.id} value={technician.id}>{technician.name}</option>)}
+            </select>
+            <button
+              aria-label={
+                isPublishingWorkspace
+                  ? 'Publicando...'
+                  : hasPendingWorkspaceEncounterSave
+                    ? 'Aguardando salvamento'
+                    : workspaceConflictCount > 0
+                      ? `Resolva ${workspaceConflictCount} conflito(s) antes de publicar as turmas`
+                      : 'Publicar turmas'
+              }
+              type="button"
+              disabled={isPublishBlocked}
+              onClick={openPublishConfirmation}
+            >
+              {isPublishingWorkspace
+                ? 'Publicando...'
+                : hasPendingWorkspaceEncounterSave
+                  ? 'Aguardando'
+                  : workspaceConflictCount > 0
+                    ? `${workspaceConflictCount} conflito(s)`
+                    : 'Publicar turmas'}
+            </button>
+          </div>
+        </header>
+
+        <div className="planning-board-canvas">
+          {renderCalendarBody()}
+        </div>
+
+        {selectedEncounter && selectedCohort ? (
+          <div className={`planning-quick-editor ${isSelectedEncounterAllocated ? '' : 'is-pending'}`.trim()} aria-label="Editor rápido do encontro">
+            <strong>
+              {selectedCohort.company_name} · {moduleDisplayLabel(selectedCohort.module_name)}
+              <span>
+                {isSelectedEncounterAllocated
+                  ? `${selectedEncounter.start_time}-${selectedEncounter.end_time}`
+                  : 'Pendente: arraste para um dia do calendário'}
+              </span>
+            </strong>
+            {isSelectedEncounterAllocated ? (
+              <label>
+                Data
+                <input
+                  disabled={isSavingSelectedEncounter}
+                  type="date"
+                  value={encounterDraft.day_date}
+                  onChange={(event) => setEncounterDraft((draft) => ({ ...draft, day_date: event.target.value }))}
+                />
+              </label>
+            ) : (
+              <label className="planning-quick-editor-pending">
+                Data
+                <span>sem encaixe</span>
+              </label>
+            )}
             <label>
-              Cliente
-              <select value={clientFilterId} onChange={(event) => setClientFilterId(event.target.value)}>
-                <option value="">Todos</option>
-                {clients.map((client) => <option key={client.company_id} value={client.company_id}>{client.company_name}</option>)}
-              </select>
+              Início
+              <input
+                disabled={isSavingSelectedEncounter}
+                type="time"
+                value={encounterDraft.start_time}
+                onChange={(event) => setEncounterDraft((draft) => ({ ...draft, start_time: event.target.value }))}
+              />
+            </label>
+            <label>
+              Fim
+              <input
+                disabled={isSavingSelectedEncounter}
+                type="time"
+                value={encounterDraft.end_time}
+                onChange={(event) => setEncounterDraft((draft) => ({ ...draft, end_time: event.target.value }))}
+              />
             </label>
             <label>
               Técnico
-              <select value={technicianFilterId} onChange={(event) => setTechnicianFilterId(event.target.value)}>
-                <option value="">Todos</option>
+              <select
+                disabled={isSavingSelectedEncounter}
+                value={encounterDraft.technician_id}
+                onChange={(event) => setEncounterDraft((draft) => ({ ...draft, technician_id: event.target.value }))}
+              >
+                <option value="">Escolher técnico</option>
                 {technicians.map((technician) => <option key={technician.id} value={technician.id}>{technician.name}</option>)}
               </select>
             </label>
+            <label>
+              Status
+              <select
+                disabled={isSavingSelectedEncounter}
+                value={encounterDraft.status}
+                onChange={(event) => setEncounterDraft((draft) => ({ ...draft, status: event.target.value as PlanningEncounterStatus }))}
+              >
+                {encounterStatuses.map((status) => (
+                  <option key={status} value={status}>
+                    {status}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="planning-quick-editor-notes">
+              Observações
+              <textarea
+                disabled={isSavingSelectedEncounter}
+                value={encounterDraft.notes}
+                onChange={(event) => setEncounterDraft((draft) => ({ ...draft, notes: event.target.value }))}
+              />
+            </label>
+            {isSelectedEncounterAllocated ? (
+              <button type="button" disabled={hasPendingWorkspaceEncounterSave} onClick={() => void unassignSelectedEncounter()}>
+                Tirar do mapa
+              </button>
+            ) : null}
+            <button type="button" disabled={hasPendingWorkspaceEncounterSave} onClick={saveSelectedEncounter}>
+              {isSavingSelectedEncounter ? 'Salvando...' : hasPendingWorkspaceEncounterSave ? 'Aguardando salvamento' : 'Salvar encontro'}
+            </button>
           </div>
-
-          <div className="planning-time-grid">
-            {renderCalendarBody()}
-          </div>
-        </section>
-
-        <aside className="planning-context-panel">
-          <div className="planning-panel-header">
-            <div>
-              <h2>Painel contextual</h2>
-              <p>Edite somente o bloco selecionado</p>
-            </div>
-          </div>
-
-          <div className="planning-editor-summary">
-            {isLoadingDetail ? (
-              <p>Carregando painel contextual.</p>
-            ) : selectedEncounter && selectedCohort ? (
-              <>
-                <dl>
-                  <div>
-                    <dt>Cliente</dt>
-                    <dd>{selectedCohort.company_name}</dd>
-                  </div>
-                  <div>
-                    <dt>Módulo</dt>
-                    <dd>{selectedCohort.module_code} · {selectedCohort.module_name}</dd>
-                  </div>
-                  <div>
-                    <dt>Agenda</dt>
-                    <dd>{selectedEncounter.day_date}, {selectedEncounter.start_time} - {selectedEncounter.end_time}</dd>
-                  </div>
-                  <div>
-                    <dt>Técnico</dt>
-                    <dd>{selectedEncounter.technician_name || selectedCohort.technician_name || 'Não definido'}</dd>
-                  </div>
-                  <div>
-                    <dt>Status</dt>
-                    <dd>{selectedEncounter.status}</dd>
-                  </div>
-                </dl>
-                <div className="planning-editor-grid">
-                  <label>
-                    Data
-                    <input
-                      disabled={isSavingSelectedEncounter}
-                      type="date"
-                      value={encounterDraft.day_date}
-                      onChange={(event) => setEncounterDraft((draft) => ({ ...draft, day_date: event.target.value }))}
-                    />
-                  </label>
-                  <label>
-                    Início
-                    <input
-                      disabled={isSavingSelectedEncounter}
-                      type="time"
-                      value={encounterDraft.start_time}
-                      onChange={(event) => setEncounterDraft((draft) => ({ ...draft, start_time: event.target.value }))}
-                    />
-                  </label>
-                  <label>
-                    Fim
-                    <input
-                      disabled={isSavingSelectedEncounter}
-                      type="time"
-                      value={encounterDraft.end_time}
-                      onChange={(event) => setEncounterDraft((draft) => ({ ...draft, end_time: event.target.value }))}
-                    />
-                  </label>
-                  <label>
-                    Técnico
-                    <select
-                      disabled={isSavingSelectedEncounter}
-                      value={encounterDraft.technician_id}
-                      onChange={(event) => setEncounterDraft((draft) => ({ ...draft, technician_id: event.target.value }))}
-                    >
-                      <option value="">Sem técnico</option>
-                      {technicians.map((technician) => <option key={technician.id} value={technician.id}>{technician.name}</option>)}
-                    </select>
-                  </label>
-                  <label>
-                    Status
-                    <select
-                      disabled={isSavingSelectedEncounter}
-                      value={encounterDraft.status}
-                      onChange={(event) => setEncounterDraft((draft) => ({ ...draft, status: event.target.value as PlanningEncounterStatus }))}
-                    >
-                      {encounterStatuses.map((status) => (
-                        <option key={status} value={status}>
-                          {status}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    Observações
-                    <textarea
-                      disabled={isSavingSelectedEncounter}
-                      value={encounterDraft.notes}
-                      onChange={(event) => setEncounterDraft((draft) => ({ ...draft, notes: event.target.value }))}
-                    />
-                  </label>
+        ) : null}
+        {isPublishConfirmOpen && planningDetail ? (
+          <section className="planning-publish-dialog" role="dialog" aria-label="Confirmar publicação do planejamento">
+            <div className="planning-publish-card">
+              <header>
+                <div>
+                  <strong>Confirmar publicação</strong>
+                  <span>{publishReadyCohorts.length} turma(s) · {plannedEncounters.length} encontro(s)</span>
                 </div>
-                <button type="button" disabled={hasPendingWorkspaceEncounterSave} onClick={saveSelectedEncounter}>
-                  {isSavingSelectedEncounter ? 'Salvando...' : hasPendingWorkspaceEncounterSave ? 'Aguardando salvamento' : 'Salvar encontro'}
-                </button>
-              </>
-            ) : (
-              <p>Selecione um encontro para revisar cliente, módulo, técnico e horário antes da publicação.</p>
-            )}
-          </div>
-        </aside>
-      </div>
+                <button type="button" onClick={() => setIsPublishConfirmOpen(false)}>Fechar</button>
+              </header>
+              {publishIssues.length > 0 ? (
+                <div className="planning-publish-issues">
+                  <strong>Antes de confirmar</strong>
+                  {publishIssues.map((issue) => <p key={issue.cohortId}>{issue.message}</p>)}
+                </div>
+              ) : (
+                <div className="planning-publish-summary">
+                  {publishReadyCohorts.map((cohort) => (
+                    <p key={cohort.id}>
+                      {cohort.company_name} · {moduleDisplayLabel(cohort.module_name)} · {cohort.encounters.filter((encounter) => encounter.status !== 'Cancelado').length} encontro(s)
+                    </p>
+                  ))}
+                </div>
+              )}
+              <button
+                type="button"
+                disabled={publishIssues.length > 0 || isPublishBlocked}
+                onClick={publishCurrentWorkspace}
+              >
+                Confirmar publicação
+              </button>
+            </div>
+          </section>
+        ) : null}
+      </section>
     </div>
   );
 }

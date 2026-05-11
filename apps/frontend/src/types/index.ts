@@ -182,6 +182,11 @@ export type PlanningWorkspaceDetail = {
     updated_at: string;
     published_at: string | null;
   };
-  clients: Array<{ company_id: string; company_name: string; priority: number }>;
+  clients: Array<{
+    company_id: string;
+    company_name: string;
+    priority: number;
+    available_module_ids?: string[];
+  }>;
   cohorts: PlanningCohort[];
 };

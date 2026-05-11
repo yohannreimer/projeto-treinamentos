@@ -70,6 +70,10 @@ const operatorPlanningSettingsSchema = z.object({
   module_status_overrides: z.array(z.object({
     module_id: z.string().trim().min(1),
     status: z.enum(['Planejado', 'Em_execucao', 'Concluido'])
+  })).max(500).optional().default([]),
+  module_delivery_mode_overrides: z.array(z.object({
+    module_id: z.string().trim().min(1),
+    delivery_mode: z.enum(['ministrado', 'entregavel'])
   })).max(500).optional().default([])
 });
 
@@ -616,6 +620,7 @@ type PortalClientDisplaySettings = {
   hiddenModuleIds: Set<string>;
   moduleDateOverrides: Map<string, string>;
   moduleStatusOverrides: Map<string, 'Planejado' | 'Em_execucao' | 'Concluido'>;
+  moduleDeliveryModeOverrides: Map<string, 'ministrado' | 'entregavel'>;
 };
 
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -674,9 +679,29 @@ function parseModuleStatusOverrides(raw: string | null | undefined) {
   return overrides;
 }
 
+function parseModuleDeliveryModeOverrides(raw: string | null | undefined) {
+  const overrides = new Map<string, 'ministrado' | 'entregavel'>();
+  if (!raw?.trim()) return overrides;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return overrides;
+    }
+    Object.entries(parsed as Record<string, unknown>).forEach(([moduleId, deliveryMode]) => {
+      const normalizedModuleId = moduleId.trim();
+      if (!normalizedModuleId) return;
+      if (deliveryMode !== 'ministrado' && deliveryMode !== 'entregavel') return;
+      overrides.set(normalizedModuleId, deliveryMode);
+    });
+  } catch {
+    return overrides;
+  }
+  return overrides;
+}
+
 function readPortalClientDisplaySettings(portalClientId: string): PortalClientDisplaySettings {
   const row = db.prepare(`
-    select support_intro_text, hidden_module_ids_json, module_date_overrides_json, module_status_overrides_json
+    select support_intro_text, hidden_module_ids_json, module_date_overrides_json, module_status_overrides_json, module_delivery_mode_overrides_json
     from portal_client
     where id = ?
     limit 1
@@ -686,6 +711,7 @@ function readPortalClientDisplaySettings(portalClientId: string): PortalClientDi
       hidden_module_ids_json: string | null;
       module_date_overrides_json: string | null;
       module_status_overrides_json: string | null;
+      module_delivery_mode_overrides_json: string | null;
     }
     | undefined;
   if (!row) {
@@ -693,14 +719,16 @@ function readPortalClientDisplaySettings(portalClientId: string): PortalClientDi
       supportIntroText: null,
       hiddenModuleIds: new Set<string>(),
       moduleDateOverrides: new Map<string, string>(),
-      moduleStatusOverrides: new Map<string, 'Planejado' | 'Em_execucao' | 'Concluido'>()
+      moduleStatusOverrides: new Map<string, 'Planejado' | 'Em_execucao' | 'Concluido'>(),
+      moduleDeliveryModeOverrides: new Map<string, 'ministrado' | 'entregavel'>()
     };
   }
   return {
     supportIntroText: row.support_intro_text?.trim() || null,
     hiddenModuleIds: new Set(parseModuleIdList(row.hidden_module_ids_json)),
     moduleDateOverrides: parseModuleDateOverrides(row.module_date_overrides_json),
-    moduleStatusOverrides: parseModuleStatusOverrides(row.module_status_overrides_json)
+    moduleStatusOverrides: parseModuleStatusOverrides(row.module_status_overrides_json),
+    moduleDeliveryModeOverrides: parseModuleDeliveryModeOverrides(row.module_delivery_mode_overrides_json)
   };
 }
 
@@ -711,6 +739,7 @@ function writePortalClientDisplaySettings(
     hiddenModuleIds: string[];
     moduleDateOverrides: Array<{ module_id: string; next_date: string }>;
     moduleStatusOverrides: Array<{ module_id: string; status: 'Planejado' | 'Em_execucao' | 'Concluido' }>;
+    moduleDeliveryModeOverrides: Array<{ module_id: string; delivery_mode: 'ministrado' | 'entregavel' }>;
   }
 ) {
   const hiddenModuleIds = Array.from(new Set(payload.hiddenModuleIds.map((value) => value.trim()).filter(Boolean)));
@@ -720,9 +749,13 @@ function writePortalClientDisplaySettings(
   const statusOverridesEntries = payload.moduleStatusOverrides
     .map((entry) => ({ module_id: entry.module_id.trim(), status: entry.status }))
     .filter((entry) => entry.module_id);
+  const deliveryModeOverridesEntries = payload.moduleDeliveryModeOverrides
+    .map((entry) => ({ module_id: entry.module_id.trim(), delivery_mode: entry.delivery_mode }))
+    .filter((entry) => entry.module_id);
 
   const moduleDateOverridesObject = Object.fromEntries(dateOverridesEntries.map((entry) => [entry.module_id, entry.next_date]));
   const moduleStatusOverridesObject = Object.fromEntries(statusOverridesEntries.map((entry) => [entry.module_id, entry.status]));
+  const moduleDeliveryModeOverridesObject = Object.fromEntries(deliveryModeOverridesEntries.map((entry) => [entry.module_id, entry.delivery_mode]));
   const nowIso = new Date().toISOString();
   db.prepare(`
     update portal_client
@@ -731,6 +764,7 @@ function writePortalClientDisplaySettings(
       hidden_module_ids_json = ?,
       module_date_overrides_json = ?,
       module_status_overrides_json = ?,
+      module_delivery_mode_overrides_json = ?,
       updated_at = ?
     where id = ?
   `).run(
@@ -738,6 +772,7 @@ function writePortalClientDisplaySettings(
     JSON.stringify(hiddenModuleIds),
     JSON.stringify(moduleDateOverridesObject),
     JSON.stringify(moduleStatusOverridesObject),
+    JSON.stringify(moduleDeliveryModeOverridesObject),
     nowIso,
     portalClientId
   );
@@ -1260,7 +1295,17 @@ function applyPlanningDisplaySettings(
     .map((item) => {
       const overrideStatus = settings.moduleStatusOverrides.get(item.module_id);
       const overrideDate = settings.moduleDateOverrides.get(item.module_id);
-      let nextItem = item;
+      const overrideDeliveryMode = settings.moduleDeliveryModeOverrides.get(item.module_id);
+      const overrideClientHoursPolicy: 'consome' | 'nao_consume' = overrideDeliveryMode === 'ministrado'
+        ? 'consome'
+        : 'nao_consume';
+      let nextItem = overrideDeliveryMode
+        ? {
+          ...item,
+          delivery_mode: overrideDeliveryMode,
+          client_hours_policy: overrideClientHoursPolicy
+        }
+        : item;
       if (overrideStatus) {
         nextItem = {
           ...nextItem,
@@ -2249,6 +2294,10 @@ export function registerPortalRoutes(app: Express) {
       module_status_overrides: Array.from(settings.moduleStatusOverrides.entries()).map(([module_id, status]) => ({
         module_id,
         status
+      })),
+      module_delivery_mode_overrides: Array.from(settings.moduleDeliveryModeOverrides.entries()).map(([module_id, delivery_mode]) => ({
+        module_id,
+        delivery_mode
       }))
     });
   });
@@ -2265,7 +2314,8 @@ export function registerPortalRoutes(app: Express) {
       supportIntroText: payload.support_intro_text?.trim() || null,
       hiddenModuleIds: payload.hidden_module_ids ?? [],
       moduleDateOverrides: payload.module_date_overrides ?? [],
-      moduleStatusOverrides: payload.module_status_overrides ?? []
+      moduleStatusOverrides: payload.module_status_overrides ?? [],
+      moduleDeliveryModeOverrides: payload.module_delivery_mode_overrides ?? []
     });
     return res.status(200).json({ ok: true });
   });
