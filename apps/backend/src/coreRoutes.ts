@@ -2842,6 +2842,9 @@ function resolveRequiredPermissionsForRequest(req: Request): InternalPermissionK
   if (pathname.startsWith('/calendar')) {
     return ['calendar'];
   }
+  if (pathname.startsWith('/planning')) {
+    return ['calendar', 'cohorts'];
+  }
   if (pathname.startsWith('/cohorts') || pathname.startsWith('/allocations')) {
     return ['cohorts'];
   }
@@ -3224,6 +3227,17 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
             order by comp.name asc
           )
         ), '') as company_names,
+        coalesce((
+          select group_concat(company_id, '|')
+          from (
+            select distinct a_clients.company_id as company_id, comp.name as company_name
+            from cohort_allocation a_clients
+            join company comp on comp.id = a_clients.company_id
+            where a_clients.cohort_id = c.id
+              and a_clients.status in ('Previsto','Confirmado','Executado')
+            order by comp.name asc
+          )
+        ), '') as company_ids,
         coalesce((
           select group_concat(module_code, ' | ')
           from (
@@ -3802,7 +3816,27 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
               and a.status in ('Previsto','Confirmado','Executado')
             order by comp.name asc
           )
-        ), '') as company_names
+        ), '') as company_names,
+        coalesce((
+          select group_concat(module_code, ' | ')
+          from (
+            select mt.code as module_code
+            from cohort_module_block cmb
+            join module_template mt on mt.id = cmb.module_id
+            where cmb.cohort_id = c.id
+            order by cmb.order_in_cohort asc
+          )
+        ), '') as module_codes,
+        coalesce((
+          select group_concat(module_name, ' | ')
+          from (
+            select mt.name as module_name
+            from cohort_module_block cmb
+            join module_template mt on mt.id = cmb.module_id
+            where cmb.cohort_id = c.id
+            order by cmb.order_in_cohort asc
+          )
+        ), '') as module_names
       from cohort c
       left join technician t on t.id = c.technician_id
       order by date(c.start_date) asc
@@ -5184,6 +5218,10 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
     module_date_overrides: z.array(z.object({
       module_id: z.string().trim().min(1).max(120),
       next_date: isoDateSchema
+    })).max(500).optional(),
+    module_delivery_mode_overrides: z.array(z.object({
+      module_id: z.string().trim().min(1).max(120),
+      delivery_mode: z.enum(['ministrado', 'entregavel'])
     })).max(500).optional()
   });
 
@@ -5219,6 +5257,26 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       return next;
     } catch {
       return {} as Record<string, string>;
+    }
+  }
+
+  function parsePortalDeliveryModeOverrides(raw: string | null | undefined) {
+    if (!raw?.trim()) return {} as Record<string, 'ministrado' | 'entregavel'>;
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return {} as Record<string, 'ministrado' | 'entregavel'>;
+      }
+      const next: Record<string, 'ministrado' | 'entregavel'> = {};
+      Object.entries(parsed as Record<string, unknown>).forEach(([moduleId, deliveryMode]) => {
+        const normalizedModuleId = moduleId.trim();
+        if (!normalizedModuleId) return;
+        if (deliveryMode !== 'ministrado' && deliveryMode !== 'entregavel') return;
+        next[normalizedModuleId] = deliveryMode;
+      });
+      return next;
+    } catch {
+      return {} as Record<string, 'ministrado' | 'entregavel'>;
     }
   }
 
@@ -5647,9 +5705,18 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       relationship_type: (company as { is_third_party?: number }).is_third_party ? 'Terceiro' : 'Nosso'
     };
   
-    const timeline = db.prepare(`
+    const portalClientForTimeline = db.prepare(`
+      select module_delivery_mode_overrides_json
+      from portal_client
+      where company_id = ?
+      limit 1
+    `).get(req.params.id) as { module_delivery_mode_overrides_json: string | null } | undefined;
+    const deliveryModeOverrides = parsePortalDeliveryModeOverrides(portalClientForTimeline?.module_delivery_mode_overrides_json);
+
+    const timelineRows = db.prepare(`
       select mt.id as module_id, mt.code, mt.name, mt.category, mt.duration_days,
         coalesce(mt.delivery_mode, 'ministrado') as delivery_mode,
+        coalesce(mt.delivery_mode, 'ministrado') as default_delivery_mode,
         coalesce(mt.client_hours_policy, 'consome') as client_hours_policy,
         coalesce(cmp.status, 'Nao_iniciado') as status,
         cmp.completed_at,
@@ -5710,6 +5777,21 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       req.params.id,
       req.params.id
     );
+    const timeline = (timelineRows as Array<Record<string, unknown>>).map((row) => {
+      const moduleId = String(row.module_id ?? '');
+      const override = deliveryModeOverrides[moduleId];
+      const defaultDeliveryMode = row.default_delivery_mode === 'entregavel' ? 'entregavel' : 'ministrado';
+      const effectiveDeliveryMode = override ?? defaultDeliveryMode;
+      return {
+        ...row,
+        default_delivery_mode: defaultDeliveryMode,
+        delivery_mode: effectiveDeliveryMode,
+        client_hours_policy: override
+          ? (effectiveDeliveryMode === 'ministrado' ? 'consome' : 'nao_consume')
+          : row.client_hours_policy,
+        portal_delivery_mode_override: override ?? null
+      };
+    });
   
     const optionals = db.prepare(`
       select om.id, om.code, om.name, om.category, om.duration_days,
@@ -6252,6 +6334,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
         pc.support_intro_text,
         pc.hidden_module_ids_json,
         pc.module_date_overrides_json,
+        pc.module_delivery_mode_overrides_json,
         pu.username
       from portal_client pc
       left join portal_user pu on pu.portal_client_id = pc.id
@@ -6266,6 +6349,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
         support_intro_text: string | null;
         hidden_module_ids_json: string | null;
         module_date_overrides_json: string | null;
+        module_delivery_mode_overrides_json: string | null;
       }
       | undefined;
 
@@ -6276,12 +6360,14 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
         is_active: false,
         support_intro_text: null,
         hidden_module_ids: [],
-        module_date_overrides: []
+        module_date_overrides: [],
+        module_delivery_mode_overrides: []
       });
     }
 
     const hiddenModuleIds = parsePortalModuleIdList(row.hidden_module_ids_json);
     const moduleDateOverrides = parsePortalDateOverrides(row.module_date_overrides_json);
+    const moduleDeliveryModeOverrides = parsePortalDeliveryModeOverrides(row.module_delivery_mode_overrides_json);
 
     return res.json({
       slug: row.slug,
@@ -6292,6 +6378,10 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       module_date_overrides: Object.entries(moduleDateOverrides).map(([module_id, next_date]) => ({
         module_id,
         next_date
+      })),
+      module_delivery_mode_overrides: Object.entries(moduleDeliveryModeOverrides).map(([module_id, delivery_mode]) => ({
+        module_id,
+        delivery_mode
       }))
     });
   });
@@ -6321,8 +6411,15 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       acc[moduleId] = entry.next_date;
       return acc;
     }, {} as Record<string, string>);
+    const moduleDeliveryModeOverrideMap = (payload.module_delivery_mode_overrides ?? []).reduce((acc, entry) => {
+      const moduleId = entry.module_id.trim();
+      if (!moduleId) return acc;
+      acc[moduleId] = entry.delivery_mode;
+      return acc;
+    }, {} as Record<string, 'ministrado' | 'entregavel'>);
     const hiddenModuleIdsJson = JSON.stringify(hiddenModuleIds);
     const moduleDateOverridesJson = JSON.stringify(moduleDateOverrideMap);
+    const moduleDeliveryModeOverridesJson = JSON.stringify(moduleDeliveryModeOverrideMap);
 
     try {
       const passwordCandidate = payload.password?.trim() ?? '';
@@ -6340,7 +6437,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
         if (existingClient) {
           db.prepare(`
             update portal_client
-            set slug = ?, is_active = ?, support_intro_text = ?, hidden_module_ids_json = ?, module_date_overrides_json = ?, updated_at = ?
+            set slug = ?, is_active = ?, support_intro_text = ?, hidden_module_ids_json = ?, module_date_overrides_json = ?, module_delivery_mode_overrides_json = ?, updated_at = ?
             where id = ?
           `).run(
             normalizedSlug,
@@ -6348,15 +6445,16 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
             normalizedSupportIntroText,
             hiddenModuleIdsJson,
             moduleDateOverridesJson,
+            moduleDeliveryModeOverridesJson,
             nowIso,
             portalClientId
           );
         } else {
           db.prepare(`
             insert into portal_client (
-              id, company_id, slug, is_active, support_intro_text, hidden_module_ids_json, module_date_overrides_json, created_at, updated_at
+              id, company_id, slug, is_active, support_intro_text, hidden_module_ids_json, module_date_overrides_json, module_delivery_mode_overrides_json, created_at, updated_at
             )
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).run(
             portalClientId,
             req.params.id,
@@ -6365,6 +6463,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
             normalizedSupportIntroText,
             hiddenModuleIdsJson,
             moduleDateOverridesJson,
+            moduleDeliveryModeOverridesJson,
             nowIso,
             nowIso
           );

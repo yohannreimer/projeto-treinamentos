@@ -2,7 +2,10 @@ import type {
   CompanyHoursLedgerItem,
   CompanyHoursModuleInsight,
   CompanyHoursPendingItem,
-  CompanyHoursSummary
+  CompanyHoursSummary,
+  PlanningCohort,
+  PlanningEncounter,
+  PlanningWorkspaceDetail
 } from '../types';
 import { internalSessionStore, type InternalPermission, type InternalRole, type InternalSessionUser } from '../auth/session';
 
@@ -33,6 +36,18 @@ type CalendarActivityUpsertPayload = {
   linked_module_id?: string | null;
   hours_scope?: CalendarActivityHoursScope;
 };
+
+export class ApiRequestError extends Error {
+  status: number;
+  body: unknown;
+
+  constructor(message: string, status: number, body: unknown) {
+    super(message);
+    this.name = 'ApiRequestError';
+    this.status = status;
+    this.body = body;
+  }
+}
 
 function withConfirmation(path: string, confirmationPhrase?: string): string {
   const normalized = confirmationPhrase?.trim();
@@ -93,10 +108,16 @@ async function req<T = any>(path: string, init?: RequestInit): Promise<T> {
     if (response.status === 413) {
       throw new Error(oversizedMessage);
     }
+    let parsedBody: { message?: string } | null = null;
     try {
-      const parsed = JSON.parse(body) as { message?: string };
-      throw new Error(parsed.message || body || 'Erro na API');
+      parsedBody = JSON.parse(body) as { message?: string };
     } catch {
+      parsedBody = null;
+    }
+    if (parsedBody) {
+      throw new ApiRequestError(parsedBody.message || body || 'Erro na API', response.status, parsedBody);
+    }
+    {
       if (body.trim().startsWith('<')) {
         throw new Error('Falha ao enviar anexo. Tente novamente em instantes.');
       }
@@ -123,6 +144,99 @@ export const api = {
   dashboard: () => req('/dashboard'),
   calendar: () => req('/calendar/cohorts'),
   calendarActivities: () => req('/calendar/activities'),
+  planningWorkspaces: () =>
+    req<{ workspaces: Array<{ id: string; name: string; status: string; client_count: number; encounter_count: number }> }>('/planning/workspaces'),
+  planningWorkspace: (id: string) =>
+    req<PlanningWorkspaceDetail>(`/planning/workspaces/${id}`),
+  createPlanningWorkspace: (payload: {
+    name: string;
+    mode?: 'Manual' | 'Assistido' | 'Automatico';
+    horizon_days?: number;
+    notes?: string | null;
+    company_ids?: string[];
+  }) =>
+    req<PlanningWorkspaceDetail>('/planning/workspaces', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  addPlanningWorkspaceClients: (workspaceId: string, companyIds: string[]) =>
+    req<PlanningWorkspaceDetail>(`/planning/workspaces/${workspaceId}/clients`, {
+      method: 'POST',
+      body: JSON.stringify({ company_ids: companyIds })
+    }),
+  removePlanningWorkspaceClient: (workspaceId: string, companyId: string) =>
+    req<PlanningWorkspaceDetail>(`/planning/workspaces/${workspaceId}/clients/${companyId}`, {
+      method: 'DELETE'
+    }),
+  createPlanningCohort: (workspaceId: string, payload: {
+    company_id: string;
+    module_id: string;
+    technician_id?: string | null;
+    name: string;
+    status?: string;
+    delivery_mode?: 'Online' | 'Presencial' | 'Hibrida';
+    period?: 'Integral' | 'Meio_periodo';
+    notes?: string | null;
+    encounters: Array<{
+      day_date: string;
+      start_time: string;
+      end_time: string;
+      status?: string;
+      notes?: string | null;
+    }>;
+  }) =>
+    req<{ cohort: PlanningCohort; encounters: PlanningEncounter[] }>(`/planning/workspaces/${workspaceId}/cohorts`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  addPlanningCohortEncounters: (workspaceId: string, cohortId: string, payload: {
+    technician_id?: string | null;
+    encounters: Array<{
+      day_date: string;
+      start_time: string;
+      end_time: string;
+      status?: string;
+      notes?: string | null;
+    }>;
+  }) =>
+    req<PlanningWorkspaceDetail>(`/planning/workspaces/${workspaceId}/cohorts/${cohortId}/encounters`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  planningSuggestions: (payload: {
+    module_id: string;
+    technician_ids: string[];
+    date_from: string;
+    date_to: string;
+    duration_minutes: number;
+    max_results?: number;
+  }) =>
+    req<{ suggestions: Array<{ technician_id: string; day_date: string; start_time: string; end_time: string }> }>('/planning/suggestions', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  updatePlanningEncounter: (workspaceId: string, encounterId: string, payload: {
+    technician_id?: string | null;
+    day_date?: string;
+    start_time?: string;
+    end_time?: string;
+    status?: string;
+    notes?: string | null;
+  }) =>
+    req<PlanningWorkspaceDetail>(`/planning/workspaces/${workspaceId}/encounters/${encounterId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload)
+    }),
+  validatePlanningWorkspace: (workspaceId: string) =>
+    req<{ ok: boolean; conflicts: unknown[] }>(`/planning/workspaces/${workspaceId}/validate`, {
+      method: 'POST',
+      body: JSON.stringify({})
+    }),
+  publishPlanningWorkspace: (workspaceId: string) =>
+    req<{ created_cohorts: number; updated_cohorts: number; encounter_count: number; version_number: number }>(
+      `/planning/workspaces/${workspaceId}/publish`,
+      { method: 'POST', body: JSON.stringify({}) }
+    ),
   createCalendarActivity: (payload: CalendarActivityUpsertPayload) =>
     req('/calendar/activities', {
       method: 'POST',
@@ -267,6 +381,7 @@ export const api = {
       support_intro_text: string | null;
       hidden_module_ids: string[];
       module_date_overrides: Array<{ module_id: string; next_date: string }>;
+      module_delivery_mode_overrides: Array<{ module_id: string; delivery_mode: 'ministrado' | 'entregavel' }>;
     }>(`/companies/${companyId}/portal-access`),
   upsertPortalAccessByCompany: (
     companyId: string,
@@ -278,6 +393,7 @@ export const api = {
       support_intro_text?: string | null;
       hidden_module_ids?: string[];
       module_date_overrides?: Array<{ module_id: string; next_date: string }>;
+      module_delivery_mode_overrides?: Array<{ module_id: string; delivery_mode: 'ministrado' | 'entregavel' }>;
     }
   ) =>
     req<{ ok: boolean; portal_client_id: string }>(`/companies/${companyId}/portal-access`, {

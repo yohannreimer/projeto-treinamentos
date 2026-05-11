@@ -52,7 +52,8 @@ const emptySettings: PortalOperatorDisplaySettings = {
   support_intro_text: null,
   hidden_module_ids: [],
   module_date_overrides: [],
-  module_status_overrides: []
+  module_status_overrides: [],
+  module_delivery_mode_overrides: []
 };
 
 export function PortalPlanningPage({ api, isInternal }: PortalPlanningPageProps) {
@@ -73,7 +74,8 @@ export function PortalPlanningPage({ api, isInternal }: PortalPlanningPageProps)
         support_intro_text: displaySettings.support_intro_text ?? null,
         hidden_module_ids: displaySettings.hidden_module_ids ?? [],
         module_date_overrides: displaySettings.module_date_overrides ?? [],
-        module_status_overrides: displaySettings.module_status_overrides ?? []
+        module_status_overrides: displaySettings.module_status_overrides ?? [],
+        module_delivery_mode_overrides: displaySettings.module_delivery_mode_overrides ?? []
       });
     }
   }
@@ -108,6 +110,10 @@ export function PortalPlanningPage({ api, isInternal }: PortalPlanningPageProps)
     () => new Map(settings.module_status_overrides.map((entry) => [entry.module_id, entry.status])),
     [settings.module_status_overrides]
   );
+  const deliveryModeOverrideMap = useMemo(
+    () => new Map(settings.module_delivery_mode_overrides.map((entry) => [entry.module_id, entry.delivery_mode])),
+    [settings.module_delivery_mode_overrides]
+  );
   const summary = hoursSummary ?? {
     available_hours: 0,
     consumed_hours: 0,
@@ -131,6 +137,16 @@ export function PortalPlanningPage({ api, isInternal }: PortalPlanningPageProps)
       module_status_overrides: [
         ...prev.module_status_overrides.filter((entry) => entry.module_id !== moduleId),
         ...(status ? [{ module_id: moduleId, status }] : [])
+      ]
+    }));
+  }
+
+  function setModuleDeliveryModeOverride(moduleId: string, deliveryMode: '' | 'ministrado' | 'entregavel') {
+    setSettings((prev) => ({
+      ...prev,
+      module_delivery_mode_overrides: [
+        ...prev.module_delivery_mode_overrides.filter((entry) => entry.module_id !== moduleId),
+        ...(deliveryMode ? [{ module_id: moduleId, delivery_mode: deliveryMode }] : [])
       ]
     }));
   }
@@ -291,6 +307,17 @@ export function PortalPlanningPage({ api, isInternal }: PortalPlanningPageProps)
                   {isInternal ? (
                     <td>
                       <div className="portal-inline-operator-grid">
+                        <label>
+                          Tipo
+                          <select
+                            value={deliveryModeOverrideMap.get(item.module_id) ?? ''}
+                            onChange={(event) => setModuleDeliveryModeOverride(item.module_id, event.target.value as '' | 'ministrado' | 'entregavel')}
+                          >
+                            <option value="">Padrão</option>
+                            <option value="ministrado">Treinamento</option>
+                            <option value="entregavel">Entregável</option>
+                          </select>
+                        </label>
                         <label>
                           Status
                           <select

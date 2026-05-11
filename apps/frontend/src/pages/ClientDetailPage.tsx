@@ -25,6 +25,7 @@ const priorityOptions = ['Alta', 'Normal', 'Baixa', 'Parado', 'Aguardando_libera
 const modalityOptions = ['Turma_Online', 'Exclusivo_Online', 'Presencial'] as const;
 const relationshipOptions = ['Nosso', 'Terceiro'] as const;
 const progressStatusOptions = ['Nao_iniciado', 'Planejado', 'Em_execucao', 'Concluido'] as const;
+const portalDeliveryModeOptions = ['ministrado', 'entregavel'] as const;
 type HistorySortKey = 'cohort_code' | 'start_date' | 'module_code' | 'entry_day' | 'status' | 'cohort_status' | 'executed_at';
 
 function formatDateTimeBr(value: string | null | undefined) {
@@ -187,6 +188,7 @@ export function ClientDetailPage() {
   const [portalSupportIntroText, setPortalSupportIntroText] = useState('');
   const [portalHiddenModuleIds, setPortalHiddenModuleIds] = useState<string[]>([]);
   const [portalDateOverrides, setPortalDateOverrides] = useState<Record<string, string>>({});
+  const [portalDeliveryModeOverrides, setPortalDeliveryModeOverrides] = useState<Record<string, 'ministrado' | 'entregavel'>>({});
   const [savingPortalAccess, setSavingPortalAccess] = useState(false);
 
   const [hoursSummary, setHoursSummary] = useState<CompanyHoursSummary | null>(null);
@@ -282,6 +284,11 @@ export function ClientDetailPage() {
           acc[row.module_id] = row.next_date;
           return acc;
         }, {} as Record<string, string>));
+        setPortalDeliveryModeOverrides((portalAccess.module_delivery_mode_overrides ?? []).reduce((acc, row) => {
+          if (!row.module_id || (row.delivery_mode !== 'ministrado' && row.delivery_mode !== 'entregavel')) return acc;
+          acc[row.module_id] = row.delivery_mode;
+          return acc;
+        }, {} as Record<string, 'ministrado' | 'entregavel'>));
         setHoursSummary(summaryResponse ?? null);
         setHoursModuleInsights(moduleResponse.items ?? []);
         setHoursLedger(ledgerResponse.items ?? []);
@@ -678,6 +685,22 @@ export function ClientDetailPage() {
     });
   }
 
+  function updatePortalModuleDeliveryModeOverride(
+    moduleId: string,
+    deliveryMode: 'ministrado' | 'entregavel',
+    defaultDeliveryMode: 'ministrado' | 'entregavel'
+  ) {
+    setPortalDeliveryModeOverrides((prev) => {
+      const next = { ...prev };
+      if (deliveryMode === defaultDeliveryMode) {
+        delete next[moduleId];
+        return next;
+      }
+      next[moduleId] = deliveryMode;
+      return next;
+    });
+  }
+
   async function savePortalAccess() {
     if (!id) return;
     if (!portalSlug.trim()) {
@@ -702,7 +725,9 @@ export function ClientDetailPage() {
         hidden_module_ids: Array.from(new Set(portalHiddenModuleIds)),
         module_date_overrides: Object.entries(portalDateOverrides)
           .filter(([, nextDate]) => nextDate.trim().length > 0)
-          .map(([module_id, next_date]) => ({ module_id, next_date }))
+          .map(([module_id, next_date]) => ({ module_id, next_date })),
+        module_delivery_mode_overrides: Object.entries(portalDeliveryModeOverrides)
+          .map(([module_id, delivery_mode]) => ({ module_id, delivery_mode }))
       });
       setPortalPassword('');
       setMessage('Acesso do portal atualizado.');
@@ -1092,34 +1117,64 @@ export function ClientDetailPage() {
                     <tr>
                       <th>Módulo</th>
                       <th>Visível no portal</th>
+                      <th>Tipo no portal</th>
                       <th>Data exibida (opcional)</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {activeTimeline.map((moduleItem: any) => (
-                      <tr key={`portal-curation-${moduleItem.module_id}`}>
-                        <td>
-                          <strong>{moduleItem.code} - {moduleItem.name}</strong>
-                        </td>
-                        <td>
-                          <label className="checkbox-row">
+                    {activeTimeline.map((moduleItem: any) => {
+                      const defaultDeliveryMode = (moduleItem.default_delivery_mode ?? moduleItem.delivery_mode) === 'entregavel'
+                        ? 'entregavel'
+                        : 'ministrado';
+                      const selectedDeliveryMode = portalDeliveryModeOverrides[moduleItem.module_id] ?? defaultDeliveryMode;
+                      const hasDeliveryOverride = selectedDeliveryMode !== defaultDeliveryMode;
+
+                      return (
+                        <tr key={`portal-curation-${moduleItem.module_id}`}>
+                          <td>
+                            <strong>{moduleItem.code} - {moduleItem.name}</strong>
+                          </td>
+                          <td>
+                            <label className="checkbox-row">
+                              <input
+                                type="checkbox"
+                                checked={!moduleHiddenInPortal(moduleItem.module_id)}
+                                onChange={(event) => toggleModuleVisibilityInPortal(moduleItem.module_id, event.target.checked)}
+                              />
+                              {moduleHiddenInPortal(moduleItem.module_id) ? 'Oculto no portal' : 'Exibido no portal'}
+                            </label>
+                          </td>
+                          <td>
+                            <label className="portal-delivery-mode-control">
+                              <select
+                                value={selectedDeliveryMode}
+                                onChange={(event) => updatePortalModuleDeliveryModeOverride(
+                                  moduleItem.module_id,
+                                  event.target.value as 'ministrado' | 'entregavel',
+                                  defaultDeliveryMode
+                                )}
+                              >
+                                {portalDeliveryModeOptions.map((option) => (
+                                  <option key={option} value={option}>{moduleDeliveryLabel(option)}</option>
+                                ))}
+                              </select>
+                              <small>
+                                {hasDeliveryOverride
+                                  ? `Substitui o padrão: ${moduleDeliveryLabel(defaultDeliveryMode)}`
+                                  : `Padrão: ${moduleDeliveryLabel(defaultDeliveryMode)}`}
+                              </small>
+                            </label>
+                          </td>
+                          <td>
                             <input
-                              type="checkbox"
-                              checked={!moduleHiddenInPortal(moduleItem.module_id)}
-                              onChange={(event) => toggleModuleVisibilityInPortal(moduleItem.module_id, event.target.checked)}
+                              type="date"
+                              value={portalDateOverrides[moduleItem.module_id] ?? ''}
+                              onChange={(event) => updatePortalModuleDateOverride(moduleItem.module_id, event.target.value)}
                             />
-                            {moduleHiddenInPortal(moduleItem.module_id) ? 'Oculto no portal' : 'Exibido no portal'}
-                          </label>
-                        </td>
-                        <td>
-                          <input
-                            type="date"
-                            value={portalDateOverrides[moduleItem.module_id] ?? ''}
-                            onChange={(event) => updatePortalModuleDateOverride(moduleItem.module_id, event.target.value)}
-                          />
-                        </td>
-                      </tr>
-                    ))}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ChangeEvent } from 'react';
 import { Section } from '../components/Section';
-import { api } from '../services/api';
+import { api, createInternalAuthHeaders } from '../services/api';
 import { askDestructiveConfirmation } from '../utils/destructive';
 
 type InternalDocumentRow = {
@@ -48,6 +48,24 @@ function formatBytes(bytes?: number): string {
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function fileNameFromContentDisposition(contentDisposition: string, fallback: string): string {
+  const utfFileNameMatch = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+  const simpleFileNameMatch = contentDisposition.match(/filename=\"?([^\";]+)\"?/i);
+  const encodedFileName = utfFileNameMatch?.[1] ?? simpleFileNameMatch?.[1] ?? '';
+  return encodedFileName ? decodeURIComponent(encodedFileName) : fallback;
+}
+
+async function errorMessageFromResponse(response: Response, fallback: string): Promise<string> {
+  const body = await response.text();
+  if (!body) return fallback;
+  try {
+    const parsed = JSON.parse(body) as { message?: string };
+    return parsed.message || fallback;
+  } catch {
+    return body;
+  }
+}
+
 export function InternalDocsPage() {
   const [rows, setRows] = useState<InternalDocumentRow[]>([]);
   const [title, setTitle] = useState('');
@@ -57,6 +75,7 @@ export function InternalDocsPage() {
   const [query, setQuery] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
 
   async function loadAll() {
     const data = await api.internalDocuments() as InternalDocumentRow[];
@@ -154,6 +173,39 @@ export function InternalDocsPage() {
     }
   }
 
+  async function downloadDocument(row: InternalDocumentRow) {
+    setDownloadingId(row.id);
+    setError('');
+    setMessage('');
+
+    try {
+      const response = await fetch(api.internalDocumentDownloadUrl(row.id), {
+        headers: createInternalAuthHeaders()
+      });
+      if (!response.ok) {
+        throw new Error(await errorMessageFromResponse(response, 'Falha ao baixar documento.'));
+      }
+
+      const blob = await response.blob();
+      const fileName = fileNameFromContentDisposition(
+        response.headers.get('Content-Disposition') ?? '',
+        row.file_name || 'documento'
+      );
+      const objectUrl = window.URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      anchor.download = fileName;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      window.URL.revokeObjectURL(objectUrl);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setDownloadingId(null);
+    }
+  }
+
   return (
     <div className="page internal-docs-page">
       <header className="page-header">
@@ -218,7 +270,13 @@ export function InternalDocsPage() {
                   <td>{formatBytes(row.file_size_bytes)}</td>
                   <td>{formatDateBr(row.updated_at)}</td>
                   <td className="actions">
-                    <a href={api.internalDocumentDownloadUrl(row.id)}>Download</a>
+                    <button
+                      type="button"
+                      onClick={() => void downloadDocument(row)}
+                      disabled={downloadingId === row.id}
+                    >
+                      {downloadingId === row.id ? 'Baixando...' : 'Download'}
+                    </button>
                     <button type="button" onClick={() => deleteDocument(row)}>Excluir</button>
                   </td>
                 </tr>

@@ -129,3 +129,64 @@ export type LicenseProgram = {
   updated_at: string;
   usage_count: number;
 };
+
+export type PlanningWorkspaceStatus = 'Rascunho' | 'Publicado' | 'Alteracao_pendente' | 'Arquivado';
+export type PlanningMode = 'Manual' | 'Assistido' | 'Automatico';
+export type PlanningEncounterStatus = 'Rascunho' | 'Confirmacao_cliente' | 'Confirmado' | 'Publicado' | 'Cancelado';
+
+export type PlanningEncounter = {
+  id: string;
+  workspace_id: string;
+  planning_cohort_id: string;
+  company_id: string;
+  module_id: string;
+  technician_id: string | null;
+  technician_name?: string | null;
+  encounter_index: number;
+  day_date: string;
+  start_time: string;
+  end_time: string;
+  status: PlanningEncounterStatus;
+  notes: string | null;
+  published_cohort_id: string | null;
+};
+
+export type PlanningCohort = {
+  id: string;
+  workspace_id: string;
+  company_id: string;
+  company_name: string;
+  module_id: string;
+  module_code: string;
+  module_name: string;
+  technician_id: string | null;
+  technician_name?: string | null;
+  published_cohort_id: string | null;
+  name: string;
+  status: string;
+  delivery_mode: 'Online' | 'Presencial' | 'Hibrida';
+  period: 'Integral' | 'Meio_periodo';
+  notes: string | null;
+  encounters: PlanningEncounter[];
+};
+
+export type PlanningWorkspaceDetail = {
+  workspace: {
+    id: string;
+    name: string;
+    status: PlanningWorkspaceStatus;
+    mode: PlanningMode;
+    horizon_days: number;
+    notes: string | null;
+    created_at: string;
+    updated_at: string;
+    published_at: string | null;
+  };
+  clients: Array<{
+    company_id: string;
+    company_name: string;
+    priority: number;
+    available_module_ids?: string[];
+  }>;
+  cohorts: PlanningCohort[];
+};

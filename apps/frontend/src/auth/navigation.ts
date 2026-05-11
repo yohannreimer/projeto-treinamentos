@@ -1,4 +1,4 @@
-import { hasAnyPermission, type InternalPermission, type InternalRole, type InternalSessionUser } from './session';
+import { type InternalPermission, type InternalRole, type InternalSessionUser } from './session';
 
 export type AppNavItem = {
   to: string;
@@ -8,8 +8,13 @@ export type AppNavItem = {
   badgeCount?: number;
 };
 
+type NavigationSessionUser = Omit<InternalSessionUser, 'permissions'> & {
+  permissions: readonly InternalPermission[];
+};
+
 export const APP_NAV_ITEMS: AppNavItem[] = [
   { to: '/calendario', label: 'Calendário', permissions: ['calendar'] },
+  { to: '/planejar', label: 'Planejar', permissions: ['calendar', 'cohorts'] },
   { to: '/turmas', label: 'Turmas', permissions: ['cohorts'] },
   { to: '/clientes', label: 'Clientes', permissions: ['clients'] },
   { to: '/tecnicos', label: 'Técnicos', permissions: ['technicians'] },
@@ -36,13 +41,14 @@ export const APP_NAV_ITEMS: AppNavItem[] = [
 ];
 
 export function canAccessPermissions(
-  user: InternalSessionUser | null | undefined,
+  user: NavigationSessionUser | null | undefined,
   permissions: InternalPermission[]
 ): boolean {
-  return hasAnyPermission(user, permissions);
+  if (!user) return false;
+  return permissions.some((permission) => user.permissions.includes(permission));
 }
 
-export function canAccessPath(user: InternalSessionUser | null | undefined, pathname: string): boolean {
+export function canAccessPath(user: NavigationSessionUser | null | undefined, pathname: string): boolean {
   if (pathname === '/dashboard') {
     return canAccessPermissions(user, ['dashboard']);
   }
@@ -59,7 +65,7 @@ export function canAccessPath(user: InternalSessionUser | null | undefined, path
   return canAccessPermissions(user, route.permissions);
 }
 
-export function defaultRouteForUser(user: InternalSessionUser | null | undefined): string {
+export function defaultRouteForUser(user: NavigationSessionUser | null | undefined): string {
   if (!user) return '/calendario';
   const visible = APP_NAV_ITEMS.find((item) => {
     if (item.roles && !item.roles.includes(user.role)) return false;
@@ -68,7 +74,7 @@ export function defaultRouteForUser(user: InternalSessionUser | null | undefined
   return visible?.to ?? '/calendario';
 }
 
-export function visibleNavItemsForUser(user: InternalSessionUser | null | undefined): AppNavItem[] {
+export function visibleNavItemsForUser(user: NavigationSessionUser | null | undefined): AppNavItem[] {
   return APP_NAV_ITEMS.filter((item) => {
     if (item.roles && (!user || !item.roles.includes(user.role))) return false;
     return canAccessPermissions(user, item.permissions);

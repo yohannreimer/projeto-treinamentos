@@ -257,6 +257,97 @@ test('portal planning hours summary uses only real training consumption', async 
   }
 });
 
+test('portal planning applies client delivery mode override to hours summary', async () => {
+  const { app, dbPath } = await createPortalReadModelsFixture('portal-readmodels-delivery-mode-override');
+
+  try {
+    db.prepare(`delete from company_module_progress where company_id = ?`).run('comp-readmodels');
+
+    db.prepare(`
+      insert into module_template (
+        id, code, category, name, description, duration_days, profile, is_mandatory, delivery_mode, client_hours_policy
+      )
+      values (?, ?, ?, ?, ?, ?, null, 1, ?, ?)
+    `).run(
+      'mod-portal-override-training',
+      'PTO-001',
+      'Treinamento',
+      'Treinamento Mantido',
+      null,
+      2,
+      'ministrado',
+      'consome'
+    );
+    db.prepare(`
+      insert into module_template (
+        id, code, category, name, description, duration_days, profile, is_mandatory, delivery_mode, client_hours_policy
+      )
+      values (?, ?, ?, ?, ?, ?, null, 1, ?, ?)
+    `).run(
+      'mod-portal-override-deliverable',
+      'PTO-002',
+      'Entregavel',
+      'Entregável feito como treinamento',
+      null,
+      3,
+      'entregavel',
+      'nao_consume'
+    );
+
+    db.prepare(`
+      insert into company_module_progress (id, company_id, module_id, status, completed_at)
+      values (?, ?, ?, 'Concluido', ?)
+    `).run('prog-portal-override-training', 'comp-readmodels', 'mod-portal-override-training', '2026-05-01');
+    db.prepare(`
+      insert into company_module_progress (id, company_id, module_id, status, completed_at)
+      values (?, ?, ?, 'Planejado', null)
+    `).run('prog-portal-override-deliverable', 'comp-readmodels', 'mod-portal-override-deliverable');
+    db.prepare(`
+      update portal_client
+      set module_delivery_mode_overrides_json = ?
+      where id = ?
+    `).run(
+      JSON.stringify({ 'mod-portal-override-deliverable': 'ministrado' }),
+      'portal-client-readmodels'
+    );
+
+    appendAndProject({
+      aggregate_type: 'module_scope',
+      aggregate_id: 'alloc-portal-override-training',
+      company_id: 'comp-readmodels',
+      event_type: 'training_encounter_completed',
+      payload: {
+        module_id: 'mod-portal-override-training',
+        hours_consumed: 8,
+        reason: 'Encontro realizado para validação do resumo com sobrescrita.'
+      },
+      idempotency_key: 'portal-override-training-8h',
+      actor_type: 'system'
+    });
+
+    const token = await loginPortal(app);
+    const planningRes = await request(app)
+      .get('/portal/api/planning')
+      .set('Authorization', `Bearer ${token}`);
+
+    assert.equal(planningRes.status, 200);
+    const overridden = planningRes.body.items.find((item: { module_id: string }) => (
+      item.module_id === 'mod-portal-override-deliverable'
+    )) as { delivery_mode: string; client_hours_policy: string } | undefined;
+    assert.ok(overridden);
+    assert.equal(overridden.delivery_mode, 'ministrado');
+    assert.equal(overridden.client_hours_policy, 'consome');
+    assert.deepEqual(planningRes.body.hours_summary, {
+      available_hours: 40,
+      consumed_hours: 8,
+      balance_hours: 32,
+      remaining_diarias: 4
+    });
+  } finally {
+    cleanupDbFiles(dbPath);
+  }
+});
+
 test('GET /portal/api/agenda returns only company activities', async () => {
   const { app, dbPath } = await createPortalReadModelsFixture('portal-readmodels-agenda');
 

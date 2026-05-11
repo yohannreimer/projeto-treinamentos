@@ -96,6 +96,7 @@ export type PortalOperatorDisplaySettings = {
   hidden_module_ids: string[];
   module_date_overrides: Array<{ module_id: string; next_date: string }>;
   module_status_overrides: Array<{ module_id: string; status: 'Planejado' | 'Em_execucao' | 'Concluido' }>;
+  module_delivery_mode_overrides: Array<{ module_id: string; delivery_mode: 'ministrado' | 'entregavel' }>;
 };
 
 export type PortalOperatorAgendaItem = {
