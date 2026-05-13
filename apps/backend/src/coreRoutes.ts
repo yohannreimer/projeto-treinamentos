@@ -171,8 +171,23 @@ const updateCohortSchema = z.object({
 function deriveCohortStartDateFromScheduleDays(scheduleDays: Array<{ day_index: number; day_date: string }> | undefined) {
   if (!scheduleDays || scheduleDays.length === 0) return null;
   return [...scheduleDays].sort((left, right) => (
-    left.day_index - right.day_index || left.day_date.localeCompare(right.day_date)
+    left.day_date.localeCompare(right.day_date) || left.day_index - right.day_index
   ))[0]?.day_date ?? null;
+}
+
+function normalizeScheduleDaysChronologically<T extends { day_index: number; day_date: string; start_time?: string | null; end_time?: string | null }>(
+  scheduleDays: T[]
+) {
+  return [...scheduleDays]
+    .sort((left, right) => (
+      left.day_date.localeCompare(right.day_date)
+      || (left.start_time ?? '').localeCompare(right.start_time ?? '')
+      || left.day_index - right.day_index
+    ))
+    .map((day, index) => ({
+      ...day,
+      day_index: index + 1
+    }));
 }
 
 const createAllocationSchema = z.object({
@@ -3898,7 +3913,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
           select csd.day_date
           from cohort_schedule_day csd
           where csd.cohort_id = c.id
-          order by csd.day_index asc
+          order by date(csd.day_date) asc, coalesce(csd.start_time, '00:00') asc, csd.day_index asc
           limit 1
         ) as schedule_start_date,
         coalesce((
@@ -3979,12 +3994,18 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       where a.cohort_id = ?
       order by a.entry_day asc, c.name asc
     `).all(req.params.id);
-    const schedule_days = db.prepare(`
+    const schedule_days_raw = db.prepare(`
       select day_index, day_date, start_time, end_time
       from cohort_schedule_day
       where cohort_id = ?
       order by day_index asc
-    `).all(req.params.id);
+    `).all(req.params.id) as Array<{
+      day_index: number;
+      day_date: string;
+      start_time: string | null;
+      end_time: string | null;
+    }>;
+    const schedule_days = normalizeScheduleDaysChronologically(schedule_days_raw);
     const firstScheduleDate = (schedule_days as Array<{ day_date: string }>)[0]?.day_date ?? null;
     const participantsRaw = db.prepare(`
       select

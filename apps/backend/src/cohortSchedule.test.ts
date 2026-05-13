@@ -82,24 +82,42 @@ test('cohort reads derive start date from first scheduled day for existing stale
 
     db.prepare(`
       insert into cohort_schedule_day (id, cohort_id, day_index, day_date, start_time, end_time)
-      values (?, ?, 1, ?, null, null), (?, ?, 2, ?, null, null)
+      values (?, ?, 1, ?, null, null), (?, ?, 2, ?, null, null), (?, ?, 3, ?, null, null), (?, ?, 4, ?, null, null)
     `).run(
       'csd-derived-start-1',
       'coh-derived-start',
-      '2026-06-22',
+      '2026-06-27',
       'csd-derived-start-2',
+      'coh-derived-start',
+      '2026-06-26',
+      'csd-derived-start-3',
+      'coh-derived-start',
+      '2026-06-20',
+      'csd-derived-start-4',
       'coh-derived-start',
       '2026-06-23'
     );
 
     const detail = await request(app).get('/cohorts/coh-derived-start');
     assert.equal(detail.status, 200);
-    assert.equal(detail.body.start_date, '2026-06-22');
+    assert.equal(detail.body.start_date, '2026-06-20');
+    assert.deepEqual(
+      detail.body.schedule_days.map((day: { day_index: number; day_date: string }) => ({
+        day_index: day.day_index,
+        day_date: day.day_date
+      })),
+      [
+        { day_index: 1, day_date: '2026-06-20' },
+        { day_index: 2, day_date: '2026-06-23' },
+        { day_index: 3, day_date: '2026-06-26' },
+        { day_index: 4, day_date: '2026-06-27' }
+      ]
+    );
 
     const list = await request(app).get('/cohorts');
     assert.equal(list.status, 200);
     const listed = list.body.find((row: { id: string }) => row.id === 'coh-derived-start');
-    assert.equal(listed.start_date, '2026-06-22');
+    assert.equal(listed.start_date, '2026-06-20');
   } finally {
     db.close();
     cleanupDbFiles(dbPath);
