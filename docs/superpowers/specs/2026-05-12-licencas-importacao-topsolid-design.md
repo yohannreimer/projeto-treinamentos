@@ -11,7 +11,7 @@ O arquivo TopSolid contém uma linha por módulo ou grupo. Cada linha informa o 
 - Permitir colar o texto TopSolid no cadastro de licença e obter uma prévia antes de salvar.
 - Extrair módulos/grupos e vencimentos do texto com regra testável no backend.
 - Agrupar a prévia por vencimento.
-- Pré-selecionar apenas Programas de Licença já cadastrados.
+- Pré-selecionar apenas Programas de Licença já cadastrados, usando o código TopSolid como fonte principal de correspondência.
 - Mostrar itens não encontrados como pendências, sem criar programas automaticamente.
 - Permitir revisar e alterar a seleção antes de salvar.
 - Tornar edição, exclusão e renovação mais evidentes, inclusive para licenças expiradas.
@@ -60,14 +60,21 @@ Linhas sem `Module:` ou `Group:` válidos serão ignoradas e contabilizadas. Dat
 
 A correspondência deve usar o catálogo existente de `license_program`.
 
+O código TopSolid é a fonte de verdade para encontrar o programa, porque nomes podem variar por erro de cadastro, acento, tradução, apóstrofo ou abreviação. O cadastro de Programas de Licença deve passar a guardar os campos:
+
+- `topsolid_kind`: `Module` ou `Group`;
+- `topsolid_code`: código numérico vindo do arquivo, como `600`, `817` ou `1207`.
+
 Regra inicial:
 
-- comparar nome normalizado do arquivo com nome normalizado do programa;
-- normalização remove acentos, reduz espaços, ignora maiúsculas/minúsculas e trata apóstrofos de forma tolerante;
+- comparar primeiro por `topsolid_kind` + `topsolid_code`;
+- se houver apenas um programa com o mesmo `topsolid_code` e sem conflito entre `Module`/`Group`, permitir correspondência por código mesmo que o tipo esteja vazio em cadastro legado;
+- usar nome normalizado apenas como apoio visual e fallback controlado para cadastros antigos sem código;
+- normalização de nome remove acentos, reduz espaços, ignora maiúsculas/minúsculas e trata apóstrofos de forma tolerante;
 - não criar novos programas;
-- se não houver correspondência exata normalizada, marcar como não encontrado.
+- se não houver correspondência por código, marcar como não encontrado e mostrar o nome extraído do arquivo para facilitar correção do cadastro.
 
-Essa regra evita poluir o catálogo. Em uma melhoria futura, pode haver aliases por programa, mas isso não entra nesta etapa.
+Essa regra evita poluir o catálogo e reduz falso negativo causado por nomes diferentes. Em uma melhoria futura, pode haver aliases por programa, mas isso não entra nesta etapa.
 
 ## Fluxo de criação
 
@@ -77,7 +84,7 @@ Essa regra evita poluir o catálogo. Em uma melhoria futura, pode haver aliases 
 4. Sistema mostra grupos por vencimento.
 5. Usuário aplica o grupo desejado.
 6. Formulário marca os programas encontrados e preenche o vencimento.
-7. Pendências ficam visíveis para conferência.
+7. Pendências ficam visíveis para conferência, destacando principalmente `Module:codigo` ou `Group:codigo`.
 8. Usuário informa ID da licença, ciclo e observações.
 9. Usuário salva a licença.
 
@@ -103,9 +110,18 @@ Mensagens devem deixar claro o novo vencimento após renovar.
 
 Não há necessidade de nova tabela nesta etapa.
 
+Será necessário adicionar colunas opcionais em `license_program`:
+
+- `topsolid_kind text`;
+- `topsolid_code text`.
+
+Essas colunas serão editáveis na tela de Programas de Licença. Para evitar conflitos, o backend deve impedir duplicidade exata de `topsolid_kind` + `topsolid_code` quando ambos estiverem preenchidos. Cadastros sem código continuam permitidos, mas não serão pré-selecionados com alta confiança pelo importador.
+
 Endpoints envolvidos:
 
 - `GET /licenses`: continua retornando licenças com `module_ids`, `module_list`, status e aviso.
+- `GET /license-programs`: passa a retornar `topsolid_kind` e `topsolid_code`.
+- `POST /license-programs` e `PATCH /license-programs/:id`: passam a aceitar `topsolid_kind` e `topsolid_code`.
 - `POST /licenses`: continua criando a licença revisada.
 - `PATCH /licenses/:id`: continua atualizando seleção, data e metadados.
 - `DELETE /licenses/:id`: continua excluindo com confirmação destrutiva.
@@ -131,7 +147,9 @@ Backend:
 
 - parser extrai `Module`, `Group`, código, nome e data;
 - parser agrupa linhas por vencimento;
-- endpoint retorna programas encontrados e não encontrados sem criar catálogo;
+- endpoint retorna programas encontrados por código e itens não encontrados sem criar catálogo;
+- endpoint não depende do nome quando `topsolid_kind` + `topsolid_code` batem com o catálogo;
+- cadastro de Programa de Licença rejeita duplicidade exata de tipo e código;
 - datas `30-6-2026` viram `2026-06-30`;
 - linhas inválidas são ignoradas e contabilizadas;
 - renovação de licença expirada segue funcionando.
@@ -147,6 +165,7 @@ Frontend:
 ## Critérios de aceite
 
 - Colar o arquivo TopSolid permite preencher rapidamente uma licença com todos os programas já cadastrados que foram encontrados.
+- A correspondência principal usa o código TopSolid, então diferenças de nome não impedem a seleção quando o código bate.
 - Itens sem correspondência aparecem claramente e não criam registros automáticos.
 - Textos com múltiplas datas são separados por grupo de vencimento.
 - O usuário consegue editar a seleção antes de salvar.
