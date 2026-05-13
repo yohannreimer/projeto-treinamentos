@@ -351,6 +351,25 @@ export function initDb() {
       foreign key(module_id) references module_template(id) on delete cascade
     );
 
+    create table if not exists portal_certificate_participant_evaluation (
+      id text primary key,
+      company_id text not null,
+      portal_client_id text not null,
+      cohort_id text not null,
+      module_id text not null,
+      participant_id text not null,
+      participant_name text not null,
+      answers_json text not null,
+      created_at text not null,
+      updated_at text not null,
+      unique(company_id, cohort_id, module_id, participant_id),
+      foreign key(company_id) references company(id) on delete cascade,
+      foreign key(portal_client_id) references portal_client(id) on delete cascade,
+      foreign key(cohort_id) references cohort(id) on delete cascade,
+      foreign key(module_id) references module_template(id) on delete cascade,
+      foreign key(participant_id) references cohort_participant(id) on delete cascade
+    );
+
     create table if not exists financial_account (
       id text primary key,
       organization_id text not null,
@@ -1100,6 +1119,8 @@ export function initDb() {
     create table if not exists license_program (
       id text primary key,
       name text not null unique,
+      topsolid_kind text,
+      topsolid_code text,
       notes text,
       created_at text not null,
       updated_at text not null
@@ -1370,6 +1391,8 @@ export function initDb() {
   ensureColumn('company_license', 'user_name', 'user_name text');
   ensureColumn('company_license', 'module_list', 'module_list text');
   ensureColumn('company_license', 'license_identifier', 'license_identifier text');
+  ensureColumn('license_program', 'topsolid_kind', 'topsolid_kind text');
+  ensureColumn('license_program', 'topsolid_code', 'topsolid_code text');
   ensureColumn('calendar_activity', 'selected_dates', 'selected_dates text');
   ensureColumn('module_template', 'delivery_mode', "delivery_mode text not null default 'ministrado'");
   ensureColumn('module_template', 'client_hours_policy', "client_hours_policy text not null default 'consome'");
@@ -2240,6 +2263,8 @@ export function initDb() {
     create index if not exists idx_portal_agenda_item_client_date on portal_agenda_item(portal_client_id, start_date, end_date);
     create index if not exists idx_portal_certificate_evaluation_lookup
       on portal_certificate_evaluation(company_id, cohort_id, module_id);
+    create index if not exists idx_portal_certificate_participant_evaluation_lookup
+      on portal_certificate_participant_evaluation(company_id, cohort_id, module_id, participant_id);
     create unique index if not exists idx_hours_event_store_idempotency_key on hours_event_store(idempotency_key);
     create index if not exists idx_planning_workspace_status on planning_workspace(status, updated_at desc);
     create index if not exists idx_planning_workspace_client_company on planning_workspace_client(company_id);

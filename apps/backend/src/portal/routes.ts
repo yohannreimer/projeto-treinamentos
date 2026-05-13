@@ -99,7 +99,8 @@ const realtimeHeartbeatSchema = z.object({
 });
 
 const certificateEvaluationSubmitSchema = z.object({
-  respondent_name: z.string().trim().min(2).max(160),
+  participant_id: z.string().trim().min(1).max(120).nullable().optional(),
+  respondent_name: z.string().trim().max(160).nullable().optional(),
   answers: z.record(z.union([z.string(), z.number(), z.boolean(), z.null()]))
 });
 
@@ -109,6 +110,12 @@ type PortalCertificateIdPayload = {
   type: PortalCertificateKind;
   cohortId?: string | null;
   moduleId: string;
+};
+
+type PortalCertificateParticipant = {
+  participant_id: string;
+  participant_name: string;
+  evaluation_submitted: boolean;
 };
 
 type PortalCertificateRecord = {
@@ -125,6 +132,9 @@ type PortalCertificateRecord = {
   completed_at: string | null;
   requires_evaluation: boolean;
   evaluation_submitted: boolean;
+  evaluation_total: number;
+  evaluation_submitted_count: number;
+  participants: PortalCertificateParticipant[];
   download_available: boolean;
   status_label: string;
 };
@@ -288,8 +298,9 @@ function decodePortalCertificateId(value: string): PortalCertificateIdPayload | 
   }
 }
 
-function evaluationDocumentKey(companyId: string, cohortId: string | null, moduleId: string) {
-  return `PESQUISA_CERTIFICADO:${companyId}:${cohortId ?? 'sem-turma'}:${moduleId}`;
+function evaluationDocumentKey(companyId: string, cohortId: string | null, moduleId: string, participantId?: string | null) {
+  const participantSuffix = participantId ? `:${participantId}` : '';
+  return `PESQUISA_CERTIFICADO:${companyId}:${cohortId ?? 'sem-turma'}:${moduleId}${participantSuffix}`;
 }
 
 function upsertCertificateEvaluationDocument(args: {
@@ -373,6 +384,55 @@ function upsertCertificateEvaluationDocument(args: {
   );
 }
 
+function readCertificateParticipants(companyId: string, cohortId: string | null, moduleId: string): PortalCertificateParticipant[] {
+  if (!cohortId) return [];
+
+  const rows = db.prepare(`
+    select
+      cp.id as participant_id,
+      cp.participant_name,
+      case when pcpe.id is null then 0 else 1 end as evaluation_submitted
+    from cohort_participant cp
+    join cohort_participant_module cpm on cpm.participant_id = cp.id and cpm.module_id = ?
+    left join portal_certificate_participant_evaluation pcpe
+      on pcpe.company_id = cp.company_id
+      and pcpe.cohort_id = cp.cohort_id
+      and pcpe.module_id = cpm.module_id
+      and pcpe.participant_id = cp.id
+    where cp.company_id = ? and cp.cohort_id = ?
+    order by lower(cp.participant_name) asc, cp.created_at asc
+  `).all(moduleId, companyId, cohortId) as Array<{
+    participant_id: string;
+    participant_name: string;
+    evaluation_submitted: 0 | 1;
+  }>;
+
+  const fallbackRows = rows.length > 0 ? rows : db.prepare(`
+    select
+      cp.id as participant_id,
+      cp.participant_name,
+      case when pcpe.id is null then 0 else 1 end as evaluation_submitted
+    from cohort_participant cp
+    left join portal_certificate_participant_evaluation pcpe
+      on pcpe.company_id = cp.company_id
+      and pcpe.cohort_id = cp.cohort_id
+      and pcpe.module_id = ?
+      and pcpe.participant_id = cp.id
+    where cp.company_id = ? and cp.cohort_id = ?
+    order by lower(cp.participant_name) asc, cp.created_at asc
+  `).all(moduleId, companyId, cohortId) as Array<{
+    participant_id: string;
+    participant_name: string;
+    evaluation_submitted: 0 | 1;
+  }>;
+
+  return fallbackRows.map((row) => ({
+    participant_id: row.participant_id,
+    participant_name: row.participant_name,
+    evaluation_submitted: Boolean(row.evaluation_submitted)
+  }));
+}
+
 function readPortalCertificateRecords(companyId: string): PortalCertificateRecord[] {
   const evaluationRows = db.prepare(`
     select cohort_id, module_id
@@ -440,7 +500,13 @@ function readPortalCertificateRecords(companyId: string): PortalCertificateRecor
   }>;
 
   const trainingRecords = trainingRows.map((row) => {
-    const evaluationSubmitted = evaluationKeys.has(`${row.cohort_id}:${row.module_id}`);
+    const participants = readCertificateParticipants(row.company_id, row.cohort_id, row.module_id);
+    const participantEvaluationTotal = participants.length;
+    const participantEvaluationSubmittedCount = participants.filter((participant) => participant.evaluation_submitted).length;
+    const legacyEvaluationSubmitted = evaluationKeys.has(`${row.cohort_id}:${row.module_id}`);
+    const evaluationSubmitted = participantEvaluationTotal > 0
+      ? participantEvaluationSubmittedCount === participantEvaluationTotal
+      : legacyEvaluationSubmitted;
     return {
       certificate_id: encodePortalCertificateId({ type: 'training', cohortId: row.cohort_id, moduleId: row.module_id }),
       certificate_type: 'training' as const,
@@ -455,6 +521,11 @@ function readPortalCertificateRecords(companyId: string): PortalCertificateRecor
       completed_at: row.completed_at,
       requires_evaluation: true,
       evaluation_submitted: evaluationSubmitted,
+      evaluation_total: participantEvaluationTotal || 1,
+      evaluation_submitted_count: participantEvaluationTotal > 0
+        ? participantEvaluationSubmittedCount
+        : (legacyEvaluationSubmitted ? 1 : 0),
+      participants,
       download_available: evaluationSubmitted,
       status_label: evaluationSubmitted ? 'Liberado' : 'Avaliação pendente'
     };
@@ -474,6 +545,9 @@ function readPortalCertificateRecords(companyId: string): PortalCertificateRecor
     completed_at: row.completed_at,
     requires_evaluation: false,
     evaluation_submitted: false,
+    evaluation_total: 0,
+    evaluation_submitted_count: 0,
+    participants: [],
     download_available: true,
     status_label: 'Liberado'
   }));
@@ -2167,19 +2241,36 @@ export function registerPortalRoutes(app: Express) {
       return res.status(400).json({ message: 'Este certificado não exige avaliação.' });
     }
 
-    const existing = db.prepare(`
-      select respondent_name, answers_json, created_at
-      from portal_certificate_evaluation
-      where company_id = ? and cohort_id = ? and module_id = ?
+    const participantId = typeof req.query.participant_id === 'string' ? req.query.participant_id : null;
+    const selectedParticipant = participantId
+      ? certificate.participants.find((participant) => participant.participant_id === participantId) ?? null
+      : null;
+    if (participantId && !selectedParticipant) {
+      return res.status(404).json({ message: 'Participante não encontrado nesta turma.' });
+    }
+
+    const existing = selectedParticipant ? db.prepare(`
+      select participant_name as respondent_name, answers_json, created_at
+      from portal_certificate_participant_evaluation
+      where company_id = ? and cohort_id = ? and module_id = ? and participant_id = ?
       limit 1
-    `).get(context.company_id, certificate.cohort_id, certificate.module_id) as
+    `).get(context.company_id, certificate.cohort_id, certificate.module_id, selectedParticipant.participant_id) as
       | { respondent_name: string; answers_json: string; created_at: string }
-      | undefined;
+      | undefined : db.prepare(`
+        select respondent_name, answers_json, created_at
+        from portal_certificate_evaluation
+        where company_id = ? and cohort_id = ? and module_id = ?
+        limit 1
+      `).get(context.company_id, certificate.cohort_id, certificate.module_id) as
+        | { respondent_name: string; answers_json: string; created_at: string }
+        | undefined;
 
     return res.status(200).json({
       certificate,
-      evaluation_submitted: Boolean(existing),
-      respondent_name: existing?.respondent_name ?? null,
+      participants: certificate.participants,
+      selected_participant: selectedParticipant,
+      evaluation_submitted: selectedParticipant ? selectedParticipant.evaluation_submitted : Boolean(existing),
+      respondent_name: existing?.respondent_name ?? selectedParticipant?.participant_name ?? null,
       answers: existing ? JSON.parse(existing.answers_json) : null,
       submitted_at: existing?.created_at ?? null
     });
@@ -2204,22 +2295,69 @@ export function registerPortalRoutes(app: Express) {
       return res.status(400).json(parsed.error.flatten());
     }
 
-    const nowIso = new Date().toISOString();
-    const documentKey = evaluationDocumentKey(context.company_id, certificate.cohort_id, certificate.module_id);
-    const answersJson = JSON.stringify(parsed.data.answers);
-    const existing = db.prepare(`
-      select id
-      from portal_certificate_evaluation
-      where company_id = ? and cohort_id = ? and module_id = ?
-      limit 1
-    `).get(context.company_id, certificate.cohort_id, certificate.module_id) as { id: string } | undefined;
+    const participantId = parsed.data.participant_id ?? null;
+    const selectedParticipant = participantId
+      ? certificate.participants.find((participant) => participant.participant_id === participantId) ?? null
+      : null;
+    if (certificate.participants.length > 0 && !selectedParticipant) {
+      return res.status(400).json({ message: 'Escolha o participante que está respondendo a avaliação.' });
+    }
+    const respondentName = selectedParticipant?.participant_name ?? parsed.data.respondent_name?.trim() ?? '';
+    if (respondentName.length < 2) {
+      return res.status(400).json({ message: 'Informe o nome de quem está respondendo.' });
+    }
 
-    if (existing) {
+    const nowIso = new Date().toISOString();
+    const documentKey = evaluationDocumentKey(
+      context.company_id,
+      certificate.cohort_id,
+      certificate.module_id,
+      selectedParticipant?.participant_id
+    );
+    const answersJson = JSON.stringify(parsed.data.answers);
+    const existing = selectedParticipant ? db.prepare(`
+      select id
+      from portal_certificate_participant_evaluation
+      where company_id = ? and cohort_id = ? and module_id = ? and participant_id = ?
+      limit 1
+    `).get(context.company_id, certificate.cohort_id, certificate.module_id, selectedParticipant.participant_id) as { id: string } | undefined : db.prepare(`
+        select id
+        from portal_certificate_evaluation
+        where company_id = ? and cohort_id = ? and module_id = ?
+        limit 1
+      `).get(context.company_id, certificate.cohort_id, certificate.module_id) as { id: string } | undefined;
+
+    if (existing && selectedParticipant) {
+      db.prepare(`
+        update portal_certificate_participant_evaluation
+        set participant_name = ?, answers_json = ?, updated_at = ?
+        where id = ?
+      `).run(respondentName, answersJson, nowIso, existing.id);
+    } else if (existing) {
       db.prepare(`
         update portal_certificate_evaluation
         set respondent_name = ?, answers_json = ?, updated_at = ?
         where id = ?
-      `).run(parsed.data.respondent_name, answersJson, nowIso, existing.id);
+      `).run(respondentName, answersJson, nowIso, existing.id);
+    } else if (selectedParticipant) {
+      db.prepare(`
+        insert into portal_certificate_participant_evaluation (
+          id, company_id, portal_client_id, cohort_id, module_id, participant_id,
+          participant_name, answers_json, created_at, updated_at
+        )
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        uuid('pcpeval'),
+        context.company_id,
+        context.portal_client_id,
+        certificate.cohort_id,
+        certificate.module_id,
+        selectedParticipant.participant_id,
+        respondentName,
+        answersJson,
+        nowIso,
+        nowIso
+      );
     } else {
       db.prepare(`
         insert into portal_certificate_evaluation (
@@ -2232,7 +2370,7 @@ export function registerPortalRoutes(app: Express) {
         context.portal_client_id,
         certificate.cohort_id,
         certificate.module_id,
-        parsed.data.respondent_name,
+        respondentName,
         answersJson,
         nowIso,
         nowIso
@@ -2246,7 +2384,7 @@ export function registerPortalRoutes(app: Express) {
       cohortLabel: certificate.cohort_code
         ? `${certificate.cohort_code} · ${certificate.cohort_name ?? ''}`.trim()
         : certificate.cohort_name,
-      respondentName: parsed.data.respondent_name,
+      respondentName,
       answers: parsed.data.answers
     });
 

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
@@ -25,7 +25,6 @@ vi.mock('../services/api', () => ({
     planningWorkspaces: vi.fn(),
     planningWorkspace: vi.fn(),
     createPlanningWorkspace: vi.fn(),
-    deletePlanningWorkspace: vi.fn(),
     addPlanningWorkspaceClients: vi.fn(),
     removePlanningWorkspaceClient: vi.fn(),
     createPlanningCohort: vi.fn(),
@@ -168,63 +167,6 @@ describe('PlanningPage', () => {
     expect(screen.getByRole('button', { name: /Recolher Delta Ferramentaria|Expandir Delta Ferramentaria/i })).toBeInTheDocument();
     expect(screen.queryByText('Painel contextual')).not.toBeInTheDocument();
     expect(screen.queryByText('Montar turma')).not.toBeInTheDocument();
-  });
-
-  test('archives the selected planning workspace from the rail', async () => {
-    const user = userEvent.setup();
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
-
-    vi.mocked(api.planningWorkspaces)
-      .mockResolvedValueOnce({
-        workspaces: [
-          { id: 'pln-1', name: 'Planejamento ruim', status: 'Rascunho', client_count: 1, encounter_count: 2 },
-          { id: 'pln-2', name: 'Planejamento novo', status: 'Rascunho', client_count: 0, encounter_count: 0 }
-        ]
-      })
-      .mockResolvedValueOnce({
-        workspaces: [{ id: 'pln-2', name: 'Planejamento novo', status: 'Rascunho', client_count: 0, encounter_count: 0 }]
-      });
-    vi.mocked(api.planningWorkspace)
-      .mockResolvedValueOnce({
-        workspace: {
-          id: 'pln-1',
-          name: 'Planejamento ruim',
-          status: 'Rascunho',
-          mode: 'Manual',
-          horizon_days: 60,
-          notes: null,
-          created_at: '2026-05-07',
-          updated_at: '2026-05-07',
-          published_at: null
-        },
-        clients: [],
-        cohorts: []
-      })
-      .mockResolvedValueOnce({
-        workspace: {
-          id: 'pln-2',
-          name: 'Planejamento novo',
-          status: 'Rascunho',
-          mode: 'Manual',
-          horizon_days: 60,
-          notes: null,
-          created_at: '2026-05-08',
-          updated_at: '2026-05-08',
-          published_at: null
-        },
-        clients: [],
-        cohorts: []
-      });
-    vi.mocked(api.deletePlanningWorkspace).mockResolvedValue({ ok: true });
-
-    render(<PlanningPage />);
-
-    await user.click(await screen.findByRole('button', { name: /Excluir planejamento Planejamento ruim/i }));
-
-    expect(window.confirm).toHaveBeenCalledWith('Excluir este planejamento? As turmas já publicadas continuam no calendário.');
-    expect(api.deletePlanningWorkspace).toHaveBeenCalledWith('pln-1');
-    expect(await screen.findByRole('status')).toHaveTextContent('Planejamento excluído');
-    expect(api.planningWorkspace).toHaveBeenLastCalledWith('pln-2');
   });
 
   test('shows only workspace clients and opens a compact client picker', async () => {
@@ -504,8 +446,8 @@ describe('PlanningPage', () => {
     vi.mocked(api.technicians).mockResolvedValue([{ id: 'tech-1', name: 'Ana' }]);
     vi.mocked(api.planningSuggestions).mockResolvedValue({
       suggestions: [
-        { technician_id: 'tech-1', day_date: '2026-05-11', start_time: '13:00', end_time: '17:00' },
-        { technician_id: 'tech-1', day_date: '2026-05-12', start_time: '13:00', end_time: '17:00' }
+        { technician_id: 'tech-1', day_date: '2026-05-11', start_time: '08:00', end_time: '12:00' },
+        { technician_id: 'tech-1', day_date: '2026-05-12', start_time: '08:00', end_time: '12:00' }
       ]
     });
     vi.mocked(api.createPlanningCohort).mockResolvedValue({
@@ -516,24 +458,15 @@ describe('PlanningPage', () => {
     render(<PlanningPage />);
 
     await user.click(await screen.findByRole('button', { name: /Seguranca eletrica/i }));
-    const moduleDialog = screen.getByRole('dialog', { name: 'Configurar módulo' });
-    await user.clear(within(moduleDialog).getByLabelText('Início'));
-    await user.type(within(moduleDialog).getByLabelText('Início'), '13:00');
-    await user.clear(within(moduleDialog).getByLabelText('Fim'));
-    await user.type(within(moduleDialog).getByLabelText('Fim'), '17:00');
     await user.click(screen.getByRole('button', { name: 'Autoalocar e gerar' }));
 
-    expect(api.planningSuggestions).toHaveBeenCalledWith(expect.objectContaining({
-      start_time: '13:00',
-      end_time: '17:00'
-    }));
     expect(api.createPlanningCohort).toHaveBeenCalledWith(
       'pln-1',
       expect.objectContaining({
         technician_id: 'tech-1',
         encounters: [
-          expect.objectContaining({ day_date: '2026-05-11', start_time: '13:00', end_time: '17:00' }),
-          expect.objectContaining({ day_date: '2026-05-12', start_time: '13:00', end_time: '17:00' })
+          expect.objectContaining({ day_date: '2026-05-11', start_time: '08:00', end_time: '12:00' }),
+          expect.objectContaining({ day_date: '2026-05-12', start_time: '08:00', end_time: '12:00' })
         ]
       })
     );
@@ -1241,66 +1174,6 @@ describe('PlanningPage', () => {
       'pln-1',
       'ple-2',
       expect.anything()
-    );
-  });
-
-  test('uses the selected module technician when dropping a pending encounter in the team calendar', async () => {
-    const user = userEvent.setup();
-    const pendingDetail = detail('pln-1', 'Carteira Maio', 'Delta Ferramentaria', [
-      { id: 'ple-1', time: '08:00', notes: 'Pendente 1', allocated: false }
-    ]);
-    const updatedDetail = detail('pln-1', 'Carteira Maio', 'Delta Ferramentaria', [
-      { id: 'ple-1', time: '08:00', notes: 'Pendente 1', dayDate: '2026-05-10' }
-    ]);
-
-    vi.mocked(api.planningWorkspaces).mockResolvedValue({
-      workspaces: [{ id: 'pln-1', name: 'Carteira Maio', status: 'Rascunho', client_count: 1, encounter_count: 1 }]
-    });
-    vi.mocked(api.planningWorkspace).mockResolvedValue(pendingDetail);
-    vi.mocked(api.modules).mockResolvedValue([
-      {
-        id: 'pln-1-module',
-        code: 'NR-10',
-        category: 'Treinamento',
-        name: 'Seguranca eletrica',
-        duration_days: 1,
-        profile: 'Tecnico',
-        is_mandatory: 1,
-        delivery_mode: 'ministrado',
-        client_hours_policy: 'consome'
-      }
-    ]);
-    vi.mocked(api.technicians).mockResolvedValue([{ id: 'tech-1', name: 'Ana' }]);
-    vi.mocked(api.updatePlanningEncounter).mockResolvedValue(updatedDetail);
-
-    render(<PlanningPage />);
-
-    await user.click(screen.getByRole('button', { name: 'Semana' }));
-    await user.click(await screen.findByRole('button', { name: /Seguranca eletrica/i }));
-    await user.selectOptions(
-      within(screen.getByRole('dialog', { name: 'Configurar módulo' })).getByLabelText('Técnico'),
-      'tech-1'
-    );
-    const source = await screen.findByRole('button', { name: /Pendente.*08:00-12:00/i });
-    const targetDay = screen.getByRole('region', { name: /Dia dom 10\/05/i });
-    const dataTransfer = {
-      data: {} as Record<string, string>,
-      effectAllowed: '',
-      setData(type: string, value: string) {
-        this.data[type] = value;
-      },
-      getData(type: string) {
-        return this.data[type] ?? '';
-      }
-    };
-
-    fireEvent.dragStart(source, { dataTransfer });
-    fireEvent.drop(targetDay, { dataTransfer });
-
-    expect(api.updatePlanningEncounter).toHaveBeenCalledWith(
-      'pln-1',
-      'ple-1',
-      expect.objectContaining({ technician_id: 'tech-1', day_date: '2026-05-10' })
     );
   });
 

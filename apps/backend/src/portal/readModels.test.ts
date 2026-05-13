@@ -591,3 +591,121 @@ test('portal planning and agenda derive encounter progress for meio período', a
     cleanupDbFiles(dbPath);
   }
 });
+
+test('portal certificate evaluations are collected per cohort participant', async () => {
+  const { app, dbPath } = await createPortalReadModelsFixture('portal-certificate-participant-evaluations');
+
+  try {
+    const nowIso = new Date().toISOString();
+    const moduleId = 'mod-certificate-participants';
+    const cohortId = 'coh-certificate-participants';
+
+    db.prepare(`
+      insert into module_template (
+        id, code, category, name, description, duration_days, profile, is_mandatory, delivery_mode
+      ) values (?, ?, ?, ?, null, ?, null, 1, 'ministrado')
+    `).run(moduleId, 'CERT-001', 'Treinamento', 'Treinamento Certificado', 1);
+
+    db.prepare(`
+      insert into company_module_progress (id, company_id, module_id, status, completed_at)
+      values (?, ?, ?, 'Concluido', ?)
+    `).run('prog-certificate-participants', 'comp-readmodels', moduleId, '2026-05-12');
+
+    db.prepare(`
+      insert into cohort (
+        id, code, name, start_date, technician_id, status, capacity_companies, period, start_time, end_time, delivery_mode, notes
+      ) values (?, ?, ?, ?, null, 'Concluida', 8, 'Integral', null, null, 'Online', null)
+    `).run(cohortId, 'TUR-CERT-001', 'Turma Certificado', '2026-05-12');
+
+    db.prepare(`
+      insert into cohort_module_block (id, cohort_id, module_id, order_in_cohort, start_day_offset, duration_days)
+      values (?, ?, ?, 1, 1, 1)
+    `).run('cmb-certificate-participants', cohortId, moduleId);
+
+    db.prepare(`
+      insert into cohort_allocation (id, cohort_id, company_id, module_id, entry_day, status, notes, executed_at)
+      values (?, ?, ?, ?, 1, 'Executado', null, ?)
+    `).run('alloc-certificate-participants', cohortId, 'comp-readmodels', moduleId, nowIso);
+
+    db.prepare(`
+      insert into cohort_schedule_day (id, cohort_id, day_index, day_date, start_time, end_time)
+      values (?, ?, 1, ?, null, null)
+    `).run('csd-certificate-participants', cohortId, '2026-05-01');
+
+    db.prepare(`
+      insert into cohort_participant (id, cohort_id, company_id, participant_name, created_at)
+      values (?, ?, ?, ?, ?), (?, ?, ?, ?, ?)
+    `).run(
+      'participant-ana',
+      cohortId,
+      'comp-readmodels',
+      'Ana Cliente',
+      nowIso,
+      'participant-bruno',
+      cohortId,
+      'comp-readmodels',
+      'Bruno Cliente',
+      nowIso
+    );
+    db.prepare(`
+      insert into cohort_participant_module (participant_id, module_id)
+      values (?, ?), (?, ?)
+    `).run('participant-ana', moduleId, 'participant-bruno', moduleId);
+
+    const token = await loginPortal(app);
+    const listBefore = await request(app)
+      .get('/portal/api/certificates')
+      .set('Authorization', `Bearer ${token}`);
+
+    assert.equal(listBefore.status, 200);
+    const certificate = listBefore.body.items.find((item: { module_id: string }) => item.module_id === moduleId) as {
+      certificate_id: string;
+      download_available: boolean;
+      evaluation_total: number;
+      evaluation_submitted_count: number;
+      participants: Array<{ participant_id: string; participant_name: string; evaluation_submitted: boolean }>;
+    };
+    assert.ok(certificate, JSON.stringify(listBefore.body.items));
+    assert.equal(certificate.download_available, false);
+    assert.equal(certificate.evaluation_total, 2);
+    assert.equal(certificate.evaluation_submitted_count, 0);
+    assert.deepEqual(certificate.participants.map((participant) => participant.participant_name), [
+      'Ana Cliente',
+      'Bruno Cliente'
+    ]);
+
+    const firstSubmit = await request(app)
+      .post(`/portal/api/certificates/${encodeURIComponent(certificate.certificate_id)}/evaluation`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        participant_id: 'participant-ana',
+        answers: { q1: 5, q2: 5 }
+      });
+    assert.equal(firstSubmit.status, 201);
+
+    const listAfterOne = await request(app)
+      .get('/portal/api/certificates')
+      .set('Authorization', `Bearer ${token}`);
+    const afterOne = listAfterOne.body.items.find((item: { module_id: string }) => item.module_id === moduleId);
+    assert.equal(afterOne.download_available, false);
+    assert.equal(afterOne.evaluation_submitted_count, 1);
+
+    const secondSubmit = await request(app)
+      .post(`/portal/api/certificates/${encodeURIComponent(certificate.certificate_id)}/evaluation`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        participant_id: 'participant-bruno',
+        answers: { q1: 4, q2: 5 }
+      });
+    assert.equal(secondSubmit.status, 201);
+
+    const listAfterAll = await request(app)
+      .get('/portal/api/certificates')
+      .set('Authorization', `Bearer ${token}`);
+    const afterAll = listAfterAll.body.items.find((item: { module_id: string }) => item.module_id === moduleId);
+    assert.equal(afterAll.download_available, true);
+    assert.equal(afterAll.evaluation_submitted_count, 2);
+  } finally {
+    cleanupDbFiles(dbPath);
+  }
+});

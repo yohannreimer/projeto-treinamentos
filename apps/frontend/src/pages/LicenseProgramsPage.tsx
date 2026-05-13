@@ -15,6 +15,8 @@ export function LicenseProgramsPage() {
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [name, setName] = useState('');
+  const [topsolidKind, setTopsolidKind] = useState<'' | 'Module' | 'Group'>('');
+  const [topsolidCode, setTopsolidCode] = useState('');
   const [notes, setNotes] = useState('');
 
   async function load() {
@@ -30,7 +32,7 @@ export function LicenseProgramsPage() {
   const filtered = useMemo(() => {
     if (!query.trim()) return rows;
     const normalized = query.toLowerCase();
-    return rows.filter((row) => `${row.name} ${row.notes ?? ''}`.toLowerCase().includes(normalized));
+    return rows.filter((row) => `${row.name} ${row.topsolid_kind ?? ''} ${row.topsolid_code ?? ''} ${row.notes ?? ''}`.toLowerCase().includes(normalized));
   }, [rows, query]);
 
   const ordered = useMemo(() => {
@@ -62,12 +64,16 @@ export function LicenseProgramsPage() {
   function resetForm() {
     setEditingId(null);
     setName('');
+    setTopsolidKind('');
+    setTopsolidCode('');
     setNotes('');
   }
 
   function editProgram(row: LicenseProgram) {
     setEditingId(row.id);
     setName(row.name);
+    setTopsolidKind(row.topsolid_kind ?? '');
+    setTopsolidCode(row.topsolid_code ?? '');
     setNotes(row.notes ?? '');
   }
 
@@ -84,12 +90,16 @@ export function LicenseProgramsPage() {
       if (editingId) {
         await api.updateLicenseProgram(editingId, {
           name: name.trim(),
+          topsolid_kind: topsolidKind || null,
+          topsolid_code: topsolidCode.trim() || null,
           notes: notes.trim() || null
         });
         setMessage('Programa atualizado com sucesso.');
       } else {
         await api.createLicenseProgram({
           name: name.trim(),
+          topsolid_kind: topsolidKind || null,
+          topsolid_code: topsolidCode.trim() || null,
           notes: notes.trim() || null
         });
         setMessage('Programa cadastrado com sucesso.');
@@ -135,7 +145,7 @@ export function LicenseProgramsPage() {
 
       <Section title={editingId ? 'Editar programa' : 'Novo programa'}>
         <div className="form">
-          <p className="form-hint">Use o catálogo de programas para padronizar nomes e eliminar variações de digitação no cadastro de licenças.</p>
+          <p className="form-hint">Use o código TopSolid para importar licenças com segurança mesmo quando o nome do arquivo vier diferente do cadastro.</p>
           <div className="two-col">
             <label>
               Nome do programa
@@ -143,6 +153,24 @@ export function LicenseProgramsPage() {
                 value={name}
                 onChange={(event) => setName(event.target.value)}
                 placeholder="Ex.: TopSolid CAM"
+              />
+            </label>
+            <label>
+              Tipo TopSolid
+              <select value={topsolidKind} onChange={(event) => setTopsolidKind(event.target.value as '' | 'Module' | 'Group')}>
+                <option value="">Não vinculado</option>
+                <option value="Module">Module</option>
+                <option value="Group">Group</option>
+              </select>
+            </label>
+          </div>
+          <div className="two-col">
+            <label>
+              Código TopSolid
+              <input
+                value={topsolidCode}
+                onChange={(event) => setTopsolidCode(event.target.value)}
+                placeholder="Ex.: 600"
               />
             </label>
             <label>
@@ -179,6 +207,7 @@ export function LicenseProgramsPage() {
           <thead>
             <tr>
               <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('name')}>Programa{sortIndicator('name')}</button></th>
+              <th>Código TopSolid</th>
               <th>Observações</th>
               <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('usage_count')}>Em uso{sortIndicator('usage_count')}</button></th>
               <th>Ações</th>
@@ -188,6 +217,7 @@ export function LicenseProgramsPage() {
             {ordered.map((row) => (
               <tr key={row.id}>
                 <td><strong>{row.name}</strong></td>
+                <td>{row.topsolid_kind && row.topsolid_code ? `${row.topsolid_kind}:${row.topsolid_code}` : '—'}</td>
                 <td>{row.notes || '—'}</td>
                 <td>{row.usage_count}</td>
                 <td className="actions actions-compact">

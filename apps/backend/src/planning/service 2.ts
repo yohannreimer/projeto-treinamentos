@@ -29,10 +29,6 @@ type PlanningEncounterPublishRow = {
   end_time: string;
 };
 
-type PublishedCohortLink = {
-  id: string;
-};
-
 function publishedBlockDurationDays(period: string, encounters: PlanningEncounterPublishRow[]): number {
   const divisor = period === 'Meio_periodo' ? 2 : 1;
   return Math.max(1, Math.ceil(encounters.length / divisor));
@@ -60,75 +56,6 @@ function nextPlanningCohortCode(workspaceId: string, cohortIndex: number, exclud
     candidate = `${baseCode}-${suffix}`;
   }
   return candidate;
-}
-
-function isCohortCodeCollision(error: unknown): boolean {
-  return /UNIQUE constraint failed: cohort\.code/i.test(error instanceof Error ? error.message : String(error));
-}
-
-function findPublishedCohortForPlanning(cohort: PlanningCohortPublishRow, workspaceId: string): PublishedCohortLink | undefined {
-  if (cohort.published_cohort_id) {
-    const explicit = db.prepare('select id from cohort where id = ?').get(cohort.published_cohort_id) as PublishedCohortLink | undefined;
-    if (explicit) return explicit;
-  }
-
-  const exactLink = db.prepare(`
-    select id
-    from cohort
-    where planning_workspace_id = ? and planning_cohort_id = ?
-    limit 1
-  `).get(workspaceId, cohort.id) as PublishedCohortLink | undefined;
-  if (exactLink) return exactLink;
-
-  return db.prepare(`
-    select c.id
-    from cohort c
-    join cohort_allocation ca on ca.cohort_id = c.id
-    where c.planning_workspace_id = ?
-      and c.planning_cohort_id is null
-      and ca.company_id = ?
-      and ca.module_id = ?
-      and c.status <> 'Cancelada'
-    order by c.start_date desc, c.id asc
-    limit 1
-  `).get(workspaceId, cohort.company_id, cohort.module_id) as PublishedCohortLink | undefined;
-}
-
-function isModuleAlreadyCoveredOutsidePlanning(cohort: PlanningCohortPublishRow, workspaceId: string): boolean {
-  const completed = db.prepare(`
-    select 1 as ok
-    from company_module_progress
-    where company_id = ?
-      and module_id = ?
-      and status = 'Concluido'
-    limit 1
-  `).get(cohort.company_id, cohort.module_id) as { ok: number } | undefined;
-  if (completed?.ok) return true;
-
-  const existingAllocation = db.prepare(`
-    select 1 as ok
-    from cohort_allocation ca
-    join cohort c on c.id = ca.cohort_id
-    where ca.company_id = ?
-      and ca.module_id = ?
-      and ca.status <> 'Cancelado'
-      and c.status <> 'Cancelada'
-      and (? is null or c.id <> ?)
-      and not (
-        c.planning_workspace_id = ?
-        and coalesce(c.planning_cohort_id, '') = ?
-      )
-    limit 1
-  `).get(
-    cohort.company_id,
-    cohort.module_id,
-    cohort.published_cohort_id,
-    cohort.published_cohort_id,
-    workspaceId,
-    cohort.id
-  ) as { ok: number } | undefined;
-
-  return Boolean(existingAllocation?.ok);
 }
 
 export function timeToMinutes(value: string | null | undefined): number | null {
@@ -325,44 +252,28 @@ export function publishPlanningWorkspace(workspaceId: string): {
 
   let createdCohorts = 0;
   let updatedCohorts = 0;
-  let publishedEncounterCount = 0;
   const now = nowDateIso();
 
   const tx = db.transaction(() => {
     planningCohorts.forEach((cohort, cohortIndex) => {
-      const encounters = [...(encountersByCohort.get(cohort.id) ?? [])].sort((left, right) => (
-        left.day_date.localeCompare(right.day_date) ||
-        left.start_time.localeCompare(right.start_time) ||
-        left.end_time.localeCompare(right.end_time) ||
-        left.encounter_index - right.encounter_index ||
-        left.id.localeCompare(right.id)
-      ));
+      const encounters = encountersByCohort.get(cohort.id) ?? [];
       if (encounters.length === 0) {
         throw new Error(`Turma planejada ${cohort.name} não possui encontros para publicar.`);
       }
 
       const firstEncounter = encounters[0];
-      const linkedPublishedCohort = findPublishedCohortForPlanning(cohort, workspaceId);
-      if (!linkedPublishedCohort && isModuleAlreadyCoveredOutsidePlanning(cohort, workspaceId)) {
-        db.prepare(`
-          update planning_encounter
-          set status = 'Cancelado',
-              updated_at = ?
-          where workspace_id = ?
-            and planning_cohort_id = ?
-            and status <> 'Cancelado'
-        `).run(now, workspaceId, cohort.id);
-        db.prepare(`
-          update planning_cohort
-          set status = 'Cancelado',
-              updated_at = ?
-          where id = ?
-        `).run(now, cohort.id);
-        return;
-      }
-
-      const cohortId = linkedPublishedCohort?.id ?? uuid('coh');
-      const shouldUpdateExistingCohort = Boolean(linkedPublishedCohort);
+      const linkedPublishedCohort = cohort.published_cohort_id
+        ? null
+        : db.prepare(`
+          select id
+          from cohort
+          where planning_workspace_id = ? and planning_cohort_id = ?
+          limit 1
+        `).get(workspaceId, cohort.id) as { id: string } | undefined;
+      const cohortId = cohort.published_cohort_id ?? linkedPublishedCohort?.id ?? uuid('coh');
+      const isExistingCohort = Boolean(cohort.published_cohort_id);
+      const shouldUpdateExistingCohort = isExistingCohort || Boolean(linkedPublishedCohort);
+      const cohortCode = nextPlanningCohortCode(workspaceId, cohortIndex + 1, shouldUpdateExistingCohort ? cohortId : undefined);
       const publishedTechnicianId = firstEncounter.technician_id;
       const startTime = cohort.period === 'Meio_periodo' ? firstEncounter.start_time : null;
       const endTime = cohort.period === 'Meio_periodo' ? firstEncounter.end_time : null;
@@ -396,42 +307,29 @@ export function publishPlanningWorkspace(workspaceId: string): {
           cohortId
         );
         updatedCohorts += 1;
-        if (cohort.published_cohort_id !== cohortId) {
+        if (!cohort.published_cohort_id) {
           db.prepare('update planning_cohort set published_cohort_id = ? where id = ?').run(cohortId, cohort.id);
         }
       } else {
-        let inserted = false;
-        let attempts = 0;
-        while (!inserted && attempts < 20) {
-          attempts += 1;
-          const cohortCode = nextPlanningCohortCode(workspaceId, cohortIndex + 1);
-          try {
-            db.prepare(`
-              insert into cohort (
-                id, code, name, start_date, technician_id, status, capacity_companies,
-                period, start_time, end_time, delivery_mode, notes, planning_workspace_id, planning_cohort_id
-              ) values (?, ?, ?, ?, ?, 'Planejada', 1, ?, ?, ?, ?, ?, ?, ?)
-            `).run(
-              cohortId,
-              cohortCode,
-              cohort.name,
-              firstEncounter.day_date,
-              publishedTechnicianId,
-              cohort.period,
-              startTime,
-              endTime,
-              cohort.delivery_mode,
-              cohort.notes,
-              workspaceId,
-              cohort.id
-            );
-            inserted = true;
-          } catch (error) {
-            if (!isCohortCodeCollision(error) || attempts >= 20) {
-              throw error;
-            }
-          }
-        }
+        db.prepare(`
+          insert into cohort (
+            id, code, name, start_date, technician_id, status, capacity_companies,
+            period, start_time, end_time, delivery_mode, notes, planning_workspace_id, planning_cohort_id
+          ) values (?, ?, ?, ?, ?, 'Planejada', 1, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          cohortId,
+          cohortCode,
+          cohort.name,
+          firstEncounter.day_date,
+          publishedTechnicianId,
+          cohort.period,
+          startTime,
+          endTime,
+          cohort.delivery_mode,
+          cohort.notes,
+          workspaceId,
+          cohort.id
+        );
         db.prepare('update planning_cohort set published_cohort_id = ? where id = ?').run(cohortId, cohort.id);
         createdCohorts += 1;
       }
@@ -487,7 +385,6 @@ export function publishPlanningWorkspace(workspaceId: string): {
         set status = 'Publicado', updated_at = ?
         where id = ?
       `).run(now, cohort.id);
-      publishedEncounterCount += encounters.length;
     });
 
     db.prepare(`
@@ -502,7 +399,7 @@ export function publishPlanningWorkspace(workspaceId: string): {
     `).run(uuid('plv'), workspaceId, versionNumber, JSON.stringify({
       created_cohorts: createdCohorts,
       updated_cohorts: updatedCohorts,
-      encounter_count: publishedEncounterCount
+      encounter_count: planningEncounters.length
     }), now);
   });
 
@@ -511,7 +408,7 @@ export function publishPlanningWorkspace(workspaceId: string): {
   return {
     created_cohorts: createdCohorts,
     updated_cohorts: updatedCohorts,
-    encounter_count: publishedEncounterCount,
+    encounter_count: planningEncounters.length,
     version_number: versionNumber
   };
 }
@@ -538,8 +435,6 @@ export function suggestPlanningWindows(args: {
   technician_ids: string[];
   date_from: string;
   date_to: string;
-  start_time?: string;
-  end_time?: string;
   duration_minutes: number;
   max_results?: number;
 }) {
@@ -547,8 +442,6 @@ export function suggestPlanningWindows(args: {
   const startMinute = 8 * 60;
   const endMinute = 18 * 60;
   const maxResults = args.max_results ?? 10;
-  const fixedStart = args.start_time && args.end_time ? timeToMinutes(args.start_time) : null;
-  const fixedEnd = args.start_time && args.end_time ? timeToMinutes(args.end_time) : null;
 
   let cursor = args.date_from;
   while (cursor <= args.date_to && suggestions.length < maxResults) {
@@ -557,16 +450,9 @@ export function suggestPlanningWindows(args: {
       continue;
     }
     for (const technicianId of args.technician_ids) {
-      const candidateMinutes = fixedStart !== null && fixedEnd !== null && fixedEnd > fixedStart
-        ? [fixedStart]
-        : Array.from(
-          { length: Math.max(0, Math.floor((endMinute - startMinute - args.duration_minutes) / 30) + 1) },
-          (_value, index) => startMinute + index * 30
-        );
-
-      for (const minute of candidateMinutes) {
-        const startTime = fixedStart !== null && fixedEnd !== null ? args.start_time! : formatTime(minute);
-        const endTime = fixedStart !== null && fixedEnd !== null ? args.end_time! : formatTime(minute + args.duration_minutes);
+      for (let minute = startMinute; minute + args.duration_minutes <= endMinute; minute += 30) {
+        const startTime = formatTime(minute);
+        const endTime = formatTime(minute + args.duration_minutes);
         const conflicts = findPlanningEncounterConflicts({
           technician_id: technicianId,
           day_date: cursor,

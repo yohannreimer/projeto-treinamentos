@@ -64,15 +64,13 @@ const suggestionSchema = z.object({
   technician_ids: z.array(z.string()).min(1),
   date_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   date_to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  start_time: z.string().regex(/^\d{2}:\d{2}$/).optional(),
-  end_time: z.string().regex(/^\d{2}:\d{2}$/).optional(),
   duration_minutes: z.number().int().min(30).max(600),
   max_results: z.number().int().min(1).max(30).optional()
 });
 
 type WorkspaceReadModel = {
   workspace: unknown;
-  clients: Array<Record<string, unknown>>;
+  clients: unknown[];
   cohorts: Array<{ id: string; encounters: PlanningEncounterReadRow[] } & Record<string, unknown>>;
 };
 
@@ -114,79 +112,6 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
-function isModuleAlreadyCoveredForCompany(args: {
-  companyId: string;
-  moduleId: string;
-  workspaceId?: string;
-  planningCohortId?: string | null;
-  publishedCohortId?: string | null;
-}): boolean {
-  const completed = db.prepare(`
-    select 1 as ok
-    from company_module_progress
-    where company_id = ?
-      and module_id = ?
-      and status = 'Concluido'
-    limit 1
-  `).get(args.companyId, args.moduleId) as { ok: number } | undefined;
-  if (completed?.ok) return true;
-
-  const existingAllocation = db.prepare(`
-    select 1 as ok
-    from cohort_allocation ca
-    join cohort c on c.id = ca.cohort_id
-    where ca.company_id = ?
-      and ca.module_id = ?
-      and ca.status <> 'Cancelado'
-      and c.status <> 'Cancelada'
-      and (? is null or c.id <> ?)
-      and (? is null or c.planning_workspace_id is null or c.planning_workspace_id <> ?)
-    limit 1
-  `).get(
-    args.companyId,
-    args.moduleId,
-    args.publishedCohortId ?? null,
-    args.publishedCohortId ?? null,
-    args.workspaceId ?? null,
-    args.workspaceId ?? null
-  ) as { ok: number } | undefined;
-
-  return Boolean(existingAllocation?.ok);
-}
-
-function readAvailableModuleIdsForClient(companyId: string, workspaceId: string): string[] {
-  const rows = db.prepare(`
-    select mt.id
-    from module_template mt
-    left join company_module_progress cmp on cmp.company_id = ? and cmp.module_id = mt.id
-    left join company_module_activation cma on cma.company_id = ? and cma.module_id = mt.id
-    where coalesce(cma.is_enabled, 1) = 1
-      and (
-        coalesce(cmp.status, 'Nao_iniciado') <> 'Concluido'
-        or exists (
-          select 1
-          from planning_cohort pc_done
-          where pc_done.workspace_id = ?
-            and pc_done.company_id = ?
-            and pc_done.module_id = mt.id
-            and pc_done.status <> 'Cancelado'
-        )
-      )
-      and not exists (
-        select 1
-        from cohort_allocation ca
-        join cohort c on c.id = ca.cohort_id
-        where ca.company_id = ?
-          and ca.module_id = mt.id
-          and ca.status <> 'Cancelado'
-          and c.status <> 'Cancelada'
-          and (c.planning_workspace_id is null or c.planning_workspace_id <> ?)
-      )
-    order by mt.code asc
-  `).all(companyId, companyId, workspaceId, companyId, companyId, workspaceId) as Array<{ id: string }>;
-  return rows.map((row) => row.id);
-}
-
 function readWorkspace(workspaceId: string): WorkspaceReadModel | null {
   const workspace = db.prepare('select * from planning_workspace where id = ?').get(workspaceId);
   if (!workspace) return null;
@@ -197,7 +122,7 @@ function readWorkspace(workspaceId: string): WorkspaceReadModel | null {
     join company c on c.id = pwc.company_id
     where pwc.workspace_id = ?
     order by pwc.priority desc, c.name asc
-  `).all(workspaceId) as Array<Record<string, unknown> & { company_id: string }>;
+  `).all(workspaceId);
 
   const cohorts = db.prepare(`
     select pc.*, c.name as company_name, mt.code as module_code, mt.name as module_name, t.name as technician_name
@@ -206,7 +131,7 @@ function readWorkspace(workspaceId: string): WorkspaceReadModel | null {
     join module_template mt on mt.id = pc.module_id
     left join technician t on t.id = pc.technician_id
     where pc.workspace_id = ?
-    order by c.name asc, pc.created_at asc, pc.id asc
+    order by c.name asc, mt.code asc, pc.created_at asc
   `).all(workspaceId) as Array<{ id: string } & Record<string, unknown>>;
 
   const encounterRows = db.prepare(`
@@ -219,10 +144,7 @@ function readWorkspace(workspaceId: string): WorkspaceReadModel | null {
 
   return {
     workspace,
-    clients: clients.map((client) => ({
-      ...client,
-      available_module_ids: readAvailableModuleIdsForClient(client.company_id, workspaceId)
-    })),
+    clients,
     cohorts: cohorts.map((cohort) => ({
       ...cohort,
       encounters: encounterRows.filter((encounter) => encounter.planning_cohort_id === cohort.id)
@@ -283,21 +205,6 @@ export function registerPlanningRoutes(app: Express) {
     const result = readWorkspace(req.params.workspaceId);
     if (!result) return res.status(404).json({ message: 'Planejamento não encontrado.' });
     return res.json(result);
-  });
-
-  app.delete('/planning/workspaces/:workspaceId', (req, res) => {
-    const workspace = db.prepare('select id from planning_workspace where id = ?').get(req.params.workspaceId);
-    if (!workspace) return res.status(404).json({ message: 'Planejamento não encontrado.' });
-
-    const now = nowDateIso();
-    db.prepare(`
-      update planning_workspace
-      set status = 'Arquivado',
-          updated_at = ?
-      where id = ?
-    `).run(now, req.params.workspaceId);
-
-    return res.json({ ok: true });
   });
 
   app.post('/planning/workspaces/:workspaceId/clients', (req, res) => {
@@ -367,16 +274,6 @@ export function registerPlanningRoutes(app: Express) {
     const payload = parsed.data;
     const now = nowDateIso();
     const planningCohortId = uuid('plc');
-
-    if (isModuleAlreadyCoveredForCompany({
-      companyId: payload.company_id,
-      moduleId: payload.module_id,
-      workspaceId: req.params.workspaceId
-    })) {
-      return res.status(409).json({
-        message: 'Este cliente já tem esse módulo concluído ou vinculado a outra turma. Escolha outro módulo pendente.'
-      });
-    }
 
     for (const encounter of payload.encounters) {
       const validation = validatePlanningEncounterPayload(encounter);

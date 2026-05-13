@@ -124,10 +124,49 @@ export type LicenseRow = {
 export type LicenseProgram = {
   id: string;
   name: string;
+  topsolid_kind: 'Module' | 'Group' | null;
+  topsolid_code: string | null;
   notes: string | null;
   created_at: string;
   updated_at: string;
   usage_count: number;
+};
+
+export type LicenseImportPreviewItem = {
+  kind: 'Module' | 'Group';
+  code: string;
+  name: string;
+  raw_line?: string;
+};
+
+export type LicenseImportPreviewMatchedProgram = {
+  id: string;
+  name: string;
+  topsolid_kind: 'Module' | 'Group' | null;
+  topsolid_code: string | null;
+  imported_kind: 'Module' | 'Group';
+  imported_code: string;
+  imported_name: string;
+};
+
+export type LicenseImportPreviewGroup = {
+  expires_at: string;
+  item_count: number;
+  matched_count: number;
+  unmatched_count: number;
+  matched_programs: LicenseImportPreviewMatchedProgram[];
+  unmatched_items: LicenseImportPreviewItem[];
+};
+
+export type LicenseImportPreviewResponse = {
+  groups: LicenseImportPreviewGroup[];
+  summary: {
+    parsed_lines: number;
+    ignored_lines: number;
+    group_count: number;
+    matched_programs: number;
+    unmatched_items: number;
+  };
 };
 
 export type PlanningWorkspaceStatus = 'Rascunho' | 'Publicado' | 'Alteracao_pendente' | 'Arquivado';
@@ -167,6 +206,8 @@ export type PlanningCohort = {
   delivery_mode: 'Online' | 'Presencial' | 'Hibrida';
   period: 'Integral' | 'Meio_periodo';
   notes: string | null;
+  created_at?: string;
+  updated_at?: string;
   encounters: PlanningEncounter[];
 };
 

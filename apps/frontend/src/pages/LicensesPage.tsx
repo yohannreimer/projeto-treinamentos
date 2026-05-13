@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
-import type { LicenseProgram, LicenseRow } from '../types';
+import type { LicenseImportPreviewGroup, LicenseImportPreviewResponse, LicenseProgram, LicenseRow } from '../types';
 import { Section } from '../components/Section';
 import { askDestructiveConfirmation } from '../utils/destructive';
 
@@ -73,6 +73,10 @@ export function LicensesPage() {
   const [expiresAt, setExpiresAt] = useState(new Date().toISOString().slice(0, 10));
   const [notes, setNotes] = useState('');
   const [detailRow, setDetailRow] = useState<LicenseRow | null>(null);
+  const [importRawText, setImportRawText] = useState('');
+  const [importPreview, setImportPreview] = useState<LicenseImportPreviewResponse | null>(null);
+  const [importLoading, setImportLoading] = useState(false);
+  const [appliedImportGroupExpiresAt, setAppliedImportGroupExpiresAt] = useState<string | null>(null);
 
   async function load() {
     const [licensesResponse, companiesResponse, programsResponse] = await Promise.all([
@@ -207,6 +211,9 @@ export function LicensesPage() {
     setRenewalCycle('Mensal');
     setExpiresAt(new Date().toISOString().slice(0, 10));
     setNotes('');
+    setImportRawText('');
+    setImportPreview(null);
+    setAppliedImportGroupExpiresAt(null);
   }
 
   function editLicense(row: LicenseRow) {
@@ -224,6 +231,44 @@ export function LicensesPage() {
     setRenewalCycle(row.renewal_cycle);
     setExpiresAt(row.expires_at);
     setNotes(row.notes ?? '');
+    setImportPreview(null);
+    setAppliedImportGroupExpiresAt(null);
+  }
+
+  function applyImportGroup(group: LicenseImportPreviewGroup) {
+    const importedProgramNames = group.matched_programs.map((program) => program.name);
+    setSelectedProgramNames((prev) => Array.from(new Set([...prev, ...importedProgramNames])));
+    setExpiresAt(group.expires_at);
+    setAppliedImportGroupExpiresAt(group.expires_at);
+    setMessage(`Grupo de ${formatDate(group.expires_at)} aplicado ao cadastro.`);
+  }
+
+  async function analyzeTopSolidText() {
+    if (!importRawText.trim()) {
+      setError('Cole o texto TopSolid antes de analisar.');
+      return;
+    }
+
+    setError('');
+    setMessage('');
+    setImportLoading(true);
+    setAppliedImportGroupExpiresAt(null);
+
+    try {
+      const response = await api.licenseImportPreview({ raw_text: importRawText }) as LicenseImportPreviewResponse;
+      setImportPreview(response);
+      if (response.groups.length === 1) {
+        applyImportGroup(response.groups[0]);
+      } else if (response.groups.length === 0) {
+        setMessage('Nenhum módulo ou grupo TopSolid válido encontrado no texto.');
+      } else {
+        setMessage(`${response.groups.length} vencimentos encontrados. Escolha qual grupo aplicar.`);
+      }
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setImportLoading(false);
+    }
   }
 
   async function submitLicense() {
@@ -391,6 +436,71 @@ export function LicensesPage() {
               <input value={userName} onChange={(event) => setUserName(event.target.value)} placeholder="Nome do usuário" />
             </label>
           </div>
+
+          <label className="licenses-modules-field">
+            Importar texto TopSolid
+            <div className="licenses-import-panel">
+              <textarea
+                value={importRawText}
+                onChange={(event) => setImportRawText(event.target.value)}
+                placeholder="Cole aqui o conteúdo do arquivo TopSolid..."
+                rows={6}
+              />
+              <div className="actions actions-compact">
+                <button type="button" onClick={analyzeTopSolidText} disabled={importLoading}>
+                  {importLoading ? 'Analisando...' : 'Analisar'}
+                </button>
+                {importPreview ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setImportPreview(null);
+                      setAppliedImportGroupExpiresAt(null);
+                    }}
+                  >
+                    Limpar prévia
+                  </button>
+                ) : null}
+              </div>
+              {importPreview ? (
+                <div className="licenses-import-preview">
+                  <div className="licenses-import-summary">
+                    <span>{importPreview.summary.parsed_lines} itens lidos</span>
+                    <span>{importPreview.summary.group_count} vencimento(s)</span>
+                    <span>{importPreview.summary.matched_programs} programa(s) encontrados</span>
+                    <span>{importPreview.summary.unmatched_items} pendência(s)</span>
+                    {importPreview.summary.ignored_lines > 0 ? <span>{importPreview.summary.ignored_lines} linha(s) ignorada(s)</span> : null}
+                  </div>
+                  {importPreview.groups.map((group) => (
+                    <div
+                      key={group.expires_at}
+                      className={`licenses-import-group${appliedImportGroupExpiresAt === group.expires_at ? ' is-applied' : ''}`}
+                    >
+                      <div>
+                        <strong>{formatDate(group.expires_at)}</strong>
+                        <p>
+                          {group.matched_count} encontrado(s) de {group.item_count} item(ns)
+                          {group.unmatched_count > 0 ? ` - ${group.unmatched_count} pendência(s)` : ''}
+                        </p>
+                      </div>
+                      <button type="button" onClick={() => applyImportGroup(group)}>
+                        {appliedImportGroupExpiresAt === group.expires_at ? 'Aplicado' : 'Aplicar este grupo'}
+                      </button>
+                      {group.unmatched_items.length > 0 ? (
+                        <div className="licenses-import-unmatched">
+                          {group.unmatched_items.map((item) => (
+                            <span key={`${group.expires_at}-${item.kind}-${item.code}-${item.name}`}>
+                              {item.kind}:{item.code} - {item.name}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          </label>
 
           <label className="licenses-modules-field">
             Programas da licença
@@ -604,6 +714,35 @@ export function LicensesPage() {
                 </article>
               ) : null}
             </div>
+            <footer className="read-detail-actions">
+              <button
+                type="button"
+                onClick={() => {
+                  editLicense(detailRow);
+                  setDetailRow(null);
+                }}
+              >
+                Editar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setDetailRow(null);
+                  void renewLicense(detailRow);
+                }}
+              >
+                {renewalActionLabel(detailRow.renewal_cycle)}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setDetailRow(null);
+                  void deleteLicense(detailRow);
+                }}
+              >
+                Excluir
+              </button>
+            </footer>
           </section>
         </div>
       ) : null}

@@ -168,6 +168,13 @@ const updateCohortSchema = z.object({
   blocks: z.array(cohortBlockSchema).min(1).optional()
 });
 
+function deriveCohortStartDateFromScheduleDays(scheduleDays: Array<{ day_index: number; day_date: string }> | undefined) {
+  if (!scheduleDays || scheduleDays.length === 0) return null;
+  return [...scheduleDays].sort((left, right) => (
+    left.day_index - right.day_index || left.day_date.localeCompare(right.day_date)
+  ))[0]?.day_date ?? null;
+}
+
 const createAllocationSchema = z.object({
   cohort_id: z.string(),
   company_id: z.string(),
@@ -234,6 +241,10 @@ const licenseUpdateSchema = z.object({
   renewal_cycle: z.enum(['Mensal', 'Bimestral', 'Trimestral', 'Semestral', 'Anual']).optional(),
   expires_at: z.string().min(10).optional(),
   notes: z.string().nullable().optional()
+});
+
+const licenseImportPreviewSchema = z.object({
+  raw_text: z.string().min(1)
 });
 
 const kanbanCardCreateSchema = z.object({
@@ -1374,6 +1385,77 @@ function syncLicenseModules(licenseId: string, moduleIds: string[]) {
   });
 }
 
+type TopSolidImportKind = 'Module' | 'Group';
+
+type ParsedTopSolidLicenseItem = {
+  kind: TopSolidImportKind;
+  code: string;
+  name: string;
+  expires_at: string;
+  raw_line: string;
+};
+
+function normalizeTopSolidDate(dayText: string, monthText: string, yearText: string): string | null {
+  const day = Number(dayText);
+  const month = Number(monthText);
+  const year = Number(yearText);
+  const date = new Date(year, month - 1, day);
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return null;
+  }
+  const normalizedMonth = String(month).padStart(2, '0');
+  const normalizedDay = String(day).padStart(2, '0');
+  return `${year}-${normalizedMonth}-${normalizedDay}`;
+}
+
+function parseTopSolidLicenseLine(rawLine: string): ParsedTopSolidLicenseItem | null {
+  const line = rawLine.trim();
+  if (!line) return null;
+
+  const match = line.match(/\/(Module|Group):(\d+)\/"([^"]+)"\/(\d{1,2})-(\d{1,2})-(\d{4})(?:\/|$)/);
+  if (!match) {
+    return null;
+  }
+
+  const expiresAt = normalizeTopSolidDate(match[4], match[5], match[6]);
+  if (!expiresAt) {
+    return null;
+  }
+
+  return {
+    kind: match[1] as TopSolidImportKind,
+    code: match[2],
+    name: match[3].trim(),
+    expires_at: expiresAt,
+    raw_line: rawLine
+  };
+}
+
+function parseTopSolidLicenseText(rawText: string): {
+  items: ParsedTopSolidLicenseItem[];
+  ignoredLines: number;
+} {
+  const lines = rawText.split(/\r?\n/);
+  const items: ParsedTopSolidLicenseItem[] = [];
+  let ignoredLines = 0;
+
+  lines.forEach((line) => {
+    if (!line.trim()) return;
+    const parsed = parseTopSolidLicenseLine(line);
+    if (parsed) {
+      items.push(parsed);
+      return;
+    }
+    ignoredLines += 1;
+  });
+
+  return { items, ignoredLines };
+}
+
 function slugify(value: string): string {
   return value
     .toLowerCase()
@@ -2123,8 +2205,10 @@ function syncCohortLifecycleStatuses() {
       const endMarker = `${lastSlot.day_date}T${period === 'Meio_periodo' ? (lastSlot.end_time ?? cohort.end_time ?? '23:59') : '23:59'}`;
 
       let nextStatus: 'Planejada' | 'Aguardando_quorum' | 'Confirmada' | 'Concluida';
-      if (nowMarker < startMarker) {
-        nextStatus = cohort.status === 'Aguardando_quorum' ? 'Aguardando_quorum' : 'Planejada';
+      if (cohort.status === 'Aguardando_quorum') {
+        nextStatus = 'Aguardando_quorum';
+      } else if (nowMarker < startMarker) {
+        nextStatus = 'Planejada';
       } else if (nowMarker > endMarker) {
         nextStatus = 'Concluida';
       } else {
@@ -4419,6 +4503,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
   
     const cohortId = uuid('coh');
     const resolvedCode = resolveUniqueCohortCode(payload.code);
+    const resolvedStartDate = deriveCohortStartDateFromScheduleDays(payload.schedule_days) ?? payload.start_date;
   
     const tx = db.transaction(() => {
       db.prepare(`
@@ -4430,7 +4515,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
         cohortId,
         resolvedCode,
         payload.name,
-        payload.start_date,
+        resolvedStartDate,
         payload.technician_id ?? null,
         payload.status,
         payload.capacity_companies,
@@ -4552,7 +4637,10 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
     }
   
     const nextTechnicianId = payload.technician_id === undefined ? existing.technician_id : payload.technician_id;
-    const nextStartDate = payload.start_date ?? existing.start_date;
+    const scheduleStartDate = typeof payload.schedule_days !== 'undefined'
+      ? deriveCohortStartDateFromScheduleDays(payload.schedule_days)
+      : null;
+    const nextStartDate = scheduleStartDate ?? payload.start_date ?? existing.start_date;
     const nextStatus = payload.status ?? existing.status;
     const nextPeriod = payload.period ?? (existing.period ?? 'Integral');
     const nextStartTime = Object.prototype.hasOwnProperty.call(payload, 'start_time')
@@ -4601,7 +4689,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
     const values: unknown[] = [];
   
     Object.entries(payload).forEach(([key, value]) => {
-      if (key === 'blocks' || key === 'start_time' || key === 'end_time' || key === 'schedule_days') return;
+      if (key === 'blocks' || key === 'start_time' || key === 'end_time' || key === 'schedule_days' || key === 'start_date') return;
       if (key === 'code' && typeof value === 'string') {
         fields.push('code = ?');
         values.push(resolveUniqueCohortCode(value, req.params.id));
@@ -4610,6 +4698,11 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       fields.push(`${key} = ?`);
       values.push(value);
     });
+
+    if (nextStartDate !== existing.start_date || Object.prototype.hasOwnProperty.call(payload, 'start_date')) {
+      fields.push('start_date = ?');
+      values.push(nextStartDate);
+    }
   
     if (Object.prototype.hasOwnProperty.call(payload, 'period') || Object.prototype.hasOwnProperty.call(payload, 'start_time') || Object.prototype.hasOwnProperty.call(payload, 'end_time')) {
       if (nextPeriod !== 'Meio_periodo') {
@@ -4625,7 +4718,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       }
     }
   
-    if (fields.length === 0 && !payload.blocks) {
+    if (fields.length === 0 && !payload.blocks && typeof payload.schedule_days === 'undefined') {
       return res.status(200).json({ message: 'Sem alteracoes' });
     }
   
@@ -6623,7 +6716,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
   
   app.get('/license-programs', (_req, res) => {
     const rows = db.prepare(`
-      select lp.id, lp.name, lp.notes, lp.created_at, lp.updated_at,
+      select lp.id, lp.name, lp.topsolid_kind, lp.topsolid_code, lp.notes, lp.created_at, lp.updated_at,
         (
           select count(*)
           from company_license l
@@ -6638,6 +6731,8 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
   app.post('/license-programs', (req, res) => {
     const schema = z.object({
       name: z.string().min(2),
+      topsolid_kind: z.enum(['Module', 'Group']).nullable().optional(),
+      topsolid_code: z.string().nullable().optional(),
       notes: z.string().nullable().optional()
     });
     const parsed = schema.safeParse(req.body);
@@ -6646,18 +6741,29 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
     }
   
     const payload = parsed.data;
+    const topsolidKind = payload.topsolid_kind ?? null;
+    const topsolidCode = payload.topsolid_code?.trim() || null;
     const existing = db.prepare('select id from license_program where lower(name) = lower(?)').get(payload.name.trim()) as { id: string } | undefined;
     if (existing) {
       return res.status(400).json({ message: 'Já existe um programa com este nome.' });
+    }
+    if (topsolidKind && topsolidCode) {
+      const duplicateTopSolidCode = db.prepare(`
+        select id from license_program
+        where topsolid_kind = ? and topsolid_code = ?
+      `).get(topsolidKind, topsolidCode) as { id: string } | undefined;
+      if (duplicateTopSolidCode) {
+        return res.status(400).json({ message: 'Já existe um programa com este tipo e código TopSolid.' });
+      }
     }
   
     const nowIso = nowDateIso();
     const id = uuid('lpr');
     try {
       db.prepare(`
-        insert into license_program (id, name, notes, created_at, updated_at)
-        values (?, ?, ?, ?, ?)
-      `).run(id, payload.name.trim(), payload.notes ?? null, nowIso, nowIso);
+        insert into license_program (id, name, topsolid_kind, topsolid_code, notes, created_at, updated_at)
+        values (?, ?, ?, ?, ?, ?, ?)
+      `).run(id, payload.name.trim(), topsolidKind, topsolidCode, payload.notes ?? null, nowIso, nowIso);
       return res.status(201).json({ id });
     } catch (error) {
       return res.status(400).json({ message: 'Não foi possível criar programa', detail: errorMessage(error) });
@@ -6667,6 +6773,8 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
   app.patch('/license-programs/:id', (req, res) => {
     const schema = z.object({
       name: z.string().min(2).optional(),
+      topsolid_kind: z.enum(['Module', 'Group']).nullable().optional(),
+      topsolid_code: z.string().nullable().optional(),
       notes: z.string().nullable().optional()
     });
     const parsed = schema.safeParse(req.body);
@@ -6681,6 +6789,10 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
   
     const fields: string[] = [];
     const values: unknown[] = [];
+    const current = db.prepare('select topsolid_kind, topsolid_code from license_program where id = ?').get(req.params.id) as {
+      topsolid_kind: 'Module' | 'Group' | null;
+      topsolid_code: string | null;
+    };
   
     if (typeof parsed.data.name !== 'undefined') {
       const duplicate = db.prepare('select id from license_program where lower(name) = lower(?) and id <> ?').get(parsed.data.name.trim(), req.params.id) as { id: string } | undefined;
@@ -6693,6 +6805,29 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
     if (typeof parsed.data.notes !== 'undefined') {
       fields.push('notes = ?');
       values.push(parsed.data.notes ?? null);
+    }
+    const nextTopSolidKind = typeof parsed.data.topsolid_kind !== 'undefined'
+      ? parsed.data.topsolid_kind
+      : current.topsolid_kind;
+    const nextTopSolidCode = typeof parsed.data.topsolid_code !== 'undefined'
+      ? parsed.data.topsolid_code?.trim() || null
+      : current.topsolid_code;
+    if (nextTopSolidKind && nextTopSolidCode) {
+      const duplicateTopSolidCode = db.prepare(`
+        select id from license_program
+        where topsolid_kind = ? and topsolid_code = ? and id <> ?
+      `).get(nextTopSolidKind, nextTopSolidCode, req.params.id) as { id: string } | undefined;
+      if (duplicateTopSolidCode) {
+        return res.status(400).json({ message: 'Já existe outro programa com este tipo e código TopSolid.' });
+      }
+    }
+    if (typeof parsed.data.topsolid_kind !== 'undefined') {
+      fields.push('topsolid_kind = ?');
+      values.push(parsed.data.topsolid_kind ?? null);
+    }
+    if (typeof parsed.data.topsolid_code !== 'undefined') {
+      fields.push('topsolid_code = ?');
+      values.push(parsed.data.topsolid_code?.trim() || null);
     }
   
     if (fields.length === 0) {
@@ -6901,6 +7036,126 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
         monthly_due_soon: monthlyDueSoon,
         annual_due_soon: annualDueSoon,
         total_attention: expired.length + dueSoon.length
+      }
+    });
+  });
+
+  app.post('/licenses/import-preview', (req, res) => {
+    const parsed = licenseImportPreviewSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+
+    const { items, ignoredLines } = parseTopSolidLicenseText(parsed.data.raw_text);
+    const programRows = db.prepare(`
+      select id, name, topsolid_kind, topsolid_code
+      from license_program
+      where topsolid_code is not null and trim(topsolid_code) <> ''
+      order by name asc
+    `).all() as Array<{
+      id: string;
+      name: string;
+      topsolid_kind: TopSolidImportKind | null;
+      topsolid_code: string | null;
+    }>;
+
+    const programsByKindAndCode = new Map<string, typeof programRows[number]>();
+    const programsByCode = new Map<string, Array<typeof programRows[number]>>();
+    programRows.forEach((program) => {
+      const code = program.topsolid_code?.trim();
+      if (!code) return;
+      if (program.topsolid_kind) {
+        programsByKindAndCode.set(`${program.topsolid_kind}:${code}`, program);
+      }
+      const existing = programsByCode.get(code) ?? [];
+      existing.push(program);
+      programsByCode.set(code, existing);
+    });
+
+    const groupsByExpiration = new Map<string, {
+      expires_at: string;
+      items: ParsedTopSolidLicenseItem[];
+      matched_programs: Array<{
+        id: string;
+        name: string;
+        topsolid_kind: TopSolidImportKind | null;
+        topsolid_code: string | null;
+        imported_kind: TopSolidImportKind;
+        imported_code: string;
+        imported_name: string;
+      }>;
+      unmatched_items: Array<{
+        kind: TopSolidImportKind;
+        code: string;
+        name: string;
+        raw_line: string;
+      }>;
+    }>();
+
+    items.forEach((item) => {
+      const group = groupsByExpiration.get(item.expires_at) ?? {
+        expires_at: item.expires_at,
+        items: [],
+        matched_programs: [],
+        unmatched_items: []
+      };
+      group.items.push(item);
+
+      const exactProgram = programsByKindAndCode.get(`${item.kind}:${item.code}`);
+      const codeCandidates = programsByCode.get(item.code) ?? [];
+      const legacyProgram = !exactProgram && codeCandidates.length === 1 && !codeCandidates[0].topsolid_kind
+        ? codeCandidates[0]
+        : null;
+      const matchedProgram = exactProgram ?? legacyProgram;
+
+      if (matchedProgram) {
+        if (!group.matched_programs.some((program) => program.id === matchedProgram.id)) {
+          group.matched_programs.push({
+            id: matchedProgram.id,
+            name: matchedProgram.name,
+            topsolid_kind: matchedProgram.topsolid_kind,
+            topsolid_code: matchedProgram.topsolid_code,
+            imported_kind: item.kind,
+            imported_code: item.code,
+            imported_name: item.name
+          });
+        }
+      } else {
+        group.unmatched_items.push({
+          kind: item.kind,
+          code: item.code,
+          name: item.name,
+          raw_line: item.raw_line
+        });
+      }
+
+      groupsByExpiration.set(item.expires_at, group);
+    });
+
+    const groups = Array.from(groupsByExpiration.values())
+      .sort((left, right) => left.expires_at.localeCompare(right.expires_at))
+      .map((group) => ({
+        expires_at: group.expires_at,
+        item_count: group.items.length,
+        matched_count: group.matched_programs.length,
+        unmatched_count: group.unmatched_items.length,
+        matched_programs: group.matched_programs,
+        unmatched_items: group.unmatched_items
+      }));
+
+    const matchedProgramIds = new Set<string>();
+    groups.forEach((group) => {
+      group.matched_programs.forEach((program) => matchedProgramIds.add(program.id));
+    });
+
+    return res.json({
+      groups,
+      summary: {
+        parsed_lines: items.length,
+        ignored_lines: ignoredLines,
+        group_count: groups.length,
+        matched_programs: matchedProgramIds.size,
+        unmatched_items: groups.reduce((total, group) => total + group.unmatched_items.length, 0)
       }
     });
   });

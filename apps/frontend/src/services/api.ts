@@ -159,6 +159,10 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload)
     }),
+  deletePlanningWorkspace: (workspaceId: string) =>
+    req<{ ok: boolean }>(`/planning/workspaces/${workspaceId}`, {
+      method: 'DELETE'
+    }),
   addPlanningWorkspaceClients: (workspaceId: string, companyIds: string[]) =>
     req<PlanningWorkspaceDetail>(`/planning/workspaces/${workspaceId}/clients`, {
       method: 'POST',
@@ -208,6 +212,8 @@ export const api = {
     technician_ids: string[];
     date_from: string;
     date_to: string;
+    start_time?: string;
+    end_time?: string;
     duration_minutes: number;
     max_results?: number;
   }) =>
@@ -427,6 +433,11 @@ export const api = {
     }),
   internalDocumentDownloadUrl: (id: string) => `${BASE_URL}/internal-documents/${id}/download`,
   licenses: () => req('/licenses'),
+  licenseImportPreview: (payload: unknown) =>
+    req('/licenses/import-preview', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
   createLicense: (payload: unknown) =>
     req('/licenses', {
       method: 'POST',

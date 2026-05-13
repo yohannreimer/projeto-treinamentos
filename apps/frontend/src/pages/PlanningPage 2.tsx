@@ -364,7 +364,6 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
   const [savingEncounters, setSavingEncounters] = useState<NonNullable<SavingEncounterState>[]>([]);
   const [publishingWorkspaceId, setPublishingWorkspaceId] = useState<string | null>(null);
   const [isCreatingWorkspace, setIsCreatingWorkspace] = useState(false);
-  const [deletingWorkspaceId, setDeletingWorkspaceId] = useState<string | null>(null);
   const [isCreatingCohort, setIsCreatingCohort] = useState(false);
   const [isSuggesting, setIsSuggesting] = useState(false);
   const [message, setMessage] = useState('');
@@ -600,11 +599,7 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
   );
   const cohortVisuals = useMemo(() => {
     const visuals = new Map<string, CohortVisual>();
-    const stableCohorts = [...cohorts].sort((left, right) => (
-      (left.created_at ?? '').localeCompare(right.created_at ?? '') ||
-      left.id.localeCompare(right.id)
-    ));
-    stableCohorts.forEach((cohort, index) => {
+    cohorts.forEach((cohort, index) => {
       const palette = cohortPalette[index % cohortPalette.length];
       visuals.set(cohort.id, {
         index: index + 1,
@@ -730,6 +725,7 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
     setExpandedClientId(companyId);
     setActiveModule({ companyId, moduleId });
     setComposer(emptyComposer(module));
+    setClientFilterId(companyId);
     const plannedCohort = cohorts.find((cohort) => cohort.company_id === companyId && cohort.module_id === moduleId);
     const firstEncounter = plannedCohort?.encounters.find((encounter) => encounter.status !== 'Cancelado');
     if (firstEncounter) selectEncounter(firstEncounter.id);
@@ -769,41 +765,6 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
       setError(planningErrorMessage(requestError, 'Falha ao criar planejamento.'));
     } finally {
       setIsCreatingWorkspace(false);
-    }
-  }
-
-  async function deleteSelectedWorkspace() {
-    if (!selectedWorkspaceId || !selectedWorkspace) return;
-    if (!window.confirm('Excluir este planejamento? As turmas já publicadas continuam no calendário.')) return;
-
-    const workspaceId = selectedWorkspaceId;
-    try {
-      setDeletingWorkspaceId(workspaceId);
-      setError('');
-      setMessage('');
-      await api.deletePlanningWorkspace(workspaceId);
-      const payload = await api.planningWorkspaces();
-      const nextWorkspaceId = payload.workspaces[0]?.id ?? '';
-      setWorkspaces(payload.workspaces);
-      selectedWorkspaceIdRef.current = nextWorkspaceId;
-      setSelectedWorkspaceId(nextWorkspaceId);
-      setActiveModule(null);
-      setExpandedClientId('');
-      selectEncounter('');
-
-      if (nextWorkspaceId) {
-        const detail = await api.planningWorkspace(nextWorkspaceId);
-        if (selectedWorkspaceIdRef.current !== nextWorkspaceId) return;
-        setPlanningDetail(detail);
-      } else {
-        setPlanningDetail(null);
-      }
-      setMessage('Planejamento excluído.');
-    } catch (requestError) {
-      setMessage('');
-      setError(planningErrorMessage(requestError, 'Falha ao excluir planejamento.'));
-    } finally {
-      setDeletingWorkspaceId((currentWorkspaceId) => (currentWorkspaceId === workspaceId ? null : currentWorkspaceId));
     }
   }
 
@@ -874,8 +835,6 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
         technician_ids: candidateTechnicianIds,
         date_from: rangeStartDate,
         date_to: addDaysIso(rangeStartDate, selectedWorkspace?.horizon_days ?? 60),
-        start_time: composer.startTime,
-        end_time: composer.endTime,
         duration_minutes: duration,
         max_results: composer.encounterCount
       });
@@ -1014,27 +973,13 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
     }
   }
 
-  function technicianForDroppedEncounter(cohort: PlanningCohort, encounter: PlanningEncounter, technicianId?: string | null) {
-    if (technicianId !== undefined) return technicianId;
-    if (encounter.technician_id) return encounter.technician_id;
-    if (
-      activeModule &&
-      activeModule.companyId === cohort.company_id &&
-      activeModule.moduleId === cohort.module_id &&
-      composer.technicianId
-    ) {
-      return composer.technicianId;
-    }
-    return null;
-  }
-
-  async function moveEncounterToDate(encounterId: string, dayDate: string, technicianId?: string | null) {
+  async function moveEncounterToDate(encounterId: string, dayDate: string, technicianId?: string) {
     if (hasPendingWorkspaceEncounterSave || !planningDetail) return;
 
     const cohort = planningDetail.cohorts.find((item) => item.encounters.some((encounter) => encounter.id === encounterId));
     const encounter = cohort?.encounters.find((item) => item.id === encounterId);
     if (!cohort || !encounter) return;
-    const nextTechnicianId = technicianForDroppedEncounter(cohort, encounter, technicianId);
+    const nextTechnicianId = technicianId ?? encounter.technician_id ?? technicianFilterId ?? technicians[0]?.id ?? null;
     if (encounter.day_date === dayDate && encounter.technician_id === nextTechnicianId) return;
 
     const savingWorkspaceId = planningDetail.workspace.id;
@@ -1276,22 +1221,13 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
   }
 
   function renderClientModuleList(company: CatalogCompany) {
-    const client = planningDetail?.clients.find((item) => item.company_id === company.id);
-    const availableModuleIds = new Set(client?.available_module_ids ?? modules.map((module) => module.id));
     const plannedByModule = new Map(cohorts
       .filter((cohort) => cohort.company_id === company.id)
       .map((cohort) => [cohort.module_id, cohort]));
-    const visibleModules = modules.filter((module) => {
-      const plannedCohort = plannedByModule.get(module.id);
-      return availableModuleIds.has(module.id) || Boolean(plannedCohort?.published_cohort_id);
-    });
 
     return (
       <div className="planning-module-stack">
-        {visibleModules.length === 0 ? (
-          <p className="planning-empty-modules">Sem módulos pendentes para este cliente.</p>
-        ) : null}
-        {visibleModules.map((module) => {
+        {modules.map((module) => {
           const plannedCohort = plannedByModule.get(module.id);
           const isActive = activeModule?.companyId === company.id && activeModule.moduleId === module.id;
           const visual = plannedCohort
@@ -1480,7 +1416,9 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
                 event.preventDefault();
                 const draggedEncounterId = event.dataTransfer.getData('text/planning-encounter-id');
                 if (draggedEncounterId) {
-                  const targetTechnicianId = technicianFilterId || undefined;
+                  const draggedCohort = cohorts.find((cohort) => cohort.encounters.some((encounter) => encounter.id === draggedEncounterId));
+                  const draggedEncounter = draggedCohort?.encounters.find((encounter) => encounter.id === draggedEncounterId);
+                  const targetTechnicianId = technicianFilterId || draggedEncounter?.technician_id || technicians[0]?.id;
                   void moveEncounterToDate(draggedEncounterId, date, targetTechnicianId || undefined);
                 }
               }}
@@ -1526,7 +1464,9 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
                       event.preventDefault();
                       const draggedEncounterId = event.dataTransfer.getData('text/planning-encounter-id');
                       if (!draggedEncounterId) return;
-                      void moveEncounterToDate(draggedEncounterId, date);
+                      const draggedCohort = cohorts.find((cohort) => cohort.encounters.some((encounter) => encounter.id === draggedEncounterId));
+                      const draggedEncounter = draggedCohort?.encounters.find((encounter) => encounter.id === draggedEncounterId);
+                      void moveEncounterToDate(draggedEncounterId, date, draggedEncounter?.technician_id || technicians[0]?.id);
                     }}
                   >
                     <button
@@ -1634,7 +1574,7 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
                     onDrop={(event) => {
                       event.preventDefault();
                       const draggedEncounterId = event.dataTransfer.getData('text/planning-encounter-id');
-                      if (draggedEncounterId) void moveEncounterToDate(draggedEncounterId, date, technician.id === '__none__' ? null : technician.id);
+                      if (draggedEncounterId) void moveEncounterToDate(draggedEncounterId, date, technician.id === '__none__' ? undefined : technician.id);
                     }}
                   >
                     <button
@@ -1753,15 +1693,6 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
               {isCreatingWorkspace ? 'Criando...' : 'Novo'}
             </button>
           </div>
-          <button
-            className="planning-delete-workspace-button"
-            type="button"
-            aria-label={`Excluir planejamento ${selectedWorkspace?.name ?? ''}`.trim()}
-            disabled={!selectedWorkspaceId || deletingWorkspaceId === selectedWorkspaceId}
-            onClick={() => void deleteSelectedWorkspace()}
-          >
-            {deletingWorkspaceId === selectedWorkspaceId ? 'Excluindo...' : 'Excluir planejamento'}
-          </button>
           <button
             className="planning-add-client-button"
             type="button"

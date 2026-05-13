@@ -89,9 +89,10 @@ export function PortalCertificatesPage({ api, sessionToken }: PortalCertificates
     }
   }
 
-  function openEvaluation(item: PortalCertificateItem) {
+  function openEvaluation(item: PortalCertificateItem, participantId?: string) {
     const currentPath = window.location.pathname.replace(/\/$/, '');
-    const url = `${window.location.origin}${currentPath}/${encodeURIComponent(item.certificate_id)}/avaliacao`;
+    const participantQuery = participantId ? `?participantId=${encodeURIComponent(participantId)}` : '';
+    const url = `${window.location.origin}${currentPath}/${encodeURIComponent(item.certificate_id)}/avaliacao${participantQuery}`;
     window.open(url, '_blank', 'noopener,noreferrer');
   }
 
@@ -135,10 +136,30 @@ export function PortalCertificatesPage({ api, sessionToken }: PortalCertificates
               </p>
               <div className="portal-ticket-badges">
                 <span className={`portal-status-chip ${statusTone(item)}`}>{item.status_label}</span>
+                {item.requires_evaluation && item.evaluation_total > 1 ? (
+                  <span className="portal-status-chip is-muted">
+                    {item.evaluation_submitted_count}/{item.evaluation_total} avaliações
+                  </span>
+                ) : null}
                 {item.requires_evaluation && !item.evaluation_submitted ? (
                   <span className="portal-status-chip is-warning">Avaliação antes do primeiro download</span>
                 ) : null}
               </div>
+              {item.participants?.length ? (
+                <div className="portal-certificate-participants">
+                  {item.participants.map((participant) => (
+                    <button
+                      key={participant.participant_id}
+                      type="button"
+                      className={participant.evaluation_submitted ? 'is-done' : ''}
+                      onClick={() => openEvaluation(item, participant.participant_id)}
+                    >
+                      {participant.participant_name}
+                      <span>{participant.evaluation_submitted ? 'Respondida' : 'Avaliar'}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
             </div>
             <div className="portal-certificate-actions">
               {item.download_available ? (
