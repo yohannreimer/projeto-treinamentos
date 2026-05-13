@@ -1456,6 +1456,10 @@ function parseTopSolidLicenseText(rawText: string): {
   return { items, ignoredLines };
 }
 
+function readLegacyTopSolidCodeFromProgramName(name: string): string | null {
+  return name.trim().match(/^\((\d+)\)/)?.[1] ?? null;
+}
+
 function slugify(value: string): string {
   return value
     .toLowerCase()
@@ -7050,7 +7054,6 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
     const programRows = db.prepare(`
       select id, name, topsolid_kind, topsolid_code
       from license_program
-      where topsolid_code is not null and trim(topsolid_code) <> ''
       order by name asc
     `).all() as Array<{
       id: string;
@@ -7062,7 +7065,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
     const programsByKindAndCode = new Map<string, typeof programRows[number]>();
     const programsByCode = new Map<string, Array<typeof programRows[number]>>();
     programRows.forEach((program) => {
-      const code = program.topsolid_code?.trim();
+      const code = program.topsolid_code?.trim() || readLegacyTopSolidCodeFromProgramName(program.name);
       if (!code) return;
       if (program.topsolid_kind) {
         programsByKindAndCode.set(`${program.topsolid_kind}:${code}`, program);

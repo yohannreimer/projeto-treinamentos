@@ -187,3 +187,35 @@ test('TopSolid import preview groups by expiration and matches programs by TopSo
 
   cleanupDbFiles(dbPath);
 });
+
+test('TopSolid import preview matches legacy program codes stored in program names', async () => {
+  const dbPath = assignTestDbPath('license-topsolid-import-preview-legacy-name-code');
+  cleanupDbFiles(dbPath);
+
+  const app = createApp({ forceDbRefresh: true, seedDb: false });
+  const authHeader = await loginWithLicensesPermission(app);
+  const nowIso = nowDateIso();
+
+  db.prepare(`
+    insert into license_program (id, name, notes, created_at, updated_at)
+    values (?, ?, null, ?, ?)
+  `).run('program-legacy-600', "(600) Ext/TopSolid'Cam Essential Milling", nowIso, nowIso);
+
+  const preview = await request(app)
+    .post('/licenses/import-preview')
+    .set(authHeader)
+    .send({
+      raw_text: `TOPSOLID/"Missler"/3/hash/7.19/Group:600/"TopSolid'Cam Essential Milling"/30-6-2026/Professional/token`
+    });
+
+  assert.equal(preview.status, 200);
+  const juneGroup = preview.body.groups.find((group: any) => group.expires_at === '2026-06-30');
+  assert.ok(juneGroup);
+  assert.equal(juneGroup.unmatched_items.length, 0);
+  assert.deepEqual(
+    juneGroup.matched_programs.map((program: any) => program.id),
+    ['program-legacy-600']
+  );
+
+  cleanupDbFiles(dbPath);
+});
