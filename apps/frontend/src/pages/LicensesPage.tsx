@@ -6,7 +6,7 @@ import { Section } from '../components/Section';
 import { askDestructiveConfirmation } from '../utils/destructive';
 
 type RenewalCycle = 'Mensal' | 'Bimestral' | 'Trimestral' | 'Semestral' | 'Anual';
-type LicenseSortKey = 'company_name' | 'program_name' | 'user_name' | 'license_identifier' | 'renewal_cycle' | 'expires_at' | 'alert_level';
+type LicenseSortKey = 'company_name' | 'user_name' | 'license_identifier' | 'renewal_cycle' | 'expires_at' | 'alert_level';
 
 type LicenseAlertsResponse = {
   rows: LicenseRow[];
@@ -40,6 +40,46 @@ function alertRank(level: string): number {
   if (level === 'Expirada') return 3;
   if (level === 'Atenção') return 2;
   return 1;
+}
+
+function extractTopSolidCodes(value: string): string[] {
+  return Array.from(value.matchAll(/\((\d+)\)|(?:Module|Group):(\d+)/g))
+    .map((match) => match[1] ?? match[2])
+    .filter(Boolean);
+}
+
+function programTopSolidCode(program: LicenseProgram): string | null {
+  return program.topsolid_code?.trim() || extractTopSolidCodes(program.name)[0] || null;
+}
+
+function selectedProgramNamesFromLicense(row: LicenseRow, programs: LicenseProgram[]): string[] {
+  const selected = new Set<string>();
+  const savedNames = row.module_list
+    .split('|')
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  savedNames.forEach((name) => {
+    if (programs.some((program) => program.name === name)) {
+      selected.add(name);
+    }
+  });
+
+  const savedCodes = new Set(extractTopSolidCodes(row.module_list));
+  if (savedCodes.size > 0) {
+    programs.forEach((program) => {
+      const code = programTopSolidCode(program);
+      if (code && savedCodes.has(code)) {
+        selected.add(program.name);
+      }
+    });
+  }
+
+  if (selected.size === 0 && programs.some((program) => program.name === row.program_name)) {
+    selected.add(row.program_name);
+  }
+
+  return Array.from(selected);
 }
 
 export function LicensesPage() {
@@ -130,7 +170,7 @@ export function LicensesPage() {
     if (!query.trim()) return rows;
     const normalized = query.toLowerCase();
     return rows.filter((row) =>
-      `${row.company_name} ${row.program_name} ${row.user_name} ${row.module_list} ${row.license_identifier} ${row.renewal_cycle}`
+      `${row.company_name} ${row.user_name} ${row.module_list} ${row.license_identifier} ${row.renewal_cycle}`
         .toLowerCase()
         .includes(normalized)
     );
@@ -221,12 +261,7 @@ export function LicensesPage() {
     setEditingId(row.id);
     setCompanyId(row.company_id);
     setUserName(row.user_name);
-    const parsedProgramNames = row.module_list
-      .split('|')
-      .map((item) => item.trim())
-      .filter(Boolean);
-    const knownProgramNames = parsedProgramNames.filter((name) => programs.some((program) => program.name === name));
-    setSelectedProgramNames(knownProgramNames.length > 0 ? knownProgramNames : [row.program_name].filter((name) => programs.some((program) => program.name === name)));
+    setSelectedProgramNames(selectedProgramNamesFromLicense(row, programs));
     setLicenseIdentifier(row.license_identifier);
     setRenewalCycle(row.renewal_cycle);
     setExpiresAt(row.expires_at);
@@ -330,7 +365,7 @@ export function LicensesPage() {
 
   async function deleteLicense(row: LicenseRow) {
     const confirmationPhrase = askDestructiveConfirmation(
-      `Excluir licença "${row.program_name}" (ID ${row.license_identifier}) de ${row.company_name}`
+      `Excluir licença ID ${row.license_identifier} de ${row.company_name}`
     );
     if (!confirmationPhrase) {
       setMessage('Ação cancelada.');
@@ -420,7 +455,7 @@ export function LicensesPage() {
       >
         {showLicenseFormSection ? (
           <div className="form form-spacious">
-          <p className="form-hint">Preencha cliente e usuário. O programa principal será o primeiro item marcado em Programas da licença.</p>
+          <p className="form-hint">Preencha cliente e usuário, depois revise os programas do pacote, ID, renovação e vencimento.</p>
           <div className="two-col">
             <label>
               Cliente
@@ -569,7 +604,6 @@ export function LicensesPage() {
             <thead>
               <tr>
                 <th><button type="button" className="table-sort-btn" onClick={() => toggleAttentionSort('company_name')}>Cliente{attentionSortIndicator('company_name')}</button></th>
-                <th><button type="button" className="table-sort-btn" onClick={() => toggleAttentionSort('program_name')}>Programa{attentionSortIndicator('program_name')}</button></th>
                 <th><button type="button" className="table-sort-btn" onClick={() => toggleAttentionSort('user_name')}>Usuário{attentionSortIndicator('user_name')}</button></th>
                 <th><button type="button" className="table-sort-btn" onClick={() => toggleAttentionSort('license_identifier')}>ID{attentionSortIndicator('license_identifier')}</button></th>
                 <th><button type="button" className="table-sort-btn" onClick={() => toggleAttentionSort('expires_at')}>Vencimento{attentionSortIndicator('expires_at')}</button></th>
@@ -580,7 +614,6 @@ export function LicensesPage() {
               {sortedAttentionRows.map((row) => (
                 <tr key={`alert-${row.id}`} className="row-openable" onDoubleClick={() => openLicenseDetail(row)}>
                   <td><div className="table-cell-clamp table-cell-clamp-compact">{row.company_name}</div></td>
-                  <td><div className="table-cell-clamp table-cell-clamp-compact">{row.program_name}</div></td>
                   <td><div className="table-cell-clamp table-cell-clamp-compact">{row.user_name}</div></td>
                   <td><div className="table-cell-clamp table-cell-clamp-compact">{row.license_identifier}</div></td>
                   <td>{formatDate(row.expires_at)}</td>
@@ -602,7 +635,7 @@ export function LicensesPage() {
         title="Base de licenças"
         action={
           <input
-            placeholder="Buscar por cliente, programa, usuário, programas, ID..."
+            placeholder="Buscar por cliente, usuário, programas, ID..."
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />
@@ -612,7 +645,6 @@ export function LicensesPage() {
         <table className="table table-hover table-tight table-readable-grid">
           <colgroup>
             <col className="licenses-col-client" />
-            <col className="licenses-col-program" />
             <col className="licenses-col-user" />
             <col className="licenses-col-modules" />
             <col className="licenses-col-id" />
@@ -624,7 +656,6 @@ export function LicensesPage() {
           <thead>
             <tr>
               <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('company_name')}>Cliente{sortIndicator('company_name')}</button></th>
-              <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('program_name')}>Programa{sortIndicator('program_name')}</button></th>
               <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('user_name')}>Usuário{sortIndicator('user_name')}</button></th>
               <th>Programas</th>
               <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('license_identifier')}>ID{sortIndicator('license_identifier')}</button></th>
@@ -638,7 +669,6 @@ export function LicensesPage() {
             {sortedFiltered.map((row) => (
               <tr key={row.id} className="row-openable" onDoubleClick={() => openLicenseDetail(row)}>
                 <td><div className="table-cell-clamp">{row.company_name}</div></td>
-                <td><div className="table-cell-clamp">{row.program_name}</div></td>
                 <td><div className="table-cell-clamp">{row.user_name}</div></td>
                 <td title={row.module_list}>
                   <div className="table-cell-clamp table-cell-clamp-tall">{row.module_list}</div>
@@ -680,10 +710,6 @@ export function LicensesPage() {
               <article className="read-detail-block">
                 <span>Usuário</span>
                 <p>{detailRow.user_name}</p>
-              </article>
-              <article className="read-detail-block">
-                <span>Programa principal</span>
-                <p>{detailRow.program_name}</p>
               </article>
               <article className="read-detail-block read-detail-block-wide">
                 <span>Programas da licença</span>
