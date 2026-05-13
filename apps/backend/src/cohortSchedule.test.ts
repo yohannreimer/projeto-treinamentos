@@ -65,3 +65,43 @@ test('cohort update keeps start date equal to first scheduled day', { concurrenc
     cleanupDbFiles(dbPath);
   }
 });
+
+test('cohort reads derive start date from first scheduled day for existing stale records', { concurrency: false }, async () => {
+  const dbPath = assignTestDbPath('cohort-schedule-derived-start-date');
+  cleanupDbFiles(dbPath);
+
+  try {
+    const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+    db.prepare(`
+      insert into cohort (
+        id, code, name, start_date, technician_id, status, capacity_companies, period, delivery_mode
+      )
+      values (?, ?, ?, ?, null, 'Planejada', 8, 'Integral', 'Online')
+    `).run('coh-derived-start', 'TUR-DER', 'Turma com início legado', '2026-06-01');
+
+    db.prepare(`
+      insert into cohort_schedule_day (id, cohort_id, day_index, day_date, start_time, end_time)
+      values (?, ?, 1, ?, null, null), (?, ?, 2, ?, null, null)
+    `).run(
+      'csd-derived-start-1',
+      'coh-derived-start',
+      '2026-06-22',
+      'csd-derived-start-2',
+      'coh-derived-start',
+      '2026-06-23'
+    );
+
+    const detail = await request(app).get('/cohorts/coh-derived-start');
+    assert.equal(detail.status, 200);
+    assert.equal(detail.body.start_date, '2026-06-22');
+
+    const list = await request(app).get('/cohorts');
+    assert.equal(list.status, 200);
+    const listed = list.body.find((row: { id: string }) => row.id === 'coh-derived-start');
+    assert.equal(listed.start_date, '2026-06-22');
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});

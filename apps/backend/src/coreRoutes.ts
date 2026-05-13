@@ -3892,8 +3892,15 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
   });
   
   app.get('/cohorts', (_req, res) => {
-    const rows = db.prepare(`
+    const rows = (db.prepare(`
       select c.*, t.name as technician_name,
+        (
+          select csd.day_date
+          from cohort_schedule_day csd
+          where csd.cohort_id = c.id
+          order by csd.day_index asc
+          limit 1
+        ) as schedule_start_date,
         coalesce((
           select group_concat(company_name, ' | ')
           from (
@@ -3927,8 +3934,14 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
         ), '') as module_names
       from cohort c
       left join technician t on t.id = c.technician_id
-      order by date(c.start_date) asc
-    `).all();
+      order by date(coalesce(schedule_start_date, c.start_date)) asc
+    `).all() as Array<Record<string, unknown> & { start_date: string; schedule_start_date?: string | null }>).map((row) => {
+      const { schedule_start_date: scheduleStartDate, ...cohort } = row;
+      return {
+        ...cohort,
+        start_date: scheduleStartDate ?? row.start_date
+      };
+    });
   
     res.json(rows);
   });
@@ -3972,6 +3985,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       where cohort_id = ?
       order by day_index asc
     `).all(req.params.id);
+    const firstScheduleDate = (schedule_days as Array<{ day_date: string }>)[0]?.day_date ?? null;
     const participantsRaw = db.prepare(`
       select
         cp.id,
@@ -4008,7 +4022,14 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
         : []
     }));
   
-    return res.json({ ...cohort, blocks, allocations, schedule_days, participants });
+    return res.json({
+      ...cohort,
+      start_date: firstScheduleDate ?? (cohort as { start_date: string }).start_date,
+      blocks,
+      allocations,
+      schedule_days,
+      participants
+    });
   });
   
   app.get('/cohorts/:id/certificate', async (req, res) => {
