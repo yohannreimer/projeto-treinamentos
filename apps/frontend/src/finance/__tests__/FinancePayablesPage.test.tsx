@@ -36,7 +36,10 @@ vi.mock('../api', () => ({
     ]),
     getCatalogSnapshot: vi.fn().mockResolvedValue({
       accounts: [{ id: 'acc-1', organization_id: 'org-holand', company_id: 'comp-1', name: 'Banco principal', kind: 'bank', currency: 'BRL', account_number: null, branch_number: null, is_active: true, created_at: '2026-04-22T09:00:00.000Z', updated_at: '2026-04-22T09:00:00.000Z' }],
-      categories: [{ id: 'cat-1', organization_id: 'org-holand', company_id: 'comp-1', name: 'Software', kind: 'expense', parent_category_id: null, is_active: true, created_at: '2026-04-22T09:00:00.000Z', updated_at: '2026-04-22T09:00:00.000Z' }],
+      categories: [
+        { id: 'cat-1', organization_id: 'org-holand', company_id: 'comp-1', name: 'Software', kind: 'expense', parent_category_id: null, is_active: true, created_at: '2026-04-22T09:00:00.000Z', updated_at: '2026-04-22T09:00:00.000Z' },
+        { id: 'cat-2', organization_id: 'org-holand', company_id: 'comp-1', name: 'Eventos', kind: 'expense', parent_category_id: null, is_active: true, created_at: '2026-04-22T09:00:00.000Z', updated_at: '2026-04-22T09:00:00.000Z' }
+      ],
       cost_centers: [{ id: 'cc-1', organization_id: 'org-holand', name: 'Operações', code: 'OPS', is_active: true, created_at: '2026-04-22T09:00:00.000Z', updated_at: '2026-04-22T09:00:00.000Z' }],
       payment_methods: [{ id: 'pm-1', organization_id: 'org-holand', name: 'PIX', kind: 'pix', is_active: true, created_at: '2026-04-22T09:00:00.000Z', updated_at: '2026-04-22T09:00:00.000Z' }]
     }),
@@ -151,6 +154,54 @@ test('payables page renders and submits a new payable', async () => {
         amount_cents: 9800
       })
     );
+  });
+});
+
+test('payables page keeps a manually changed category when entity defaults finish loading later', async () => {
+  const { financeApi } = await import('../api');
+  let resolveProfile: (value: unknown) => void = () => undefined;
+  vi.mocked(financeApi.getEntityDefaultProfile).mockImplementationOnce(() => new Promise((resolve) => {
+    resolveProfile = resolve;
+  }) as ReturnType<typeof financeApi.getEntityDefaultProfile>);
+
+  const user = userEvent.setup();
+  render(<FinancePayablesPage />);
+
+  expect(await screen.findByRole('heading', { name: 'Rotina operacional de obrigações' })).toBeInTheDocument();
+  await user.type(screen.getByLabelText('Descrição'), 'Cachê evento');
+  await user.type(screen.getByLabelText('Fornecedor'), 'Ven');
+  await user.click(await screen.findByRole('button', { name: 'Vendor' }));
+  await user.selectOptions(screen.getByLabelText('Categoria'), 'cat-2');
+
+  resolveProfile({
+    id: 'profile-payable',
+    organization_id: 'org-holand',
+    financial_entity_id: 'ent-vendor',
+    context: 'payable',
+    financial_category_id: 'cat-1',
+    financial_category_name: 'Software',
+    financial_cost_center_id: 'cc-1',
+    financial_cost_center_name: 'Operações',
+    financial_account_id: 'acc-1',
+    financial_account_name: 'Banco principal',
+    financial_payment_method_id: 'pm-1',
+    financial_payment_method_name: 'PIX',
+    due_rule: null,
+    competence_rule: null,
+    recurrence_rule: null,
+    is_active: true,
+    created_at: '2026-04-22T09:00:00.000Z',
+    updated_at: '2026-04-22T09:00:00.000Z'
+  });
+
+  await waitFor(() => expect(screen.getByText('Perfil padrão aplicado ao lançamento.')).toBeInTheDocument());
+  await user.type(screen.getByLabelText('Valor (R$)'), '300,00');
+  await user.click(screen.getByRole('button', { name: 'Registrar conta a pagar' }));
+
+  await waitFor(() => {
+    expect(financeApi.createPayable).toHaveBeenCalledWith(expect.objectContaining({
+      financial_category_id: 'cat-2'
+    }));
   });
 });
 
