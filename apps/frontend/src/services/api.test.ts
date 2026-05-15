@@ -38,9 +38,10 @@ describe('companyModuleCertificateUrl', () => {
   test('builds the journey certificate URL for a company module', () => {
     const url = api.companyModuleCertificateUrl('company-1', 'module-7', {
       download: true,
-      format: 'pdf'
+      format: 'pdf',
+      technicianId: 'tech-2'
     });
 
-    expect(url).toBe('http://localhost:4000/companies/company-1/modules/module-7/certificate?format=pdf&download=1');
+    expect(url).toBe('http://localhost:4000/companies/company-1/modules/module-7/certificate?format=pdf&download=1&technician_id=tech-2');
   });
 });

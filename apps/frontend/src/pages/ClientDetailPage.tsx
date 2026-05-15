@@ -19,6 +19,14 @@ type ModuleEdit = {
 
 type JourneyFilter = 'all' | 'Concluido' | 'Em_execucao' | 'Planejado' | 'Nao_iniciado';
 type HoursPendingAction = 'confirm' | 'reject';
+type CertificateTechnicianChoice = {
+  moduleId: string;
+  moduleName: string;
+};
+type TechnicianOption = {
+  id: string;
+  name: string;
+};
 
 const statusOptions = ['Em_treinamento', 'Finalizado', 'Ativo', 'Inativo'] as const;
 const priorityOptions = ['Alta', 'Normal', 'Baixa', 'Parado', 'Aguardando_liberacao'] as const;
@@ -210,6 +218,9 @@ export function ClientDetailPage() {
   const [savingCompany, setSavingCompany] = useState(false);
   const [savingModuleId, setSavingModuleId] = useState<string | null>(null);
   const [emittingCertificateModuleId, setEmittingCertificateModuleId] = useState<string | null>(null);
+  const [certificateTechnicianChoice, setCertificateTechnicianChoice] = useState<CertificateTechnicianChoice | null>(null);
+  const [certificateTechnicianId, setCertificateTechnicianId] = useState('');
+  const [technicians, setTechnicians] = useState<TechnicianOption[]>([]);
   const [historySortKey, setHistorySortKey] = useState<HistorySortKey>('start_date');
   const [historySortDirection, setHistorySortDirection] = useState<'asc' | 'desc'>('desc');
   const [journeyFilter, setJourneyFilter] = useState<JourneyFilter>('all');
@@ -270,10 +281,12 @@ export function ClientDetailPage() {
       api.companyHoursSummary(id),
       api.companyHoursModules(id),
       api.companyHoursLedger(id),
-      api.companyHoursPending(id)
+      api.companyHoursPending(id),
+      api.technicians()
     ])
-      .then(([response, portalAccess, summaryResponse, moduleResponse, ledgerResponse, pendingResponse]) => {
+      .then(([response, portalAccess, summaryResponse, moduleResponse, ledgerResponse, pendingResponse, technicianRows]) => {
         setData(response);
+        setTechnicians((technicianRows ?? []) as TechnicianOption[]);
         setPortalSlug(portalAccess.slug ?? '');
         setPortalUsername(portalAccess.username ?? '');
         setPortalActive(Boolean(portalAccess.is_active));
@@ -881,13 +894,19 @@ export function ClientDetailPage() {
 
   async function emitModuleCertificate(moduleId: string) {
     if (!id) return;
+    await downloadModuleCertificate(moduleId, null);
+  }
+
+  async function downloadModuleCertificate(moduleId: string, technicianId: string | null) {
+    if (!id) return;
     setEmittingCertificateModuleId(moduleId);
     setError('');
     setMessage('');
     try {
       const response = await fetch(api.companyModuleCertificateUrl(id, moduleId, {
         download: true,
-        format: 'pdf'
+        format: 'pdf',
+        technicianId
       }), {
         headers: createInternalAuthHeaders()
       });
@@ -910,11 +929,27 @@ export function ClientDetailPage() {
       document.body.removeChild(anchor);
       URL.revokeObjectURL(blobUrl);
       setMessage('Certificado gerado e salvo em Documentação.');
+      setCertificateTechnicianChoice(null);
+      setCertificateTechnicianId('');
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setEmittingCertificateModuleId(null);
     }
+  }
+
+  function requestModuleCertificate(moduleItem: any) {
+    if (moduleItem.last_cohort_code) {
+      void emitModuleCertificate(moduleItem.module_id);
+      return;
+    }
+    setCertificateTechnicianChoice({
+      moduleId: moduleItem.module_id,
+      moduleName: moduleItem.module_name
+    });
+    setCertificateTechnicianId('');
+    setError('');
+    setMessage('');
   }
 
   async function toggleModule(moduleId: string, currentEnabled: boolean) {
@@ -1790,7 +1825,7 @@ export function ClientDetailPage() {
                               {canEmitCertificate ? (
                                 <button
                                   type="button"
-                                  onClick={() => void emitModuleCertificate(moduleItem.module_id)}
+                                  onClick={() => requestModuleCertificate(moduleItem)}
                                   disabled={emittingCertificateModuleId === moduleItem.module_id}
                                 >
                                   {emittingCertificateModuleId === moduleItem.module_id ? 'Gerando...' : 'Certificado PDF'}
@@ -1963,6 +1998,70 @@ export function ClientDetailPage() {
           </Section>
         </>
       )}
+      {certificateTechnicianChoice ? (
+        <div className="cohort-editor-overlay" role="dialog" aria-modal="true" aria-label="Escolher técnico do certificado">
+          <button
+            type="button"
+            className="cohort-editor-backdrop"
+            onClick={() => {
+              setCertificateTechnicianChoice(null);
+              setCertificateTechnicianId('');
+            }}
+            aria-label="Fechar escolha de técnico"
+          />
+          <div className="certificate-tech-modal">
+            <Section
+              title="Técnico do certificado"
+              action={(
+                <button
+                  type="button"
+                  className="cohort-editor-close-btn"
+                  onClick={() => {
+                    setCertificateTechnicianChoice(null);
+                    setCertificateTechnicianId('');
+                  }}
+                >
+                  Fechar
+                </button>
+              )}
+            >
+              <div className="certificate-tech-choice">
+                <p className="form-hint">
+                  {certificateTechnicianChoice.moduleName} não tem turma vinculada. Você pode emitir só com a assinatura administrativa ou escolher um técnico para assinar junto.
+                </p>
+                <label>
+                  Técnico
+                  <select
+                    value={certificateTechnicianId}
+                    onChange={(event) => setCertificateTechnicianId(event.target.value)}
+                  >
+                    <option value="">Sem técnico</option>
+                    {technicians.map((technician) => (
+                      <option key={technician.id} value={technician.id}>{technician.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <div className="actions actions-compact">
+                  <button
+                    type="button"
+                    onClick={() => void downloadModuleCertificate(certificateTechnicianChoice.moduleId, null)}
+                    disabled={emittingCertificateModuleId === certificateTechnicianChoice.moduleId}
+                  >
+                    Gerar sem técnico
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void downloadModuleCertificate(certificateTechnicianChoice.moduleId, certificateTechnicianId)}
+                    disabled={!certificateTechnicianId || emittingCertificateModuleId === certificateTechnicianChoice.moduleId}
+                  >
+                    {emittingCertificateModuleId === certificateTechnicianChoice.moduleId ? 'Gerando...' : 'Gerar com técnico'}
+                  </button>
+                </div>
+              </div>
+            </Section>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

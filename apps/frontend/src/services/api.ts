@@ -332,12 +332,15 @@ export const api = {
   companyModuleCertificateUrl: (
     companyId: string,
     moduleId: string,
-    options?: { download?: boolean; format?: 'pdf' | 'html' }
+    options?: { download?: boolean; format?: 'pdf' | 'html'; technicianId?: string | null }
   ) => {
     const params = new URLSearchParams();
     params.set('format', options?.format ?? 'pdf');
     if (options?.download) {
       params.set('download', '1');
+    }
+    if (options?.technicianId) {
+      params.set('technician_id', options.technicianId);
     }
     return `${BASE_URL}/companies/${encodeURIComponent(companyId)}/modules/${encodeURIComponent(moduleId)}/certificate?${params.toString()}`;
   },

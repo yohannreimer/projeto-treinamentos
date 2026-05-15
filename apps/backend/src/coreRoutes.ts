@@ -846,6 +846,7 @@ export async function buildCompanyModuleCertificate(args: {
   companyId: string;
   moduleId: string;
   cohortId?: string | null;
+  technicianId?: string | null;
   format?: 'pdf' | 'html';
   shouldDownload?: boolean;
 }): Promise<{
@@ -900,6 +901,18 @@ export async function buildCompanyModuleCertificate(args: {
   }
 
   const isDeliverableCertificate = moduleRow.delivery_mode === 'entregavel';
+  const manualTechnician = args.technicianId && !isDeliverableCertificate
+    ? db.prepare(`
+        select id, name
+        from technician
+        where id = ?
+      `).get(args.technicianId) as { id: string; name: string } | undefined
+    : undefined;
+
+  if (args.technicianId && !isDeliverableCertificate && !manualTechnician) {
+    throw new Error('Técnico não encontrado.');
+  }
+
   const latestAllocation = !isDeliverableCertificate
     ? db.prepare(`
         select
@@ -970,6 +983,17 @@ export async function buildCompanyModuleCertificate(args: {
   const totalDays = Math.max(1, Number(latestAllocation?.duration_days ?? moduleRow.duration_days) || 1);
   const totalHours = totalDays * 8;
   const employeeCardsHtml = certificateSubjectCardsHtml(participants, company.name);
+  const technicianName = latestAllocation?.technician_name ?? (!latestAllocation ? manualTechnician?.name : null) ?? null;
+  const technicianSignatureHtml = technicianName
+    ? `
+    <div class="footer-div"></div>
+
+    <div>
+      <div class="sig-line"></div>
+      <div id="sig-name-2">${escapeHtml(technicianName)}</div>
+      <div id="sig-title-2">Técnico Responsável pelo Curso</div>
+    </div>`
+    : '';
 
   const template = isDeliverableCertificate ? readDeliverableCertificateTemplate() : readCertificateTemplate();
   const html = replaceTemplateTokens(template, isDeliverableCertificate
@@ -983,10 +1007,11 @@ export async function buildCompanyModuleCertificate(args: {
     : [
         ['COMPANY_NAME', escapeHtml(company.name)],
         ['COURSE_NAME', escapeHtml(trainingName)],
-        ['COURSE_HOURS', escapeHtml(`⏱ ${totalDays} diária(s) (${totalHours}h)`)],
+        ['COURSE_HOURS', escapeHtml(`Duração: ${totalDays} diária(s) (${totalHours}h)`)],
         ['EMPLOYEES_LABEL', escapeHtml(certificateSubjectLabel(participants))],
         ['EMPLOYEES_GRID', employeeCardsHtml],
-        ['TECHNICIAN_NAME', escapeHtml(latestAllocation?.technician_name ?? 'Sem técnico definido')],
+        ['FOOTER_CLASS', technicianName ? 'has-technician' : 'no-technician'],
+        ['TECHNICIAN_SIGNATURE_HTML', technicianSignatureHtml],
         ['EMIT_DATE', escapeHtml(formatLongDatePtBr(issueDateIso))],
         ['CERT_CODE', escapeHtml(certCode)]
       ]);
@@ -1021,13 +1046,14 @@ export async function buildCompanyModuleCertificate(args: {
     latestAllocation ? `Turma: ${latestAllocation.cohort_code}` : 'Turma: Jornada do cliente',
     `Empresa: ${company.name}`,
     `Módulo: ${isDeliverableCertificate ? `${deliverableLabels.name} - ${deliverableLabels.subtitle}` : trainingName}`,
+    !isDeliverableCertificate ? `Técnico: ${technicianName ?? 'Sem técnico'}` : null,
     isDeliverableCertificate
       ? 'Status: Concluído & Aprovado'
       : participants.length > 0
         ? `Participantes: ${participants.map((item) => item.participant_name).join(' | ')}`
         : 'Participantes: certificado emitido para a empresa',
     `Emitido em: ${formatLongDatePtBr(issueDateIso)}`
-  ].join('\n');
+  ].filter((item): item is string => Boolean(item)).join('\n');
 
   upsertCertificateDocument({
     documentKey: certificateDocumentKey,
@@ -4164,6 +4190,17 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
     ].filter(Boolean).join('-');
   
     const employeeCardsHtml = certificateSubjectCardsHtml(participants, company.name);
+    const technicianName = cohort.technician_name ?? null;
+    const technicianSignatureHtml = technicianName
+      ? `
+    <div class="footer-div"></div>
+
+    <div>
+      <div class="sig-line"></div>
+      <div id="sig-name-2">${escapeHtml(technicianName)}</div>
+      <div id="sig-title-2">Técnico Responsável pelo Curso</div>
+    </div>`
+      : '';
   
     try {
       let html = isDeliverableCertificate ? readDeliverableCertificateTemplate() : readCertificateTemplate();
@@ -4179,10 +4216,11 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
         : [
             ['COMPANY_NAME', escapeHtml(company.name)],
             ['COURSE_NAME', escapeHtml(trainingName || cohort.name)],
-            ['COURSE_HOURS', escapeHtml(`⏱ ${totalDays} diária(s) (${totalHours}h)`)],
+            ['COURSE_HOURS', escapeHtml(`Duração: ${totalDays} diária(s) (${totalHours}h)`)],
             ['EMPLOYEES_LABEL', escapeHtml(certificateSubjectLabel(participants))],
             ['EMPLOYEES_GRID', employeeCardsHtml],
-            ['TECHNICIAN_NAME', escapeHtml(cohort.technician_name ?? 'Sem técnico definido')],
+            ['FOOTER_CLASS', technicianName ? 'has-technician' : 'no-technician'],
+            ['TECHNICIAN_SIGNATURE_HTML', technicianSignatureHtml],
             ['EMIT_DATE', escapeHtml(formatLongDatePtBr(issueDateIso))],
             ['CERT_CODE', escapeHtml(certCode)]
           ];
@@ -4217,13 +4255,14 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
         `Turma: ${cohort.code}`,
         `Empresa: ${company.name}`,
         `Módulo: ${isDeliverableCertificate ? `${deliverableLabels.name} - ${deliverableLabels.subtitle}` : trainingName}`,
+        !isDeliverableCertificate ? `Técnico: ${technicianName ?? 'Sem técnico'}` : null,
         isDeliverableCertificate
           ? 'Status: Concluído & Aprovado'
           : participants.length > 0
             ? `Participantes: ${participants.map((item) => item.participant_name).join(' | ')}`
             : 'Participantes: certificado emitido para a empresa',
         `Emitido em: ${formatLongDatePtBr(issueDateIso)}`
-      ].join('\n');
+      ].filter((item): item is string => Boolean(item)).join('\n');
       upsertCertificateDocument({
         documentKey: certificateDocumentKey,
         title: certificateDocumentTitle,
@@ -4250,6 +4289,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       const certificate = await buildCompanyModuleCertificate({
         companyId: req.params.companyId,
         moduleId: req.params.moduleId,
+        technicianId: typeof req.query.technician_id === 'string' ? req.query.technician_id.trim() || null : null,
         format: format === 'html' ? 'html' : 'pdf',
         shouldDownload
       });
