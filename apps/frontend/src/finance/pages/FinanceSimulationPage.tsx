@@ -532,7 +532,7 @@ export function FinanceSimulationPage() {
 
   function exportSimulationTablePdf() {
     if (!selected || !startingPoint || !endingPoint) return;
-    const printWindow = window.open('', '_blank', 'width=1180,height=820');
+    const printWindow = window.open('', '_blank', 'width=1280,height=900');
     if (!printWindow) {
       setError('Não consegui abrir a janela de exportação. Libere pop-ups para gerar o PDF.');
       return;
@@ -543,63 +543,66 @@ export function FinanceSimulationPage() {
         className: 'anchor',
         date: formatDate(startingPoint.date),
         label: 'Saldo inicial',
-        kind: 'Base',
         nature: 'Base',
         amount: formatCurrency(selected.result.starting_balance_cents),
         amountClass: '',
         balance: formatCurrency(selected.result.starting_balance_cents),
-        balanceClass: selected.result.starting_balance_cents < 0 ? 'negative' : '',
+        balanceClass: selected.result.starting_balance_cents < 0 ? 'neg' : '',
         detail: 'Ponto de partida da mesa'
       },
       ...sortedItems.map((item) => ({
         className: itemKindTone(item.kind),
         date: formatDate(item.event_date),
         label: item.label,
-        kind: itemKindLabel(item.kind),
         nature: itemNatureLabel(item.kind),
         amount: formatCurrency(signedItemAmount(item)),
-        amountClass: itemKindTone(item.kind) === 'outflow' ? 'negative' : 'positive',
+        amountClass: itemKindTone(item.kind) === 'outflow' ? 'neg' : 'pos',
         balance: formatCurrency(balanceAfterItem(item)),
-        balanceClass: balanceAfterItem(item) < 0 ? 'negative' : '',
+        balanceClass: balanceAfterItem(item) < 0 ? 'neg' : '',
         detail: itemKindLabel(item.kind)
       })),
       {
         className: endingPoint.balance_cents < 0 ? 'final negative' : 'final positive',
         date: formatDate(endingPoint.date),
         label: 'Saldo final',
-        kind: 'Resultado',
         nature: 'Resultado',
         amount: formatCurrency(endingPoint.balance_cents),
-        amountClass: endingPoint.balance_cents < 0 ? 'negative' : '',
+        amountClass: endingPoint.balance_cents < 0 ? 'neg' : '',
         balance: formatCurrency(endingPoint.balance_cents),
-        balanceClass: endingPoint.balance_cents < 0 ? 'negative' : '',
-        detail: selected.result.first_negative_date ? `Caixa negativo em ${formatDate(selected.result.first_negative_date)}` : `${sortedItems.length} linhas simuladas`
+        balanceClass: endingPoint.balance_cents < 0 ? 'neg' : '',
+        detail: selected.result.first_negative_date
+          ? `Caixa negativo em ${formatDate(selected.result.first_negative_date)}`
+          : `${sortedItems.length} linhas simuladas`
       }
     ];
+
     const tableRows = rows.map((row) => `
       <tr class="${escapeHtml(row.className)}">
-        <td>${escapeHtml(row.date)}</td>
-        <td>
+        <td class="col-date">${escapeHtml(row.date)}</td>
+        <td class="col-movement">
           <strong>${escapeHtml(row.label)}</strong>
           <small>${escapeHtml(row.detail)}</small>
         </td>
-        <td><span class="tag ${escapeHtml(row.className.split(' ')[0])}">${escapeHtml(row.nature)}</span></td>
-        <td class="money ${escapeHtml(row.amountClass)}">${escapeHtml(row.amount)}</td>
-        <td class="money ${escapeHtml(row.balanceClass)}">${escapeHtml(row.balance)}</td>
+        <td class="col-nature"><span class="tag ${escapeHtml(row.className.split(' ')[0])}">${escapeHtml(row.nature)}</span></td>
+        <td class="col-value money ${escapeHtml(row.amountClass)}">${escapeHtml(row.amount)}</td>
+        <td class="col-balance money ${escapeHtml(row.balanceClass)}">${escapeHtml(row.balance)}</td>
       </tr>
     `).join('');
+
     const impactRows = impactPoints.length === 0
       ? '<p class="empty-impact">Nenhuma alteração no cenário.</p>'
       : impactPoints.map((point) => `
         <div class="impact-row">
-          <span>${escapeHtml(formatDateShort(point.date))}</span>
-          <strong class="${point.net_cents < 0 ? 'negative' : 'positive'}">${escapeHtml(netLabel(point.net_cents))}</strong>
-          <small>${escapeHtml(formatCurrency(point.balance_cents))}</small>
+          <span class="i-date">${escapeHtml(formatDateShort(point.date))}</span>
+          <span class="i-amount ${point.net_cents < 0 ? 'neg' : 'pos'}">${escapeHtml(netLabel(point.net_cents))}</span>
+          <span class="i-balance ${point.balance_cents < 0 ? 'neg' : ''}">${escapeHtml(formatCurrency(point.balance_cents))}</span>
         </div>
       `).join('');
+
     const title = `Mesa de simulação - ${selected.name}`;
     const filename = `${fileSafeName(selected.name)}.pdf`;
     const exportedAt = new Date().toLocaleString('pt-BR');
+    const finalNegative = endingPoint.balance_cents < 0;
 
     printWindow.document.write(`<!doctype html>
       <html lang="pt-BR">
@@ -607,351 +610,342 @@ export function FinanceSimulationPage() {
           <meta charset="utf-8" />
           <title>${escapeHtml(title)}</title>
           <style>
-            @page { size: A4 landscape; margin: 9mm; }
-            * { box-sizing: border-box; }
+            @page { size: A4 landscape; margin: 0; }
+            *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
             body {
-              margin: 0;
-              color: #172033;
-              font-family: "Avenir Next", "Helvetica Neue", Helvetica, Arial, sans-serif;
-              background: #ffffff;
-              text-rendering: optimizeLegibility;
-              -webkit-font-smoothing: antialiased;
+              font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+              background: #faf8f5;
+              color: #1a2230;
               -webkit-print-color-adjust: exact;
               print-color-adjust: exact;
+              font-size: 10px;
+              line-height: 1.4;
             }
-            .sheet {
-              min-height: 190mm;
-              padding: 15mm;
-              border: 1px solid #d6dfeb;
-              border-radius: 12px;
-              background: #ffffff;
-              box-shadow: none;
+            .page {
+              width: 297mm;
+              min-height: 210mm;
+              display: flex;
+              flex-direction: column;
             }
-            .report-header {
+            /* ── Cabeçalho escuro ── */
+            .page-header {
+              background: #1a1f2e;
+              padding: 8mm 10mm 7.5mm;
               display: grid;
-              grid-template-columns: minmax(0, 1fr) 310px;
-              gap: 24px;
-              align-items: end;
-              padding-bottom: 16px;
-              border-bottom: 1px solid #dfe7f1;
-              margin-bottom: 14px;
+              grid-template-columns: 1fr auto;
+              gap: 14mm;
+              align-items: center;
             }
             .eyebrow {
               display: block;
+              font-size: 7px;
+              font-weight: 800;
+              letter-spacing: 0.26em;
+              text-transform: uppercase;
               color: #e35f25;
-              font-size: 9px;
-              font-weight: 900;
-              letter-spacing: 0.22em;
-              text-transform: uppercase;
+              margin-bottom: 5px;
             }
-            h1 {
-              max-width: 620px;
-              margin: 6px 0 8px;
-              color: #101827;
-              font-size: 30px;
-              line-height: 1.1;
-              letter-spacing: -0.03em;
+            .page-title {
+              font-family: Georgia, "Times New Roman", serif;
+              font-size: 25px;
+              font-weight: 700;
+              color: #f5f2ed;
+              line-height: 1.08;
+              letter-spacing: -0.02em;
             }
-            .subtitle {
-              margin: 0;
-              max-width: 620px;
-              color: #66758d;
-              font-size: 12px;
-              line-height: 1.5;
-              font-weight: 650;
+            .page-subtitle {
+              margin-top: 5px;
+              font-size: 8.5px;
+              color: #7a8394;
+              max-width: 340px;
             }
-            .meta {
-              display: grid;
-              grid-template-columns: 1fr 1fr;
-              gap: 8px;
-              padding: 10px;
-              border: 1px solid #dfe7f1;
-              border-radius: 16px;
-              background: #f8fafc;
-              color: #6b7890;
-              font-size: 9px;
-              font-weight: 850;
+            .header-meta { display: flex; gap: 7px; }
+            .meta-box {
+              padding: 7px 10px;
+              border: 1px solid rgba(255,255,255,0.10);
+              border-radius: 6px;
+              background: rgba(255,255,255,0.05);
               text-align: right;
+              min-width: 106px;
             }
-            .meta span {
-              padding: 8px;
-              border-radius: 11px;
-              background: #ffffff;
-            }
-            .meta strong {
+            .meta-box span {
               display: block;
-              margin-top: 4px;
-              color: #172033;
-              font-size: 12px;
-            }
-            .kpis {
-              display: grid;
-              grid-template-columns: repeat(4, minmax(0, 1fr));
-              gap: 10px;
-              margin: 14px 0 16px;
-            }
-            .kpi {
-              min-height: 76px;
-              padding: 13px;
-              border: 1px solid #dfe7f1;
-              border-radius: 16px;
-              background: #ffffff;
-            }
-            .kpi small {
-              display: block;
-              color: #94a3b8;
-              font-size: 8px;
-              font-weight: 900;
-              letter-spacing: 0.13em;
+              font-size: 6.5px;
+              font-weight: 800;
+              letter-spacing: 0.16em;
               text-transform: uppercase;
+              color: #5e6b7e;
+              margin-bottom: 4px;
             }
-            .kpi strong {
+            .meta-box strong {
               display: block;
-              margin-top: 8px;
-              color: #101827;
-              font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-              font-size: 18px;
-              line-height: 1;
+              font-size: 11px;
+              font-weight: 700;
+              color: #f5f2ed;
             }
-            .kpi.success {
-              border-color: #a7f3d0;
-              background: #f5fff9;
+            /* ── Corpo ── */
+            .page-body {
+              flex: 1;
+              padding: 5.5mm 10mm 0;
+              display: flex;
+              flex-direction: column;
+              gap: 4.5mm;
             }
-            .kpi.danger {
-              border-color: #fecdd3;
-              background: #fff7f8;
-            }
-            .content-grid {
+            /* ── Faixa de fluxo (equação narrativa) ── */
+            .cashflow-strip {
               display: grid;
-              grid-template-columns: minmax(0, 1fr) 220px;
-              gap: 14px;
+              grid-template-columns: 1fr 20px 1fr 20px 1fr 20px 1fr;
+              align-items: stretch;
+              background: #ffffff;
+              border: 1px solid #e4ddd6;
+              border-radius: 8px;
+              overflow: hidden;
+            }
+            .cf-node { padding: 9px 13px 10px; }
+            .cf-node.final-node    { background: #fff8f5; border-left: 1px solid #f0d5c5; }
+            .cf-node.final-success { background: #f4fdf8; border-left: 1px solid #c3e8d6; }
+            .cf-label {
+              display: block;
+              font-size: 6.5px;
+              font-weight: 800;
+              letter-spacing: 0.15em;
+              text-transform: uppercase;
+              color: #9aa3b2;
+              margin-bottom: 5px;
+            }
+            .cf-val {
+              display: block;
+              font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+              font-size: 14.5px;
+              font-weight: 700;
+              color: #1a2230;
+              white-space: nowrap;
+            }
+            .cf-op {
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              font-size: 15px;
+              font-weight: 300;
+              color: #c8cdd8;
+              background: #faf8f5;
+              border-left: 1px solid #ede8e2;
+              border-right: 1px solid #ede8e2;
+            }
+            /* ── Grade principal ── */
+            .main-grid {
+              display: grid;
+              grid-template-columns: 1fr 186px;
+              gap: 4.5mm;
+              flex: 1;
               align-items: start;
             }
-            .table-card,
-            .summary-card {
-              border: 1px solid #dfe7f1;
-              border-radius: 18px;
+            /* ── Tabela ── */
+            .table-card {
               background: #ffffff;
+              border: 1px solid #e4ddd6;
+              border-radius: 8px;
               overflow: hidden;
-              box-shadow: none;
             }
-            .table-title,
-            .summary-card {
-              padding: 13px;
-            }
-            .table-title {
+            .table-bar {
               display: flex;
               justify-content: space-between;
               align-items: center;
-              border-bottom: 1px solid #e6edf5;
-              background: #f9fbfd;
+              padding: 8px 13px;
+              background: #f7f4ef;
+              border-bottom: 1px solid #e4ddd6;
             }
-            .table-title strong,
-            .summary-card h2 {
-              margin: 0;
-              color: #101827;
-              font-size: 14px;
-              line-height: 1.2;
-            }
-            .table-title span {
-              color: #66758d;
-              font-size: 9px;
-              font-weight: 800;
-            }
-            table {
-              width: 100%;
-              border-collapse: collapse;
-              table-layout: fixed;
-            }
-            th,
-            td {
-              min-height: 34px;
-              padding: 9px 10px;
-              border-bottom: 1px solid #edf2f7;
-              color: #172033;
-              font-size: 10px;
-              line-height: 1.25;
+            .table-bar strong { font-size: 10px; font-weight: 700; color: #1a2230; }
+            .table-bar span   { font-size: 7px; font-weight: 700; color: #9aa3b2; letter-spacing: 0.05em; }
+            table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+            .col-date   { width: 76px; }
+            .col-nature { width: 80px; }
+            .col-value, .col-balance { width: 114px; }
+            thead th {
+              padding: 6px 13px;
+              background: #ffffff;
+              font-size: 6.5px;
+              font-weight: 900;
+              letter-spacing: 0.14em;
+              text-transform: uppercase;
+              color: #b8bfc9;
               text-align: left;
+              border-bottom: 1px solid #f0ebe3;
+            }
+            thead th.r { text-align: right; }
+            tbody td {
+              padding: 7px 13px;
+              font-size: 9.5px;
+              color: #1a2230;
+              border-bottom: 1px solid #f5f1ec;
               vertical-align: middle;
             }
-            th {
-              background: #f7f9fc;
-              color: #94a3b8;
-              font-size: 8px;
-              font-weight: 900;
-              letter-spacing: 0.12em;
-              text-transform: uppercase;
-            }
-            tr:last-child td { border-bottom: 0; }
-            th:nth-child(1), td:nth-child(1) { width: 82px; }
-            th:nth-child(3), td:nth-child(3) { width: 96px; }
-            th:nth-child(4), td:nth-child(4),
-            th:nth-child(5), td:nth-child(5) { width: 132px; }
-            td:nth-child(2) {
-              overflow: hidden;
-              text-overflow: ellipsis;
-              white-space: nowrap;
-            }
+            tbody tr:last-child td { border-bottom: none; }
             td strong {
               display: block;
-              overflow: hidden;
-              color: #101827;
-              font-size: 10.5px;
-              font-weight: 850;
-              text-overflow: ellipsis;
+              font-size: 9.5px;
+              font-weight: 600;
+              color: #1a2230;
               white-space: nowrap;
+              overflow: hidden;
+              text-overflow: ellipsis;
             }
             td small {
               display: block;
-              margin-top: 3px;
-              color: #7b8799;
-              font-size: 8px;
-              font-weight: 750;
+              font-size: 7px;
+              color: #9aa3b2;
+              margin-top: 1px;
             }
             .tag {
-              display: inline-flex;
-              align-items: center;
-              justify-content: center;
-              min-width: 62px;
-              min-height: 22px;
-              padding: 0 9px;
-              border-radius: 999px;
-              background: #eef2f7;
-              color: #526177;
-              font-size: 8px;
+              display: inline-block;
+              padding: 2px 6px;
+              border-radius: 3px;
+              font-size: 6.5px;
               font-weight: 900;
-              letter-spacing: 0.04em;
+              letter-spacing: 0.10em;
               text-transform: uppercase;
+              background: #f0ebe3;
+              color: #6b7280;
             }
-            .tag.inflow {
-              background: #dff8ec;
-              color: #047857;
-            }
-            .tag.outflow {
-              background: #fee2e2;
-              color: #dc2626;
-            }
-            .tag.final {
-              background: #e6f0ff;
-              color: #1d4ed8;
-            }
+            .tag.inflow  { background: #ccf2e8; color: #0a5c42; }
+            .tag.outflow { background: #fde4e4; color: #8b1a1a; }
+            .tag.final   { background: #dbeafe; color: #1e3a8a; }
             .money {
               font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-              font-weight: 800;
+              font-weight: 600;
               text-align: right;
               white-space: nowrap;
+              font-size: 9.5px;
             }
-            .anchor td {
-              background: #fbfdff;
-              color: #66758d;
-              font-weight: 800;
-            }
-            tbody tr.inflow td:first-child { box-shadow: inset 3px 0 0 #059669; }
-            tbody tr.outflow td:first-child { box-shadow: inset 3px 0 0 #dc2626; }
-            .positive { color: #047857; }
-            .negative { color: #dc2626; }
-            .final.positive td { background: #f0fdf4; font-weight: 900; }
-            .final.negative td { background: #fff7f8; font-weight: 900; }
-            .summary-card {
-              min-height: 180px;
-            }
-            .summary-card .eyebrow {
-              margin-bottom: 10px;
-            }
+            .pos { color: #0f766e; }
+            .neg { color: #be3232; }
+            tbody tr.anchor  td { background: #fdfcfa; color: #6b7280; }
+            tbody tr.outflow td { background: #fffbfb; }
+            tbody tr.inflow  td { background: #fbfffe; }
+            tbody tr.final.positive td { background: #f4fdf8; font-weight: 700; }
+            tbody tr.final.negative td { background: #fff6f6; font-weight: 700; }
+            /* ── Resumo (lista tipográfica, sem card) ── */
+            .summary { padding: 2px 0 0 2px; }
+            .summary .eyebrow { margin-bottom: 3px; }
+            .summary h2 { font-size: 11px; font-weight: 700; color: #1a2230; margin-bottom: 6px; }
             .impact-row {
               display: grid;
-              grid-template-columns: 46px minmax(0, 1fr);
-              gap: 4px 8px;
-              padding: 11px 0;
-              border-top: 1px solid #e2e8f0;
+              grid-template-columns: auto 1fr;
+              column-gap: 8px;
+              padding: 7px 0;
+              border-top: 1px solid #ede8e2;
             }
-            .impact-row span {
-              color: #e35f25;
-              font-size: 11px;
-              font-weight: 900;
-            }
-            .impact-row strong {
+            .i-date   { font-size: 10.5px; font-weight: 900; color: #e35f25; white-space: nowrap; }
+            .i-amount {
               font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-              font-size: 11px;
+              font-size: 9.5px;
+              font-weight: 700;
               text-align: right;
             }
-            .impact-row small {
+            .i-balance {
               grid-column: 1 / -1;
-              color: #66758d;
               font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-              font-size: 9px;
-              font-weight: 800;
+              font-size: 8px;
+              color: #9aa3b2;
+              margin-top: 1px;
             }
-            .empty-impact {
-              margin: 12px 0 0;
-              color: #64748b;
-              font-size: 10px;
-              font-weight: 750;
-            }
-            footer {
+            .empty-impact { font-size: 9px; color: #9aa3b2; padding-top: 8px; }
+            /* ── Rodapé ── */
+            .page-footer {
               display: flex;
               justify-content: space-between;
-              margin-top: 12px;
-              padding-top: 10px;
-              border-top: 1px solid #e2e8f0;
-              color: #94a3b8;
-              font-size: 8px;
-              font-weight: 800;
+              align-items: center;
+              padding: 3.5mm 10mm 4mm;
+              margin-top: 4.5mm;
+              border-top: 1px solid #e4ddd6;
+              font-size: 7.5px;
+              color: #9aa3b2;
+              font-weight: 500;
             }
+            .page-footer .brand { font-weight: 800; color: #64748b; }
           </style>
         </head>
         <body>
-          <main class="sheet">
-            <header class="report-header">
+          <div class="page">
+
+            <header class="page-header">
               <div>
                 <span class="eyebrow">Mesa de simulação</span>
-                <h1>${escapeHtml(selected.name)}</h1>
-                <p class="subtitle">Cenário de caixa com linhas reais e manuais para decisão gerencial.</p>
+                <div class="page-title">${escapeHtml(selected.name)}</div>
+                <p class="page-subtitle">Cenário de caixa com linhas reais e manuais para decisão gerencial.</p>
               </div>
-              <div class="meta">
-                <span>Período<br /><strong>${escapeHtml(formatDate(selected.start_date))} - ${escapeHtml(formatDate(selected.end_date))}</strong></span>
-                <span>Linhas<br /><strong>${escapeHtml(String(selected.result.item_count))}</strong></span>
+              <div class="header-meta">
+                <div class="meta-box">
+                  <span>Período</span>
+                  <strong>${escapeHtml(formatDate(selected.start_date))} – ${escapeHtml(formatDate(selected.end_date))}</strong>
+                </div>
+                <div class="meta-box">
+                  <span>Linhas</span>
+                  <strong>${escapeHtml(String(selected.result.item_count))}</strong>
+                </div>
               </div>
             </header>
 
-            <section class="kpis">
-              <article class="kpi"><small>Saldo inicial</small><strong>${escapeHtml(formatCurrency(selected.result.starting_balance_cents))}</strong></article>
-              <article class="kpi"><small>Entradas</small><strong>${escapeHtml(formatCurrency(selected.result.total_inflow_cents))}</strong></article>
-              <article class="kpi"><small>Saídas</small><strong>${escapeHtml(formatCurrency(selected.result.total_outflow_cents))}</strong></article>
-              <article class="kpi ${endingPoint.balance_cents < 0 ? 'danger' : 'success'}"><small>Saldo final</small><strong>${escapeHtml(formatCurrency(endingPoint.balance_cents))}</strong></article>
-            </section>
+            <div class="page-body">
 
-            <section class="content-grid">
-              <article class="table-card">
-                <div class="table-title">
-                  <strong>Grade de movimentos</strong>
-                  <span>${escapeHtml(filename)}</span>
+              <div class="cashflow-strip">
+                <div class="cf-node">
+                  <span class="cf-label">Saldo inicial</span>
+                  <span class="cf-val">${escapeHtml(formatCurrency(selected.result.starting_balance_cents))}</span>
                 </div>
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Data</th>
-                      <th>Movimento</th>
-                      <th>Natureza</th>
-                      <th>Valor</th>
-                      <th>Saldo após</th>
-                    </tr>
-                  </thead>
-                  <tbody>${tableRows}</tbody>
-                </table>
-              </article>
-              <aside class="summary-card">
-                <span class="eyebrow">Resumo</span>
-                <h2>Datas impactadas</h2>
-                ${impactRows}
-              </aside>
-            </section>
+                <div class="cf-op">+</div>
+                <div class="cf-node">
+                  <span class="cf-label">Entradas</span>
+                  <span class="cf-val pos">${escapeHtml(formatCurrency(selected.result.total_inflow_cents))}</span>
+                </div>
+                <div class="cf-op">&minus;</div>
+                <div class="cf-node">
+                  <span class="cf-label">Saídas</span>
+                  <span class="cf-val neg">${escapeHtml(formatCurrency(selected.result.total_outflow_cents))}</span>
+                </div>
+                <div class="cf-op">=</div>
+                <div class="cf-node ${finalNegative ? 'final-node' : 'final-success'}">
+                  <span class="cf-label">Saldo final</span>
+                  <span class="cf-val ${finalNegative ? 'neg' : 'pos'}">${escapeHtml(formatCurrency(endingPoint.balance_cents))}</span>
+                </div>
+              </div>
 
-            <footer>
-              <span>Holand Financeiro ERP</span>
+              <div class="main-grid">
+
+                <div class="table-card">
+                  <div class="table-bar">
+                    <strong>Grade de movimentos</strong>
+                    <span>${escapeHtml(filename)}</span>
+                  </div>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th class="col-date">Data</th>
+                        <th class="col-movement">Movimento</th>
+                        <th class="col-nature">Natureza</th>
+                        <th class="col-value r">Valor</th>
+                        <th class="col-balance r">Saldo após</th>
+                      </tr>
+                    </thead>
+                    <tbody>${tableRows}</tbody>
+                  </table>
+                </div>
+
+                <div class="summary">
+                  <span class="eyebrow">Resumo</span>
+                  <h2>Datas impactadas</h2>
+                  ${impactRows}
+                </div>
+
+              </div>
+            </div>
+
+            <footer class="page-footer">
+              <span class="brand">Holand Financeiro ERP</span>
               <span>Exportado em ${escapeHtml(exportedAt)}</span>
             </footer>
-          </main>
+
+          </div>
           <script>
             window.addEventListener('load', () => {
               window.focus();
