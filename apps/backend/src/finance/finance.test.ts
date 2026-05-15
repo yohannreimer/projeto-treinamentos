@@ -5439,6 +5439,19 @@ test('finance simulations create scenarios, calculate impact and duplicate safel
       });
     assert.equal(recurringRuleRes.status, 201, JSON.stringify(recurringRuleRes.body));
 
+    const overduePayableRes = await request(app)
+      .post('/finance/payables')
+      .set(authHeader)
+      .send({
+        description: 'Aluguel vencido',
+        supplier_name: 'Agile2',
+        amount_cents: 250000,
+        status: 'overdue',
+        issue_date: '2026-09-01',
+        due_date: '2026-09-08'
+      });
+    assert.equal(overduePayableRes.status, 201, JSON.stringify(overduePayableRes.body));
+
     const sourcesRes = await request(app)
       .get(`/finance/simulations/sources?scenario_id=${scenarioRes.body.id}`)
       .set(authHeader);
@@ -5448,6 +5461,37 @@ test('finance simulations create scenarios, calculate impact and duplicate safel
     assert.ok(sourcesRes.body.sources.some((source: { cadence: string; label: string }) =>
       source.cadence === 'recurring' && source.label === 'Aluguel recorrente'
     ));
+    const overdueSource = sourcesRes.body.sources.find((source: { source_id: string }) => source.source_id === overduePayableRes.body.id);
+    assert.ok(overdueSource, JSON.stringify(sourcesRes.body.sources));
+    assert.equal(overdueSource.event_date, '2026-10-01');
+    assert.equal(overdueSource.original_event_date, '2026-09-08');
+    assert.match(overdueSource.detail, /Atrasado/);
+
+    const sourcedItemRes = await request(app)
+      .post(`/finance/simulations/${scenarioRes.body.id}/items`)
+      .set(authHeader)
+      .send({
+        source_type: 'payable',
+        source_id: recurringPayableRes.body.id,
+        kind: 'scheduled_outflow',
+        label: 'Aluguel recorrente',
+        amount_cents: 68000,
+        event_date: '2026-10-02'
+      });
+    assert.equal(sourcedItemRes.status, 201, JSON.stringify(sourcedItemRes.body));
+
+    const sourcesAfterUsedRes = await request(app)
+      .get(`/finance/simulations/sources?scenario_id=${scenarioRes.body.id}`)
+      .set(authHeader);
+    assert.equal(sourcesAfterUsedRes.status, 200, JSON.stringify(sourcesAfterUsedRes.body));
+    assert.ok(!sourcesAfterUsedRes.body.sources.some((source: { source_id: string }) => source.source_id === recurringPayableRes.body.id));
+
+    const sourcedItem = sourcedItemRes.body.items.find((item: { source_id: string }) => item.source_id === recurringPayableRes.body.id);
+    assert.ok(sourcedItem);
+    const removeSourcedItemRes = await request(app)
+      .delete(`/finance/simulations/${scenarioRes.body.id}/items/${sourcedItem.id}`)
+      .set(authHeader);
+    assert.equal(removeSourcedItemRes.status, 200, JSON.stringify(removeSourcedItemRes.body));
 
     const deleteItemRes = await request(app)
       .delete(`/finance/simulations/${scenarioRes.body.id}/items/${partialRes.body.items[2].id}`)

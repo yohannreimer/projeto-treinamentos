@@ -96,6 +96,87 @@ const mocks = vi.hoisted(() => {
       }
     ]
   };
+  const withSameDayOutflows = {
+    ...baseScenario,
+    result: {
+      ...baseScenario.result,
+      starting_balance_cents: 2222073,
+      total_outflow_cents: 1155000,
+      ending_balance_cents: 1067073,
+      minimum_balance_cents: 1067073,
+      item_count: 4,
+      timeline: [
+        { date: '2026-10-01', inflow_cents: 0, outflow_cents: 1155000, net_cents: -1155000, balance_cents: 1067073 },
+        { date: '2026-10-02', inflow_cents: 0, outflow_cents: 0, net_cents: 0, balance_cents: 1067073 }
+      ]
+    },
+    items: [
+      {
+        id: 'item-pay-1',
+        organization_id: 'org-holand',
+        company_id: null,
+        financial_simulation_scenario_id: 'sim-1',
+        source_type: 'payable',
+        source_id: 'pay-peterson',
+        kind: 'scheduled_outflow',
+        label: 'Pagamento Peterson',
+        amount_cents: 600000,
+        event_date: '2026-10-01',
+        probability_percent: 100,
+        note: null,
+        created_at: '2026-04-23T20:00:00.000Z',
+        updated_at: '2026-04-23T20:00:00.000Z'
+      },
+      {
+        id: 'item-pay-2',
+        organization_id: 'org-holand',
+        company_id: null,
+        financial_simulation_scenario_id: 'sim-1',
+        source_type: 'payable',
+        source_id: 'pay-aluguel-1',
+        kind: 'scheduled_outflow',
+        label: 'Aluguel',
+        amount_cents: 250000,
+        event_date: '2026-10-01',
+        probability_percent: 100,
+        note: null,
+        created_at: '2026-04-23T20:01:00.000Z',
+        updated_at: '2026-04-23T20:01:00.000Z'
+      },
+      {
+        id: 'item-pay-3',
+        organization_id: 'org-holand',
+        company_id: null,
+        financial_simulation_scenario_id: 'sim-1',
+        source_type: 'payable',
+        source_id: 'pay-aluguel-2',
+        kind: 'scheduled_outflow',
+        label: 'Aluguel',
+        amount_cents: 250000,
+        event_date: '2026-10-01',
+        probability_percent: 100,
+        note: null,
+        created_at: '2026-04-23T20:02:00.000Z',
+        updated_at: '2026-04-23T20:02:00.000Z'
+      },
+      {
+        id: 'item-pay-4',
+        organization_id: 'org-holand',
+        company_id: null,
+        financial_simulation_scenario_id: 'sim-1',
+        source_type: 'payable',
+        source_id: 'pay-contabilidade',
+        kind: 'scheduled_outflow',
+        label: 'Contabilidade',
+        amount_cents: 55000,
+        event_date: '2026-10-01',
+        probability_percent: 100,
+        note: null,
+        created_at: '2026-04-23T20:03:00.000Z',
+        updated_at: '2026-04-23T20:03:00.000Z'
+      }
+    ]
+  };
   const sources = {
     balance: {
       id: 'balance-current',
@@ -123,9 +204,22 @@ const mocks = vi.hoisted(() => {
         cadence: 'one_time'
       },
       {
+        id: 'payable-pay-overdue',
+        label: 'Aluguel antigo',
+        detail: 'Agile2 · overdue',
+        amount_cents: 250000,
+        event_date: '2026-10-01',
+        original_event_date: '2026-09-08',
+        kind: 'scheduled_outflow',
+        source_type: 'payable',
+        source_id: 'pay-overdue',
+        tone: 'outflow',
+        cadence: 'one_time'
+      },
+      {
         id: 'payable-pay-1',
         label: 'Aluguel sala',
-        detail: 'Recorrente · Conta a pagar pendente',
+        detail: 'Recorrente · Peterson Nunes · open',
         amount_cents: 680000,
         event_date: '2026-10-03',
         kind: 'scheduled_outflow',
@@ -141,6 +235,7 @@ const mocks = vi.hoisted(() => {
     detail,
     withItem,
     withOutflow,
+    withSameDayOutflows,
     sources,
     listSimulations: vi.fn(),
     listSimulationSources: vi.fn(),
@@ -242,6 +337,53 @@ test('FinanceSimulationPage creates a table and pulls real financial sources int
   });
 
   expect(await screen.findByText('Linha puxada do financeiro.')).toBeInTheDocument();
+});
+
+test('FinanceSimulationPage shows running balance after each movement on the same day', async () => {
+  mocks.getSimulation.mockResolvedValue(mocks.withSameDayOutflows);
+  render(<FinanceSimulationPage />);
+
+  const table = await screen.findByRole('table', { name: 'Planilha de simulação financeira' });
+  const rows = within(table).getAllByRole('row');
+  expect(rows[1]).toHaveTextContent('R$ 22.220,73');
+  expect(rows[2]).toHaveTextContent('R$ 16.220,73');
+  expect(rows[3]).toHaveTextContent('R$ 13.720,73');
+  expect(rows[4]).toHaveTextContent('R$ 11.220,73');
+  expect(rows[5]).toHaveTextContent('R$ 10.670,73');
+});
+
+test('FinanceSimulationPage localizes source status, keeps original overdue date visible and hides sources already in the scenario', async () => {
+  mocks.getSimulation.mockResolvedValue({
+    ...mocks.withItem,
+    items: [
+      ...mocks.withItem.items,
+      {
+        id: 'item-used-payable',
+        organization_id: 'org-holand',
+        company_id: null,
+        financial_simulation_scenario_id: 'sim-1',
+        source_type: 'payable',
+        source_id: 'pay-1',
+        kind: 'scheduled_outflow',
+        label: 'Aluguel sala',
+        amount_cents: 680000,
+        event_date: '2026-10-03',
+        probability_percent: 100,
+        note: null,
+        created_at: '2026-04-23T20:00:00.000Z',
+        updated_at: '2026-04-23T20:00:00.000Z'
+      }
+    ]
+  });
+  render(<FinanceSimulationPage />);
+
+  expect(await screen.findByText('Aluguel antigo')).toBeInTheDocument();
+  const sourceLibrary = screen.getByText('Fontes do financeiro').closest('section');
+  expect(sourceLibrary).not.toBeNull();
+  expect(within(sourceLibrary as HTMLElement).getByText('Agile2 · Atrasado · 08/09/2026')).toBeInTheDocument();
+  expect(within(sourceLibrary as HTMLElement).queryByText('Aluguel sala')).not.toBeInTheDocument();
+  expect(within(sourceLibrary as HTMLElement).queryByText(/open/i)).not.toBeInTheDocument();
+  expect(within(sourceLibrary as HTMLElement).queryByText(/overdue/i)).not.toBeInTheDocument();
 });
 
 test('FinanceSimulationPage supports manual rows, cell editing, removal and scenario actions', async () => {

@@ -819,6 +819,7 @@ export type FinanceSimulationSource = {
   detail: string;
   amount_cents: number;
   event_date: string;
+  original_event_date?: string | null;
   kind: FinanceSimulationSourceKind;
   source_type: FinanceSimulationItemSource | 'balance';
   source_id: string | null;

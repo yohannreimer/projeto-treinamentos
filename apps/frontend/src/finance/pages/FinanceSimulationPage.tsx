@@ -79,8 +79,30 @@ function signedItemAmount(item: FinanceSimulationItem) {
   return itemKindTone(item.kind) === 'outflow' ? -item.amount_cents : item.amount_cents;
 }
 
+function signedItemProjectedAmount(item: FinanceSimulationItem) {
+  const weightedAmount = Math.round(Math.abs(item.amount_cents) * Math.min(100, Math.max(0, item.probability_percent)) / 100);
+  return itemKindTone(item.kind) === 'outflow' ? -weightedAmount : weightedAmount;
+}
+
 function netLabel(cents: number) {
   return `${cents >= 0 ? '+' : ''}${formatCurrency(cents)}`;
+}
+
+function localizedSourceDetail(source: FinanceSimulationSource) {
+  const statusLabels: Record<string, string> = {
+    planned: 'Planejado',
+    open: 'Aberto',
+    partial: 'Parcial',
+    paid: 'Pago',
+    received: 'Recebido',
+    overdue: 'Atrasado',
+    canceled: 'Cancelado'
+  };
+  const detail = source.detail
+    .split(' · ')
+    .map((part) => statusLabels[part.trim().toLowerCase()] ?? part)
+    .join(' · ');
+  return `${detail} · ${formatDate(source.original_event_date ?? source.event_date)}`;
 }
 
 function escapeHtml(value: string) {
@@ -435,12 +457,18 @@ export function FinanceSimulationPage() {
   const draggingSource = availableSources.find((source) => source.id === draggingSourceId) ?? null;
   const editingItem = selected?.items.find((item) => item.id === editingItemId) ?? null;
   const normalizedSourceSearch = sourceSearch.trim().toLowerCase();
+  const usedSourceKeys = useMemo(() => new Set(
+    (selected?.items ?? [])
+      .filter((item) => item.source_id)
+      .map((item) => `${item.source_type}:${item.source_id}`)
+  ), [selected?.items]);
   const filteredSources = availableSources.filter((source) => {
+    if (source.source_id && usedSourceKeys.has(`${source.source_type}:${source.source_id}`)) return false;
     const matchesView = sourceView === 'all'
       || (sourceView === 'inflow' && source.tone === 'inflow')
       || (sourceView === 'outflow' && source.tone === 'outflow')
       || (sourceView === 'recurring' && source.cadence === 'recurring')
-      || (sourceView === 'overdue' && source.detail.toLowerCase().includes('overdue'));
+      || (sourceView === 'overdue' && ['overdue', 'atrasado'].some((status) => source.detail.toLowerCase().includes(status)));
     const matchesSearch = !normalizedSourceSearch
       || source.label.toLowerCase().includes(normalizedSourceSearch)
       || source.detail.toLowerCase().includes(normalizedSourceSearch);
@@ -459,10 +487,21 @@ export function FinanceSimulationPage() {
   const balanceByDate = useMemo(() => (
     new Map((selected?.result.timeline ?? []).map((point) => [point.date, point.balance_cents]))
   ), [selected]);
+  const runningBalanceByItemId = useMemo(() => {
+    const balances = new Map<string, number>();
+    let balance = selected?.result.starting_balance_cents ?? 0;
+    sortedItems.forEach((item) => {
+      balance += signedItemProjectedAmount(item);
+      balances.set(item.id, balance);
+    });
+    return balances;
+  }, [selected?.result.starting_balance_cents, sortedItems]);
   const startingPoint = selected?.result.timeline[0] ?? null;
   const endingPoint = selected?.result.timeline[selected.result.timeline.length - 1] ?? null;
 
   function balanceAfterItem(item: FinanceSimulationItem) {
+    const itemBalance = runningBalanceByItemId.get(item.id);
+    if (typeof itemBalance === 'number') return itemBalance;
     const exact = balanceByDate.get(item.event_date);
     if (typeof exact === 'number') return exact;
     const previous = [...(selected?.result.timeline ?? [])].filter((point) => point.date <= item.event_date).pop();
@@ -1032,7 +1071,7 @@ export function FinanceSimulationPage() {
               >
                 <div>
                   <strong>{source.label}</strong>
-                  <span>{source.detail} · {formatDate(source.event_date)}</span>
+                  <span>{localizedSourceDetail(source)}</span>
                 </div>
                 <FinanceMono>{formatCurrency(source.amount_cents)}</FinanceMono>
                 <button type="button" className="finance-advanced-button" onClick={() => { void addSource(source); }} disabled={busyKey === `source-${source.id}`}>

@@ -159,7 +159,7 @@ test('payables page renders and submits a new payable', async () => {
 
 test('payables page keeps a manually changed category when entity defaults finish loading later', async () => {
   const { financeApi } = await import('../api');
-  let resolveProfile: (value: unknown) => void = () => undefined;
+  let resolveProfile: (value: Awaited<ReturnType<typeof financeApi.getEntityDefaultProfile>>) => void = () => undefined;
   vi.mocked(financeApi.getEntityDefaultProfile).mockImplementationOnce(() => new Promise((resolve) => {
     resolveProfile = resolve;
   }) as ReturnType<typeof financeApi.getEntityDefaultProfile>);
