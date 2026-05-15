@@ -2,8 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { promisify } from 'node:util';
 import express, { type Express, type Request } from 'express';
-import puppeteer from 'puppeteer-core';
 import { z } from 'zod';
 import { clearAllData, db, nowDateIso, uuid } from './db.js';
 import { appendAndProject, getHoursLedger, getHoursPending, getHoursSummary } from './hours/service.js';
@@ -70,6 +72,7 @@ const IMPLEMENTATION_KANBAN_DEFAULT_COLUMNS = [
 const SERVER_FILE_PATH = fileURLToPath(import.meta.url);
 const SERVER_DIR = path.dirname(SERVER_FILE_PATH);
 const PROJECT_ROOT_FROM_SERVER = path.resolve(SERVER_DIR, '..', '..', '..');
+const execFileAsync = promisify(execFile);
 const CERTIFICATE_TEMPLATE_PATH_CANDIDATES = [
   path.resolve(SERVER_DIR, 'templates/certificate_holand.html'),
   path.resolve(PROJECT_ROOT_FROM_SERVER, 'apps/backend/src/templates/certificate_holand.html'),
@@ -570,41 +573,28 @@ function resolvePdfBrowserExecutablePath(): string {
 
 async function renderPdfFromHtml(html: string): Promise<Buffer> {
   const executablePath = resolvePdfBrowserExecutablePath();
-  const browser = await puppeteer.launch({
-    executablePath,
-    headless: true,
-    args: [
+  const workDir = fs.mkdtempSync(path.join(tmpdir(), 'orq-certificate-'));
+  const htmlPath = path.join(workDir, 'certificate.html');
+  const pdfPath = path.join(workDir, 'certificate.pdf');
+  try {
+    fs.writeFileSync(htmlPath, html, 'utf-8');
+    await execFileAsync(executablePath, [
+      '--headless=new',
       '--no-sandbox',
       '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
-      '--font-render-hinting=none'
-    ]
-  });
-
-  try {
-    const page = await browser.newPage();
-    await page.setViewport({ width: 1400, height: 1000, deviceScaleFactor: 2 });
-    await page.setContent(html, { waitUntil: 'networkidle0' });
-    await page.emulateMediaType('screen');
-    await page.evaluate(async () => {
-      const fontsReady = (document as any)?.fonts?.ready;
-      if (fontsReady) {
-        await fontsReady;
-      }
+      '--disable-gpu',
+      '--run-all-compositor-stages-before-draw',
+      '--print-to-pdf-no-header',
+      `--print-to-pdf=${pdfPath}`,
+      `file://${htmlPath}`
+    ], {
+      timeout: 60_000,
+      maxBuffer: 1024 * 1024
     });
-    const pdfBuffer = await page.pdf({
-      printBackground: true,
-      preferCSSPageSize: true,
-      margin: {
-        top: '0mm',
-        right: '0mm',
-        bottom: '0mm',
-        left: '0mm'
-      }
-    });
-    return Buffer.from(pdfBuffer);
+    return fs.readFileSync(pdfPath);
   } finally {
-    await browser.close();
+    fs.rmSync(workDir, { recursive: true, force: true });
   }
 }
 
@@ -759,6 +749,34 @@ function replaceTemplateTokens(html: string, tokens: Array<[string, string]>): s
     output = output.split(`{{${token}}}`).join(value);
   });
   return output;
+}
+
+function certificateSubjectLabel(participants: Array<{ participant_name: string }>): string {
+  return participants.length > 0 ? 'Colaboradores Certificados' : 'Empresa Certificada';
+}
+
+function certificateSubjectCardsHtml(participants: Array<{ participant_name: string }>, companyName: string): string {
+  const subjects = participants.length > 0
+    ? participants.map((participant) => ({
+        name: participant.participant_name,
+        role: 'Participante'
+      }))
+    : [{
+        name: companyName,
+        role: 'Empresa'
+      }];
+
+  return subjects
+    .map((subject, index) => {
+      const position = String(index + 1).padStart(2, '0');
+      return `
+        <div class="employee-card">
+          <div class="employee-num">${position}</div>
+          <div class="employee-name">${escapeHtml(subject.name)}</div>
+          <div class="employee-role">${escapeHtml(subject.role)}</div>
+        </div>`;
+    })
+    .join('');
 }
 
 function upsertCertificateDocument(args: {
@@ -928,10 +946,6 @@ export async function buildCompanyModuleCertificate(args: {
       } | undefined
     : undefined;
 
-  if (!isDeliverableCertificate && !latestAllocation) {
-    throw new Error('Nenhuma turma encontrada para emitir o certificado deste treinamento.');
-  }
-
   const participants = latestAllocation
     ? db.prepare(`
         select cp.participant_name
@@ -941,10 +955,6 @@ export async function buildCompanyModuleCertificate(args: {
         order by cp.participant_name asc
       `).all(latestAllocation.cohort_id, company.id, moduleRow.id) as Array<{ participant_name: string }>
     : [];
-
-  if (!isDeliverableCertificate && participants.length === 0) {
-    throw new Error('Nenhum participante desta empresa está vinculado ao módulo na turma encontrada.');
-  }
 
   const issueDateIso = nowDateIso();
   const trainingName = moduleShortLabel(moduleRow.module_name);
@@ -959,17 +969,7 @@ export async function buildCompanyModuleCertificate(args: {
 
   const totalDays = Math.max(1, Number(latestAllocation?.duration_days ?? moduleRow.duration_days) || 1);
   const totalHours = totalDays * 8;
-  const employeeCardsHtml = participants
-    .map((participant, index) => {
-      const position = String(index + 1).padStart(2, '0');
-      return `
-        <div class="employee-card">
-          <div class="employee-num">${position}</div>
-          <div class="employee-name">${escapeHtml(participant.participant_name)}</div>
-          <div class="employee-role">Participante</div>
-        </div>`;
-    })
-    .join('');
+  const employeeCardsHtml = certificateSubjectCardsHtml(participants, company.name);
 
   const template = isDeliverableCertificate ? readDeliverableCertificateTemplate() : readCertificateTemplate();
   const html = replaceTemplateTokens(template, isDeliverableCertificate
@@ -984,6 +984,7 @@ export async function buildCompanyModuleCertificate(args: {
         ['COMPANY_NAME', escapeHtml(company.name)],
         ['COURSE_NAME', escapeHtml(trainingName)],
         ['COURSE_HOURS', escapeHtml(`⏱ ${totalDays} diária(s) (${totalHours}h)`)],
+        ['EMPLOYEES_LABEL', escapeHtml(certificateSubjectLabel(participants))],
         ['EMPLOYEES_GRID', employeeCardsHtml],
         ['TECHNICIAN_NAME', escapeHtml(latestAllocation?.technician_name ?? 'Sem técnico definido')],
         ['EMIT_DATE', escapeHtml(formatLongDatePtBr(issueDateIso))],
@@ -1009,7 +1010,9 @@ export async function buildCompanyModuleCertificate(args: {
   const pdfBuffer = await renderPdfFromHtml(applyPdfLayoutOverrides(html));
   const certificateDocumentKey = isDeliverableCertificate
     ? `CERTIFICADO_CLIENTE_MODULO:${company.id}:${moduleRow.id}:entregavel`
-    : `CERTIFICADO_TURMA_MODULO:${latestAllocation?.cohort_id}:${company.id}:${moduleRow.id}`;
+    : latestAllocation
+      ? `CERTIFICADO_TURMA_MODULO:${latestAllocation.cohort_id}:${company.id}:${moduleRow.id}`
+      : `CERTIFICADO_CLIENTE_MODULO:${company.id}:${moduleRow.id}:treinamento`;
   const certificateDocumentNotes = [
     '[CERTIFICADO_AUTOMATICO]',
     `Chave: ${certificateDocumentKey}`,
@@ -1020,7 +1023,9 @@ export async function buildCompanyModuleCertificate(args: {
     `Módulo: ${isDeliverableCertificate ? `${deliverableLabels.name} - ${deliverableLabels.subtitle}` : trainingName}`,
     isDeliverableCertificate
       ? 'Status: Concluído & Aprovado'
-      : `Participantes: ${participants.map((item) => item.participant_name).join(' | ')}`,
+      : participants.length > 0
+        ? `Participantes: ${participants.map((item) => item.participant_name).join(' | ')}`
+        : 'Participantes: certificado emitido para a empresa',
     `Emitido em: ${formatLongDatePtBr(issueDateIso)}`
   ].join('\n');
 
@@ -4146,10 +4151,6 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       order by cp.participant_name asc
     `).all(req.params.id, companyId, requestedModuleId) as Array<{ participant_name: string }>;
   
-    if (!isDeliverableCertificate && participants.length === 0) {
-      return res.status(400).json({ message: 'Nenhum participante desta empresa está vinculado ao módulo selecionado.' });
-    }
-  
     const totalDays = Math.max(1, Number(moduleRow.duration_days) || 1);
     const totalHours = totalDays * 8;
     const trainingName = moduleShortLabel(moduleRow.module_name);
@@ -4162,17 +4163,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       issueDateIso.replace(/-/g, '')
     ].filter(Boolean).join('-');
   
-    const employeeCardsHtml = participants
-      .map((participant, index) => {
-        const position = String(index + 1).padStart(2, '0');
-        return `
-        <div class="employee-card">
-          <div class="employee-num">${position}</div>
-          <div class="employee-name">${escapeHtml(participant.participant_name)}</div>
-          <div class="employee-role">Participante</div>
-        </div>`;
-      })
-      .join('');
+    const employeeCardsHtml = certificateSubjectCardsHtml(participants, company.name);
   
     try {
       let html = isDeliverableCertificate ? readDeliverableCertificateTemplate() : readCertificateTemplate();
@@ -4189,6 +4180,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
             ['COMPANY_NAME', escapeHtml(company.name)],
             ['COURSE_NAME', escapeHtml(trainingName || cohort.name)],
             ['COURSE_HOURS', escapeHtml(`⏱ ${totalDays} diária(s) (${totalHours}h)`)],
+            ['EMPLOYEES_LABEL', escapeHtml(certificateSubjectLabel(participants))],
             ['EMPLOYEES_GRID', employeeCardsHtml],
             ['TECHNICIAN_NAME', escapeHtml(cohort.technician_name ?? 'Sem técnico definido')],
             ['EMIT_DATE', escapeHtml(formatLongDatePtBr(issueDateIso))],
@@ -4227,7 +4219,9 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
         `Módulo: ${isDeliverableCertificate ? `${deliverableLabels.name} - ${deliverableLabels.subtitle}` : trainingName}`,
         isDeliverableCertificate
           ? 'Status: Concluído & Aprovado'
-          : `Participantes: ${participants.map((item) => item.participant_name).join(' | ')}`,
+          : participants.length > 0
+            ? `Participantes: ${participants.map((item) => item.participant_name).join(' | ')}`
+            : 'Participantes: certificado emitido para a empresa',
         `Emitido em: ${formatLongDatePtBr(issueDateIso)}`
       ].join('\n');
       upsertCertificateDocument({
@@ -4248,203 +4242,26 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
   });
 
   app.get('/companies/:companyId/modules/:moduleId/certificate', async (req, res) => {
-    const company = db.prepare(`
-      select id, name
-      from company
-      where id = ?
-    `).get(req.params.companyId) as { id: string; name: string } | undefined;
-
-    if (!company) {
-      return res.status(404).json({ message: 'Empresa não encontrada.' });
-    }
-
-    const moduleRow = db.prepare(`
-      select
-        id,
-        code as module_code,
-        name as module_name,
-        duration_days,
-        coalesce(delivery_mode, 'ministrado') as delivery_mode
-      from module_template
-      where id = ?
-    `).get(req.params.moduleId) as {
-      id: string;
-      module_code: string;
-      module_name: string;
-      duration_days: number;
-      delivery_mode: 'ministrado' | 'entregavel';
-    } | undefined;
-
-    if (!moduleRow) {
-      return res.status(404).json({ message: 'Módulo não encontrado.' });
-    }
-
-    if (!hasModuleEnabled(company.id, moduleRow.id)) {
-      return res.status(400).json({ message: 'Módulo está desativado para esta empresa.' });
-    }
-
-    const progress = db.prepare(`
-      select status, completed_at
-      from company_module_progress
-      where company_id = ? and module_id = ?
-    `).get(company.id, moduleRow.id) as { status: ModuleProgressStatus; completed_at: string | null } | undefined;
-
-    if (progress?.status !== 'Concluido') {
-      return res.status(400).json({ message: 'Conclua o módulo na jornada antes de emitir o certificado.' });
-    }
-
-    const isDeliverableCertificate = moduleRow.delivery_mode === 'entregavel';
-    const latestAllocation = !isDeliverableCertificate
-      ? db.prepare(`
-          select
-            a.cohort_id,
-            a.status as allocation_status,
-            a.executed_at,
-            c.code as cohort_code,
-            c.name as cohort_name,
-            c.status as cohort_status,
-            c.start_date,
-            c.technician_id,
-            t.name as technician_name,
-            coalesce(cmb.duration_days, ?) as duration_days
-          from cohort_allocation a
-          join cohort c on c.id = a.cohort_id
-          left join technician t on t.id = c.technician_id
-          left join cohort_module_block cmb on cmb.cohort_id = a.cohort_id and cmb.module_id = a.module_id
-          where a.company_id = ?
-            and a.module_id = ?
-            and a.status <> 'Cancelado'
-          order by
-            case when a.status = 'Executado' then 0 else 1 end asc,
-            date(coalesce(a.executed_at, c.start_date)) desc,
-            c.code desc
-          limit 1
-        `).get(moduleRow.duration_days, company.id, moduleRow.id) as {
-          cohort_id: string;
-          allocation_status: string;
-          executed_at: string | null;
-          cohort_code: string;
-          cohort_name: string;
-          cohort_status: string;
-          start_date: string;
-          technician_id: string | null;
-          technician_name: string | null;
-          duration_days: number;
-        } | undefined
-      : undefined;
-
-    if (!isDeliverableCertificate && !latestAllocation) {
-      return res.status(400).json({ message: 'Nenhuma turma encontrada para emitir o certificado deste treinamento.' });
-    }
-
-    const participants = latestAllocation
-      ? db.prepare(`
-          select cp.participant_name
-          from cohort_participant cp
-          join cohort_participant_module cpm on cpm.participant_id = cp.id
-          where cp.cohort_id = ? and cp.company_id = ? and cpm.module_id = ?
-          order by cp.participant_name asc
-        `).all(latestAllocation.cohort_id, company.id, moduleRow.id) as Array<{ participant_name: string }>
-      : [];
-
-    if (!isDeliverableCertificate && participants.length === 0) {
-      return res.status(400).json({ message: 'Nenhum participante desta empresa está vinculado ao módulo na turma encontrada.' });
-    }
-
-    const issueDateIso = nowDateIso();
-    const trainingName = moduleShortLabel(moduleRow.module_name);
-    const deliverableLabels = deliverableCertificateLabels(moduleRow.module_name);
-    const certCode = [
-      'CERT',
-      normalizeCertToken(latestAllocation?.cohort_code || 'JORNADA'),
-      normalizeCertToken(company.name || 'EMPRESA'),
-      normalizeCertToken(moduleRow.module_code || moduleRow.module_name || moduleRow.id),
-      issueDateIso.replace(/-/g, '')
-    ].filter(Boolean).join('-');
-
-    const totalDays = Math.max(1, Number(latestAllocation?.duration_days ?? moduleRow.duration_days) || 1);
-    const totalHours = totalDays * 8;
-    const employeeCardsHtml = participants
-      .map((participant, index) => {
-        const position = String(index + 1).padStart(2, '0');
-        return `
-        <div class="employee-card">
-          <div class="employee-num">${position}</div>
-          <div class="employee-name">${escapeHtml(participant.participant_name)}</div>
-          <div class="employee-role">Participante</div>
-        </div>`;
-      })
-      .join('');
-
     try {
-      const template = isDeliverableCertificate ? readDeliverableCertificateTemplate() : readCertificateTemplate();
-      const html = replaceTemplateTokens(template, isDeliverableCertificate
-        ? [
-            ['COMPANY_NAME', escapeHtml(company.name)],
-            ['DELIVERABLE_NAME', escapeHtml(deliverableLabels.name)],
-            ['DELIVERABLE_SUBTITLE', escapeHtml(deliverableLabels.subtitle)],
-            ['EMIT_DATE', escapeHtml(formatLongDatePtBr(issueDateIso))],
-            ['CERT_CODE', escapeHtml(certCode)]
-          ]
-        : [
-            ['COMPANY_NAME', escapeHtml(company.name)],
-            ['COURSE_NAME', escapeHtml(trainingName)],
-            ['COURSE_HOURS', escapeHtml(`⏱ ${totalDays} diária(s) (${totalHours}h)`)],
-            ['EMPLOYEES_GRID', employeeCardsHtml],
-            ['TECHNICIAN_NAME', escapeHtml(latestAllocation?.technician_name ?? 'Sem técnico definido')],
-            ['EMIT_DATE', escapeHtml(formatLongDatePtBr(issueDateIso))],
-            ['CERT_CODE', escapeHtml(certCode)]
-          ]);
-
       const format = typeof req.query.format === 'string'
         ? req.query.format.trim().toLowerCase()
         : 'pdf';
       const shouldDownload = String(req.query.download ?? '1') !== '0';
-      const moduleFileLabel = isDeliverableCertificate
-        ? `${deliverableLabels.name} - ${deliverableLabels.subtitle}`
-        : (trainingName || moduleRow.module_name);
-      const fileBase = `Certificado - ${normalizeFileLabelPart(company.name)} - ${normalizeFileLabelPart(moduleFileLabel)}`;
-
-      if (format === 'html') {
-        const encodedFileName = encodeURIComponent(`${fileBase}.html`);
-        res.setHeader('Content-Type', 'text/html; charset=utf-8');
-        res.setHeader('Content-Disposition', `${shouldDownload ? 'attachment' : 'inline'}; filename*=UTF-8''${encodedFileName}`);
-        return res.send(html);
-      }
-
-      const pdfHtml = applyPdfLayoutOverrides(html);
-      const pdfBuffer = await renderPdfFromHtml(pdfHtml);
-      const certificateDocumentKey = isDeliverableCertificate
-        ? `CERTIFICADO_CLIENTE_MODULO:${company.id}:${moduleRow.id}:entregavel`
-        : `CERTIFICADO_TURMA_MODULO:${latestAllocation?.cohort_id}:${company.id}:${moduleRow.id}`;
-      const certificateDocumentNotes = [
-        '[CERTIFICADO_AUTOMATICO]',
-        `Chave: ${certificateDocumentKey}`,
-        `Código: ${certCode}`,
-        `Tipo: ${isDeliverableCertificate ? 'Entregável' : 'Treinamento ministrado'}`,
-        latestAllocation ? `Turma: ${latestAllocation.cohort_code}` : 'Turma: Jornada do cliente',
-        `Empresa: ${company.name}`,
-        `Módulo: ${isDeliverableCertificate ? `${deliverableLabels.name} - ${deliverableLabels.subtitle}` : trainingName}`,
-        isDeliverableCertificate
-          ? 'Status: Concluído & Aprovado'
-          : `Participantes: ${participants.map((item) => item.participant_name).join(' | ')}`,
-        `Emitido em: ${formatLongDatePtBr(issueDateIso)}`
-      ].join('\n');
-
-      upsertCertificateDocument({
-        documentKey: certificateDocumentKey,
-        title: fileBase,
-        notes: certificateDocumentNotes,
-        fileBase,
-        pdfBuffer
+      const certificate = await buildCompanyModuleCertificate({
+        companyId: req.params.companyId,
+        moduleId: req.params.moduleId,
+        format: format === 'html' ? 'html' : 'pdf',
+        shouldDownload
       });
 
-      const encodedFileName = encodeURIComponent(`${fileBase}.pdf`);
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `${shouldDownload ? 'attachment' : 'inline'}; filename*=UTF-8''${encodedFileName}`);
-      return res.send(pdfBuffer);
+      const encodedFileName = encodeURIComponent(certificate.fileName);
+      res.setHeader('Content-Type', certificate.contentType);
+      res.setHeader('Content-Disposition', `${certificate.disposition}; filename*=UTF-8''${encodedFileName}`);
+      return res.send(certificate.body);
     } catch (error) {
-      return res.status(500).json({ message: 'Erro ao gerar certificado.', detail: errorMessage(error) });
+      const detail = errorMessage(error);
+      const status = detail === 'Empresa não encontrada.' || detail === 'Módulo não encontrado.' ? 404 : 400;
+      return res.status(status).json({ message: 'Erro ao gerar certificado.', detail });
     }
   });
   
