@@ -763,11 +763,11 @@ export function InternalDocsPage() {
         throw new Error(await errorMessageFromResponse(response, 'Falha ao abrir prévia do documento.'));
       }
 
-      if (isCertificateSurveyDocument(row) && row.mime_type.includes('application/json')) {
-        const text = await response.text();
+      if (isCertificateSurveyDocument(row)) {
+        const text = row.mime_type.includes('application/json') ? await response.text() : '';
         setPreviewSurvey({
           row,
-          data: text.trim()
+          data: row.mime_type.includes('application/json') && text.trim()
             ? parseCertificateSurveyJson(text, row)
             : parseCertificateSurveyNotes(row)
         });
@@ -1240,6 +1240,7 @@ export function InternalDocsPage() {
                 </p>
               </div>
               <div className="actions actions-compact">
+                <button type="button" onClick={() => void downloadDocument(previewSurvey.row)}>Baixar</button>
                 <button type="button" onClick={closePreview}>Fechar</button>
               </div>
             </header>
