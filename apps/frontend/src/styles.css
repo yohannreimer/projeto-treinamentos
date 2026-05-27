@@ -10405,6 +10405,10 @@ button:focus-visible,
     grid-template-columns: 34px minmax(0, 1fr);
   }
 
+  .docs-row--result {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
   .docs-survey-summary {
     grid-template-columns: 1fr;
   }
