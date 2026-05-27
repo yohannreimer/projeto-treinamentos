@@ -93,6 +93,32 @@ type FolderNode = {
   children: FolderNode[];
 };
 
+type SearchScope = 'current' | 'all';
+type DocsPanelMode = 'details' | 'new-folder' | 'upload';
+type DocsItemKind = 'folder' | 'document' | 'certificate' | 'survey' | 'followup';
+
+type DocsItem = {
+  id: string;
+  kind: DocsItemKind;
+  title: string;
+  subtitle: string;
+  path: string;
+  pathLabel: string;
+  updatedAt?: string | null;
+  folder?: FolderNode;
+  document?: InternalDocumentRow;
+  followup?: FollowupEvaluationRow;
+  companyId?: string | null;
+  moduleId?: string | null;
+};
+
+type GroupedDocsResults = {
+  folders: DocsItem[];
+  surveys: DocsItem[];
+  certificates: DocsItem[];
+  files: DocsItem[];
+};
+
 const MAX_DOC_UPLOAD_BYTES = 6_000_000;
 const ROOT_PATH = '/';
 const CLIENTS_PATH = '/Clientes';
@@ -350,6 +376,9 @@ export function InternalDocsPage() {
   const [previewSurvey, setPreviewSurvey] = useState<CertificateSurveyPreview>(null);
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [showActionsPanel, setShowActionsPanel] = useState(false);
+  const [searchScope, setSearchScope] = useState<SearchScope>('current');
+  const [selectedItem, setSelectedItem] = useState<DocsItem | null>(null);
+  const [panelMode, setPanelMode] = useState<DocsPanelMode>('details');
 
   async function loadAll() {
     const [documentRows, folderRows, companyRows, moduleRows] = await Promise.all([
@@ -448,6 +477,36 @@ export function InternalDocsPage() {
   const selectedCompanyId = selectedCompanyIdFromPath(selectedNode.path);
   const selectedFollowups = selectedCompanyId ? followupsByCompany[selectedCompanyId] ?? [] : [];
   const selectedCompany = selectedCompanyId ? companies.find((company) => company.id === selectedCompanyId) : null;
+  const folderItems = useMemo<DocsItem[]>(() => (
+    collectFolderNodes(tree).map((folder) => ({
+      id: `folder:${folder.path}`,
+      kind: 'folder',
+      title: folder.name,
+      subtitle: folder.system ? 'Pasta automática' : 'Pasta manual',
+      path: folder.path,
+      pathLabel: nodePathLabel(tree, folder.path),
+      folder
+    }))
+  ), [tree]);
+
+  const documentItems = useMemo<DocsItem[]>(() => rows.map((row) => {
+    const path = fileFolderPath(row);
+    const isSurvey = isCertificateSurveyDocument(row);
+    const isCertificate = isCertificateDocument(row);
+    return {
+      id: `document:${row.id}`,
+      kind: isSurvey ? 'survey' : isCertificate ? 'certificate' : 'document',
+      title: isSurvey ? (parseCertificateSurveyNotes(row).module_name ?? row.title) : row.title,
+      subtitle: isSurvey
+        ? `${parseCertificateSurveyNotes(row).respondent_name ?? 'Respondente não identificado'} · ${formatDateBr(parseCertificateSurveyNotes(row).submitted_at ?? row.updated_at)}`
+        : `${row.file_name} · ${formatBytes(row.file_size_bytes)}`,
+      path,
+      pathLabel: nodePathLabel(tree, path),
+      updatedAt: row.updated_at,
+      document: row,
+      companyId: selectedCompanyIdFromPath(path)
+    };
+  }), [rows, tree]);
 
   const documentsInFolder = useMemo(() => rows.filter((row) => fileFolderPath(row) === selectedNode.path), [rows, selectedNode.path]);
   const filteredDocuments = useMemo(() => {
@@ -486,6 +545,31 @@ export function InternalDocsPage() {
     }
     return matches;
   }, [query, selectedNode.children, tree]);
+
+  const isSearchActive = query.trim().length > 0;
+  const searchableItems = useMemo(() => {
+    const scopePath = searchScope === 'current' ? selectedNode.path : ROOT_PATH;
+    return [...folderItems, ...documentItems].filter((item) => (
+      searchScope === 'all' || isDescendantPath(item.path, scopePath)
+    ));
+  }, [documentItems, folderItems, searchScope, selectedNode.path]);
+
+  const groupedResults = useMemo<GroupedDocsResults>(() => {
+    const term = query.trim().toLowerCase();
+    const empty: GroupedDocsResults = { folders: [], surveys: [], certificates: [], files: [] };
+    if (!term) return empty;
+
+    searchableItems.forEach((item) => {
+      const haystack = `${item.title} ${item.subtitle} ${item.pathLabel}`.toLowerCase();
+      if (!haystack.includes(term)) return;
+      if (item.kind === 'folder') empty.folders.push(item);
+      else if (item.kind === 'survey' || item.kind === 'followup') empty.surveys.push(item);
+      else if (item.kind === 'certificate') empty.certificates.push(item);
+      else empty.files.push(item);
+    });
+
+    return empty;
+  }, [query, searchableItems]);
 
   const breadcrumb = useMemo(() => {
     const parts: FolderNode[] = [];
@@ -1020,6 +1104,36 @@ function findNode(root: FolderNode, path: string): FolderNode | null {
     if (found) return found;
   }
   return null;
+}
+
+function isDescendantPath(candidate: string, parent: string): boolean {
+  const normalizedCandidate = normalizeFolderPath(candidate);
+  const normalizedParent = normalizeFolderPath(parent);
+  return normalizedCandidate === normalizedParent || normalizedCandidate.startsWith(`${normalizedParent}/`);
+}
+
+function nodePathLabel(root: FolderNode, path: string): string {
+  const node = findNode(root, path);
+  if (!node) return folderDisplayName(path);
+  const parts: string[] = [];
+  let current: FolderNode | null = node;
+  while (current) {
+    if (current.path !== ROOT_PATH) parts.unshift(current.name);
+    current = current.parentPath ? findNode(root, current.parentPath) : null;
+  }
+  return parts.join(' > ') || 'Documentação';
+}
+
+function collectFolderNodes(root: FolderNode): FolderNode[] {
+  const output: FolderNode[] = [];
+  const stack = [...root.children];
+  while (stack.length > 0) {
+    const node = stack.shift();
+    if (!node) continue;
+    output.push(node);
+    stack.push(...node.children);
+  }
+  return output;
 }
 
 function FolderTree({
