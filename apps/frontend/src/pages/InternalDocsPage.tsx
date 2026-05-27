@@ -379,6 +379,7 @@ export function InternalDocsPage() {
   const [searchScope, setSearchScope] = useState<SearchScope>('current');
   const [, setSelectedItem] = useState<DocsItem | null>(null);
   const [, setPanelMode] = useState<DocsPanelMode>('details');
+  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set([CLIENTS_PATH, INTERNAL_PATH]));
 
   async function loadAll() {
     const [documentRows, folderRows, companyRows, moduleRows] = await Promise.all([
@@ -635,7 +636,7 @@ export function InternalDocsPage() {
         name: newFolderName.trim()
       }) as InternalDocumentFolderRow;
       setFolders((current) => [...current, folder]);
-      setSelectedPath(folder.path);
+      selectFolderPath(folder.path);
       setNewFolderName('');
       setMessage('Pasta criada.');
     } catch (err) {
@@ -796,10 +797,36 @@ export function InternalDocsPage() {
     setPanelMode('details');
   }
 
+  function toggleFolderExpanded(path: string) {
+    setExpandedPaths((current) => {
+      const next = new Set(current);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }
+
+  function expandAncestors(path: string) {
+    setExpandedPaths((existing) => {
+      const next = new Set(existing);
+      let current = parentPath(path);
+      while (current) {
+        next.add(current);
+        current = parentPath(current);
+      }
+      return next;
+    });
+  }
+
+  function selectFolderPath(path: string) {
+    setSelectedPath(path);
+    expandAncestors(path);
+  }
+
   function openDocsItem(item: DocsItem) {
     selectDocsItem(item);
     if (item.kind === 'folder') {
-      setSelectedPath(item.path);
+      selectFolderPath(item.path);
       return;
     }
     if (item.document && canPreviewDocument(item.document)) {
@@ -830,13 +857,19 @@ export function InternalDocsPage() {
               onChange={(event) => setQuery(event.target.value)}
             />
           </div>
-          <FolderTree node={tree} selectedPath={selectedNode.path} onSelect={setSelectedPath} />
+          <FolderTree
+            node={tree}
+            selectedPath={selectedNode.path}
+            expandedPaths={expandedPaths}
+            onSelect={selectFolderPath}
+            onToggle={toggleFolderExpanded}
+          />
         </aside>
 
         <main className="docs-main">
           <nav className="docs-breadcrumb" aria-label="Caminho da pasta">
             {breadcrumb.map((node, index) => (
-              <button key={node.path} type="button" onClick={() => setSelectedPath(node.path)}>
+              <button key={node.path} type="button" onClick={() => selectFolderPath(node.path)}>
                 {index === 0 ? 'Documentação' : node.name}
               </button>
             ))}
@@ -1207,14 +1240,20 @@ function collectFolderNodes(root: FolderNode): FolderNode[] {
 function FolderTree({
   node,
   selectedPath,
+  expandedPaths,
   onSelect,
+  onToggle,
   depth = 0
 }: {
   node: FolderNode;
   selectedPath: string;
+  expandedPaths: Set<string>;
   onSelect: (path: string) => void;
+  onToggle: (path: string) => void;
   depth?: number;
 }) {
+  const expanded = expandedPaths.has(node.path);
+  const hasChildren = node.children.length > 0;
   return (
     <div className="docs-tree-node">
       {node.path !== ROOT_PATH ? (
@@ -1222,24 +1261,30 @@ function FolderTree({
           className={node.path === selectedPath ? 'is-selected' : ''}
           style={{ paddingLeft: `${10 + depth * 14}px` }}
           type="button"
-          onClick={() => onSelect(node.path)}
+          onClick={() => {
+            onSelect(node.path);
+            if (hasChildren) onToggle(node.path);
+          }}
+          aria-expanded={hasChildren ? expanded : undefined}
         >
-          <span aria-hidden="true">□</span>
+          <span aria-hidden="true">{hasChildren ? (expanded ? '▾' : '▸') : '□'}</span>
           <span>
             {node.name}
             <small>{node.system ? 'Pasta automática' : 'Pasta manual'}</small>
           </span>
         </button>
       ) : null}
-      {node.children.map((child) => (
+      {node.path === ROOT_PATH || expanded ? node.children.map((child) => (
         <FolderTree
           depth={node.path === ROOT_PATH ? 0 : depth + 1}
           key={child.path}
           node={child}
           selectedPath={selectedPath}
+          expandedPaths={expandedPaths}
           onSelect={onSelect}
+          onToggle={onToggle}
         />
-      ))}
+      )) : null}
     </div>
   );
 }

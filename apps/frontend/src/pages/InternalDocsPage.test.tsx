@@ -189,4 +189,20 @@ describe('InternalDocsPage', () => {
     expect(screen.getAllByText(/Clientes > Magui Dispositivos de Controle Ltda > Pesquisa de satisfação/i).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Treinamento TopSolid'Cam 7 - Fresamento 2D/i).length).toBeGreaterThan(0);
   });
+
+  test('keeps client module folders collapsed until the user expands them', async () => {
+    const user = userEvent.setup();
+    render(<InternalDocsPage />);
+
+    await screen.findByRole('button', { name: /^Clientes/i });
+    expect(screen.queryByRole('button', { name: /020102010/i })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /^Clientes/i }));
+    await user.click(screen.getByRole('button', { name: /Magui Dispositivos/i }));
+    expect(screen.getByRole('button', { name: /^Módulos/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /020102010/i })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /^Módulos/i }));
+    expect(screen.getByRole('button', { name: /020102010/i })).toBeInTheDocument();
+  });
 });
