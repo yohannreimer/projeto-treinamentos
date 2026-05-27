@@ -6897,11 +6897,14 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       updated_at: string;
     }>;
 
-    return res.json(rows.map((row) => ({
-      ...row,
-      answers: row.answers_json ? JSON.parse(row.answers_json) : null,
-      public_path: `/acompanhamento/${encodeURIComponent(row.token)}`
-    })));
+    return res.json(rows.map((row) => {
+      const { answers_json, ...publicRow } = row;
+      return {
+        ...publicRow,
+        answers: answers_json ? JSON.parse(answers_json) : null,
+        public_path: `/acompanhamento/${encodeURIComponent(row.token)}`
+      };
+    }));
   });
 
   app.post('/companies/:companyId/followup-evaluations', (req, res) => {
@@ -6966,9 +6969,10 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       return res.status(404).json({ message: 'Avaliação não encontrada.' });
     }
 
+    const { answers_json, ...publicRow } = row;
     return res.json({
-      ...row,
-      answers: row.answers_json ? JSON.parse(row.answers_json) : null
+      ...publicRow,
+      answers: answers_json ? JSON.parse(answers_json) : null
     });
   });
 

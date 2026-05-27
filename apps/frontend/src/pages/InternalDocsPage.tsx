@@ -41,9 +41,15 @@ type ModuleRow = {
 type FollowupEvaluationRow = {
   id: string;
   title: string;
+  notes?: string | null;
   status: string;
   respondent_name: string | null;
   rating: number | null;
+  answers?: {
+    what_worked?: string | null;
+    what_to_improve?: string | null;
+    next_priority?: string | null;
+  } | null;
   submitted_at: string | null;
   created_at: string;
   public_path?: string;
@@ -212,6 +218,20 @@ function isSatisfactionPath(path: string) {
   return normalizeFolderPath(path).endsWith(`/${SATISFACTION_SEGMENT}`);
 }
 
+function evaluationStatusLabel(status: string) {
+  if (status === 'Respondida') return 'Respondida';
+  if (status === 'Aberta') return 'Aguardando resposta';
+  return status;
+}
+
+function satisfactionAnswerRows(item: FollowupEvaluationRow) {
+  return [
+    ['Funcionou bem', item.answers?.what_worked],
+    ['Melhorar', item.answers?.what_to_improve],
+    ['Próxima prioridade', item.answers?.next_priority]
+  ].filter(([, value]) => String(value ?? '').trim().length > 0) as Array<[string, string]>;
+}
+
 export function InternalDocsPage() {
   const [rows, setRows] = useState<InternalDocumentRow[]>([]);
   const [folders, setFolders] = useState<InternalDocumentFolderRow[]>([]);
@@ -231,6 +251,7 @@ export function InternalDocsPage() {
   const [previewingId, setPreviewingId] = useState<string | null>(null);
   const [previewDocument, setPreviewDocument] = useState<PreviewDocument>(null);
   const [creatingFolder, setCreatingFolder] = useState(false);
+  const [showActionsPanel, setShowActionsPanel] = useState(false);
 
   async function loadAll() {
     const [documentRows, folderRows, companyRows, moduleRows] = await Promise.all([
@@ -607,12 +628,15 @@ export function InternalDocsPage() {
             {selectedCompany ? <strong className="docs-context-chip">{selectedCompany.name}</strong> : null}
           </section>
 
-          <section className="docs-grid" aria-label="Conteúdo da pasta">
+          <section className="docs-content-list" aria-label="Conteúdo da pasta">
             {visibleFolders.map((folder) => (
-              <button className="docs-folder-card" key={folder.path} type="button" onClick={() => setSelectedPath(folder.path)}>
-                <span aria-hidden="true">□</span>
-                <strong>{folder.name}</strong>
-                <small>{folder.system ? 'Pasta automática' : 'Pasta manual'}</small>
+              <button className="docs-row docs-row--folder" key={folder.path} type="button" onClick={() => setSelectedPath(folder.path)}>
+                <span className="docs-row-icon" aria-hidden="true">□</span>
+                <span>
+                  <strong>{folder.name}</strong>
+                  <small>{folder.system ? 'Pasta automática' : 'Pasta manual'}</small>
+                </span>
+                <em>{folder.children.length} pasta(s)</em>
               </button>
             ))}
 
@@ -620,23 +644,42 @@ export function InternalDocsPage() {
               selectedFollowups.length === 0 ? (
                 <p className="docs-empty-card">Nenhuma pesquisa de satisfação respondida ou criada para este cliente.</p>
               ) : selectedFollowups.map((item) => (
-                <article className="docs-file-card docs-file-card--evaluation" key={item.id}>
-                  <span aria-hidden="true">◇</span>
-                  <strong>{item.title}</strong>
-                  <small>
-                    {item.status} · {item.rating ? `Nota ${item.rating}/5` : 'sem nota'} · {formatDateBr(item.submitted_at ?? item.created_at)}
-                  </small>
-                  <p>{item.respondent_name ?? 'Respondente não identificado'}</p>
+                <article className="docs-evaluation-row" key={item.id}>
+                  <header>
+                    <span className="docs-row-icon" aria-hidden="true">◇</span>
+                    <div>
+                      <strong>{item.title}</strong>
+                      <small>{item.respondent_name ?? 'Respondente não identificado'} · {formatDateBr(item.submitted_at ?? item.created_at)}</small>
+                    </div>
+                    <div className="docs-evaluation-meta">
+                      <span>{evaluationStatusLabel(item.status)}</span>
+                      <strong>{item.rating ? `${item.rating}/5` : 'Sem nota'}</strong>
+                    </div>
+                  </header>
+                  {item.notes ? <p className="docs-evaluation-note">{item.notes}</p> : null}
+                  {satisfactionAnswerRows(item).length > 0 ? (
+                    <dl className="docs-evaluation-answers">
+                      {satisfactionAnswerRows(item).map(([label, value]) => (
+                        <div key={label}>
+                          <dt>{label}</dt>
+                          <dd>{value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  ) : item.status === 'Aberta' ? (
+                    <p className="docs-evaluation-note">Link criado, aguardando o cliente responder.</p>
+                  ) : null}
                 </article>
               ))
             ) : null}
 
             {filteredDocuments.map((row) => (
-              <article className={`docs-file-card ${isCertificateDocument(row) ? 'is-certificate' : ''}`.trim()} key={row.id}>
-                <span aria-hidden="true">{row.mime_type.startsWith('image/') ? '▧' : '▤'}</span>
-                <strong title={row.notes ?? undefined}>{row.title}</strong>
-                <small>{row.file_name} · {formatBytes(row.file_size_bytes)}</small>
-                <p>{query.trim() ? fileFolderPath(row) : row.category ?? 'Sem categoria'}</p>
+              <article className={`docs-row docs-row--file ${isCertificateDocument(row) ? 'is-certificate' : ''}`.trim()} key={row.id}>
+                <span className="docs-row-icon" aria-hidden="true">{row.mime_type.startsWith('image/') ? '▧' : '▤'}</span>
+                <span>
+                  <strong title={row.notes ?? undefined}>{row.title}</strong>
+                  <small>{row.file_name} · {formatBytes(row.file_size_bytes)} · {query.trim() ? fileFolderPath(row) : row.category ?? 'Sem categoria'}</small>
+                </span>
                 <div className="actions actions-compact">
                   {canPreviewDocument(row) ? (
                     <button
@@ -665,7 +708,17 @@ export function InternalDocsPage() {
           </section>
         </main>
 
-        <aside className="docs-actions-panel" aria-label="Ações da pasta">
+        <aside className={`docs-actions-panel ${showActionsPanel ? 'is-open' : ''}`} aria-label="Ações da pasta">
+          <button
+            type="button"
+            className="docs-actions-toggle"
+            onClick={() => setShowActionsPanel((current) => !current)}
+            aria-expanded={showActionsPanel}
+          >
+            {showActionsPanel ? 'Fechar ações' : 'Nova pasta / enviar arquivo'}
+          </button>
+          {showActionsPanel ? (
+            <>
           <Section title="Nova pasta">
             <div className="form form-spacious">
               <label>Nome
@@ -701,6 +754,8 @@ export function InternalDocsPage() {
               </button>
             </div>
           </Section>
+            </>
+          ) : null}
         </aside>
       </div>
 
