@@ -224,4 +224,24 @@ describe('InternalDocsPage', () => {
     expect(within(detailsPanel).getByText('Pesquisa')).toBeInTheDocument();
     expect(within(detailsPanel).getByText(/Clientes > Magui Dispositivos de Controle Ltda/i)).toBeInTheDocument();
   });
+
+  test('selects regular folder documents and clears stale details when navigating', async () => {
+    const user = userEvent.setup();
+    render(<InternalDocsPage />);
+
+    const content = await screen.findByRole('region', { name: 'Conteúdo da pasta' });
+    await user.click(within(content).getByRole('button', { name: /Materiais/i }));
+    await screen.findByText('Material interno de implantação');
+    await user.click(within(content).getByRole('button', { name: 'Detalhes' }));
+
+    const detailsPanel = screen.getByRole('complementary', { name: 'Detalhes e ações' });
+    expect(within(detailsPanel).getAllByText('Arquivo').length).toBeGreaterThan(0);
+    expect(within(detailsPanel).getByText('material.pdf')).toBeInTheDocument();
+
+    const breadcrumb = screen.getByRole('navigation', { name: 'Caminho da pasta' });
+    await user.click(within(breadcrumb).getByRole('button', { name: 'Interna' }));
+
+    expect(within(detailsPanel).getByText(/Selecione uma pasta, pesquisa, certificado ou arquivo/i)).toBeInTheDocument();
+    expect(within(detailsPanel).queryByText('material.pdf')).not.toBeInTheDocument();
+  });
 });

@@ -490,24 +490,14 @@ export function InternalDocsPage() {
     }))
   ), [folders, tree]);
 
-  const documentItems = useMemo<DocsItem[]>(() => rows.map((row) => {
-    const path = fileFolderPath(row);
-    const isSurvey = isCertificateSurveyDocument(row);
-    const isCertificate = isCertificateDocument(row);
-    return {
-      id: `document:${row.id}`,
-      kind: isSurvey ? 'survey' : isCertificate ? 'certificate' : 'document',
-      title: isSurvey ? (parseCertificateSurveyNotes(row).module_name ?? row.title) : row.title,
-      subtitle: isSurvey
-        ? `${parseCertificateSurveyNotes(row).respondent_name ?? 'Respondente não identificado'} · ${formatDateBr(parseCertificateSurveyNotes(row).submitted_at ?? row.updated_at)}`
-        : `${row.file_name} · ${formatBytes(row.file_size_bytes)}`,
-      path,
-      pathLabel: nodePathLabel(tree, path),
-      updatedAt: row.updated_at,
-      document: row,
-      companyId: selectedCompanyIdFromPath(path)
-    };
-  }), [rows, tree]);
+  const documentItems = useMemo<DocsItem[]>(() => rows.map((row) => documentRowToDocsItem(row, tree)), [rows, tree]);
+  const allDocsItems = useMemo(() => [...folderItems, ...documentItems], [documentItems, folderItems]);
+
+  useEffect(() => {
+    if (!selectedItem) return;
+    const currentItem = allDocsItems.find((item) => item.id === selectedItem.id);
+    setSelectedItem(currentItem ?? null);
+  }, [allDocsItems, selectedItem]);
 
   const documentsInFolder = useMemo(() => rows.filter((row) => fileFolderPath(row) === selectedNode.path), [rows, selectedNode.path]);
   const filteredDocuments = useMemo(() => {
@@ -693,6 +683,7 @@ export function InternalDocsPage() {
     setMessage('');
     try {
       await api.deleteInternalDocument(row.id, confirmationPhrase);
+      setSelectedItem((current) => (current?.document?.id === row.id ? null : current));
       setMessage('Documento removido.');
       await loadAll();
     } catch (err) {
@@ -799,6 +790,10 @@ export function InternalDocsPage() {
     setPanelMode('details');
   }
 
+  function selectDocumentRow(row: InternalDocumentRow) {
+    selectDocsItem(documentItems.find((item) => item.document?.id === row.id) ?? documentRowToDocsItem(row, tree));
+  }
+
   function toggleFolderExpanded(path: string) {
     setExpandedPaths((current) => {
       const next = new Set(current);
@@ -822,6 +817,8 @@ export function InternalDocsPage() {
 
   function selectFolderPath(path: string) {
     setSelectedPath(path);
+    setSelectedItem(null);
+    setPanelMode('details');
     expandAncestors(path);
   }
 
@@ -980,6 +977,7 @@ export function InternalDocsPage() {
                         </dl>
                       ) : null}
                       <div className="actions actions-compact">
+                        <button type="button" onClick={() => selectDocumentRow(row)}>Detalhes</button>
                         <button
                           type="button"
                           onClick={() => void previewInternalDocument(row)}
@@ -1029,6 +1027,7 @@ export function InternalDocsPage() {
                       <small>{row.file_name} · {formatBytes(row.file_size_bytes)} · {row.category ?? 'Sem categoria'}</small>
                     </span>
                     <div className="actions actions-compact">
+                      <button type="button" onClick={() => selectDocumentRow(row)}>Detalhes</button>
                       {canPreviewDocument(row) ? (
                         <button
                           type="button"
@@ -1249,6 +1248,25 @@ function collectFolderNodes(root: FolderNode): FolderNode[] {
     stack.push(...node.children);
   }
   return output;
+}
+
+function documentRowToDocsItem(row: InternalDocumentRow, tree: FolderNode): DocsItem {
+  const path = fileFolderPath(row);
+  const survey = isCertificateSurveyDocument(row) ? parseCertificateSurveyNotes(row) : null;
+  const isCertificate = isCertificateDocument(row);
+  return {
+    id: `document:${row.id}`,
+    kind: survey ? 'survey' : isCertificate ? 'certificate' : 'document',
+    title: survey ? (survey.module_name ?? row.title) : row.title,
+    subtitle: survey
+      ? `${survey.respondent_name ?? 'Respondente não identificado'} · ${formatDateBr(survey.submitted_at ?? row.updated_at)}`
+      : `${row.file_name} · ${formatBytes(row.file_size_bytes)}`,
+    path,
+    pathLabel: nodePathLabel(tree, path),
+    updatedAt: row.updated_at,
+    document: row,
+    companyId: selectedCompanyIdFromPath(path)
+  };
 }
 
 function FolderTree({
