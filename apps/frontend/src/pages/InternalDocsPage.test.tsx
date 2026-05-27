@@ -225,6 +225,24 @@ describe('InternalDocsPage', () => {
     expect(within(detailsPanel).getByText(/Clientes > Magui Dispositivos de Controle Ltda/i)).toBeInTheDocument();
   });
 
+  test('opens new folder and upload forms from the Novo menu', async () => {
+    const user = userEvent.setup();
+    render(<InternalDocsPage />);
+
+    await screen.findByRole('heading', { name: 'Documentação' });
+    await user.click(screen.getByRole('button', { name: '+ Novo' }));
+    expect(screen.getByRole('menuitem', { name: 'Nova pasta' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Enviar arquivo' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('menuitem', { name: 'Nova pasta' }));
+    expect(screen.getByRole('heading', { name: 'Nova pasta' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Cancelar' }));
+    await user.click(screen.getByRole('button', { name: '+ Novo' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Enviar arquivo' }));
+    expect(screen.getByRole('heading', { name: 'Enviar arquivo' })).toBeInTheDocument();
+  });
+
   test('selects regular folder documents and clears stale details when navigating', async () => {
     const user = userEvent.setup();
     render(<InternalDocsPage />);

@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState, type ChangeEvent } from 'react';
-import { Section } from '../components/Section';
 import { api, createInternalAuthHeaders } from '../services/api';
 import { askDestructiveConfirmation } from '../utils/destructive';
 
@@ -378,6 +377,7 @@ export function InternalDocsPage() {
   const [searchScope, setSearchScope] = useState<SearchScope>('current');
   const [selectedItem, setSelectedItem] = useState<DocsItem | null>(null);
   const [panelMode, setPanelMode] = useState<DocsPanelMode>('details');
+  const [newMenuOpen, setNewMenuOpen] = useState(false);
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set([CLIENTS_PATH, INTERNAL_PATH]));
 
   async function loadAll() {
@@ -788,6 +788,7 @@ export function InternalDocsPage() {
   function selectDocsItem(item: DocsItem) {
     setSelectedItem(item);
     setPanelMode('details');
+    setNewMenuOpen(false);
   }
 
   function selectDocumentRow(row: InternalDocumentRow) {
@@ -819,6 +820,7 @@ export function InternalDocsPage() {
     setSelectedPath(path);
     setSelectedItem(null);
     setPanelMode('details');
+    setNewMenuOpen(false);
     expandAncestors(path);
   }
 
@@ -831,6 +833,29 @@ export function InternalDocsPage() {
     if (item.document && canPreviewDocument(item.document)) {
       void previewInternalDocument(item.document);
     }
+  }
+
+  function openNewFolderPanel() {
+    setPanelMode('new-folder');
+    setNewMenuOpen(false);
+  }
+
+  function openUploadPanel() {
+    setPanelMode('upload');
+    setNewMenuOpen(false);
+  }
+
+  function cancelNewFolder() {
+    setNewFolderName('');
+    setPanelMode('details');
+  }
+
+  function cancelUpload() {
+    setTitle('');
+    setCategory('');
+    setNotes('');
+    setFileDraft(null);
+    setPanelMode('details');
   }
 
   return (
@@ -898,6 +923,27 @@ export function InternalDocsPage() {
               >
                 Tudo
               </button>
+            </div>
+            <div className="docs-new-menu-wrap">
+              <button
+                type="button"
+                className="docs-new-button"
+                onClick={() => setNewMenuOpen((current) => !current)}
+                aria-haspopup="menu"
+                aria-expanded={newMenuOpen}
+              >
+                + Novo
+              </button>
+              {newMenuOpen ? (
+                <div className="docs-new-menu" role="menu">
+                  <button type="button" role="menuitem" onClick={openNewFolderPanel}>
+                    Nova pasta
+                  </button>
+                  <button type="button" role="menuitem" onClick={openUploadPanel}>
+                    Enviar arquivo
+                  </button>
+                </div>
+              ) : null}
             </div>
             {selectedCompany ? <strong className="docs-context-chip">{selectedCompany.name}</strong> : null}
           </section>
@@ -1059,63 +1105,38 @@ export function InternalDocsPage() {
 
         <aside className="docs-right-panel" aria-label="Detalhes e ações">
           {panelMode === 'details' ? (
-            <>
-              <DetailsPanel
-                item={selectedItem}
-                selectedNode={selectedNode}
-                onPreview={(row) => void previewInternalDocument(row)}
-                onDownload={(row) => void downloadDocument(row)}
-                onDelete={(row) => void deleteDocument(row)}
-              />
-              <div className="actions actions-compact">
-                <button type="button" onClick={() => setPanelMode('new-folder')}>Nova pasta</button>
-                <button type="button" onClick={() => setPanelMode('upload')}>Enviar arquivo</button>
-              </div>
-            </>
+            <DetailsPanel
+              item={selectedItem}
+              selectedNode={selectedNode}
+              onPreview={(row) => void previewInternalDocument(row)}
+              onDownload={(row) => void downloadDocument(row)}
+              onDelete={(row) => void deleteDocument(row)}
+            />
           ) : null}
           {panelMode === 'new-folder' ? (
-            <Section title="Nova pasta">
-              <div className="actions actions-compact">
-                <button type="button" onClick={() => setPanelMode('details')}>Voltar aos detalhes</button>
-              </div>
-            <div className="form form-spacious">
-              <label>Nome
-                <input value={newFolderName} onChange={(event) => setNewFolderName(event.target.value)} placeholder="Ex.: Contratos" />
-              </label>
-              <button type="button" disabled={creatingFolder || selectedNode.path === ROOT_PATH} onClick={() => void createFolder()}>
-                {creatingFolder ? 'Criando...' : 'Criar pasta'}
-              </button>
-            </div>
-          </Section>
+            <NewFolderPanel
+              value={newFolderName}
+              disabled={selectedNode.path === ROOT_PATH}
+              creating={creatingFolder}
+              onChange={setNewFolderName}
+              onCreate={() => void createFolder()}
+              onCancel={cancelNewFolder}
+            />
           ) : null}
           {panelMode === 'upload' ? (
-          <Section title="Enviar arquivo">
-            <div className="actions actions-compact">
-              <button type="button" onClick={() => setPanelMode('details')}>Voltar aos detalhes</button>
-            </div>
-            <div className="form form-spacious">
-              <label>Título
-                <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Ex.: Checklist de implantação" />
-              </label>
-              <label>Categoria
-                <input value={category} onChange={(event) => setCategory(event.target.value)} placeholder="Ex.: Suporte, Certificados" />
-              </label>
-              <label>Descrição
-                <textarea rows={3} value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Contexto rápido do arquivo." />
-              </label>
-              <label>Arquivo
-                <input type="file" accept="application/pdf,image/*" onChange={onPickFile} />
-              </label>
-              {fileDraft ? (
-                <p className="form-hint">
-                  Selecionado: <strong>{fileDraft.file_name}</strong> ({formatBytes(fileDraft.file_size_bytes)})
-                </p>
-              ) : null}
-              <button type="button" disabled={selectedNode.path === ROOT_PATH} onClick={() => void createDocument()}>
-                Salvar na pasta
-              </button>
-            </div>
-          </Section>
+            <UploadPanel
+              title={title}
+              category={category}
+              notes={notes}
+              fileDraft={fileDraft}
+              disabled={selectedNode.path === ROOT_PATH}
+              onTitleChange={setTitle}
+              onCategoryChange={setCategory}
+              onNotesChange={setNotes}
+              onPickFile={onPickFile}
+              onCreate={() => void createDocument()}
+              onCancel={cancelUpload}
+            />
           ) : null}
         </aside>
       </div>
@@ -1402,6 +1423,94 @@ function DetailsPanel({
           <button type="button" onClick={() => onDelete(item.document!)}>Excluir</button>
         </div>
       ) : null}
+    </section>
+  );
+}
+
+function NewFolderPanel({
+  value,
+  disabled,
+  creating,
+  onChange,
+  onCreate,
+  onCancel
+}: {
+  value: string;
+  disabled: boolean;
+  creating: boolean;
+  onChange: (value: string) => void;
+  onCreate: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <section className="docs-details-panel">
+      <h2>Nova pasta</h2>
+      <div className="form form-spacious">
+        <label>Nome
+          <input value={value} onChange={(event) => onChange(event.target.value)} placeholder="Ex.: Contratos" />
+        </label>
+        <div className="actions actions-compact">
+          <button type="button" disabled={creating || disabled} onClick={onCreate}>
+            {creating ? 'Criando...' : 'Criar pasta'}
+          </button>
+          <button type="button" onClick={onCancel}>Cancelar</button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function UploadPanel({
+  title,
+  category,
+  notes,
+  fileDraft,
+  disabled,
+  onTitleChange,
+  onCategoryChange,
+  onNotesChange,
+  onPickFile,
+  onCreate,
+  onCancel
+}: {
+  title: string;
+  category: string;
+  notes: string;
+  fileDraft: FileDraft;
+  disabled: boolean;
+  onTitleChange: (value: string) => void;
+  onCategoryChange: (value: string) => void;
+  onNotesChange: (value: string) => void;
+  onPickFile: (event: ChangeEvent<HTMLInputElement>) => void;
+  onCreate: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <section className="docs-details-panel">
+      <h2>Enviar arquivo</h2>
+      <div className="form form-spacious">
+        <label>Título
+          <input value={title} onChange={(event) => onTitleChange(event.target.value)} placeholder="Ex.: Checklist de implantação" />
+        </label>
+        <label>Categoria
+          <input value={category} onChange={(event) => onCategoryChange(event.target.value)} placeholder="Ex.: Suporte, Certificados" />
+        </label>
+        <label>Descrição
+          <textarea rows={3} value={notes} onChange={(event) => onNotesChange(event.target.value)} placeholder="Contexto rápido do arquivo." />
+        </label>
+        <label>Arquivo
+          <input type="file" accept="application/pdf,image/*" onChange={onPickFile} />
+        </label>
+        {fileDraft ? (
+          <p className="form-hint">
+            Selecionado: <strong>{fileDraft.file_name}</strong> ({formatBytes(fileDraft.file_size_bytes)})
+          </p>
+        ) : null}
+        <div className="actions actions-compact">
+          <button type="button" disabled={disabled} onClick={onCreate}>Salvar na pasta</button>
+          <button type="button" onClick={onCancel}>Cancelar</button>
+        </div>
+      </div>
     </section>
   );
 }
