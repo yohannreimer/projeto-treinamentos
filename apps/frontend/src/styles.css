@@ -9621,7 +9621,7 @@ button:focus-visible,
 .docs-explorer {
   min-height: calc(100vh - 190px);
   display: grid;
-  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr) minmax(220px, 280px);
+  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr) minmax(260px, 320px);
   gap: 16px;
   align-items: start;
 }
@@ -9636,23 +9636,13 @@ button:focus-visible,
   box-shadow: var(--shadow-sm);
 }
 
-.docs-actions-panel {
+.docs-right-panel {
   min-width: 0;
+  position: sticky;
+  top: 16px;
   display: grid;
   align-content: start;
   gap: 14px;
-}
-
-.docs-actions-toggle {
-  width: 100%;
-  min-height: 42px;
-  justify-content: center;
-  background: #172530;
-  color: #ffffff;
-}
-
-.docs-actions-toggle:hover {
-  background: #223445;
 }
 
 .docs-sidebar-header {
@@ -9693,6 +9683,13 @@ button:focus-visible,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.docs-tree-node small {
+  display: block;
+  color: var(--color-muted);
+  font-size: 0.7rem;
+  font-weight: 700;
 }
 
 .docs-main {
@@ -9740,6 +9737,73 @@ button:focus-visible,
   background: #eef8f1;
   color: #1f6b48;
   font-size: 0.78rem;
+}
+
+.docs-search-scope {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: #ffffff;
+}
+
+.docs-search-scope button {
+  min-height: 34px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #526678;
+  padding: 0 12px;
+  box-shadow: none;
+}
+
+.docs-search-scope button.is-selected,
+.docs-search-scope button.is-active {
+  background: #172530;
+  color: #ffffff;
+}
+
+.docs-new-menu-wrap {
+  position: relative;
+}
+
+.docs-new-button {
+  min-height: 34px;
+  background: #172530;
+  color: #ffffff;
+}
+
+.docs-new-button:hover {
+  background: #223445;
+}
+
+.docs-new-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 10;
+  width: 180px;
+  display: grid;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 6px;
+  box-shadow: 0 14px 36px rgba(21, 28, 34, 0.16);
+}
+
+.docs-new-menu button {
+  min-height: 34px;
+  justify-content: flex-start;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #263746;
+  box-shadow: none;
+}
+
+.docs-new-menu button:hover,
+.docs-new-menu button:focus-visible {
+  background: #eef4f8;
 }
 
 .docs-content-list {
@@ -9820,6 +9884,102 @@ button:focus-visible,
 
 .docs-row--file {
   grid-template-columns: 34px minmax(0, 1fr) max-content;
+}
+
+.docs-search-results {
+  display: grid;
+  gap: 18px;
+}
+
+.docs-result-group {
+  display: grid;
+  gap: 8px;
+}
+
+.docs-result-group > header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--color-muted);
+}
+
+.docs-result-group h3 {
+  margin: 0;
+  color: var(--color-text);
+  font-size: 0.95rem;
+}
+
+.docs-result-list {
+  display: grid;
+  gap: 8px;
+}
+
+.docs-row--result {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.docs-row--result > button:first-child {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  justify-content: stretch;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  text-align: left;
+  box-shadow: none;
+}
+
+.docs-row--result > button:last-child {
+  min-height: 32px;
+}
+
+.docs-details-panel {
+  display: grid;
+  gap: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 14px;
+  box-shadow: var(--shadow-sm);
+}
+
+.docs-details-panel h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.docs-details-panel > strong {
+  color: #172530;
+  overflow-wrap: anywhere;
+}
+
+.docs-details-panel dl {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.docs-details-panel dt {
+  color: var(--color-muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.docs-details-panel dd {
+  margin: 3px 0 0;
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+.docs-details-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .docs-evaluation-row {
@@ -10220,12 +10380,22 @@ button:focus-visible,
     grid-template-columns: 1fr;
   }
 
+  .docs-right-panel {
+    position: static;
+    order: -1;
+  }
+
   .docs-main {
     min-height: 520px;
   }
 
-  .docs-actions-panel {
-    order: -1;
+  .docs-toolbar {
+    display: grid;
+  }
+
+  .docs-search-scope,
+  .docs-new-button {
+    width: 100%;
   }
 
   .docs-row,

@@ -1432,7 +1432,10 @@ function ResultGroup({
 }) {
   return (
     <section className="docs-result-group" aria-labelledby={`docs-result-group-${title.toLowerCase()}`}>
-      <h3 id={`docs-result-group-${title.toLowerCase()}`}>{title}</h3>
+      <header>
+        <h3 id={`docs-result-group-${title.toLowerCase()}`}>{title}</h3>
+        <span>{items.length} resultado(s)</span>
+      </header>
       {items.length > 0 ? (
         <div className="docs-result-list">
           {items.map((item) => (
