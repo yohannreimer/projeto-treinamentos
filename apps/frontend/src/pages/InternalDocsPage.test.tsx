@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
@@ -204,5 +204,24 @@ describe('InternalDocsPage', () => {
 
     await user.click(screen.getByRole('button', { name: /^Módulos/i }));
     expect(screen.getByRole('button', { name: /020102010/i })).toBeInTheDocument();
+  });
+
+  test('shows selected document metadata in the right details panel', async () => {
+    const user = userEvent.setup();
+    render(<InternalDocsPage />);
+
+    await screen.findByRole('heading', { name: 'Documentação' });
+    await user.type(screen.getByRole('searchbox', { name: 'Buscar documentação' }), 'Magui');
+    await user.click(screen.getByRole('button', { name: 'Tudo' }));
+    const surveyResultButtons = await screen.findAllByRole('button', {
+      name: /Treinamento TopSolid'Cam 7 - Fresamento 2D/i
+    });
+    await user.click(surveyResultButtons.find((button) => button.textContent?.includes('Cleberson')) ?? surveyResultButtons[0]);
+
+    const detailsPanel = screen.getByRole('complementary', { name: 'Detalhes e ações' });
+    expect(within(detailsPanel).getByRole('heading', { name: 'Detalhes' })).toBeInTheDocument();
+    expect(within(detailsPanel).getByText(/Tipo/i)).toBeInTheDocument();
+    expect(within(detailsPanel).getByText('Pesquisa')).toBeInTheDocument();
+    expect(within(detailsPanel).getByText(/Clientes > Magui Dispositivos de Controle Ltda/i)).toBeInTheDocument();
   });
 });

@@ -375,10 +375,9 @@ export function InternalDocsPage() {
   const [previewDocument, setPreviewDocument] = useState<PreviewDocument>(null);
   const [previewSurvey, setPreviewSurvey] = useState<CertificateSurveyPreview>(null);
   const [creatingFolder, setCreatingFolder] = useState(false);
-  const [showActionsPanel, setShowActionsPanel] = useState(false);
   const [searchScope, setSearchScope] = useState<SearchScope>('current');
-  const [, setSelectedItem] = useState<DocsItem | null>(null);
-  const [, setPanelMode] = useState<DocsPanelMode>('details');
+  const [selectedItem, setSelectedItem] = useState<DocsItem | null>(null);
+  const [panelMode, setPanelMode] = useState<DocsPanelMode>('details');
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set([CLIENTS_PATH, INTERNAL_PATH]));
 
   async function loadAll() {
@@ -486,9 +485,10 @@ export function InternalDocsPage() {
       subtitle: folder.system ? 'Pasta automática' : 'Pasta manual',
       path: folder.path,
       pathLabel: nodePathLabel(tree, folder.path),
+      updatedAt: folders.find((row) => normalizeFolderPath(row.path) === folder.path)?.updated_at ?? null,
       folder
     }))
-  ), [tree]);
+  ), [folders, tree]);
 
   const documentItems = useMemo<DocsItem[]>(() => rows.map((row) => {
     const path = fileFolderPath(row);
@@ -638,6 +638,7 @@ export function InternalDocsPage() {
       setFolders((current) => [...current, folder]);
       selectFolderPath(folder.path);
       setNewFolderName('');
+      setPanelMode('details');
       setMessage('Pasta criada.');
     } catch (err) {
       setError((err as Error).message);
@@ -676,6 +677,7 @@ export function InternalDocsPage() {
       setCategory('');
       setNotes('');
       setFileDraft(null);
+      setPanelMode('details');
       setMessage('Documento salvo na pasta.');
       await loadAll();
     } catch (err) {
@@ -1056,18 +1058,27 @@ export function InternalDocsPage() {
           </section>
         </main>
 
-        <aside className={`docs-actions-panel ${showActionsPanel ? 'is-open' : ''}`} aria-label="Ações da pasta">
-          <button
-            type="button"
-            className="docs-actions-toggle"
-            onClick={() => setShowActionsPanel((current) => !current)}
-            aria-expanded={showActionsPanel}
-          >
-            {showActionsPanel ? 'Fechar ações' : 'Nova pasta / enviar arquivo'}
-          </button>
-          {showActionsPanel ? (
+        <aside className="docs-right-panel" aria-label="Detalhes e ações">
+          {panelMode === 'details' ? (
             <>
-          <Section title="Nova pasta">
+              <DetailsPanel
+                item={selectedItem}
+                selectedNode={selectedNode}
+                onPreview={(row) => void previewInternalDocument(row)}
+                onDownload={(row) => void downloadDocument(row)}
+                onDelete={(row) => void deleteDocument(row)}
+              />
+              <div className="actions actions-compact">
+                <button type="button" onClick={() => setPanelMode('new-folder')}>Nova pasta</button>
+                <button type="button" onClick={() => setPanelMode('upload')}>Enviar arquivo</button>
+              </div>
+            </>
+          ) : null}
+          {panelMode === 'new-folder' ? (
+            <Section title="Nova pasta">
+              <div className="actions actions-compact">
+                <button type="button" onClick={() => setPanelMode('details')}>Voltar aos detalhes</button>
+              </div>
             <div className="form form-spacious">
               <label>Nome
                 <input value={newFolderName} onChange={(event) => setNewFolderName(event.target.value)} placeholder="Ex.: Contratos" />
@@ -1077,8 +1088,12 @@ export function InternalDocsPage() {
               </button>
             </div>
           </Section>
-
+          ) : null}
+          {panelMode === 'upload' ? (
           <Section title="Enviar arquivo">
+            <div className="actions actions-compact">
+              <button type="button" onClick={() => setPanelMode('details')}>Voltar aos detalhes</button>
+            </div>
             <div className="form form-spacious">
               <label>Título
                 <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Ex.: Checklist de implantação" />
@@ -1102,7 +1117,6 @@ export function InternalDocsPage() {
               </button>
             </div>
           </Section>
-            </>
           ) : null}
         </aside>
       </div>
@@ -1324,4 +1338,59 @@ function ResultGroup({
       ) : null}
     </section>
   );
+}
+
+function DetailsPanel({
+  item,
+  selectedNode,
+  onPreview,
+  onDownload,
+  onDelete
+}: {
+  item: DocsItem | null;
+  selectedNode: FolderNode;
+  onPreview: (row: InternalDocumentRow) => void;
+  onDownload: (row: InternalDocumentRow) => void;
+  onDelete: (row: InternalDocumentRow) => void;
+}) {
+  if (!item) {
+    return (
+      <section className="docs-details-panel">
+        <h2>Detalhes</h2>
+        <p className="muted">Selecione uma pasta, pesquisa, certificado ou arquivo para ver detalhes.</p>
+        <dl>
+          <div><dt>Pasta atual</dt><dd>{selectedNode.name}</dd></div>
+          <div><dt>Caminho</dt><dd>{selectedNode.path}</dd></div>
+        </dl>
+      </section>
+    );
+  }
+
+  return (
+    <section className="docs-details-panel">
+      <h2>Detalhes</h2>
+      <strong>{item.title}</strong>
+      <dl>
+        <div><dt>Tipo</dt><dd>{itemKindLabel(item.kind)}</dd></div>
+        <div><dt>Caminho</dt><dd>{item.pathLabel}</dd></div>
+        <div><dt>Atualizado</dt><dd>{formatDateBr(item.updatedAt)}</dd></div>
+        {item.document ? <div><dt>Arquivo</dt><dd>{item.document.file_name}</dd></div> : null}
+        {item.document ? <div><dt>Tamanho</dt><dd>{formatBytes(item.document.file_size_bytes)}</dd></div> : null}
+      </dl>
+      {item.document ? (
+        <div className="docs-details-actions">
+          {canPreviewDocument(item.document) ? <button type="button" onClick={() => onPreview(item.document!)}>Visualizar</button> : null}
+          <button type="button" onClick={() => onDownload(item.document!)}>Baixar</button>
+          <button type="button" onClick={() => onDelete(item.document!)}>Excluir</button>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function itemKindLabel(kind: DocsItemKind): string {
+  if (kind === 'survey' || kind === 'followup') return 'Pesquisa';
+  if (kind === 'certificate') return 'Certificado';
+  if (kind === 'folder') return 'Pasta';
+  return 'Arquivo';
 }
