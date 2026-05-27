@@ -234,6 +234,10 @@ export function ClientDetailPage() {
   const [editingDurationModuleId, setEditingDurationModuleId] = useState<string | null>(null);
   const [moduleToActivate, setModuleToActivate] = useState('');
   const [activatingModule, setActivatingModule] = useState(false);
+  const [followupEvaluations, setFollowupEvaluations] = useState<any[]>([]);
+  const [followupTitle, setFollowupTitle] = useState('Avaliação de acompanhamento');
+  const [followupNotes, setFollowupNotes] = useState('');
+  const [creatingFollowup, setCreatingFollowup] = useState(false);
 
   async function loadCompanyHours(companyId: string) {
     const [summary, moduleResponse, ledgerResponse, pendingResponse] = await Promise.all([
@@ -282,11 +286,13 @@ export function ClientDetailPage() {
       api.companyHoursModules(id),
       api.companyHoursLedger(id),
       api.companyHoursPending(id),
-      api.technicians()
+      api.technicians(),
+      api.companyFollowupEvaluations(id)
     ])
-      .then(([response, portalAccess, summaryResponse, moduleResponse, ledgerResponse, pendingResponse, technicianRows]) => {
+      .then(([response, portalAccess, summaryResponse, moduleResponse, ledgerResponse, pendingResponse, technicianRows, followupRows]) => {
         setData(response);
         setTechnicians((technicianRows ?? []) as TechnicianOption[]);
+        setFollowupEvaluations((followupRows ?? []) as any[]);
         setPortalSlug(portalAccess.slug ?? '');
         setPortalUsername(portalAccess.username ?? '');
         setPortalActive(Boolean(portalAccess.is_active));
@@ -315,6 +321,7 @@ export function ClientDetailPage() {
         setHoursModuleInsights([]);
         setHoursLedger([]);
         setHoursPending([]);
+        setFollowupEvaluations([]);
         setError(err.message);
       });
   }
@@ -752,6 +759,44 @@ export function ClientDetailPage() {
     }
   }
 
+  function followupPublicUrl(row: { public_path?: string; token?: string }) {
+    const path = row.public_path ?? `/acompanhamento/${encodeURIComponent(row.token ?? '')}`;
+    return `${window.location.origin}${path}`;
+  }
+
+  async function createFollowupEvaluation() {
+    if (!id) return;
+    if (!followupTitle.trim()) {
+      setError('Informe um título para a avaliação.');
+      return;
+    }
+
+    setCreatingFollowup(true);
+    setError('');
+    setMessage('');
+    try {
+      const created = await api.createCompanyFollowupEvaluation(id, {
+        title: followupTitle.trim(),
+        notes: followupNotes.trim() || null
+      }) as { public_path: string };
+      await load();
+      const url = `${window.location.origin}${created.public_path}`;
+      await navigator.clipboard?.writeText(url);
+      setMessage(`Link de avaliação criado e copiado: ${url}`);
+      setFollowupNotes('');
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setCreatingFollowup(false);
+    }
+  }
+
+  async function copyFollowupLink(row: { public_path?: string; token?: string }) {
+    const url = followupPublicUrl(row);
+    await navigator.clipboard?.writeText(url);
+    setMessage(`Link copiado: ${url}`);
+  }
+
   async function resolveHoursPending(pendingId: string, action: HoursPendingAction) {
     if (!id) return;
     setHoursActionLoadingId(`${action}:${pendingId}`);
@@ -994,6 +1039,42 @@ export function ClientDetailPage() {
 
       {!data ? null : (
         <>
+          <Section title="Avaliação de acompanhamento">
+            <div className="followup-admin-grid">
+              <div className="form form-spacious">
+                <p className="form-hint">Gere um link rápido para o cliente avaliar um acompanhamento, reunião ou check-in.</p>
+                <label>
+                  Título
+                  <input value={followupTitle} onChange={(event) => setFollowupTitle(event.target.value)} />
+                </label>
+                <label>
+                  Contexto para o cliente
+                  <textarea rows={3} value={followupNotes} onChange={(event) => setFollowupNotes(event.target.value)} placeholder="Ex.: Avalie o acompanhamento feito hoje sobre implantação e próximos passos." />
+                </label>
+                <div className="actions actions-compact">
+                  <button type="button" onClick={() => void createFollowupEvaluation()} disabled={creatingFollowup}>
+                    {creatingFollowup ? 'Gerando...' : 'Gerar link e copiar'}
+                  </button>
+                </div>
+              </div>
+
+              <div className="followup-admin-list">
+                {followupEvaluations.length === 0 ? (
+                  <p className="muted">Nenhuma avaliação de acompanhamento criada para este cliente.</p>
+                ) : followupEvaluations.slice(0, 5).map((row) => (
+                  <article key={row.id} className="followup-admin-item">
+                    <div>
+                      <strong>{row.title}</strong>
+                      <span>{row.status} {row.rating ? `· nota ${row.rating}/5` : ''}</span>
+                      {row.respondent_name ? <small>Respondido por {row.respondent_name}</small> : null}
+                    </div>
+                    <button type="button" onClick={() => void copyFollowupLink(row)}>Copiar link</button>
+                  </article>
+                ))}
+              </div>
+            </div>
+          </Section>
+
           <Section
             title="Dados do cliente"
             action={(

@@ -11,6 +11,7 @@ import { internalSessionStore, type InternalPermission, type InternalRole, type 
 
 const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
 const BASE_URL = env?.VITE_API_BASE_URL ?? `http://${window.location.hostname}:4000`;
+const GLOBAL_ERROR_EVENT = 'orquestrador:global-error';
 
 type CalendarActivityHoursScope = 'none' | 'client_consumption' | 'internal_effort';
 type CalendarActivityDateSchedulePayload = {
@@ -47,6 +48,11 @@ export class ApiRequestError extends Error {
     this.status = status;
     this.body = body;
   }
+}
+
+function notifyGlobalError(message: string) {
+  if (!message || typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent(GLOBAL_ERROR_EVENT, { detail: { message } }));
 }
 
 function withConfirmation(path: string, confirmationPhrase?: string): string {
@@ -93,6 +99,7 @@ async function req<T = any>(path: string, init?: RequestInit): Promise<T> {
     const message = error instanceof Error && error.name === 'AbortError'
       ? 'Timeout ao conectar com a API (10s).'
       : 'Falha de conexao com a API.';
+    notifyGlobalError(message);
     throw new Error(message);
   } finally {
     window.clearTimeout(timeoutId);
@@ -101,11 +108,13 @@ async function req<T = any>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     if (response.status === 401 && authToken) {
       internalSessionStore.clear();
+      notifyGlobalError('Sessão expirada. Faça login novamente.');
       throw new Error('Sessão expirada. Faça login novamente.');
     }
     const body = await response.text();
     const oversizedMessage = 'Arquivo muito grande. Use anexos de até 20 MB.';
     if (response.status === 413) {
+      notifyGlobalError(oversizedMessage);
       throw new Error(oversizedMessage);
     }
     let parsedBody: { message?: string } | null = null;
@@ -115,13 +124,19 @@ async function req<T = any>(path: string, init?: RequestInit): Promise<T> {
       parsedBody = null;
     }
     if (parsedBody) {
-      throw new ApiRequestError(parsedBody.message || body || 'Erro na API', response.status, parsedBody);
+      const message = parsedBody.message || body || 'Erro na API';
+      notifyGlobalError(message);
+      throw new ApiRequestError(message, response.status, parsedBody);
     }
     {
       if (body.trim().startsWith('<')) {
-        throw new Error('Falha ao enviar anexo. Tente novamente em instantes.');
+        const message = 'Falha ao enviar anexo. Tente novamente em instantes.';
+        notifyGlobalError(message);
+        throw new Error(message);
       }
-      throw new Error(body || 'Erro na API');
+      const message = body || 'Erro na API';
+      notifyGlobalError(message);
+      throw new Error(message);
     }
   }
 
@@ -382,6 +397,31 @@ export const api = {
       method: 'DELETE'
     }),
   companyById: (id: string) => req(`/companies/${id}`),
+  companyFollowupEvaluations: (companyId: string) =>
+    req(`/companies/${companyId}/followup-evaluations`),
+  createCompanyFollowupEvaluation: (companyId: string, payload: { title: string; notes?: string | null }) =>
+    req(`/companies/${companyId}/followup-evaluations`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  followupEvaluation: (token: string) =>
+    req(`/followup-evaluations/${encodeURIComponent(token)}`),
+  submitFollowupEvaluation: (
+    token: string,
+    payload: {
+      respondent_name: string;
+      rating: number;
+      answers: {
+        what_worked?: string;
+        what_to_improve?: string;
+        next_priority?: string;
+      };
+    }
+  ) =>
+    req(`/followup-evaluations/${encodeURIComponent(token)}`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
   portalAccessByCompany: (companyId: string) =>
     req<{
       slug: string | null;
@@ -425,6 +465,16 @@ export const api = {
       method: 'DELETE'
     }),
   internalDocuments: () => req('/internal-documents'),
+  internalDocumentFolders: () => req('/internal-document-folders'),
+  createInternalDocumentFolder: (payload: { parent_path: string; name: string }) =>
+    req('/internal-document-folders', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  deleteInternalDocumentFolder: (id: string, confirmation_phrase?: string) =>
+    req(withConfirmation(`/internal-document-folders/${id}`, confirmation_phrase), {
+      method: 'DELETE'
+    }),
   createInternalDocument: (payload: unknown) =>
     req('/internal-documents', {
       method: 'POST',

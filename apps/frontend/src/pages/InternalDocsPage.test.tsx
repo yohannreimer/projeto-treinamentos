@@ -8,10 +8,10 @@ import { InternalDocsPage } from './InternalDocsPage';
 const rows = [
   {
     id: 'doc-1',
-    title: 'Procedimento de suporte',
-    category: 'Suporte',
+    title: 'Certificado - Metal Forte - Instalacao TopSolid',
+    category: 'Certificados',
     notes: null,
-    file_name: 'procedimento.pdf',
+    file_name: 'certificado-metal-forte.pdf',
     mime_type: 'application/pdf',
     file_size_bytes: 1234,
     created_at: '2026-05-08',
@@ -43,6 +43,18 @@ describe('InternalDocsPage', () => {
         status: 200,
         headers: { 'Content-Type': 'application/json' }
       }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      }))
       .mockResolvedValueOnce(new Response(new Blob(['PDF'], { type: 'application/pdf' }), {
         status: 200,
         headers: { 'Content-Disposition': "attachment; filename*=UTF-8''procedimento.pdf" }
@@ -71,14 +83,31 @@ describe('InternalDocsPage', () => {
 
     render(<InternalDocsPage />);
 
+    await user.click(await screen.findByRole('button', { name: /Certificados.*Pasta automática/i }));
     await user.click(await screen.findByRole('button', { name: 'Download' }));
 
-    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
-    const downloadRequest = vi.mocked(fetch).mock.calls[1];
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(5));
+    const downloadRequest = vi.mocked(fetch).mock.calls[4];
     expect(downloadRequest[0]).toBe('http://localhost:4000/internal-documents/doc-1/download');
     expect((downloadRequest[1]?.headers as Headers).get('Authorization')).toBe('Bearer token-documentos');
     expect(anchorClick).toHaveBeenCalledTimes(1);
     expect(appendChildSpy).toHaveBeenCalled();
     expect(removeChildSpy).toHaveBeenCalled();
+  });
+
+  test('previews certificate PDFs without downloading raw document data', async () => {
+    const user = userEvent.setup();
+
+    render(<InternalDocsPage />);
+
+    await user.click(await screen.findByRole('button', { name: /Certificados.*Pasta automática/i }));
+    await user.click(await screen.findByRole('button', { name: 'Visualizar' }));
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(5));
+    const previewRequest = vi.mocked(fetch).mock.calls[4];
+    expect(previewRequest[0]).toBe('http://localhost:4000/internal-documents/doc-1/download');
+    expect((previewRequest[1]?.headers as Headers).get('Authorization')).toBe('Bearer token-documentos');
+    expect(screen.getByRole('dialog', { name: /Certificado - Metal Forte/i })).toBeInTheDocument();
+    expect(screen.getByTitle('Prévia do documento')).toHaveAttribute('src', 'blob:documento');
   });
 });

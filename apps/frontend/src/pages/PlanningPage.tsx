@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { CSSProperties } from 'react';
+import type { CSSProperties, DragEvent } from 'react';
 
 import { ApiRequestError, api } from '../services/api';
 import type { Module, PlanningCohort, PlanningEncounter, PlanningEncounterStatus, PlanningWorkspaceDetail } from '../types';
@@ -80,6 +80,11 @@ type PlanningCalendarCohort = {
   }>;
 };
 
+type PlanningDragItem =
+  | { type: 'planning'; encounterId: string }
+  | { type: 'cohort'; cohortId: string; dayIndex: number; dayDate: string }
+  | { type: 'activity'; activityId: string; dayDate: string };
+
 type PublishIssue = {
   cohortId: string;
   message: string;
@@ -126,6 +131,12 @@ const cohortPalette: Array<{ color: string; softColor: string }> = [
   { color: '#bf2f65', softColor: '#fff0f6' },
   { color: '#59611f', softColor: '#f5f7df' }
 ];
+const PLANNING_DRAG_TYPE = 'text/planning-item-type';
+const PLANNING_DRAG_ENCOUNTER_ID = 'text/planning-encounter-id';
+const PLANNING_DRAG_COHORT_ID = 'text/planning-cohort-id';
+const PLANNING_DRAG_COHORT_DAY_INDEX = 'text/planning-cohort-day-index';
+const PLANNING_DRAG_DAY_DATE = 'text/planning-day-date';
+const PLANNING_DRAG_ACTIVITY_ID = 'text/planning-activity-id';
 
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
@@ -135,6 +146,10 @@ function addDaysIso(dateIso: string, amount: number) {
   const [year, month, day] = dateIso.split('-').map(Number);
   const date = new Date(Date.UTC(year, month - 1, day + amount));
   return date.toISOString().slice(0, 10);
+}
+
+function sortIsoDates(dates: string[]) {
+  return [...dates].sort((left, right) => left.localeCompare(right));
 }
 
 function minutes(value: string) {
@@ -367,6 +382,7 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
   const [deletingWorkspaceId, setDeletingWorkspaceId] = useState<string | null>(null);
   const [isCreatingCohort, setIsCreatingCohort] = useState(false);
   const [isSuggesting, setIsSuggesting] = useState(false);
+  const [movingCalendarItem, setMovingCalendarItem] = useState<string | null>(null);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [companies, setCompanies] = useState<CatalogCompany[]>([]);
@@ -407,6 +423,15 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
     }, error ? 9000 : 5000);
     return () => window.clearTimeout(timeoutId);
   }, [error, message]);
+
+  async function reloadCalendarSources() {
+    const [activityRows, calendarCohortRows] = await Promise.all([
+      api.calendarActivities() as Promise<Array<Record<string, unknown>>>,
+      api.calendar() as Promise<Array<Record<string, unknown>>>
+    ]);
+    setActivities(normalizeActivityRows(activityRows ?? []));
+    setExternalCohorts(normalizeCalendarCohortRows(calendarCohortRows ?? []));
+  }
 
   useEffect(() => {
     let isCurrent = true;
@@ -1070,6 +1095,104 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
     }
   }
 
+  function calendarMoveKey(type: 'cohort' | 'activity', id: string, sourceDate: string) {
+    return `${type}:${id}:${sourceDate}`;
+  }
+
+  async function moveExternalCohortOccurrence(cohortId: string, dayIndex: number, sourceDate: string, targetDate: string) {
+    if (movingCalendarItem || sourceDate === targetDate) return;
+
+    const externalCohort = externalCohorts.find((item) => item.id === cohortId);
+    if (!externalCohort) return;
+    const occurrenceIndex = externalCohort.occurrences.findIndex((occurrence) => (
+      occurrence.day_date === sourceDate &&
+      (dayIndex > 0 ? occurrence.day_index === dayIndex : true)
+    ));
+    if (occurrenceIndex < 0) return;
+
+    const moveKey = calendarMoveKey('cohort', cohortId, sourceDate);
+    const nextScheduleDays = externalCohort.occurrences
+      .map((occurrence, index) => ({
+        day_index: occurrence.day_index,
+        day_date: index === occurrenceIndex ? targetDate : occurrence.day_date,
+        start_time: occurrence.start_time,
+        end_time: occurrence.end_time
+      }))
+      .sort((left, right) => (
+        left.day_date.localeCompare(right.day_date) ||
+        (left.start_time ?? '').localeCompare(right.start_time ?? '') ||
+        left.day_index - right.day_index
+      ))
+      .map((occurrence, index) => ({
+        ...occurrence,
+        day_index: index + 1
+      }));
+
+    try {
+      setMovingCalendarItem(moveKey);
+      setError('');
+      setMessage('');
+      await api.updateCohort(cohortId, { schedule_days: nextScheduleDays });
+      await reloadCalendarSources();
+      setMessage('Dia da turma movido e ordem recalculada.');
+    } catch (requestError) {
+      setMessage('');
+      setError(planningErrorMessage(requestError, 'Falha ao mover dia da turma.'));
+    } finally {
+      setMovingCalendarItem((current) => (current === moveKey ? null : current));
+    }
+  }
+
+  async function moveActivityOccurrence(activityId: string, sourceDate: string, targetDate: string) {
+    if (movingCalendarItem || sourceDate === targetDate) return;
+
+    const activity = activities.find((item) => item.id === activityId);
+    if (!activity) return;
+    const occurrenceIndex = activity.occurrences.findIndex((occurrence) => occurrence.day_date === sourceDate);
+    if (occurrenceIndex < 0) return;
+    const targetAlreadyExists = activity.occurrences.some((occurrence, index) => (
+      index !== occurrenceIndex && occurrence.day_date === targetDate
+    ));
+    if (targetAlreadyExists) {
+      setMessage('');
+      setError('Essa atividade já possui um quadradinho nessa data.');
+      return;
+    }
+
+    const moveKey = calendarMoveKey('activity', activityId, sourceDate);
+    const dateSchedules = activity.occurrences
+      .map((occurrence, index) => ({
+        day_date: index === occurrenceIndex ? targetDate : occurrence.day_date,
+        all_day: occurrence.all_day,
+        start_time: occurrence.start_time,
+        end_time: occurrence.end_time
+      }))
+      .sort((left, right) => (
+        left.day_date.localeCompare(right.day_date) ||
+        (left.start_time ?? '').localeCompare(right.start_time ?? '')
+      ));
+    const selectedDates = sortIsoDates(dateSchedules.map((occurrence) => occurrence.day_date));
+
+    try {
+      setMovingCalendarItem(moveKey);
+      setError('');
+      setMessage('');
+      await api.updateCalendarActivity(activityId, {
+        start_date: selectedDates[0] ?? targetDate,
+        end_date: selectedDates[selectedDates.length - 1] ?? targetDate,
+        selected_dates: selectedDates,
+        date_schedules: dateSchedules
+      });
+      await reloadCalendarSources();
+      setMessage('Data da atividade movida no calendário.');
+    } catch (requestError) {
+      setMessage('');
+      setError(planningErrorMessage(requestError, 'Falha ao mover atividade do calendário.'));
+    } finally {
+      setMovingCalendarItem((current) => (current === moveKey ? null : current));
+    }
+  }
+
   async function unassignSelectedEncounter() {
     if (hasPendingWorkspaceEncounterSave || !planningDetail || !selectedEncounter || !selectedCohort) return;
 
@@ -1160,6 +1283,63 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
     setSelectedEncounterId(encounterId || null);
   }
 
+  function writeDragItem(event: DragEvent<HTMLElement>, item: PlanningDragItem) {
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData(PLANNING_DRAG_TYPE, item.type);
+
+    if (item.type === 'planning') {
+      event.dataTransfer.setData(PLANNING_DRAG_ENCOUNTER_ID, item.encounterId);
+      return;
+    }
+
+    event.dataTransfer.setData(PLANNING_DRAG_DAY_DATE, item.dayDate);
+    if (item.type === 'cohort') {
+      event.dataTransfer.setData(PLANNING_DRAG_COHORT_ID, item.cohortId);
+      event.dataTransfer.setData(PLANNING_DRAG_COHORT_DAY_INDEX, String(item.dayIndex));
+      return;
+    }
+
+    event.dataTransfer.setData(PLANNING_DRAG_ACTIVITY_ID, item.activityId);
+  }
+
+  function readDragItem(event: DragEvent<HTMLElement>): PlanningDragItem | null {
+    const type = event.dataTransfer.getData(PLANNING_DRAG_TYPE);
+    if (type === 'planning') {
+      const encounterId = event.dataTransfer.getData(PLANNING_DRAG_ENCOUNTER_ID);
+      return encounterId ? { type, encounterId } : null;
+    }
+    if (type === 'cohort') {
+      const cohortId = event.dataTransfer.getData(PLANNING_DRAG_COHORT_ID);
+      const dayIndex = Number(event.dataTransfer.getData(PLANNING_DRAG_COHORT_DAY_INDEX));
+      const dayDate = event.dataTransfer.getData(PLANNING_DRAG_DAY_DATE);
+      return cohortId && dayDate ? { type, cohortId, dayIndex, dayDate } : null;
+    }
+    if (type === 'activity') {
+      const activityId = event.dataTransfer.getData(PLANNING_DRAG_ACTIVITY_ID);
+      const dayDate = event.dataTransfer.getData(PLANNING_DRAG_DAY_DATE);
+      return activityId && dayDate ? { type, activityId, dayDate } : null;
+    }
+
+    const legacyEncounterId = event.dataTransfer.getData(PLANNING_DRAG_ENCOUNTER_ID);
+    return legacyEncounterId ? { type: 'planning', encounterId: legacyEncounterId } : null;
+  }
+
+  function handlePlanningDrop(event: DragEvent<HTMLElement>, dayDate: string, technicianId?: string | null) {
+    event.preventDefault();
+    const item = readDragItem(event);
+    if (!item) return;
+
+    if (item.type === 'planning') {
+      void moveEncounterToDate(item.encounterId, dayDate, technicianId);
+      return;
+    }
+    if (item.type === 'cohort') {
+      void moveExternalCohortOccurrence(item.cohortId, item.dayIndex, item.dayDate, dayDate);
+      return;
+    }
+    void moveActivityOccurrence(item.activityId, item.dayDate, dayDate);
+  }
+
   function moveRange(amount: number) {
     setRangeStartDate((currentDate) => addDaysIso(currentDate, amount));
   }
@@ -1211,7 +1391,13 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
     return (
       <button
         className={`planning-blocker ${compact ? 'planning-blocker--compact' : ''}`.trim()}
+        draggable
         key={`${activity.id}-${occurrence.day_date}`}
+        onDragStart={(event) => writeDragItem(event, {
+          type: 'activity',
+          activityId: activity.id,
+          dayDate: occurrence.day_date
+        })}
         style={compact ? undefined : encounterGridStyle(startTime, endTime)}
         type="button"
       >
@@ -1235,8 +1421,15 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
     return (
       <button
         className={`planning-external-blocker ${compact ? 'planning-external-blocker--compact' : ''}`.trim()}
+        draggable
         key={`${externalCohort.id}-${occurrence.day_index}-${occurrence.day_date}`}
         onClick={() => setMessage(`Turma já criada: ${companyLabel} · ${moduleLabel} · ${shortDateLabel(occurrence.day_date)} ${startTime}-${endTime}`)}
+        onDragStart={(event) => writeDragItem(event, {
+          type: 'cohort',
+          cohortId: externalCohort.id,
+          dayIndex: occurrence.day_index,
+          dayDate: occurrence.day_date
+        })}
         style={compact ? undefined : encounterGridStyle(startTime, endTime)}
         type="button"
       >
@@ -1261,8 +1454,7 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
         key={encounter.id}
         onClick={() => selectEncounter(encounter.id)}
         onDragStart={(event) => {
-          event.dataTransfer.effectAllowed = 'move';
-          event.dataTransfer.setData('text/planning-encounter-id', encounter.id);
+          writeDragItem(event, { type: 'planning', encounterId: encounter.id });
         }}
         style={compact ? cohortStyle(visual) : { ...encounterGridStyle(encounter.start_time, encounter.end_time), ...cohortStyle(visual) }}
         type="button"
@@ -1447,8 +1639,7 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
                 key={encounter.id}
                 onClick={() => selectEncounter(encounter.id)}
                 onDragStart={(event) => {
-                  event.dataTransfer.effectAllowed = 'move';
-                  event.dataTransfer.setData('text/planning-encounter-id', encounter.id);
+                  writeDragItem(event, { type: 'planning', encounterId: encounter.id });
                 }}
               >
                 {isAllocated ? `${shortDateLabel(encounter.day_date)} · ` : 'Pendente · '}
@@ -1476,14 +1667,7 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
               className={`planning-day-lane ${date === todayIso() ? 'is-today' : ''}`.trim()}
               key={date}
               onDragOver={(event) => event.preventDefault()}
-              onDrop={(event) => {
-                event.preventDefault();
-                const draggedEncounterId = event.dataTransfer.getData('text/planning-encounter-id');
-                if (draggedEncounterId) {
-                  const targetTechnicianId = technicianFilterId || undefined;
-                  void moveEncounterToDate(draggedEncounterId, date, targetTechnicianId || undefined);
-                }
-              }}
+              onDrop={(event) => handlePlanningDrop(event, date, technicianFilterId || undefined)}
             >
               <header>
                 <strong>{weekdayLabel(date)}</strong>
@@ -1522,12 +1706,7 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
                     className={`planning-range-day ${dayPairs.length || dayActivities.length || dayExternalCohorts.length ? 'has-events' : ''} ${date === todayIso() ? 'is-today' : ''}`.trim()}
                     key={`team-${date}`}
                     onDragOver={(event) => event.preventDefault()}
-                    onDrop={(event) => {
-                      event.preventDefault();
-                      const draggedEncounterId = event.dataTransfer.getData('text/planning-encounter-id');
-                      if (!draggedEncounterId) return;
-                      void moveEncounterToDate(draggedEncounterId, date);
-                    }}
+                    onDrop={(event) => handlePlanningDrop(event, date)}
                   >
                     <button
                       className="planning-range-day-header"
@@ -1631,11 +1810,7 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
                     className={`planning-range-day ${dayPairs.length || dayActivities.length || dayExternalCohorts.length ? 'has-events' : ''} ${date === todayIso() ? 'is-today' : ''}`.trim()}
                     key={`${technician.id}-${date}`}
                     onDragOver={(event) => event.preventDefault()}
-                    onDrop={(event) => {
-                      event.preventDefault();
-                      const draggedEncounterId = event.dataTransfer.getData('text/planning-encounter-id');
-                      if (draggedEncounterId) void moveEncounterToDate(draggedEncounterId, date, technician.id === '__none__' ? null : technician.id);
-                    }}
+                    onDrop={(event) => handlePlanningDrop(event, date, technician.id === '__none__' ? null : technician.id)}
                   >
                     <button
                       className="planning-range-day-header"
@@ -1667,11 +1842,38 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
   function renderListBoard() {
     return (
       <div className="planning-list-table">
+        {visibleActivityOccurrences.map(({ activity, occurrence }) => (
+          <button
+            className="planning-list-row planning-list-row--activity"
+            draggable
+            key={`${activity.id}-${occurrence.day_date}`}
+            onDragStart={(event) => writeDragItem(event, {
+              type: 'activity',
+              activityId: activity.id,
+              dayDate: occurrence.day_date
+            })}
+            type="button"
+          >
+            <span>{shortDateLabel(occurrence.day_date)}</span>
+            <strong>{occurrence.all_day ? 'Dia inteiro' : `${occurrence.start_time ?? '08:00'} - ${occurrence.end_time ?? '18:00'}`}</strong>
+            <span>{activity.company_name ?? 'Atividade interna'}</span>
+            <span>{activity.title}</span>
+            <span>{activity.technician_names.join(', ') || 'Sem técnico'}</span>
+            <small>Calendário</small>
+          </button>
+        ))}
         {visibleExternalCohortOccurrences.map(({ externalCohort, occurrence }) => (
           <button
             className="planning-list-row planning-list-row--external"
+            draggable
             key={`${externalCohort.id}-${occurrence.day_index}-${occurrence.day_date}`}
             onClick={() => setMessage(`Turma já criada: ${externalCohort.company_names.join(', ') || 'Cliente'} · ${shortDateLabel(occurrence.day_date)}`)}
+            onDragStart={(event) => writeDragItem(event, {
+              type: 'cohort',
+              cohortId: externalCohort.id,
+              dayIndex: occurrence.day_index,
+              dayDate: occurrence.day_date
+            })}
             type="button"
           >
             <span>{shortDateLabel(occurrence.day_date)}</span>
@@ -1685,8 +1887,10 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
         {visibleEncounterPairs.map(({ cohort, encounter }) => (
           <button
             className={`planning-list-row ${selectedEncounter?.id === encounter.id ? 'is-selected' : ''}`.trim()}
+            draggable
             key={encounter.id}
             onClick={() => selectEncounter(encounter.id)}
+            onDragStart={(event) => writeDragItem(event, { type: 'planning', encounterId: encounter.id })}
             type="button"
           >
             <span>{shortDateLabel(encounter.day_date)}</span>
@@ -1703,7 +1907,7 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
 
   function renderCalendarBody() {
     if (isLoadingDetail) return <p>Carregando encontros do planejamento.</p>;
-    if (visibleEncounterPairs.length === 0 && visibleExternalCohortOccurrences.length === 0 && viewMode === 'list') {
+    if (visibleEncounterPairs.length === 0 && visibleExternalCohortOccurrences.length === 0 && visibleActivityOccurrences.length === 0 && viewMode === 'list') {
       return <p>Nenhum encontro neste recorte. Selecione um módulo à esquerda e gere encontros.</p>;
     }
     if (viewMode === 'list') return renderListBoard();

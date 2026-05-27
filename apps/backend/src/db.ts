@@ -1265,12 +1265,38 @@ export function initDb() {
       title text not null,
       category text,
       notes text,
+      folder_path text,
       file_name text not null,
       mime_type text not null,
       file_data_base64 text not null,
       file_size_bytes integer not null default 0,
       created_at text not null,
       updated_at text not null
+    );
+
+    create table if not exists internal_document_folder (
+      id text primary key,
+      parent_path text not null,
+      path text not null unique,
+      name text not null,
+      created_at text not null,
+      updated_at text not null
+    );
+
+    create table if not exists client_followup_evaluation (
+      id text primary key,
+      token text not null unique,
+      company_id text not null,
+      title text not null,
+      notes text,
+      status text not null default 'Aberta',
+      respondent_name text,
+      rating integer,
+      answers_json text,
+      created_at text not null,
+      submitted_at text,
+      updated_at text not null,
+      foreign key(company_id) references company(id) on delete cascade
     );
 
     create table if not exists implementation_kanban_card (
@@ -1399,6 +1425,7 @@ export function initDb() {
   ensureColumn('calendar_activity', 'linked_module_id', 'linked_module_id text');
   ensureColumn('calendar_activity', 'hours_scope', "hours_scope text not null default 'none'");
   ensureColumn('calendar_activity', 'hours_consumed_snapshot', 'hours_consumed_snapshot real not null default 0');
+  ensureColumn('internal_document', 'folder_path', 'folder_path text');
   ensureColumn('technician', 'hourly_cost', 'hourly_cost real');
   ensureColumn('implementation_kanban_card', 'column_id', 'column_id text');
   ensureColumn('implementation_kanban_card', 'client_name', 'client_name text');
@@ -2265,6 +2292,8 @@ export function initDb() {
       on portal_certificate_evaluation(company_id, cohort_id, module_id);
     create index if not exists idx_portal_certificate_participant_evaluation_lookup
       on portal_certificate_participant_evaluation(company_id, cohort_id, module_id, participant_id);
+    create index if not exists idx_client_followup_evaluation_company
+      on client_followup_evaluation(company_id, created_at desc);
     create unique index if not exists idx_hours_event_store_idempotency_key on hours_event_store(idempotency_key);
     create index if not exists idx_planning_workspace_status on planning_workspace(status, updated_at desc);
     create index if not exists idx_planning_workspace_client_company on planning_workspace_client(company_id);

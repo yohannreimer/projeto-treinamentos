@@ -370,9 +370,30 @@ const internalDocumentCreateSchema = z.object({
   title: z.string().min(2).max(180),
   category: z.string().max(120).nullable().optional(),
   notes: z.string().max(2000).nullable().optional(),
+  folder_path: z.string().min(1).max(600).nullable().optional(),
   file_name: z.string().min(1).max(200),
   mime_type: z.string().min(3).max(120),
   file_data_base64: internalDocumentDataUrlSchema
+});
+
+const internalDocumentFolderCreateSchema = z.object({
+  parent_path: z.string().min(1).max(600),
+  name: z.string().trim().min(1).max(120)
+});
+
+const followupEvaluationCreateSchema = z.object({
+  title: z.string().trim().min(2).max(160).default('Avaliação de acompanhamento'),
+  notes: z.string().trim().max(1000).nullable().optional()
+});
+
+const followupEvaluationSubmitSchema = z.object({
+  respondent_name: z.string().trim().min(2).max(160),
+  rating: z.number().int().min(1).max(5),
+  answers: z.object({
+    what_worked: z.string().trim().max(1200).optional().default(''),
+    what_to_improve: z.string().trim().max(1200).optional().default(''),
+    next_priority: z.string().trim().max(1200).optional().default('')
+  })
 });
 
 const internalRoleSchema = z.enum(INTERNAL_ROLE_VALUES);
@@ -785,8 +806,10 @@ function upsertCertificateDocument(args: {
   notes: string;
   fileBase: string;
   pdfBuffer: Buffer;
+  folderPath?: string | null;
 }) {
   const certificateDataUrl = `data:application/pdf;base64,${args.pdfBuffer.toString('base64')}`;
+  const folderPath = normalizeDocumentFolderPath(args.folderPath ?? '/Interna/Certificados');
   const existingCertificateDocument = db.prepare(`
     select id
     from internal_document
@@ -806,6 +829,7 @@ function upsertCertificateDocument(args: {
         mime_type = ?,
         file_data_base64 = ?,
         file_size_bytes = ?,
+        folder_path = ?,
         updated_at = ?
       where id = ?
     `).run(
@@ -816,6 +840,7 @@ function upsertCertificateDocument(args: {
       'application/pdf',
       certificateDataUrl,
       args.pdfBuffer.length,
+      folderPath,
       nowDateIso(),
       existingCertificateDocument.id
     );
@@ -824,15 +849,16 @@ function upsertCertificateDocument(args: {
 
   db.prepare(`
     insert into internal_document (
-      id, title, category, notes, file_name, mime_type, file_data_base64,
+      id, title, category, notes, folder_path, file_name, mime_type, file_data_base64,
       file_size_bytes, created_at, updated_at
     )
-    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     uuid('doc'),
     args.title,
     'Certificados',
     args.notes,
+    folderPath,
     `${args.fileBase}.pdf`,
     'application/pdf',
     certificateDataUrl,
@@ -1060,7 +1086,8 @@ export async function buildCompanyModuleCertificate(args: {
     title: fileBase,
     notes: certificateDocumentNotes,
     fileBase,
-    pdfBuffer
+    pdfBuffer,
+    folderPath: `/Clientes/${company.id}/modulos/${moduleRow.id}/Certificados`
   });
 
   return {
@@ -1102,6 +1129,31 @@ function decodeDataUrl(dataUrl: string): { mimeType: string; buffer: Buffer } {
     mimeType,
     buffer: Buffer.from(base64, 'base64')
   };
+}
+
+function normalizeDocumentFolderPath(value?: string | null) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '/Interna';
+  const withSlash = raw.startsWith('/') ? raw : `/${raw}`;
+  return withSlash
+    .replace(/\/{2,}/g, '/')
+    .replace(/\/$/, '') || '/Interna';
+}
+
+function documentFolderSegment(name: string) {
+  return encodeURIComponent(name.trim().replace(/\s+/g, ' '));
+}
+
+function resolveUniqueDocumentFolderPath(parentPath: string, name: string) {
+  const normalizedParent = normalizeDocumentFolderPath(parentPath);
+  const baseSegment = documentFolderSegment(name) || 'Nova%20pasta';
+  let candidate = `${normalizedParent}/${baseSegment}`;
+  let suffix = 2;
+  while (db.prepare('select id from internal_document_folder where path = ?').get(candidate)) {
+    candidate = `${normalizedParent}/${baseSegment}-${suffix}`;
+    suffix += 1;
+  }
+  return candidate;
 }
 
 type TicketAttachmentPayload = {
@@ -3008,7 +3060,7 @@ function resolveRequiredPermissionsForRequest(req: Request): InternalPermissionK
   if (pathname.startsWith('/license-programs')) {
     return ['licenses', 'license_programs'];
   }
-  if (pathname.startsWith('/internal-documents')) {
+  if (pathname.startsWith('/internal-documents') || pathname.startsWith('/internal-document-folders')) {
     return ['docs'];
   }
   if (pathname.startsWith('/admin')) {
@@ -3022,6 +3074,7 @@ function isPublicOrPortalPath(pathname: string): boolean {
   if (pathname === '/health') return true;
   if (pathname.startsWith('/auth/')) return true;
   if (pathname === '/portal/api' || pathname.startsWith('/portal/api/')) return true;
+  if (pathname.startsWith('/followup-evaluations/')) return true;
   return false;
 }
 
@@ -4268,7 +4321,8 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
         title: certificateDocumentTitle,
         notes: certificateDocumentNotes,
         fileBase,
-        pdfBuffer
+        pdfBuffer,
+        folderPath: `/Clientes/${company.id}/modulos/${requestedModuleId}/Certificados`
       });
   
       const encodedFileName = encodeURIComponent(`${fileBase}.pdf`);
@@ -5109,6 +5163,55 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
     }
   
     return res.json({ ok: true, override_used: Boolean(usedInstallationOverride) });
+  });
+
+  app.delete('/allocations/:id', (req, res) => {
+    const allocation = db.prepare(`
+      select id, company_id, module_id, cohort_id
+      from cohort_allocation
+      where id = ?
+    `).get(req.params.id) as {
+      id: string;
+      company_id: string;
+      module_id: string;
+      cohort_id: string;
+    } | undefined;
+
+    if (!allocation) {
+      return res.status(404).json({ message: 'Alocacao nao encontrada' });
+    }
+
+    const tx = db.transaction(() => {
+      db.prepare('delete from cohort_allocation where id = ?').run(allocation.id);
+      db.prepare(`
+        delete from cohort_participant_module
+        where module_id = ?
+          and participant_id in (
+            select id
+            from cohort_participant
+            where cohort_id = ? and company_id = ?
+          )
+          and not exists (
+            select 1
+            from cohort_allocation a
+            where a.cohort_id = ?
+              and a.company_id = ?
+              and a.module_id = ?
+              and a.status <> 'Cancelado'
+          )
+      `).run(
+        allocation.module_id,
+        allocation.cohort_id,
+        allocation.company_id,
+        allocation.cohort_id,
+        allocation.company_id,
+        allocation.module_id
+      );
+      refreshCompanyModuleProgressFromAllocations(allocation.company_id, allocation.module_id);
+    });
+
+    tx();
+    return res.json({ ok: true });
   });
   
   app.get('/cohorts/:id/suggestions/:moduleId', (req, res) => {
@@ -6767,10 +6870,195 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
     db.prepare('delete from license_program where id = ?').run(req.params.id);
     return res.json({ ok: true });
   });
+
+  app.get('/companies/:companyId/followup-evaluations', (req, res) => {
+    const company = db.prepare('select id from company where id = ?').get(req.params.companyId) as { id: string } | undefined;
+    if (!company) {
+      return res.status(404).json({ message: 'Cliente não encontrado.' });
+    }
+
+    const rows = db.prepare(`
+      select id, token, company_id, title, notes, status, respondent_name, rating, answers_json, created_at, submitted_at, updated_at
+      from client_followup_evaluation
+      where company_id = ?
+      order by datetime(created_at) desc
+    `).all(req.params.companyId) as Array<{
+      id: string;
+      token: string;
+      company_id: string;
+      title: string;
+      notes: string | null;
+      status: string;
+      respondent_name: string | null;
+      rating: number | null;
+      answers_json: string | null;
+      created_at: string;
+      submitted_at: string | null;
+      updated_at: string;
+    }>;
+
+    return res.json(rows.map((row) => ({
+      ...row,
+      answers: row.answers_json ? JSON.parse(row.answers_json) : null,
+      public_path: `/acompanhamento/${encodeURIComponent(row.token)}`
+    })));
+  });
+
+  app.post('/companies/:companyId/followup-evaluations', (req, res) => {
+    const parsed = followupEvaluationCreateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+    const company = db.prepare('select id from company where id = ?').get(req.params.companyId) as { id: string } | undefined;
+    if (!company) {
+      return res.status(404).json({ message: 'Cliente não encontrado.' });
+    }
+
+    const id = uuid('fup');
+    const token = uuid('fup-link').replace(/^fup-link-/, '');
+    const nowIso = new Date().toISOString();
+    db.prepare(`
+      insert into client_followup_evaluation (
+        id, token, company_id, title, notes, status, respondent_name, rating,
+        answers_json, created_at, submitted_at, updated_at
+      ) values (?, ?, ?, ?, ?, 'Aberta', null, null, null, ?, null, ?)
+    `).run(
+      id,
+      token,
+      req.params.companyId,
+      parsed.data.title,
+      parsed.data.notes ?? null,
+      nowIso,
+      nowIso
+    );
+
+    return res.status(201).json({
+      id,
+      token,
+      public_path: `/acompanhamento/${encodeURIComponent(token)}`
+    });
+  });
+
+  app.get('/followup-evaluations/:token', (req, res) => {
+    const row = db.prepare(`
+      select f.id, f.token, f.company_id, f.title, f.notes, f.status, f.respondent_name,
+        f.rating, f.answers_json, f.created_at, f.submitted_at, c.name as company_name
+      from client_followup_evaluation f
+      join company c on c.id = f.company_id
+      where f.token = ?
+      limit 1
+    `).get(req.params.token) as {
+      id: string;
+      token: string;
+      company_id: string;
+      title: string;
+      notes: string | null;
+      status: string;
+      respondent_name: string | null;
+      rating: number | null;
+      answers_json: string | null;
+      created_at: string;
+      submitted_at: string | null;
+      company_name: string;
+    } | undefined;
+
+    if (!row) {
+      return res.status(404).json({ message: 'Avaliação não encontrada.' });
+    }
+
+    return res.json({
+      ...row,
+      answers: row.answers_json ? JSON.parse(row.answers_json) : null
+    });
+  });
+
+  app.post('/followup-evaluations/:token', (req, res) => {
+    const parsed = followupEvaluationSubmitSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+    const row = db.prepare(`
+      select id
+      from client_followup_evaluation
+      where token = ?
+      limit 1
+    `).get(req.params.token) as { id: string } | undefined;
+
+    if (!row) {
+      return res.status(404).json({ message: 'Avaliação não encontrada.' });
+    }
+
+    const nowIso = new Date().toISOString();
+    db.prepare(`
+      update client_followup_evaluation
+      set status = 'Respondida',
+        respondent_name = ?,
+        rating = ?,
+        answers_json = ?,
+        submitted_at = ?,
+        updated_at = ?
+      where id = ?
+    `).run(
+      parsed.data.respondent_name,
+      parsed.data.rating,
+      JSON.stringify(parsed.data.answers),
+      nowIso,
+      nowIso,
+      row.id
+    );
+
+    return res.json({ ok: true });
+  });
   
+  app.get('/internal-document-folders', (_req, res) => {
+    const rows = db.prepare(`
+      select id, parent_path, path, name, created_at, updated_at
+      from internal_document_folder
+      order by parent_path asc, name asc
+    `).all();
+    return res.json(rows);
+  });
+
+  app.post('/internal-document-folders', (req, res) => {
+    const parsed = internalDocumentFolderCreateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+
+    const nowIso = nowDateIso();
+    const parentPath = normalizeDocumentFolderPath(parsed.data.parent_path);
+    const folderPath = resolveUniqueDocumentFolderPath(parentPath, parsed.data.name);
+    const id = uuid('idf');
+    db.prepare(`
+      insert into internal_document_folder (id, parent_path, path, name, created_at, updated_at)
+      values (?, ?, ?, ?, ?, ?)
+    `).run(id, parentPath, folderPath, parsed.data.name.trim(), nowIso, nowIso);
+    return res.status(201).json({ id, parent_path: parentPath, path: folderPath, name: parsed.data.name.trim(), created_at: nowIso, updated_at: nowIso });
+  });
+
+  app.delete('/internal-document-folders/:id', (req, res) => {
+    if (!requireDestructiveConfirmation(req, res, 'excluir pasta de documentação')) {
+      return;
+    }
+
+    const folder = db.prepare('select id, path from internal_document_folder where id = ?').get(req.params.id) as { id: string; path: string } | undefined;
+    if (!folder) {
+      return res.status(404).json({ message: 'Pasta não encontrada.' });
+    }
+
+    const hasDocuments = db.prepare('select id from internal_document where folder_path = ? limit 1').get(folder.path);
+    const hasChildren = db.prepare('select id from internal_document_folder where parent_path = ? limit 1').get(folder.path);
+    if (hasDocuments || hasChildren) {
+      return res.status(400).json({ message: 'Pasta possui itens. Remova ou mova os documentos antes de excluir.' });
+    }
+
+    db.prepare('delete from internal_document_folder where id = ?').run(folder.id);
+    return res.json({ ok: true });
+  });
+
   app.get('/internal-documents', (_req, res) => {
     const rows = db.prepare(`
-      select id, title, category, notes, file_name, mime_type, file_size_bytes, created_at, updated_at
+      select id, title, category, notes, folder_path, file_name, mime_type, file_size_bytes, created_at, updated_at
       from internal_document
       order by date(updated_at) desc, title asc
     `).all();
@@ -6791,15 +7079,16 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
   
       db.prepare(`
         insert into internal_document (
-          id, title, category, notes, file_name, mime_type, file_data_base64,
+          id, title, category, notes, folder_path, file_name, mime_type, file_data_base64,
           file_size_bytes, created_at, updated_at
         )
-        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         documentId,
         payload.title.trim(),
         payload.category?.trim() || null,
         payload.notes?.trim() || null,
+        normalizeDocumentFolderPath(payload.folder_path),
         payload.file_name.trim(),
         payload.mime_type.trim() || decoded.mimeType,
         payload.file_data_base64,

@@ -87,6 +87,7 @@ export function Layout({ children, loggedUser, navItems, onLogout }: LayoutProps
   const context = topbarContext(location.pathname);
   const isPlanningRoute = location.pathname.startsWith('/planejar');
   const [isPlanningNavExpanded, setIsPlanningNavExpanded] = useState(false);
+  const [globalError, setGlobalError] = useState('');
   const [viewMode, setViewMode] = useState<(typeof viewModes)[number]>(() => {
     const saved = readStorageItem(VIEW_MODE_STORAGE_KEY);
     return saved === 'management' ? 'management' : 'operational';
@@ -114,10 +115,34 @@ export function Layout({ children, loggedUser, navItems, onLogout }: LayoutProps
     }
   }, [isPlanningRoute]);
 
+  useEffect(() => {
+    function onGlobalError(event: Event) {
+      const detail = (event as CustomEvent<{ message?: string }>).detail;
+      const message = detail?.message?.trim();
+      if (message) {
+        setGlobalError(message);
+      }
+    }
+    window.addEventListener('orquestrador:global-error', onGlobalError);
+    return () => window.removeEventListener('orquestrador:global-error', onGlobalError);
+  }, []);
+
+  useEffect(() => {
+    if (!globalError) return undefined;
+    const timeoutId = window.setTimeout(() => setGlobalError(''), 15000);
+    return () => window.clearTimeout(timeoutId);
+  }, [globalError]);
+
   const isNavCollapsed = isPlanningRoute && !isPlanningNavExpanded;
 
   return (
     <div className={`app-shell ${isPlanningRoute ? 'is-planning-focus' : ''} ${isNavCollapsed ? 'is-nav-collapsed' : ''}`.trim()}>
+      {globalError ? (
+        <div className="global-error-toast" role="alert" aria-live="assertive">
+          <span>{globalError}</span>
+          <button type="button" aria-label="Fechar erro" onClick={() => setGlobalError('')}>×</button>
+        </div>
+      ) : null}
       {isPlanningRoute ? (
         <button
           className="planning-nav-toggle"
