@@ -140,10 +140,10 @@ describe('InternalDocsPage', () => {
 
     render(<InternalDocsPage />);
 
-    await user.click(await screen.findByRole('button', { name: 'Holand Automação de Engenharias Ltda' }));
-    await user.click(await screen.findByRole('button', { name: /Módulos.*Pasta automática/i }));
-    await user.click(await screen.findByRole('button', { name: /020101020.*Treinamento TopSolid'Design 7 - Básico.*Pasta automática/i }));
-    await user.click(await screen.findByRole('button', { name: /Certificados.*Pasta automática/i }));
+    await user.click((await screen.findAllByRole('button', { name: /Holand Automação de Engenharias Ltda.*Pasta automática/i }))[0]);
+    await user.click((await screen.findAllByRole('button', { name: /Módulos.*Pasta automática/i }))[0]);
+    await user.click((await screen.findAllByRole('button', { name: /020101020.*Treinamento TopSolid'Design 7 - Básico.*Pasta automática/i }))[0]);
+    await user.click((await screen.findAllByRole('button', { name: /Certificados.*Pasta automática/i }))[0]);
     await screen.findByText('Certificado - Holand - Design Básico');
     await user.click(await screen.findByRole('button', { name: 'Download' }));
 
@@ -161,10 +161,10 @@ describe('InternalDocsPage', () => {
 
     render(<InternalDocsPage />);
 
-    await user.click(await screen.findByRole('button', { name: 'Holand Automação de Engenharias Ltda' }));
-    await user.click(await screen.findByRole('button', { name: /Módulos.*Pasta automática/i }));
-    await user.click(await screen.findByRole('button', { name: /020101020.*Treinamento TopSolid'Design 7 - Básico.*Pasta automática/i }));
-    await user.click(await screen.findByRole('button', { name: /Certificados.*Pasta automática/i }));
+    await user.click((await screen.findAllByRole('button', { name: /Holand Automação de Engenharias Ltda.*Pasta automática/i }))[0]);
+    await user.click((await screen.findAllByRole('button', { name: /Módulos.*Pasta automática/i }))[0]);
+    await user.click((await screen.findAllByRole('button', { name: /020101020.*Treinamento TopSolid'Design 7 - Básico.*Pasta automática/i }))[0]);
+    await user.click((await screen.findAllByRole('button', { name: /Certificados.*Pasta automática/i }))[0]);
     await screen.findByText('Certificado - Holand - Design Básico');
     await user.click(await screen.findByRole('button', { name: 'Visualizar' }));
 
@@ -186,7 +186,7 @@ describe('InternalDocsPage', () => {
 
     expect(await screen.findByRole('heading', { name: 'Pastas' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Pesquisas' })).toBeInTheDocument();
-    expect(screen.getByText(/Clientes > Magui Dispositivos de Controle Ltda > Pesquisa de satisfação/i)).toBeInTheDocument();
-    expect(screen.getByText(/Treinamento TopSolid'Cam 7 - Fresamento 2D/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/Clientes > Magui Dispositivos de Controle Ltda > Pesquisa de satisfação/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Treinamento TopSolid'Cam 7 - Fresamento 2D/i).length).toBeGreaterThan(0);
   });
 });

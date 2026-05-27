@@ -377,8 +377,8 @@ export function InternalDocsPage() {
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [showActionsPanel, setShowActionsPanel] = useState(false);
   const [searchScope, setSearchScope] = useState<SearchScope>('current');
-  const [selectedItem, setSelectedItem] = useState<DocsItem | null>(null);
-  const [panelMode, setPanelMode] = useState<DocsPanelMode>('details');
+  const [, setSelectedItem] = useState<DocsItem | null>(null);
+  const [, setPanelMode] = useState<DocsPanelMode>('details');
 
   async function loadAll() {
     const [documentRows, folderRows, companyRows, moduleRows] = await Promise.all([
@@ -570,6 +570,10 @@ export function InternalDocsPage() {
 
     return empty;
   }, [query, searchableItems]);
+  const hasSearchResults = groupedResults.folders.length > 0
+    || groupedResults.surveys.length > 0
+    || groupedResults.certificates.length > 0
+    || groupedResults.files.length > 0;
 
   const breadcrumb = useMemo(() => {
     const parts: FolderNode[] = [];
@@ -787,6 +791,22 @@ export function InternalDocsPage() {
     setPreviewSurvey(null);
   }
 
+  function selectDocsItem(item: DocsItem) {
+    setSelectedItem(item);
+    setPanelMode('details');
+  }
+
+  function openDocsItem(item: DocsItem) {
+    selectDocsItem(item);
+    if (item.kind === 'folder') {
+      setSelectedPath(item.path);
+      return;
+    }
+    if (item.document && canPreviewDocument(item.document)) {
+      void previewInternalDocument(item.document);
+    }
+  }
+
   return (
     <div className="page internal-docs-page">
       <header className="page-header">
@@ -802,6 +822,8 @@ export function InternalDocsPage() {
           <div className="docs-sidebar-header">
             <strong>Pastas</strong>
             <input
+              type="search"
+              role="searchbox"
               aria-label="Buscar documentação"
               placeholder="Buscar"
               value={query}
@@ -824,134 +846,180 @@ export function InternalDocsPage() {
             <div>
               <h2>{selectedNode.name}</h2>
               <span>
-                {query.trim()
-                  ? `${visibleFolders.length} pasta(s) e ${filteredDocuments.length} arquivo(s) encontrados`
+                {isSearchActive
+                  ? `${groupedResults.folders.length + groupedResults.surveys.length + groupedResults.certificates.length + groupedResults.files.length} resultado(s) encontrados`
                   : `${selectedNode.children.length} pasta(s) · ${documentsInFolder.length} arquivo(s)`}
               </span>
+            </div>
+            <div className="docs-search-scope" role="group" aria-label="Escopo da busca">
+              <button
+                type="button"
+                className={searchScope === 'current' ? 'is-selected' : ''}
+                onClick={() => setSearchScope('current')}
+              >
+                Nesta pasta
+              </button>
+              <button
+                type="button"
+                className={searchScope === 'all' ? 'is-selected' : ''}
+                onClick={() => setSearchScope('all')}
+              >
+                Tudo
+              </button>
             </div>
             {selectedCompany ? <strong className="docs-context-chip">{selectedCompany.name}</strong> : null}
           </section>
 
           <section className="docs-content-list" aria-label="Conteúdo da pasta">
-            {visibleFolders.map((folder) => (
-              <button className="docs-row docs-row--folder" key={folder.path} type="button" onClick={() => setSelectedPath(folder.path)}>
-                <span className="docs-row-icon" aria-hidden="true">□</span>
-                <span>
-                  <strong>{folder.name}</strong>
-                  <small>{folder.system ? 'Pasta automática' : 'Pasta manual'}</small>
-                </span>
-                <em>{folder.children.length} pasta(s)</em>
-              </button>
-            ))}
-
-            {isSatisfactionPath(selectedNode.path) ? (
-              selectedFollowups.length === 0 && certificateSurveyDocuments.length === 0 ? (
-                <p className="docs-empty-card">Nenhuma pesquisa de satisfação respondida ou criada para este cliente.</p>
-              ) : null
-            ) : null}
-
-            {isSatisfactionPath(selectedNode.path) ? certificateSurveyDocuments.map((row) => {
-              const survey = parseCertificateSurveyNotes(row);
-              return (
-                <article className="docs-evaluation-row" key={row.id}>
-                  <header>
-                    <span className="docs-row-icon" aria-hidden="true">◇</span>
-                    <div>
-                      <strong>{survey.module_name ?? row.title}</strong>
-                      <small>
-                        {survey.respondent_name ?? 'Respondente não identificado'} · {formatDateBr(survey.submitted_at ?? row.updated_at)}
-                      </small>
-                    </div>
-                    <div className="docs-evaluation-meta">
-                      <span>Pesquisa do certificado</span>
-                      <strong>{survey.cohort ?? 'Jornada do cliente'}</strong>
-                    </div>
-                  </header>
-                  <p className="docs-evaluation-note">{survey.company_name ?? selectedCompany?.name ?? 'Cliente'} · {row.file_name}</p>
-                  {certificateSurveyAnswerRows(survey).length > 0 ? (
-                    <dl className="docs-evaluation-answers docs-evaluation-answers--compact">
-                      {certificateSurveyAnswerRows(survey).slice(0, 6).map((answer) => (
-                        <div key={answer.key}>
-                          <dt>{answer.label}</dt>
-                          <dd>{answer.value}</dd>
-                        </div>
-                      ))}
-                    </dl>
-                  ) : null}
-                  <div className="actions actions-compact">
-                    <button
-                      type="button"
-                      onClick={() => void previewInternalDocument(row)}
-                      disabled={previewingId === row.id}
-                    >
-                      {previewingId === row.id ? 'Abrindo...' : 'Visualizar pesquisa'}
-                    </button>
-                  </div>
-                </article>
-              );
-            }) : null}
-
-            {isSatisfactionPath(selectedNode.path) ? selectedFollowups.map((item) => (
-                <article className="docs-evaluation-row" key={item.id}>
-                  <header>
-                    <span className="docs-row-icon" aria-hidden="true">◇</span>
-                    <div>
-                      <strong>{item.title}</strong>
-                      <small>{item.respondent_name ?? 'Respondente não identificado'} · {formatDateBr(item.submitted_at ?? item.created_at)}</small>
-                    </div>
-                    <div className="docs-evaluation-meta">
-                      <span>{evaluationStatusLabel(item.status)}</span>
-                      <strong>{item.rating ? `${item.rating}/5` : 'Sem nota'}</strong>
-                    </div>
-                  </header>
-                  {item.notes ? <p className="docs-evaluation-note">{item.notes}</p> : null}
-                  {satisfactionAnswerRows(item).length > 0 ? (
-                    <dl className="docs-evaluation-answers">
-                      {satisfactionAnswerRows(item).map(([label, value]) => (
-                        <div key={label}>
-                          <dt>{label}</dt>
-                          <dd>{value}</dd>
-                        </div>
-                      ))}
-                    </dl>
-                  ) : item.status === 'Aberta' ? (
-                    <p className="docs-evaluation-note">Link criado, aguardando o cliente responder.</p>
-                  ) : null}
-                </article>
-            )) : null}
-
-            {regularDocuments.map((row) => (
-              <article className={`docs-row docs-row--file ${isCertificateDocument(row) ? 'is-certificate' : ''}`.trim()} key={row.id}>
-                <span className="docs-row-icon" aria-hidden="true">{row.mime_type.startsWith('image/') ? '▧' : '▤'}</span>
-                <span>
-                  <strong title={row.notes ?? undefined}>{row.title}</strong>
-                  <small>{row.file_name} · {formatBytes(row.file_size_bytes)} · {query.trim() ? fileFolderPath(row) : row.category ?? 'Sem categoria'}</small>
-                </span>
-                <div className="actions actions-compact">
-                  {canPreviewDocument(row) ? (
-                    <button
-                      type="button"
-                      onClick={() => void previewInternalDocument(row)}
-                      disabled={previewingId === row.id}
-                    >
-                      {previewingId === row.id ? 'Abrindo...' : 'Visualizar'}
-                    </button>
-                  ) : null}
+            {isSearchActive ? (
+              <div className="docs-search-results">
+                {hasSearchResults ? (
+                  <>
+                    <ResultGroup title="Pastas" items={groupedResults.folders} onSelect={selectDocsItem} onOpen={openDocsItem} />
+                    <ResultGroup title="Pesquisas" items={groupedResults.surveys} onSelect={selectDocsItem} onOpen={openDocsItem} />
+                    <ResultGroup title="Certificados" items={groupedResults.certificates} onSelect={selectDocsItem} onOpen={openDocsItem} />
+                    <ResultGroup title="Arquivos" items={groupedResults.files} onSelect={selectDocsItem} onOpen={openDocsItem} />
+                  </>
+                ) : (
+                  <p className="docs-empty-card">Nenhum resultado encontrado.</p>
+                )}
+              </div>
+            ) : (
+              <>
+                {visibleFolders.map((folder) => (
                   <button
+                    className="docs-row docs-row--folder"
+                    key={folder.path}
                     type="button"
-                    onClick={() => void downloadDocument(row)}
-                    disabled={downloadingId === row.id}
+                    onClick={() => openDocsItem({
+                      id: `folder:${folder.path}`,
+                      kind: 'folder',
+                      title: folder.name,
+                      subtitle: folder.system ? 'Pasta automática' : 'Pasta manual',
+                      path: folder.path,
+                      pathLabel: nodePathLabel(tree, folder.path),
+                      folder
+                    })}
                   >
-                    {downloadingId === row.id ? 'Baixando...' : 'Download'}
+                    <span className="docs-row-icon" aria-hidden="true">□</span>
+                    <span>
+                      <strong>{folder.name}</strong>
+                      <small>{folder.system ? 'Pasta automática' : 'Pasta manual'}</small>
+                    </span>
+                    <em>{folder.children.length} pasta(s)</em>
                   </button>
-                  <button type="button" onClick={() => deleteDocument(row)}>Excluir</button>
-                </div>
-              </article>
-            ))}
+                ))}
 
-            {visibleFolders.length === 0 && regularDocuments.length === 0 && !isSatisfactionPath(selectedNode.path) ? (
-              <p className="docs-empty-card">Esta pasta ainda está vazia.</p>
-            ) : null}
+                {isSatisfactionPath(selectedNode.path) ? (
+                  selectedFollowups.length === 0 && certificateSurveyDocuments.length === 0 ? (
+                    <p className="docs-empty-card">Nenhuma pesquisa de satisfação respondida ou criada para este cliente.</p>
+                  ) : null
+                ) : null}
+
+                {isSatisfactionPath(selectedNode.path) ? certificateSurveyDocuments.map((row) => {
+                  const survey = parseCertificateSurveyNotes(row);
+                  return (
+                    <article className="docs-evaluation-row" key={row.id}>
+                      <header>
+                        <span className="docs-row-icon" aria-hidden="true">◇</span>
+                        <div>
+                          <strong>{survey.module_name ?? row.title}</strong>
+                          <small>
+                            {survey.respondent_name ?? 'Respondente não identificado'} · {formatDateBr(survey.submitted_at ?? row.updated_at)}
+                          </small>
+                        </div>
+                        <div className="docs-evaluation-meta">
+                          <span>Pesquisa do certificado</span>
+                          <strong>{survey.cohort ?? 'Jornada do cliente'}</strong>
+                        </div>
+                      </header>
+                      <p className="docs-evaluation-note">{survey.company_name ?? selectedCompany?.name ?? 'Cliente'} · {row.file_name}</p>
+                      {certificateSurveyAnswerRows(survey).length > 0 ? (
+                        <dl className="docs-evaluation-answers docs-evaluation-answers--compact">
+                          {certificateSurveyAnswerRows(survey).slice(0, 6).map((answer) => (
+                            <div key={answer.key}>
+                              <dt>{answer.label}</dt>
+                              <dd>{answer.value}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                      ) : null}
+                      <div className="actions actions-compact">
+                        <button
+                          type="button"
+                          onClick={() => void previewInternalDocument(row)}
+                          disabled={previewingId === row.id}
+                        >
+                          {previewingId === row.id ? 'Abrindo...' : 'Visualizar pesquisa'}
+                        </button>
+                      </div>
+                    </article>
+                  );
+                }) : null}
+
+                {isSatisfactionPath(selectedNode.path) ? selectedFollowups.map((item) => (
+                    <article className="docs-evaluation-row" key={item.id}>
+                      <header>
+                        <span className="docs-row-icon" aria-hidden="true">◇</span>
+                        <div>
+                          <strong>{item.title}</strong>
+                          <small>{item.respondent_name ?? 'Respondente não identificado'} · {formatDateBr(item.submitted_at ?? item.created_at)}</small>
+                        </div>
+                        <div className="docs-evaluation-meta">
+                          <span>{evaluationStatusLabel(item.status)}</span>
+                          <strong>{item.rating ? `${item.rating}/5` : 'Sem nota'}</strong>
+                        </div>
+                      </header>
+                      {item.notes ? <p className="docs-evaluation-note">{item.notes}</p> : null}
+                      {satisfactionAnswerRows(item).length > 0 ? (
+                        <dl className="docs-evaluation-answers">
+                          {satisfactionAnswerRows(item).map(([label, value]) => (
+                            <div key={label}>
+                              <dt>{label}</dt>
+                              <dd>{value}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                      ) : item.status === 'Aberta' ? (
+                        <p className="docs-evaluation-note">Link criado, aguardando o cliente responder.</p>
+                      ) : null}
+                    </article>
+                )) : null}
+
+                {regularDocuments.map((row) => (
+                  <article className={`docs-row docs-row--file ${isCertificateDocument(row) ? 'is-certificate' : ''}`.trim()} key={row.id}>
+                    <span className="docs-row-icon" aria-hidden="true">{row.mime_type.startsWith('image/') ? '▧' : '▤'}</span>
+                    <span>
+                      <strong title={row.notes ?? undefined}>{row.title}</strong>
+                      <small>{row.file_name} · {formatBytes(row.file_size_bytes)} · {row.category ?? 'Sem categoria'}</small>
+                    </span>
+                    <div className="actions actions-compact">
+                      {canPreviewDocument(row) ? (
+                        <button
+                          type="button"
+                          onClick={() => void previewInternalDocument(row)}
+                          disabled={previewingId === row.id}
+                        >
+                          {previewingId === row.id ? 'Abrindo...' : 'Visualizar'}
+                        </button>
+                      ) : null}
+                    <button
+                      type="button"
+                      onClick={() => void downloadDocument(row)}
+                      disabled={downloadingId === row.id}
+                    >
+                      {downloadingId === row.id ? 'Baixando...' : 'Download'}
+                    </button>
+                      <button type="button" onClick={() => deleteDocument(row)}>Excluir</button>
+                    </div>
+                  </article>
+                ))}
+
+                {visibleFolders.length === 0 && regularDocuments.length === 0 && !isSatisfactionPath(selectedNode.path) ? (
+                  <p className="docs-empty-card">Esta pasta ainda está vazia.</p>
+                ) : null}
+              </>
+            )}
           </section>
         </main>
 
@@ -1157,7 +1225,10 @@ function FolderTree({
           onClick={() => onSelect(node.path)}
         >
           <span aria-hidden="true">□</span>
-          <span>{node.name}</span>
+          <span>
+            {node.name}
+            <small>{node.system ? 'Pasta automática' : 'Pasta manual'}</small>
+          </span>
         </button>
       ) : null}
       {node.children.map((child) => (
@@ -1170,5 +1241,42 @@ function FolderTree({
         />
       ))}
     </div>
+  );
+}
+
+function ResultGroup({
+  title,
+  items,
+  onSelect,
+  onOpen
+}: {
+  title: string;
+  items: DocsItem[];
+  onSelect: (item: DocsItem) => void;
+  onOpen: (item: DocsItem) => void;
+}) {
+  return (
+    <section className="docs-result-group" aria-labelledby={`docs-result-group-${title.toLowerCase()}`}>
+      <h3 id={`docs-result-group-${title.toLowerCase()}`}>{title}</h3>
+      {items.length > 0 ? (
+        <div className="docs-result-list">
+          {items.map((item) => (
+            <article className="docs-row docs-row--result" key={item.id}>
+              <button type="button" onClick={() => onSelect(item)}>
+                <span className="docs-row-icon" aria-hidden="true">{item.kind === 'folder' ? '□' : '▤'}</span>
+                <span>
+                  <strong>{item.title}</strong>
+                  <small>{item.pathLabel}</small>
+                  <small>{item.subtitle}</small>
+                </span>
+              </button>
+              <button type="button" onClick={() => onOpen(item)}>
+                Abrir
+              </button>
+            </article>
+          ))}
+        </div>
+      ) : null}
+    </section>
   );
 }
