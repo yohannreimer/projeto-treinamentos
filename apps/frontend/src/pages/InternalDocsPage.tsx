@@ -69,6 +69,21 @@ type PreviewDocument = {
   mimeType: string;
 } | null;
 
+type CertificateSurveyPreview = {
+  row: InternalDocumentRow;
+  data: CertificateSurveyData;
+} | null;
+
+type CertificateSurveyData = {
+  document_key?: string;
+  company_name?: string;
+  cohort?: string | null;
+  module_name?: string;
+  respondent_name?: string;
+  submitted_at?: string;
+  answers?: Record<string, string | number | boolean | null>;
+};
+
 type FolderNode = {
   path: string;
   name: string;
@@ -83,6 +98,31 @@ const ROOT_PATH = '/';
 const CLIENTS_PATH = '/Clientes';
 const INTERNAL_PATH = '/Interna';
 const SATISFACTION_SEGMENT = 'Pesquisa%20de%20satisfacao';
+const certificateSurveyQuestionLabels: Record<string, string> = {
+  q1: 'O instrutor demonstrou domínio técnico do conteúdo do curso?',
+  q2: 'O instrutor explicou os conceitos de forma clara e objetiva?',
+  q3: 'O instrutor foi paciente e disponível para tirar dúvidas?',
+  q4: 'O ritmo das aulas foi adequado?',
+  q5: 'O instrutor estimulou a participação e a prática dos alunos?',
+  q6: 'Qual foi o principal ponto forte do instrutor?',
+  q7: 'O que o instrutor poderia melhorar?',
+  q8: 'O conteúdo do curso atendeu às suas expectativas?',
+  q9: 'Os temas abordados foram relevantes para sua realidade profissional?',
+  q10: 'O nível de dificuldade do curso foi adequado?',
+  q11: 'As aulas práticas foram suficientes?',
+  q12: 'A sequência dos tópicos foi lógica e bem organizada?',
+  q13: 'Você se sente mais confiante para aplicar o conteúdo após o curso?',
+  q14: 'O material didático foi de boa qualidade?',
+  q15: 'Os exercícios práticos foram úteis e bem elaborados?',
+  q16: 'O ambiente, laboratório ou licenças do software funcionaram bem?',
+  q17: 'No geral, como você avalia o curso?',
+  q18: 'Recomendaria este curso para outros colegas?',
+  q19: 'Qual foi o tópico mais útil do curso?',
+  q20: 'Qual tópico você achou menos útil ou precisa de mais aprofundamento?',
+  q21: 'O que mais você gostou no curso?',
+  q22: 'O que podemos melhorar para as próximas turmas?',
+  q23: 'Sugestões de novos temas ou módulos que gostaria de ver?'
+};
 
 function toDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -123,6 +163,11 @@ function fileFolderPath(row: InternalDocumentRow): string {
   if (row.folder_path) return normalizeFolderPath(row.folder_path);
 
   const notes = row.notes ?? '';
+  const surveyKey = notes.match(/Chave:\s*PESQUISA_CERTIFICADO:([^:\n]+):([^:\n]+):([^:\n]+)/)?.[1]?.trim();
+  if (surveyKey) {
+    return `${CLIENTS_PATH}/${surveyKey}/${SATISFACTION_SEGMENT}`;
+  }
+
   const certificateKey = notes.match(/Chave:\s*(CERTIFICADO_[^\n]+)/)?.[1]?.trim();
   if (certificateKey) {
     const parts = certificateKey.split(':');
@@ -162,13 +207,65 @@ function fileNameFromContentDisposition(contentDisposition: string, fallback: st
 }
 
 function canPreviewDocument(row: InternalDocumentRow): boolean {
-  return row.mime_type === 'application/pdf' || row.mime_type.startsWith('image/');
+  return row.mime_type === 'application/pdf'
+    || row.mime_type === 'text/html'
+    || row.mime_type.startsWith('image/')
+    || isCertificateSurveyDocument(row);
 }
 
 function isCertificateDocument(row: InternalDocumentRow): boolean {
   return String(row.category ?? '').toLowerCase() === 'certificados'
     || row.title.toLowerCase().includes('certificado')
     || row.file_name.toLowerCase().includes('certificado');
+}
+
+function isCertificateSurveyDocument(row: InternalDocumentRow): boolean {
+  const haystack = `${row.category ?? ''}\n${row.title}\n${row.file_name}\n${row.notes ?? ''}`.toLowerCase();
+  return haystack.includes('pesquisa_certificado')
+    || haystack.includes('pesquisa_satisfacao_certificado')
+    || haystack.includes('pesquisas de satisfação');
+}
+
+function parseCertificateSurveyNotes(row: InternalDocumentRow): CertificateSurveyData {
+  const notes = row.notes ?? '';
+  const lineValue = (label: string) => notes.match(new RegExp(`^${label}:\\s*(.+)$`, 'im'))?.[1]?.trim();
+  const answers: Record<string, string> = {};
+  notes.split('\n').forEach((line) => {
+    const match = line.match(/^(q\d+):\s*(.*)$/i);
+    if (!match) return;
+    answers[match[1].toLowerCase()] = match[2].trim();
+  });
+
+  return {
+    document_key: lineValue('Chave'),
+    company_name: lineValue('Empresa'),
+    cohort: lineValue('Turma'),
+    module_name: lineValue('Módulo'),
+    respondent_name: lineValue('Respondido por'),
+    submitted_at: lineValue('Enviado em'),
+    answers
+  };
+}
+
+function parseCertificateSurveyJson(raw: string, fallback: InternalDocumentRow): CertificateSurveyData {
+  const parsed = JSON.parse(raw) as CertificateSurveyData;
+  return {
+    ...parseCertificateSurveyNotes(fallback),
+    ...parsed,
+    answers: parsed.answers ?? parseCertificateSurveyNotes(fallback).answers
+  };
+}
+
+function certificateSurveyAnswerRows(data: CertificateSurveyData) {
+  const answers = data.answers ?? {};
+  return Object.entries(answers)
+    .filter(([, value]) => String(value ?? '').trim().length > 0)
+    .sort(([left], [right]) => left.localeCompare(right, 'pt-BR', { numeric: true }))
+    .map(([key, value]) => ({
+      key,
+      label: certificateSurveyQuestionLabels[key] ?? key.toUpperCase(),
+      value: String(value ?? '')
+    }));
 }
 
 async function errorMessageFromResponse(response: Response, fallback: string): Promise<string> {
@@ -250,6 +347,7 @@ export function InternalDocsPage() {
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [previewingId, setPreviewingId] = useState<string | null>(null);
   const [previewDocument, setPreviewDocument] = useState<PreviewDocument>(null);
+  const [previewSurvey, setPreviewSurvey] = useState<CertificateSurveyPreview>(null);
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [showActionsPanel, setShowActionsPanel] = useState(false);
 
@@ -363,6 +461,16 @@ export function InternalDocsPage() {
       || fileFolderPath(row).toLowerCase().includes(term)
     ));
   }, [documentsInFolder, query, rows]);
+  const certificateSurveyDocuments = useMemo(() => (
+    isSatisfactionPath(selectedNode.path)
+      ? filteredDocuments.filter(isCertificateSurveyDocument)
+      : []
+  ), [filteredDocuments, selectedNode.path]);
+  const regularDocuments = useMemo(() => (
+    isSatisfactionPath(selectedNode.path)
+      ? filteredDocuments.filter((row) => !isCertificateSurveyDocument(row))
+      : filteredDocuments
+  ), [filteredDocuments, selectedNode.path]);
 
   const visibleFolders = useMemo(() => {
     const term = query.trim().toLowerCase();
@@ -552,6 +660,17 @@ export function InternalDocsPage() {
         throw new Error(await errorMessageFromResponse(response, 'Falha ao abrir prévia do documento.'));
       }
 
+      if (isCertificateSurveyDocument(row) && row.mime_type.includes('application/json')) {
+        const text = await response.text();
+        setPreviewSurvey({
+          row,
+          data: text.trim()
+            ? parseCertificateSurveyJson(text, row)
+            : parseCertificateSurveyNotes(row)
+        });
+        return;
+      }
+
       const blob = await response.blob();
       const objectUrl = window.URL.createObjectURL(blob);
       const fileName = fileNameFromContentDisposition(
@@ -581,6 +700,7 @@ export function InternalDocsPage() {
       window.URL.revokeObjectURL(previewDocument.objectUrl);
     }
     setPreviewDocument(null);
+    setPreviewSurvey(null);
   }
 
   return (
@@ -641,9 +761,53 @@ export function InternalDocsPage() {
             ))}
 
             {isSatisfactionPath(selectedNode.path) ? (
-              selectedFollowups.length === 0 ? (
+              selectedFollowups.length === 0 && certificateSurveyDocuments.length === 0 ? (
                 <p className="docs-empty-card">Nenhuma pesquisa de satisfação respondida ou criada para este cliente.</p>
-              ) : selectedFollowups.map((item) => (
+              ) : null
+            ) : null}
+
+            {isSatisfactionPath(selectedNode.path) ? certificateSurveyDocuments.map((row) => {
+              const survey = parseCertificateSurveyNotes(row);
+              return (
+                <article className="docs-evaluation-row" key={row.id}>
+                  <header>
+                    <span className="docs-row-icon" aria-hidden="true">◇</span>
+                    <div>
+                      <strong>{survey.module_name ?? row.title}</strong>
+                      <small>
+                        {survey.respondent_name ?? 'Respondente não identificado'} · {formatDateBr(survey.submitted_at ?? row.updated_at)}
+                      </small>
+                    </div>
+                    <div className="docs-evaluation-meta">
+                      <span>Pesquisa do certificado</span>
+                      <strong>{survey.cohort ?? 'Jornada do cliente'}</strong>
+                    </div>
+                  </header>
+                  <p className="docs-evaluation-note">{survey.company_name ?? selectedCompany?.name ?? 'Cliente'} · {row.file_name}</p>
+                  {certificateSurveyAnswerRows(survey).length > 0 ? (
+                    <dl className="docs-evaluation-answers docs-evaluation-answers--compact">
+                      {certificateSurveyAnswerRows(survey).slice(0, 6).map((answer) => (
+                        <div key={answer.key}>
+                          <dt>{answer.label}</dt>
+                          <dd>{answer.value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  ) : null}
+                  <div className="actions actions-compact">
+                    <button
+                      type="button"
+                      onClick={() => void previewInternalDocument(row)}
+                      disabled={previewingId === row.id}
+                    >
+                      {previewingId === row.id ? 'Abrindo...' : 'Visualizar pesquisa'}
+                    </button>
+                  </div>
+                </article>
+              );
+            }) : null}
+
+            {isSatisfactionPath(selectedNode.path) ? selectedFollowups.map((item) => (
                 <article className="docs-evaluation-row" key={item.id}>
                   <header>
                     <span className="docs-row-icon" aria-hidden="true">◇</span>
@@ -670,10 +834,9 @@ export function InternalDocsPage() {
                     <p className="docs-evaluation-note">Link criado, aguardando o cliente responder.</p>
                   ) : null}
                 </article>
-              ))
-            ) : null}
+            )) : null}
 
-            {filteredDocuments.map((row) => (
+            {regularDocuments.map((row) => (
               <article className={`docs-row docs-row--file ${isCertificateDocument(row) ? 'is-certificate' : ''}`.trim()} key={row.id}>
                 <span className="docs-row-icon" aria-hidden="true">{row.mime_type.startsWith('image/') ? '▧' : '▤'}</span>
                 <span>
@@ -702,7 +865,7 @@ export function InternalDocsPage() {
               </article>
             ))}
 
-            {visibleFolders.length === 0 && filteredDocuments.length === 0 && !isSatisfactionPath(selectedNode.path) ? (
+            {visibleFolders.length === 0 && regularDocuments.length === 0 && !isSatisfactionPath(selectedNode.path) ? (
               <p className="docs-empty-card">Esta pasta ainda está vazia.</p>
             ) : null}
           </section>
@@ -758,6 +921,60 @@ export function InternalDocsPage() {
           ) : null}
         </aside>
       </div>
+
+      {previewSurvey ? (
+        <div className="internal-doc-preview-backdrop" role="presentation" onClick={closePreview}>
+          <section
+            className="internal-doc-preview-modal internal-doc-preview-modal--survey"
+            role="dialog"
+            aria-modal="true"
+            aria-label={previewSurvey.row.title}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="internal-doc-preview-header">
+              <div>
+                <span className="internal-doc-preview-kicker">Pesquisa de satisfação</span>
+                <h2>{previewSurvey.data.module_name ?? previewSurvey.row.title}</h2>
+                <p>
+                  {previewSurvey.data.company_name ?? selectedCompany?.name ?? 'Cliente'}
+                  {' · '}
+                  {previewSurvey.data.respondent_name ?? 'Respondente não identificado'}
+                  {' · '}
+                  {formatDateBr(previewSurvey.data.submitted_at ?? previewSurvey.row.updated_at)}
+                </p>
+              </div>
+              <div className="actions actions-compact">
+                <button type="button" onClick={closePreview}>Fechar</button>
+              </div>
+            </header>
+
+            <div className="docs-survey-report">
+              <dl className="docs-survey-summary">
+                <div>
+                  <dt>Turma</dt>
+                  <dd>{previewSurvey.data.cohort ?? 'Jornada do cliente'}</dd>
+                </div>
+                <div>
+                  <dt>Arquivo original</dt>
+                  <dd>{previewSurvey.row.file_name}</dd>
+                </div>
+              </dl>
+
+              <div className="docs-survey-answer-list">
+                {certificateSurveyAnswerRows(previewSurvey.data).map((answer) => (
+                  <article key={answer.key}>
+                    <span>{answer.key.toUpperCase()}</span>
+                    <div>
+                      <strong>{answer.label}</strong>
+                      <p>{answer.value}</p>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </div>
+          </section>
+        </div>
+      ) : null}
 
       {previewDocument ? (
         <div className="internal-doc-preview-backdrop" role="presentation" onClick={closePreview}>
