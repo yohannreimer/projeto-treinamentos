@@ -243,6 +243,22 @@ describe('InternalDocsPage', () => {
     expect(screen.getByRole('heading', { name: 'Enviar arquivo' })).toBeInTheDocument();
   });
 
+  test('supports keyboard interaction in the Novo menu', async () => {
+    const user = userEvent.setup();
+    render(<InternalDocsPage />);
+
+    const newButton = await screen.findByRole('button', { name: '+ Novo' });
+    newButton.focus();
+    await user.keyboard('{Enter}');
+
+    expect(screen.getByRole('menuitem', { name: 'Nova pasta' })).toHaveFocus();
+    await user.keyboard('{ArrowDown}');
+    expect(screen.getByRole('menuitem', { name: 'Enviar arquivo' })).toHaveFocus();
+    await user.keyboard('{Escape}');
+    expect(newButton).toHaveFocus();
+    expect(screen.queryByRole('menuitem', { name: 'Nova pasta' })).not.toBeInTheDocument();
+  });
+
   test('selects regular folder documents and clears stale details when navigating', async () => {
     const user = userEvent.setup();
     render(<InternalDocsPage />);

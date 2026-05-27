@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ChangeEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react';
 import { api, createInternalAuthHeaders } from '../services/api';
 import { askDestructiveConfirmation } from '../utils/destructive';
 
@@ -379,6 +379,9 @@ export function InternalDocsPage() {
   const [panelMode, setPanelMode] = useState<DocsPanelMode>('details');
   const [newMenuOpen, setNewMenuOpen] = useState(false);
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set([CLIENTS_PATH, INTERNAL_PATH]));
+  const newMenuButtonRef = useRef<HTMLButtonElement | null>(null);
+  const newFolderMenuItemRef = useRef<HTMLButtonElement | null>(null);
+  const uploadMenuItemRef = useRef<HTMLButtonElement | null>(null);
 
   async function loadAll() {
     const [documentRows, folderRows, companyRows, moduleRows] = await Promise.all([
@@ -498,6 +501,24 @@ export function InternalDocsPage() {
     const currentItem = allDocsItems.find((item) => item.id === selectedItem.id);
     setSelectedItem(currentItem ?? null);
   }, [allDocsItems, selectedItem]);
+
+  useEffect(() => {
+    if (!newMenuOpen) return;
+    newFolderMenuItemRef.current?.focus();
+
+    function onDocumentPointerDown(event: MouseEvent) {
+      if (
+        event.target instanceof Node
+        && !newMenuButtonRef.current?.contains(event.target)
+        && !newFolderMenuItemRef.current?.parentElement?.contains(event.target)
+      ) {
+        setNewMenuOpen(false);
+      }
+    }
+
+    document.addEventListener('mousedown', onDocumentPointerDown);
+    return () => document.removeEventListener('mousedown', onDocumentPointerDown);
+  }, [newMenuOpen]);
 
   const documentsInFolder = useMemo(() => rows.filter((row) => fileFolderPath(row) === selectedNode.path), [rows, selectedNode.path]);
   const filteredDocuments = useMemo(() => {
@@ -845,6 +866,50 @@ export function InternalDocsPage() {
     setNewMenuOpen(false);
   }
 
+  function focusNewMenuItem(direction: 'first' | 'last') {
+    const target = direction === 'first' ? newFolderMenuItemRef.current : uploadMenuItemRef.current;
+    target?.focus();
+  }
+
+  function closeNewMenu({ restoreFocus = false } = {}) {
+    setNewMenuOpen(false);
+    if (restoreFocus) {
+      window.setTimeout(() => newMenuButtonRef.current?.focus(), 0);
+    }
+  }
+
+  function onNewMenuButtonKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
+    if (event.key === 'ArrowDown' || event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      setNewMenuOpen(true);
+      window.setTimeout(() => focusNewMenuItem('first'), 0);
+    }
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      setNewMenuOpen(true);
+      window.setTimeout(() => focusNewMenuItem('last'), 0);
+    }
+    if (event.key === 'Escape') {
+      closeNewMenu();
+    }
+  }
+
+  function onNewMenuKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeNewMenu({ restoreFocus: true });
+      return;
+    }
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      const items = [newFolderMenuItemRef.current, uploadMenuItemRef.current].filter(Boolean) as HTMLButtonElement[];
+      const activeIndex = items.findIndex((item) => item === document.activeElement);
+      const delta = event.key === 'ArrowDown' ? 1 : -1;
+      const nextIndex = activeIndex === -1 ? 0 : (activeIndex + delta + items.length) % items.length;
+      items[nextIndex]?.focus();
+    }
+  }
+
   function cancelNewFolder() {
     setNewFolderName('');
     setPanelMode('details');
@@ -928,18 +993,30 @@ export function InternalDocsPage() {
               <button
                 type="button"
                 className="docs-new-button"
+                ref={newMenuButtonRef}
                 onClick={() => setNewMenuOpen((current) => !current)}
+                onKeyDown={onNewMenuButtonKeyDown}
                 aria-haspopup="menu"
                 aria-expanded={newMenuOpen}
               >
                 + Novo
               </button>
               {newMenuOpen ? (
-                <div className="docs-new-menu" role="menu">
-                  <button type="button" role="menuitem" onClick={openNewFolderPanel}>
+                <div className="docs-new-menu" role="menu" onKeyDown={onNewMenuKeyDown}>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    ref={newFolderMenuItemRef}
+                    onClick={openNewFolderPanel}
+                  >
                     Nova pasta
                   </button>
-                  <button type="button" role="menuitem" onClick={openUploadPanel}>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    ref={uploadMenuItemRef}
+                    onClick={openUploadPanel}
+                  >
                     Enviar arquivo
                   </button>
                 </div>
