@@ -2,8 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { promisify } from 'node:util';
 import express, { type Express, type Request } from 'express';
-import puppeteer from 'puppeteer-core';
 import { z } from 'zod';
 import { clearAllData, db, nowDateIso, uuid } from './db.js';
 import { appendAndProject, getHoursLedger, getHoursPending, getHoursSummary } from './hours/service.js';
@@ -70,6 +72,7 @@ const IMPLEMENTATION_KANBAN_DEFAULT_COLUMNS = [
 const SERVER_FILE_PATH = fileURLToPath(import.meta.url);
 const SERVER_DIR = path.dirname(SERVER_FILE_PATH);
 const PROJECT_ROOT_FROM_SERVER = path.resolve(SERVER_DIR, '..', '..', '..');
+const execFileAsync = promisify(execFile);
 const CERTIFICATE_TEMPLATE_PATH_CANDIDATES = [
   path.resolve(SERVER_DIR, 'templates/certificate_holand.html'),
   path.resolve(PROJECT_ROOT_FROM_SERVER, 'apps/backend/src/templates/certificate_holand.html'),
@@ -168,6 +171,28 @@ const updateCohortSchema = z.object({
   blocks: z.array(cohortBlockSchema).min(1).optional()
 });
 
+function deriveCohortStartDateFromScheduleDays(scheduleDays: Array<{ day_index: number; day_date: string }> | undefined) {
+  if (!scheduleDays || scheduleDays.length === 0) return null;
+  return [...scheduleDays].sort((left, right) => (
+    left.day_date.localeCompare(right.day_date) || left.day_index - right.day_index
+  ))[0]?.day_date ?? null;
+}
+
+function normalizeScheduleDaysChronologically<T extends { day_index: number; day_date: string; start_time?: string | null; end_time?: string | null }>(
+  scheduleDays: T[]
+) {
+  return [...scheduleDays]
+    .sort((left, right) => (
+      left.day_date.localeCompare(right.day_date)
+      || (left.start_time ?? '').localeCompare(right.start_time ?? '')
+      || left.day_index - right.day_index
+    ))
+    .map((day, index) => ({
+      ...day,
+      day_index: index + 1
+    }));
+}
+
 const createAllocationSchema = z.object({
   cohort_id: z.string(),
   company_id: z.string(),
@@ -234,6 +259,10 @@ const licenseUpdateSchema = z.object({
   renewal_cycle: z.enum(['Mensal', 'Bimestral', 'Trimestral', 'Semestral', 'Anual']).optional(),
   expires_at: z.string().min(10).optional(),
   notes: z.string().nullable().optional()
+});
+
+const licenseImportPreviewSchema = z.object({
+  raw_text: z.string().min(1)
 });
 
 const kanbanCardCreateSchema = z.object({
@@ -341,9 +370,30 @@ const internalDocumentCreateSchema = z.object({
   title: z.string().min(2).max(180),
   category: z.string().max(120).nullable().optional(),
   notes: z.string().max(2000).nullable().optional(),
+  folder_path: z.string().min(1).max(600).nullable().optional(),
   file_name: z.string().min(1).max(200),
   mime_type: z.string().min(3).max(120),
   file_data_base64: internalDocumentDataUrlSchema
+});
+
+const internalDocumentFolderCreateSchema = z.object({
+  parent_path: z.string().min(1).max(600),
+  name: z.string().trim().min(1).max(120)
+});
+
+const followupEvaluationCreateSchema = z.object({
+  title: z.string().trim().min(2).max(160).default('Avaliação de acompanhamento'),
+  notes: z.string().trim().max(1000).nullable().optional()
+});
+
+const followupEvaluationSubmitSchema = z.object({
+  respondent_name: z.string().trim().min(2).max(160),
+  rating: z.number().int().min(1).max(5),
+  answers: z.object({
+    what_worked: z.string().trim().max(1200).optional().default(''),
+    what_to_improve: z.string().trim().max(1200).optional().default(''),
+    next_priority: z.string().trim().max(1200).optional().default('')
+  })
 });
 
 const internalRoleSchema = z.enum(INTERNAL_ROLE_VALUES);
@@ -544,41 +594,28 @@ function resolvePdfBrowserExecutablePath(): string {
 
 async function renderPdfFromHtml(html: string): Promise<Buffer> {
   const executablePath = resolvePdfBrowserExecutablePath();
-  const browser = await puppeteer.launch({
-    executablePath,
-    headless: true,
-    args: [
+  const workDir = fs.mkdtempSync(path.join(tmpdir(), 'orq-certificate-'));
+  const htmlPath = path.join(workDir, 'certificate.html');
+  const pdfPath = path.join(workDir, 'certificate.pdf');
+  try {
+    fs.writeFileSync(htmlPath, html, 'utf-8');
+    await execFileAsync(executablePath, [
+      '--headless=new',
       '--no-sandbox',
       '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
-      '--font-render-hinting=none'
-    ]
-  });
-
-  try {
-    const page = await browser.newPage();
-    await page.setViewport({ width: 1400, height: 1000, deviceScaleFactor: 2 });
-    await page.setContent(html, { waitUntil: 'networkidle0' });
-    await page.emulateMediaType('screen');
-    await page.evaluate(async () => {
-      const fontsReady = (document as any)?.fonts?.ready;
-      if (fontsReady) {
-        await fontsReady;
-      }
+      '--disable-gpu',
+      '--run-all-compositor-stages-before-draw',
+      '--print-to-pdf-no-header',
+      `--print-to-pdf=${pdfPath}`,
+      `file://${htmlPath}`
+    ], {
+      timeout: 60_000,
+      maxBuffer: 1024 * 1024
     });
-    const pdfBuffer = await page.pdf({
-      printBackground: true,
-      preferCSSPageSize: true,
-      margin: {
-        top: '0mm',
-        right: '0mm',
-        bottom: '0mm',
-        left: '0mm'
-      }
-    });
-    return Buffer.from(pdfBuffer);
+    return fs.readFileSync(pdfPath);
   } finally {
-    await browser.close();
+    fs.rmSync(workDir, { recursive: true, force: true });
   }
 }
 
@@ -735,14 +772,44 @@ function replaceTemplateTokens(html: string, tokens: Array<[string, string]>): s
   return output;
 }
 
+function certificateSubjectLabel(participants: Array<{ participant_name: string }>): string {
+  return participants.length > 0 ? 'Colaboradores Certificados' : 'Empresa Certificada';
+}
+
+function certificateSubjectCardsHtml(participants: Array<{ participant_name: string }>, companyName: string): string {
+  const subjects = participants.length > 0
+    ? participants.map((participant) => ({
+        name: participant.participant_name,
+        role: 'Participante'
+      }))
+    : [{
+        name: companyName,
+        role: 'Empresa'
+      }];
+
+  return subjects
+    .map((subject, index) => {
+      const position = String(index + 1).padStart(2, '0');
+      return `
+        <div class="employee-card">
+          <div class="employee-num">${position}</div>
+          <div class="employee-name">${escapeHtml(subject.name)}</div>
+          <div class="employee-role">${escapeHtml(subject.role)}</div>
+        </div>`;
+    })
+    .join('');
+}
+
 function upsertCertificateDocument(args: {
   documentKey: string;
   title: string;
   notes: string;
   fileBase: string;
   pdfBuffer: Buffer;
+  folderPath?: string | null;
 }) {
   const certificateDataUrl = `data:application/pdf;base64,${args.pdfBuffer.toString('base64')}`;
+  const folderPath = normalizeDocumentFolderPath(args.folderPath ?? '/Interna/Certificados');
   const existingCertificateDocument = db.prepare(`
     select id
     from internal_document
@@ -762,6 +829,7 @@ function upsertCertificateDocument(args: {
         mime_type = ?,
         file_data_base64 = ?,
         file_size_bytes = ?,
+        folder_path = ?,
         updated_at = ?
       where id = ?
     `).run(
@@ -772,6 +840,7 @@ function upsertCertificateDocument(args: {
       'application/pdf',
       certificateDataUrl,
       args.pdfBuffer.length,
+      folderPath,
       nowDateIso(),
       existingCertificateDocument.id
     );
@@ -780,15 +849,16 @@ function upsertCertificateDocument(args: {
 
   db.prepare(`
     insert into internal_document (
-      id, title, category, notes, file_name, mime_type, file_data_base64,
+      id, title, category, notes, folder_path, file_name, mime_type, file_data_base64,
       file_size_bytes, created_at, updated_at
     )
-    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     uuid('doc'),
     args.title,
     'Certificados',
     args.notes,
+    folderPath,
     `${args.fileBase}.pdf`,
     'application/pdf',
     certificateDataUrl,
@@ -802,6 +872,7 @@ export async function buildCompanyModuleCertificate(args: {
   companyId: string;
   moduleId: string;
   cohortId?: string | null;
+  technicianId?: string | null;
   format?: 'pdf' | 'html';
   shouldDownload?: boolean;
 }): Promise<{
@@ -856,6 +927,18 @@ export async function buildCompanyModuleCertificate(args: {
   }
 
   const isDeliverableCertificate = moduleRow.delivery_mode === 'entregavel';
+  const manualTechnician = args.technicianId && !isDeliverableCertificate
+    ? db.prepare(`
+        select id, name
+        from technician
+        where id = ?
+      `).get(args.technicianId) as { id: string; name: string } | undefined
+    : undefined;
+
+  if (args.technicianId && !isDeliverableCertificate && !manualTechnician) {
+    throw new Error('Técnico não encontrado.');
+  }
+
   const latestAllocation = !isDeliverableCertificate
     ? db.prepare(`
         select
@@ -902,10 +985,6 @@ export async function buildCompanyModuleCertificate(args: {
       } | undefined
     : undefined;
 
-  if (!isDeliverableCertificate && !latestAllocation) {
-    throw new Error('Nenhuma turma encontrada para emitir o certificado deste treinamento.');
-  }
-
   const participants = latestAllocation
     ? db.prepare(`
         select cp.participant_name
@@ -915,10 +994,6 @@ export async function buildCompanyModuleCertificate(args: {
         order by cp.participant_name asc
       `).all(latestAllocation.cohort_id, company.id, moduleRow.id) as Array<{ participant_name: string }>
     : [];
-
-  if (!isDeliverableCertificate && participants.length === 0) {
-    throw new Error('Nenhum participante desta empresa está vinculado ao módulo na turma encontrada.');
-  }
 
   const issueDateIso = nowDateIso();
   const trainingName = moduleShortLabel(moduleRow.module_name);
@@ -933,17 +1008,18 @@ export async function buildCompanyModuleCertificate(args: {
 
   const totalDays = Math.max(1, Number(latestAllocation?.duration_days ?? moduleRow.duration_days) || 1);
   const totalHours = totalDays * 8;
-  const employeeCardsHtml = participants
-    .map((participant, index) => {
-      const position = String(index + 1).padStart(2, '0');
-      return `
-        <div class="employee-card">
-          <div class="employee-num">${position}</div>
-          <div class="employee-name">${escapeHtml(participant.participant_name)}</div>
-          <div class="employee-role">Participante</div>
-        </div>`;
-    })
-    .join('');
+  const employeeCardsHtml = certificateSubjectCardsHtml(participants, company.name);
+  const technicianName = latestAllocation?.technician_name ?? (!latestAllocation ? manualTechnician?.name : null) ?? null;
+  const technicianSignatureHtml = technicianName
+    ? `
+    <div class="footer-div"></div>
+
+    <div>
+      <div class="sig-line"></div>
+      <div id="sig-name-2">${escapeHtml(technicianName)}</div>
+      <div id="sig-title-2">Técnico Responsável pelo Curso</div>
+    </div>`
+    : '';
 
   const template = isDeliverableCertificate ? readDeliverableCertificateTemplate() : readCertificateTemplate();
   const html = replaceTemplateTokens(template, isDeliverableCertificate
@@ -957,9 +1033,11 @@ export async function buildCompanyModuleCertificate(args: {
     : [
         ['COMPANY_NAME', escapeHtml(company.name)],
         ['COURSE_NAME', escapeHtml(trainingName)],
-        ['COURSE_HOURS', escapeHtml(`⏱ ${totalDays} diária(s) (${totalHours}h)`)],
+        ['COURSE_HOURS', escapeHtml(`Duração: ${totalDays} diária(s) (${totalHours}h)`)],
+        ['EMPLOYEES_LABEL', escapeHtml(certificateSubjectLabel(participants))],
         ['EMPLOYEES_GRID', employeeCardsHtml],
-        ['TECHNICIAN_NAME', escapeHtml(latestAllocation?.technician_name ?? 'Sem técnico definido')],
+        ['FOOTER_CLASS', technicianName ? 'has-technician' : 'no-technician'],
+        ['TECHNICIAN_SIGNATURE_HTML', technicianSignatureHtml],
         ['EMIT_DATE', escapeHtml(formatLongDatePtBr(issueDateIso))],
         ['CERT_CODE', escapeHtml(certCode)]
       ]);
@@ -983,7 +1061,9 @@ export async function buildCompanyModuleCertificate(args: {
   const pdfBuffer = await renderPdfFromHtml(applyPdfLayoutOverrides(html));
   const certificateDocumentKey = isDeliverableCertificate
     ? `CERTIFICADO_CLIENTE_MODULO:${company.id}:${moduleRow.id}:entregavel`
-    : `CERTIFICADO_TURMA_MODULO:${latestAllocation?.cohort_id}:${company.id}:${moduleRow.id}`;
+    : latestAllocation
+      ? `CERTIFICADO_TURMA_MODULO:${latestAllocation.cohort_id}:${company.id}:${moduleRow.id}`
+      : `CERTIFICADO_CLIENTE_MODULO:${company.id}:${moduleRow.id}:treinamento`;
   const certificateDocumentNotes = [
     '[CERTIFICADO_AUTOMATICO]',
     `Chave: ${certificateDocumentKey}`,
@@ -992,18 +1072,22 @@ export async function buildCompanyModuleCertificate(args: {
     latestAllocation ? `Turma: ${latestAllocation.cohort_code}` : 'Turma: Jornada do cliente',
     `Empresa: ${company.name}`,
     `Módulo: ${isDeliverableCertificate ? `${deliverableLabels.name} - ${deliverableLabels.subtitle}` : trainingName}`,
+    !isDeliverableCertificate ? `Técnico: ${technicianName ?? 'Sem técnico'}` : null,
     isDeliverableCertificate
       ? 'Status: Concluído & Aprovado'
-      : `Participantes: ${participants.map((item) => item.participant_name).join(' | ')}`,
+      : participants.length > 0
+        ? `Participantes: ${participants.map((item) => item.participant_name).join(' | ')}`
+        : 'Participantes: certificado emitido para a empresa',
     `Emitido em: ${formatLongDatePtBr(issueDateIso)}`
-  ].join('\n');
+  ].filter((item): item is string => Boolean(item)).join('\n');
 
   upsertCertificateDocument({
     documentKey: certificateDocumentKey,
     title: fileBase,
     notes: certificateDocumentNotes,
     fileBase,
-    pdfBuffer
+    pdfBuffer,
+    folderPath: `/Clientes/${company.id}/modulos/${moduleRow.id}/Certificados`
   });
 
   return {
@@ -1045,6 +1129,31 @@ function decodeDataUrl(dataUrl: string): { mimeType: string; buffer: Buffer } {
     mimeType,
     buffer: Buffer.from(base64, 'base64')
   };
+}
+
+function normalizeDocumentFolderPath(value?: string | null) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '/Interna';
+  const withSlash = raw.startsWith('/') ? raw : `/${raw}`;
+  return withSlash
+    .replace(/\/{2,}/g, '/')
+    .replace(/\/$/, '') || '/Interna';
+}
+
+function documentFolderSegment(name: string) {
+  return encodeURIComponent(name.trim().replace(/\s+/g, ' '));
+}
+
+function resolveUniqueDocumentFolderPath(parentPath: string, name: string) {
+  const normalizedParent = normalizeDocumentFolderPath(parentPath);
+  const baseSegment = documentFolderSegment(name) || 'Nova%20pasta';
+  let candidate = `${normalizedParent}/${baseSegment}`;
+  let suffix = 2;
+  while (db.prepare('select id from internal_document_folder where path = ?').get(candidate)) {
+    candidate = `${normalizedParent}/${baseSegment}-${suffix}`;
+    suffix += 1;
+  }
+  return candidate;
 }
 
 type TicketAttachmentPayload = {
@@ -1372,6 +1481,81 @@ function syncLicenseModules(licenseId: string, moduleIds: string[]) {
   moduleIds.forEach((moduleId) => {
     insert.run(licenseId, moduleId);
   });
+}
+
+type TopSolidImportKind = 'Module' | 'Group';
+
+type ParsedTopSolidLicenseItem = {
+  kind: TopSolidImportKind;
+  code: string;
+  name: string;
+  expires_at: string;
+  raw_line: string;
+};
+
+function normalizeTopSolidDate(dayText: string, monthText: string, yearText: string): string | null {
+  const day = Number(dayText);
+  const month = Number(monthText);
+  const year = Number(yearText);
+  const date = new Date(year, month - 1, day);
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return null;
+  }
+  const normalizedMonth = String(month).padStart(2, '0');
+  const normalizedDay = String(day).padStart(2, '0');
+  return `${year}-${normalizedMonth}-${normalizedDay}`;
+}
+
+function parseTopSolidLicenseLine(rawLine: string): ParsedTopSolidLicenseItem | null {
+  const line = rawLine.trim();
+  if (!line) return null;
+
+  const match = line.match(/\/(Module|Group):(\d+)\/"([^"]+)"\/(\d{1,2})-(\d{1,2})-(\d{4})(?:\/|$)/);
+  if (!match) {
+    return null;
+  }
+
+  const expiresAt = normalizeTopSolidDate(match[4], match[5], match[6]);
+  if (!expiresAt) {
+    return null;
+  }
+
+  return {
+    kind: match[1] as TopSolidImportKind,
+    code: match[2],
+    name: match[3].trim(),
+    expires_at: expiresAt,
+    raw_line: rawLine
+  };
+}
+
+function parseTopSolidLicenseText(rawText: string): {
+  items: ParsedTopSolidLicenseItem[];
+  ignoredLines: number;
+} {
+  const lines = rawText.split(/\r?\n/);
+  const items: ParsedTopSolidLicenseItem[] = [];
+  let ignoredLines = 0;
+
+  lines.forEach((line) => {
+    if (!line.trim()) return;
+    const parsed = parseTopSolidLicenseLine(line);
+    if (parsed) {
+      items.push(parsed);
+      return;
+    }
+    ignoredLines += 1;
+  });
+
+  return { items, ignoredLines };
+}
+
+function readLegacyTopSolidCodeFromProgramName(name: string): string | null {
+  return name.trim().match(/^\((\d+)\)/)?.[1] ?? null;
 }
 
 function slugify(value: string): string {
@@ -2123,8 +2307,10 @@ function syncCohortLifecycleStatuses() {
       const endMarker = `${lastSlot.day_date}T${period === 'Meio_periodo' ? (lastSlot.end_time ?? cohort.end_time ?? '23:59') : '23:59'}`;
 
       let nextStatus: 'Planejada' | 'Aguardando_quorum' | 'Confirmada' | 'Concluida';
-      if (nowMarker < startMarker) {
-        nextStatus = cohort.status === 'Aguardando_quorum' ? 'Aguardando_quorum' : 'Planejada';
+      if (cohort.status === 'Aguardando_quorum') {
+        nextStatus = 'Aguardando_quorum';
+      } else if (nowMarker < startMarker) {
+        nextStatus = 'Planejada';
       } else if (nowMarker > endMarker) {
         nextStatus = 'Concluida';
       } else {
@@ -2842,6 +3028,9 @@ function resolveRequiredPermissionsForRequest(req: Request): InternalPermissionK
   if (pathname.startsWith('/calendar')) {
     return ['calendar'];
   }
+  if (pathname.startsWith('/planning')) {
+    return ['calendar', 'cohorts'];
+  }
   if (pathname.startsWith('/cohorts') || pathname.startsWith('/allocations')) {
     return ['cohorts'];
   }
@@ -2871,7 +3060,7 @@ function resolveRequiredPermissionsForRequest(req: Request): InternalPermissionK
   if (pathname.startsWith('/license-programs')) {
     return ['licenses', 'license_programs'];
   }
-  if (pathname.startsWith('/internal-documents')) {
+  if (pathname.startsWith('/internal-documents') || pathname.startsWith('/internal-document-folders')) {
     return ['docs'];
   }
   if (pathname.startsWith('/admin')) {
@@ -2885,6 +3074,7 @@ function isPublicOrPortalPath(pathname: string): boolean {
   if (pathname === '/health') return true;
   if (pathname.startsWith('/auth/')) return true;
   if (pathname === '/portal/api' || pathname.startsWith('/portal/api/')) return true;
+  if (pathname.startsWith('/followup-evaluations/')) return true;
   return false;
 }
 
@@ -3224,6 +3414,17 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
             order by comp.name asc
           )
         ), '') as company_names,
+        coalesce((
+          select group_concat(company_id, '|')
+          from (
+            select distinct a_clients.company_id as company_id, comp.name as company_name
+            from cohort_allocation a_clients
+            join company comp on comp.id = a_clients.company_id
+            where a_clients.cohort_id = c.id
+              and a_clients.status in ('Previsto','Confirmado','Executado')
+            order by comp.name asc
+          )
+        ), '') as company_ids,
         coalesce((
           select group_concat(module_code, ' | ')
           from (
@@ -3790,8 +3991,15 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
   });
   
   app.get('/cohorts', (_req, res) => {
-    const rows = db.prepare(`
+    const rows = (db.prepare(`
       select c.*, t.name as technician_name,
+        (
+          select csd.day_date
+          from cohort_schedule_day csd
+          where csd.cohort_id = c.id
+          order by date(csd.day_date) asc, coalesce(csd.start_time, '00:00') asc, csd.day_index asc
+          limit 1
+        ) as schedule_start_date,
         coalesce((
           select group_concat(company_name, ' | ')
           from (
@@ -3802,11 +4010,37 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
               and a.status in ('Previsto','Confirmado','Executado')
             order by comp.name asc
           )
-        ), '') as company_names
+        ), '') as company_names,
+        coalesce((
+          select group_concat(module_code, ' | ')
+          from (
+            select mt.code as module_code
+            from cohort_module_block cmb
+            join module_template mt on mt.id = cmb.module_id
+            where cmb.cohort_id = c.id
+            order by cmb.order_in_cohort asc
+          )
+        ), '') as module_codes,
+        coalesce((
+          select group_concat(module_name, ' | ')
+          from (
+            select mt.name as module_name
+            from cohort_module_block cmb
+            join module_template mt on mt.id = cmb.module_id
+            where cmb.cohort_id = c.id
+            order by cmb.order_in_cohort asc
+          )
+        ), '') as module_names
       from cohort c
       left join technician t on t.id = c.technician_id
-      order by date(c.start_date) asc
-    `).all();
+      order by date(coalesce(schedule_start_date, c.start_date)) asc
+    `).all() as Array<Record<string, unknown> & { start_date: string; schedule_start_date?: string | null }>).map((row) => {
+      const { schedule_start_date: scheduleStartDate, ...cohort } = row;
+      return {
+        ...cohort,
+        start_date: scheduleStartDate ?? row.start_date
+      };
+    });
   
     res.json(rows);
   });
@@ -3844,12 +4078,19 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       where a.cohort_id = ?
       order by a.entry_day asc, c.name asc
     `).all(req.params.id);
-    const schedule_days = db.prepare(`
+    const schedule_days_raw = db.prepare(`
       select day_index, day_date, start_time, end_time
       from cohort_schedule_day
       where cohort_id = ?
       order by day_index asc
-    `).all(req.params.id);
+    `).all(req.params.id) as Array<{
+      day_index: number;
+      day_date: string;
+      start_time: string | null;
+      end_time: string | null;
+    }>;
+    const schedule_days = normalizeScheduleDaysChronologically(schedule_days_raw);
+    const firstScheduleDate = (schedule_days as Array<{ day_date: string }>)[0]?.day_date ?? null;
     const participantsRaw = db.prepare(`
       select
         cp.id,
@@ -3886,7 +4127,14 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
         : []
     }));
   
-    return res.json({ ...cohort, blocks, allocations, schedule_days, participants });
+    return res.json({
+      ...cohort,
+      start_date: firstScheduleDate ?? (cohort as { start_date: string }).start_date,
+      blocks,
+      allocations,
+      schedule_days,
+      participants
+    });
   });
   
   app.get('/cohorts/:id/certificate', async (req, res) => {
@@ -3982,10 +4230,6 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       order by cp.participant_name asc
     `).all(req.params.id, companyId, requestedModuleId) as Array<{ participant_name: string }>;
   
-    if (!isDeliverableCertificate && participants.length === 0) {
-      return res.status(400).json({ message: 'Nenhum participante desta empresa está vinculado ao módulo selecionado.' });
-    }
-  
     const totalDays = Math.max(1, Number(moduleRow.duration_days) || 1);
     const totalHours = totalDays * 8;
     const trainingName = moduleShortLabel(moduleRow.module_name);
@@ -3998,17 +4242,18 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       issueDateIso.replace(/-/g, '')
     ].filter(Boolean).join('-');
   
-    const employeeCardsHtml = participants
-      .map((participant, index) => {
-        const position = String(index + 1).padStart(2, '0');
-        return `
-        <div class="employee-card">
-          <div class="employee-num">${position}</div>
-          <div class="employee-name">${escapeHtml(participant.participant_name)}</div>
-          <div class="employee-role">Participante</div>
-        </div>`;
-      })
-      .join('');
+    const employeeCardsHtml = certificateSubjectCardsHtml(participants, company.name);
+    const technicianName = cohort.technician_name ?? null;
+    const technicianSignatureHtml = technicianName
+      ? `
+    <div class="footer-div"></div>
+
+    <div>
+      <div class="sig-line"></div>
+      <div id="sig-name-2">${escapeHtml(technicianName)}</div>
+      <div id="sig-title-2">Técnico Responsável pelo Curso</div>
+    </div>`
+      : '';
   
     try {
       let html = isDeliverableCertificate ? readDeliverableCertificateTemplate() : readCertificateTemplate();
@@ -4024,9 +4269,11 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
         : [
             ['COMPANY_NAME', escapeHtml(company.name)],
             ['COURSE_NAME', escapeHtml(trainingName || cohort.name)],
-            ['COURSE_HOURS', escapeHtml(`⏱ ${totalDays} diária(s) (${totalHours}h)`)],
+            ['COURSE_HOURS', escapeHtml(`Duração: ${totalDays} diária(s) (${totalHours}h)`)],
+            ['EMPLOYEES_LABEL', escapeHtml(certificateSubjectLabel(participants))],
             ['EMPLOYEES_GRID', employeeCardsHtml],
-            ['TECHNICIAN_NAME', escapeHtml(cohort.technician_name ?? 'Sem técnico definido')],
+            ['FOOTER_CLASS', technicianName ? 'has-technician' : 'no-technician'],
+            ['TECHNICIAN_SIGNATURE_HTML', technicianSignatureHtml],
             ['EMIT_DATE', escapeHtml(formatLongDatePtBr(issueDateIso))],
             ['CERT_CODE', escapeHtml(certCode)]
           ];
@@ -4061,17 +4308,21 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
         `Turma: ${cohort.code}`,
         `Empresa: ${company.name}`,
         `Módulo: ${isDeliverableCertificate ? `${deliverableLabels.name} - ${deliverableLabels.subtitle}` : trainingName}`,
+        !isDeliverableCertificate ? `Técnico: ${technicianName ?? 'Sem técnico'}` : null,
         isDeliverableCertificate
           ? 'Status: Concluído & Aprovado'
-          : `Participantes: ${participants.map((item) => item.participant_name).join(' | ')}`,
+          : participants.length > 0
+            ? `Participantes: ${participants.map((item) => item.participant_name).join(' | ')}`
+            : 'Participantes: certificado emitido para a empresa',
         `Emitido em: ${formatLongDatePtBr(issueDateIso)}`
-      ].join('\n');
+      ].filter((item): item is string => Boolean(item)).join('\n');
       upsertCertificateDocument({
         documentKey: certificateDocumentKey,
         title: certificateDocumentTitle,
         notes: certificateDocumentNotes,
         fileBase,
-        pdfBuffer
+        pdfBuffer,
+        folderPath: `/Clientes/${company.id}/modulos/${requestedModuleId}/Certificados`
       });
   
       const encodedFileName = encodeURIComponent(`${fileBase}.pdf`);
@@ -4084,203 +4335,27 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
   });
 
   app.get('/companies/:companyId/modules/:moduleId/certificate', async (req, res) => {
-    const company = db.prepare(`
-      select id, name
-      from company
-      where id = ?
-    `).get(req.params.companyId) as { id: string; name: string } | undefined;
-
-    if (!company) {
-      return res.status(404).json({ message: 'Empresa não encontrada.' });
-    }
-
-    const moduleRow = db.prepare(`
-      select
-        id,
-        code as module_code,
-        name as module_name,
-        duration_days,
-        coalesce(delivery_mode, 'ministrado') as delivery_mode
-      from module_template
-      where id = ?
-    `).get(req.params.moduleId) as {
-      id: string;
-      module_code: string;
-      module_name: string;
-      duration_days: number;
-      delivery_mode: 'ministrado' | 'entregavel';
-    } | undefined;
-
-    if (!moduleRow) {
-      return res.status(404).json({ message: 'Módulo não encontrado.' });
-    }
-
-    if (!hasModuleEnabled(company.id, moduleRow.id)) {
-      return res.status(400).json({ message: 'Módulo está desativado para esta empresa.' });
-    }
-
-    const progress = db.prepare(`
-      select status, completed_at
-      from company_module_progress
-      where company_id = ? and module_id = ?
-    `).get(company.id, moduleRow.id) as { status: ModuleProgressStatus; completed_at: string | null } | undefined;
-
-    if (progress?.status !== 'Concluido') {
-      return res.status(400).json({ message: 'Conclua o módulo na jornada antes de emitir o certificado.' });
-    }
-
-    const isDeliverableCertificate = moduleRow.delivery_mode === 'entregavel';
-    const latestAllocation = !isDeliverableCertificate
-      ? db.prepare(`
-          select
-            a.cohort_id,
-            a.status as allocation_status,
-            a.executed_at,
-            c.code as cohort_code,
-            c.name as cohort_name,
-            c.status as cohort_status,
-            c.start_date,
-            c.technician_id,
-            t.name as technician_name,
-            coalesce(cmb.duration_days, ?) as duration_days
-          from cohort_allocation a
-          join cohort c on c.id = a.cohort_id
-          left join technician t on t.id = c.technician_id
-          left join cohort_module_block cmb on cmb.cohort_id = a.cohort_id and cmb.module_id = a.module_id
-          where a.company_id = ?
-            and a.module_id = ?
-            and a.status <> 'Cancelado'
-          order by
-            case when a.status = 'Executado' then 0 else 1 end asc,
-            date(coalesce(a.executed_at, c.start_date)) desc,
-            c.code desc
-          limit 1
-        `).get(moduleRow.duration_days, company.id, moduleRow.id) as {
-          cohort_id: string;
-          allocation_status: string;
-          executed_at: string | null;
-          cohort_code: string;
-          cohort_name: string;
-          cohort_status: string;
-          start_date: string;
-          technician_id: string | null;
-          technician_name: string | null;
-          duration_days: number;
-        } | undefined
-      : undefined;
-
-    if (!isDeliverableCertificate && !latestAllocation) {
-      return res.status(400).json({ message: 'Nenhuma turma encontrada para emitir o certificado deste treinamento.' });
-    }
-
-    const participants = latestAllocation
-      ? db.prepare(`
-          select cp.participant_name
-          from cohort_participant cp
-          join cohort_participant_module cpm on cpm.participant_id = cp.id
-          where cp.cohort_id = ? and cp.company_id = ? and cpm.module_id = ?
-          order by cp.participant_name asc
-        `).all(latestAllocation.cohort_id, company.id, moduleRow.id) as Array<{ participant_name: string }>
-      : [];
-
-    if (!isDeliverableCertificate && participants.length === 0) {
-      return res.status(400).json({ message: 'Nenhum participante desta empresa está vinculado ao módulo na turma encontrada.' });
-    }
-
-    const issueDateIso = nowDateIso();
-    const trainingName = moduleShortLabel(moduleRow.module_name);
-    const deliverableLabels = deliverableCertificateLabels(moduleRow.module_name);
-    const certCode = [
-      'CERT',
-      normalizeCertToken(latestAllocation?.cohort_code || 'JORNADA'),
-      normalizeCertToken(company.name || 'EMPRESA'),
-      normalizeCertToken(moduleRow.module_code || moduleRow.module_name || moduleRow.id),
-      issueDateIso.replace(/-/g, '')
-    ].filter(Boolean).join('-');
-
-    const totalDays = Math.max(1, Number(latestAllocation?.duration_days ?? moduleRow.duration_days) || 1);
-    const totalHours = totalDays * 8;
-    const employeeCardsHtml = participants
-      .map((participant, index) => {
-        const position = String(index + 1).padStart(2, '0');
-        return `
-        <div class="employee-card">
-          <div class="employee-num">${position}</div>
-          <div class="employee-name">${escapeHtml(participant.participant_name)}</div>
-          <div class="employee-role">Participante</div>
-        </div>`;
-      })
-      .join('');
-
     try {
-      const template = isDeliverableCertificate ? readDeliverableCertificateTemplate() : readCertificateTemplate();
-      const html = replaceTemplateTokens(template, isDeliverableCertificate
-        ? [
-            ['COMPANY_NAME', escapeHtml(company.name)],
-            ['DELIVERABLE_NAME', escapeHtml(deliverableLabels.name)],
-            ['DELIVERABLE_SUBTITLE', escapeHtml(deliverableLabels.subtitle)],
-            ['EMIT_DATE', escapeHtml(formatLongDatePtBr(issueDateIso))],
-            ['CERT_CODE', escapeHtml(certCode)]
-          ]
-        : [
-            ['COMPANY_NAME', escapeHtml(company.name)],
-            ['COURSE_NAME', escapeHtml(trainingName)],
-            ['COURSE_HOURS', escapeHtml(`⏱ ${totalDays} diária(s) (${totalHours}h)`)],
-            ['EMPLOYEES_GRID', employeeCardsHtml],
-            ['TECHNICIAN_NAME', escapeHtml(latestAllocation?.technician_name ?? 'Sem técnico definido')],
-            ['EMIT_DATE', escapeHtml(formatLongDatePtBr(issueDateIso))],
-            ['CERT_CODE', escapeHtml(certCode)]
-          ]);
-
       const format = typeof req.query.format === 'string'
         ? req.query.format.trim().toLowerCase()
         : 'pdf';
       const shouldDownload = String(req.query.download ?? '1') !== '0';
-      const moduleFileLabel = isDeliverableCertificate
-        ? `${deliverableLabels.name} - ${deliverableLabels.subtitle}`
-        : (trainingName || moduleRow.module_name);
-      const fileBase = `Certificado - ${normalizeFileLabelPart(company.name)} - ${normalizeFileLabelPart(moduleFileLabel)}`;
-
-      if (format === 'html') {
-        const encodedFileName = encodeURIComponent(`${fileBase}.html`);
-        res.setHeader('Content-Type', 'text/html; charset=utf-8');
-        res.setHeader('Content-Disposition', `${shouldDownload ? 'attachment' : 'inline'}; filename*=UTF-8''${encodedFileName}`);
-        return res.send(html);
-      }
-
-      const pdfHtml = applyPdfLayoutOverrides(html);
-      const pdfBuffer = await renderPdfFromHtml(pdfHtml);
-      const certificateDocumentKey = isDeliverableCertificate
-        ? `CERTIFICADO_CLIENTE_MODULO:${company.id}:${moduleRow.id}:entregavel`
-        : `CERTIFICADO_TURMA_MODULO:${latestAllocation?.cohort_id}:${company.id}:${moduleRow.id}`;
-      const certificateDocumentNotes = [
-        '[CERTIFICADO_AUTOMATICO]',
-        `Chave: ${certificateDocumentKey}`,
-        `Código: ${certCode}`,
-        `Tipo: ${isDeliverableCertificate ? 'Entregável' : 'Treinamento ministrado'}`,
-        latestAllocation ? `Turma: ${latestAllocation.cohort_code}` : 'Turma: Jornada do cliente',
-        `Empresa: ${company.name}`,
-        `Módulo: ${isDeliverableCertificate ? `${deliverableLabels.name} - ${deliverableLabels.subtitle}` : trainingName}`,
-        isDeliverableCertificate
-          ? 'Status: Concluído & Aprovado'
-          : `Participantes: ${participants.map((item) => item.participant_name).join(' | ')}`,
-        `Emitido em: ${formatLongDatePtBr(issueDateIso)}`
-      ].join('\n');
-
-      upsertCertificateDocument({
-        documentKey: certificateDocumentKey,
-        title: fileBase,
-        notes: certificateDocumentNotes,
-        fileBase,
-        pdfBuffer
+      const certificate = await buildCompanyModuleCertificate({
+        companyId: req.params.companyId,
+        moduleId: req.params.moduleId,
+        technicianId: typeof req.query.technician_id === 'string' ? req.query.technician_id.trim() || null : null,
+        format: format === 'html' ? 'html' : 'pdf',
+        shouldDownload
       });
 
-      const encodedFileName = encodeURIComponent(`${fileBase}.pdf`);
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `${shouldDownload ? 'attachment' : 'inline'}; filename*=UTF-8''${encodedFileName}`);
-      return res.send(pdfBuffer);
+      const encodedFileName = encodeURIComponent(certificate.fileName);
+      res.setHeader('Content-Type', certificate.contentType);
+      res.setHeader('Content-Disposition', `${certificate.disposition}; filename*=UTF-8''${encodedFileName}`);
+      return res.send(certificate.body);
     } catch (error) {
-      return res.status(500).json({ message: 'Erro ao gerar certificado.', detail: errorMessage(error) });
+      const detail = errorMessage(error);
+      const status = detail === 'Empresa não encontrada.' || detail === 'Módulo não encontrado.' ? 404 : 400;
+      return res.status(status).json({ message: 'Erro ao gerar certificado.', detail });
     }
   });
   
@@ -4385,6 +4460,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
   
     const cohortId = uuid('coh');
     const resolvedCode = resolveUniqueCohortCode(payload.code);
+    const resolvedStartDate = deriveCohortStartDateFromScheduleDays(payload.schedule_days) ?? payload.start_date;
   
     const tx = db.transaction(() => {
       db.prepare(`
@@ -4396,7 +4472,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
         cohortId,
         resolvedCode,
         payload.name,
-        payload.start_date,
+        resolvedStartDate,
         payload.technician_id ?? null,
         payload.status,
         payload.capacity_companies,
@@ -4518,7 +4594,10 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
     }
   
     const nextTechnicianId = payload.technician_id === undefined ? existing.technician_id : payload.technician_id;
-    const nextStartDate = payload.start_date ?? existing.start_date;
+    const scheduleStartDate = typeof payload.schedule_days !== 'undefined'
+      ? deriveCohortStartDateFromScheduleDays(payload.schedule_days)
+      : null;
+    const nextStartDate = scheduleStartDate ?? payload.start_date ?? existing.start_date;
     const nextStatus = payload.status ?? existing.status;
     const nextPeriod = payload.period ?? (existing.period ?? 'Integral');
     const nextStartTime = Object.prototype.hasOwnProperty.call(payload, 'start_time')
@@ -4567,7 +4646,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
     const values: unknown[] = [];
   
     Object.entries(payload).forEach(([key, value]) => {
-      if (key === 'blocks' || key === 'start_time' || key === 'end_time' || key === 'schedule_days') return;
+      if (key === 'blocks' || key === 'start_time' || key === 'end_time' || key === 'schedule_days' || key === 'start_date') return;
       if (key === 'code' && typeof value === 'string') {
         fields.push('code = ?');
         values.push(resolveUniqueCohortCode(value, req.params.id));
@@ -4576,6 +4655,11 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       fields.push(`${key} = ?`);
       values.push(value);
     });
+
+    if (nextStartDate !== existing.start_date || Object.prototype.hasOwnProperty.call(payload, 'start_date')) {
+      fields.push('start_date = ?');
+      values.push(nextStartDate);
+    }
   
     if (Object.prototype.hasOwnProperty.call(payload, 'period') || Object.prototype.hasOwnProperty.call(payload, 'start_time') || Object.prototype.hasOwnProperty.call(payload, 'end_time')) {
       if (nextPeriod !== 'Meio_periodo') {
@@ -4591,7 +4675,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       }
     }
   
-    if (fields.length === 0 && !payload.blocks) {
+    if (fields.length === 0 && !payload.blocks && typeof payload.schedule_days === 'undefined') {
       return res.status(200).json({ message: 'Sem alteracoes' });
     }
   
@@ -5080,6 +5164,55 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
   
     return res.json({ ok: true, override_used: Boolean(usedInstallationOverride) });
   });
+
+  app.delete('/allocations/:id', (req, res) => {
+    const allocation = db.prepare(`
+      select id, company_id, module_id, cohort_id
+      from cohort_allocation
+      where id = ?
+    `).get(req.params.id) as {
+      id: string;
+      company_id: string;
+      module_id: string;
+      cohort_id: string;
+    } | undefined;
+
+    if (!allocation) {
+      return res.status(404).json({ message: 'Alocacao nao encontrada' });
+    }
+
+    const tx = db.transaction(() => {
+      db.prepare('delete from cohort_allocation where id = ?').run(allocation.id);
+      db.prepare(`
+        delete from cohort_participant_module
+        where module_id = ?
+          and participant_id in (
+            select id
+            from cohort_participant
+            where cohort_id = ? and company_id = ?
+          )
+          and not exists (
+            select 1
+            from cohort_allocation a
+            where a.cohort_id = ?
+              and a.company_id = ?
+              and a.module_id = ?
+              and a.status <> 'Cancelado'
+          )
+      `).run(
+        allocation.module_id,
+        allocation.cohort_id,
+        allocation.company_id,
+        allocation.cohort_id,
+        allocation.company_id,
+        allocation.module_id
+      );
+      refreshCompanyModuleProgressFromAllocations(allocation.company_id, allocation.module_id);
+    });
+
+    tx();
+    return res.json({ ok: true });
+  });
   
   app.get('/cohorts/:id/suggestions/:moduleId', (req, res) => {
     const moduleId = req.params.moduleId;
@@ -5184,6 +5317,10 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
     module_date_overrides: z.array(z.object({
       module_id: z.string().trim().min(1).max(120),
       next_date: isoDateSchema
+    })).max(500).optional(),
+    module_delivery_mode_overrides: z.array(z.object({
+      module_id: z.string().trim().min(1).max(120),
+      delivery_mode: z.enum(['ministrado', 'entregavel'])
     })).max(500).optional()
   });
 
@@ -5219,6 +5356,26 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       return next;
     } catch {
       return {} as Record<string, string>;
+    }
+  }
+
+  function parsePortalDeliveryModeOverrides(raw: string | null | undefined) {
+    if (!raw?.trim()) return {} as Record<string, 'ministrado' | 'entregavel'>;
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return {} as Record<string, 'ministrado' | 'entregavel'>;
+      }
+      const next: Record<string, 'ministrado' | 'entregavel'> = {};
+      Object.entries(parsed as Record<string, unknown>).forEach(([moduleId, deliveryMode]) => {
+        const normalizedModuleId = moduleId.trim();
+        if (!normalizedModuleId) return;
+        if (deliveryMode !== 'ministrado' && deliveryMode !== 'entregavel') return;
+        next[normalizedModuleId] = deliveryMode;
+      });
+      return next;
+    } catch {
+      return {} as Record<string, 'ministrado' | 'entregavel'>;
     }
   }
 
@@ -5647,9 +5804,18 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       relationship_type: (company as { is_third_party?: number }).is_third_party ? 'Terceiro' : 'Nosso'
     };
   
-    const timeline = db.prepare(`
+    const portalClientForTimeline = db.prepare(`
+      select module_delivery_mode_overrides_json
+      from portal_client
+      where company_id = ?
+      limit 1
+    `).get(req.params.id) as { module_delivery_mode_overrides_json: string | null } | undefined;
+    const deliveryModeOverrides = parsePortalDeliveryModeOverrides(portalClientForTimeline?.module_delivery_mode_overrides_json);
+
+    const timelineRows = db.prepare(`
       select mt.id as module_id, mt.code, mt.name, mt.category, mt.duration_days,
         coalesce(mt.delivery_mode, 'ministrado') as delivery_mode,
+        coalesce(mt.delivery_mode, 'ministrado') as default_delivery_mode,
         coalesce(mt.client_hours_policy, 'consome') as client_hours_policy,
         coalesce(cmp.status, 'Nao_iniciado') as status,
         cmp.completed_at,
@@ -5710,6 +5876,21 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       req.params.id,
       req.params.id
     );
+    const timeline = (timelineRows as Array<Record<string, unknown>>).map((row) => {
+      const moduleId = String(row.module_id ?? '');
+      const override = deliveryModeOverrides[moduleId];
+      const defaultDeliveryMode = row.default_delivery_mode === 'entregavel' ? 'entregavel' : 'ministrado';
+      const effectiveDeliveryMode = override ?? defaultDeliveryMode;
+      return {
+        ...row,
+        default_delivery_mode: defaultDeliveryMode,
+        delivery_mode: effectiveDeliveryMode,
+        client_hours_policy: override
+          ? (effectiveDeliveryMode === 'ministrado' ? 'consome' : 'nao_consume')
+          : row.client_hours_policy,
+        portal_delivery_mode_override: override ?? null
+      };
+    });
   
     const optionals = db.prepare(`
       select om.id, om.code, om.name, om.category, om.duration_days,
@@ -6252,6 +6433,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
         pc.support_intro_text,
         pc.hidden_module_ids_json,
         pc.module_date_overrides_json,
+        pc.module_delivery_mode_overrides_json,
         pu.username
       from portal_client pc
       left join portal_user pu on pu.portal_client_id = pc.id
@@ -6266,6 +6448,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
         support_intro_text: string | null;
         hidden_module_ids_json: string | null;
         module_date_overrides_json: string | null;
+        module_delivery_mode_overrides_json: string | null;
       }
       | undefined;
 
@@ -6276,12 +6459,14 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
         is_active: false,
         support_intro_text: null,
         hidden_module_ids: [],
-        module_date_overrides: []
+        module_date_overrides: [],
+        module_delivery_mode_overrides: []
       });
     }
 
     const hiddenModuleIds = parsePortalModuleIdList(row.hidden_module_ids_json);
     const moduleDateOverrides = parsePortalDateOverrides(row.module_date_overrides_json);
+    const moduleDeliveryModeOverrides = parsePortalDeliveryModeOverrides(row.module_delivery_mode_overrides_json);
 
     return res.json({
       slug: row.slug,
@@ -6292,6 +6477,10 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       module_date_overrides: Object.entries(moduleDateOverrides).map(([module_id, next_date]) => ({
         module_id,
         next_date
+      })),
+      module_delivery_mode_overrides: Object.entries(moduleDeliveryModeOverrides).map(([module_id, delivery_mode]) => ({
+        module_id,
+        delivery_mode
       }))
     });
   });
@@ -6321,8 +6510,15 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       acc[moduleId] = entry.next_date;
       return acc;
     }, {} as Record<string, string>);
+    const moduleDeliveryModeOverrideMap = (payload.module_delivery_mode_overrides ?? []).reduce((acc, entry) => {
+      const moduleId = entry.module_id.trim();
+      if (!moduleId) return acc;
+      acc[moduleId] = entry.delivery_mode;
+      return acc;
+    }, {} as Record<string, 'ministrado' | 'entregavel'>);
     const hiddenModuleIdsJson = JSON.stringify(hiddenModuleIds);
     const moduleDateOverridesJson = JSON.stringify(moduleDateOverrideMap);
+    const moduleDeliveryModeOverridesJson = JSON.stringify(moduleDeliveryModeOverrideMap);
 
     try {
       const passwordCandidate = payload.password?.trim() ?? '';
@@ -6340,7 +6536,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
         if (existingClient) {
           db.prepare(`
             update portal_client
-            set slug = ?, is_active = ?, support_intro_text = ?, hidden_module_ids_json = ?, module_date_overrides_json = ?, updated_at = ?
+            set slug = ?, is_active = ?, support_intro_text = ?, hidden_module_ids_json = ?, module_date_overrides_json = ?, module_delivery_mode_overrides_json = ?, updated_at = ?
             where id = ?
           `).run(
             normalizedSlug,
@@ -6348,15 +6544,16 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
             normalizedSupportIntroText,
             hiddenModuleIdsJson,
             moduleDateOverridesJson,
+            moduleDeliveryModeOverridesJson,
             nowIso,
             portalClientId
           );
         } else {
           db.prepare(`
             insert into portal_client (
-              id, company_id, slug, is_active, support_intro_text, hidden_module_ids_json, module_date_overrides_json, created_at, updated_at
+              id, company_id, slug, is_active, support_intro_text, hidden_module_ids_json, module_date_overrides_json, module_delivery_mode_overrides_json, created_at, updated_at
             )
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).run(
             portalClientId,
             req.params.id,
@@ -6365,6 +6562,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
             normalizedSupportIntroText,
             hiddenModuleIdsJson,
             moduleDateOverridesJson,
+            moduleDeliveryModeOverridesJson,
             nowIso,
             nowIso
           );
@@ -6524,7 +6722,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
   
   app.get('/license-programs', (_req, res) => {
     const rows = db.prepare(`
-      select lp.id, lp.name, lp.notes, lp.created_at, lp.updated_at,
+      select lp.id, lp.name, lp.topsolid_kind, lp.topsolid_code, lp.notes, lp.created_at, lp.updated_at,
         (
           select count(*)
           from company_license l
@@ -6539,6 +6737,8 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
   app.post('/license-programs', (req, res) => {
     const schema = z.object({
       name: z.string().min(2),
+      topsolid_kind: z.enum(['Module', 'Group']).nullable().optional(),
+      topsolid_code: z.string().nullable().optional(),
       notes: z.string().nullable().optional()
     });
     const parsed = schema.safeParse(req.body);
@@ -6547,18 +6747,29 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
     }
   
     const payload = parsed.data;
+    const topsolidKind = payload.topsolid_kind ?? null;
+    const topsolidCode = payload.topsolid_code?.trim() || null;
     const existing = db.prepare('select id from license_program where lower(name) = lower(?)').get(payload.name.trim()) as { id: string } | undefined;
     if (existing) {
       return res.status(400).json({ message: 'Já existe um programa com este nome.' });
+    }
+    if (topsolidKind && topsolidCode) {
+      const duplicateTopSolidCode = db.prepare(`
+        select id from license_program
+        where topsolid_kind = ? and topsolid_code = ?
+      `).get(topsolidKind, topsolidCode) as { id: string } | undefined;
+      if (duplicateTopSolidCode) {
+        return res.status(400).json({ message: 'Já existe um programa com este tipo e código TopSolid.' });
+      }
     }
   
     const nowIso = nowDateIso();
     const id = uuid('lpr');
     try {
       db.prepare(`
-        insert into license_program (id, name, notes, created_at, updated_at)
-        values (?, ?, ?, ?, ?)
-      `).run(id, payload.name.trim(), payload.notes ?? null, nowIso, nowIso);
+        insert into license_program (id, name, topsolid_kind, topsolid_code, notes, created_at, updated_at)
+        values (?, ?, ?, ?, ?, ?, ?)
+      `).run(id, payload.name.trim(), topsolidKind, topsolidCode, payload.notes ?? null, nowIso, nowIso);
       return res.status(201).json({ id });
     } catch (error) {
       return res.status(400).json({ message: 'Não foi possível criar programa', detail: errorMessage(error) });
@@ -6568,6 +6779,8 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
   app.patch('/license-programs/:id', (req, res) => {
     const schema = z.object({
       name: z.string().min(2).optional(),
+      topsolid_kind: z.enum(['Module', 'Group']).nullable().optional(),
+      topsolid_code: z.string().nullable().optional(),
       notes: z.string().nullable().optional()
     });
     const parsed = schema.safeParse(req.body);
@@ -6582,6 +6795,10 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
   
     const fields: string[] = [];
     const values: unknown[] = [];
+    const current = db.prepare('select topsolid_kind, topsolid_code from license_program where id = ?').get(req.params.id) as {
+      topsolid_kind: 'Module' | 'Group' | null;
+      topsolid_code: string | null;
+    };
   
     if (typeof parsed.data.name !== 'undefined') {
       const duplicate = db.prepare('select id from license_program where lower(name) = lower(?) and id <> ?').get(parsed.data.name.trim(), req.params.id) as { id: string } | undefined;
@@ -6594,6 +6811,29 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
     if (typeof parsed.data.notes !== 'undefined') {
       fields.push('notes = ?');
       values.push(parsed.data.notes ?? null);
+    }
+    const nextTopSolidKind = typeof parsed.data.topsolid_kind !== 'undefined'
+      ? parsed.data.topsolid_kind
+      : current.topsolid_kind;
+    const nextTopSolidCode = typeof parsed.data.topsolid_code !== 'undefined'
+      ? parsed.data.topsolid_code?.trim() || null
+      : current.topsolid_code;
+    if (nextTopSolidKind && nextTopSolidCode) {
+      const duplicateTopSolidCode = db.prepare(`
+        select id from license_program
+        where topsolid_kind = ? and topsolid_code = ? and id <> ?
+      `).get(nextTopSolidKind, nextTopSolidCode, req.params.id) as { id: string } | undefined;
+      if (duplicateTopSolidCode) {
+        return res.status(400).json({ message: 'Já existe outro programa com este tipo e código TopSolid.' });
+      }
+    }
+    if (typeof parsed.data.topsolid_kind !== 'undefined') {
+      fields.push('topsolid_kind = ?');
+      values.push(parsed.data.topsolid_kind ?? null);
+    }
+    if (typeof parsed.data.topsolid_code !== 'undefined') {
+      fields.push('topsolid_code = ?');
+      values.push(parsed.data.topsolid_code?.trim() || null);
     }
   
     if (fields.length === 0) {
@@ -6630,10 +6870,195 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
     db.prepare('delete from license_program where id = ?').run(req.params.id);
     return res.json({ ok: true });
   });
+
+  app.get('/companies/:companyId/followup-evaluations', (req, res) => {
+    const company = db.prepare('select id from company where id = ?').get(req.params.companyId) as { id: string } | undefined;
+    if (!company) {
+      return res.status(404).json({ message: 'Cliente não encontrado.' });
+    }
+
+    const rows = db.prepare(`
+      select id, token, company_id, title, notes, status, respondent_name, rating, answers_json, created_at, submitted_at, updated_at
+      from client_followup_evaluation
+      where company_id = ?
+      order by datetime(created_at) desc
+    `).all(req.params.companyId) as Array<{
+      id: string;
+      token: string;
+      company_id: string;
+      title: string;
+      notes: string | null;
+      status: string;
+      respondent_name: string | null;
+      rating: number | null;
+      answers_json: string | null;
+      created_at: string;
+      submitted_at: string | null;
+      updated_at: string;
+    }>;
+
+    return res.json(rows.map((row) => ({
+      ...row,
+      answers: row.answers_json ? JSON.parse(row.answers_json) : null,
+      public_path: `/acompanhamento/${encodeURIComponent(row.token)}`
+    })));
+  });
+
+  app.post('/companies/:companyId/followup-evaluations', (req, res) => {
+    const parsed = followupEvaluationCreateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+    const company = db.prepare('select id from company where id = ?').get(req.params.companyId) as { id: string } | undefined;
+    if (!company) {
+      return res.status(404).json({ message: 'Cliente não encontrado.' });
+    }
+
+    const id = uuid('fup');
+    const token = uuid('fup-link').replace(/^fup-link-/, '');
+    const nowIso = new Date().toISOString();
+    db.prepare(`
+      insert into client_followup_evaluation (
+        id, token, company_id, title, notes, status, respondent_name, rating,
+        answers_json, created_at, submitted_at, updated_at
+      ) values (?, ?, ?, ?, ?, 'Aberta', null, null, null, ?, null, ?)
+    `).run(
+      id,
+      token,
+      req.params.companyId,
+      parsed.data.title,
+      parsed.data.notes ?? null,
+      nowIso,
+      nowIso
+    );
+
+    return res.status(201).json({
+      id,
+      token,
+      public_path: `/acompanhamento/${encodeURIComponent(token)}`
+    });
+  });
+
+  app.get('/followup-evaluations/:token', (req, res) => {
+    const row = db.prepare(`
+      select f.id, f.token, f.company_id, f.title, f.notes, f.status, f.respondent_name,
+        f.rating, f.answers_json, f.created_at, f.submitted_at, c.name as company_name
+      from client_followup_evaluation f
+      join company c on c.id = f.company_id
+      where f.token = ?
+      limit 1
+    `).get(req.params.token) as {
+      id: string;
+      token: string;
+      company_id: string;
+      title: string;
+      notes: string | null;
+      status: string;
+      respondent_name: string | null;
+      rating: number | null;
+      answers_json: string | null;
+      created_at: string;
+      submitted_at: string | null;
+      company_name: string;
+    } | undefined;
+
+    if (!row) {
+      return res.status(404).json({ message: 'Avaliação não encontrada.' });
+    }
+
+    return res.json({
+      ...row,
+      answers: row.answers_json ? JSON.parse(row.answers_json) : null
+    });
+  });
+
+  app.post('/followup-evaluations/:token', (req, res) => {
+    const parsed = followupEvaluationSubmitSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+    const row = db.prepare(`
+      select id
+      from client_followup_evaluation
+      where token = ?
+      limit 1
+    `).get(req.params.token) as { id: string } | undefined;
+
+    if (!row) {
+      return res.status(404).json({ message: 'Avaliação não encontrada.' });
+    }
+
+    const nowIso = new Date().toISOString();
+    db.prepare(`
+      update client_followup_evaluation
+      set status = 'Respondida',
+        respondent_name = ?,
+        rating = ?,
+        answers_json = ?,
+        submitted_at = ?,
+        updated_at = ?
+      where id = ?
+    `).run(
+      parsed.data.respondent_name,
+      parsed.data.rating,
+      JSON.stringify(parsed.data.answers),
+      nowIso,
+      nowIso,
+      row.id
+    );
+
+    return res.json({ ok: true });
+  });
   
+  app.get('/internal-document-folders', (_req, res) => {
+    const rows = db.prepare(`
+      select id, parent_path, path, name, created_at, updated_at
+      from internal_document_folder
+      order by parent_path asc, name asc
+    `).all();
+    return res.json(rows);
+  });
+
+  app.post('/internal-document-folders', (req, res) => {
+    const parsed = internalDocumentFolderCreateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+
+    const nowIso = nowDateIso();
+    const parentPath = normalizeDocumentFolderPath(parsed.data.parent_path);
+    const folderPath = resolveUniqueDocumentFolderPath(parentPath, parsed.data.name);
+    const id = uuid('idf');
+    db.prepare(`
+      insert into internal_document_folder (id, parent_path, path, name, created_at, updated_at)
+      values (?, ?, ?, ?, ?, ?)
+    `).run(id, parentPath, folderPath, parsed.data.name.trim(), nowIso, nowIso);
+    return res.status(201).json({ id, parent_path: parentPath, path: folderPath, name: parsed.data.name.trim(), created_at: nowIso, updated_at: nowIso });
+  });
+
+  app.delete('/internal-document-folders/:id', (req, res) => {
+    if (!requireDestructiveConfirmation(req, res, 'excluir pasta de documentação')) {
+      return;
+    }
+
+    const folder = db.prepare('select id, path from internal_document_folder where id = ?').get(req.params.id) as { id: string; path: string } | undefined;
+    if (!folder) {
+      return res.status(404).json({ message: 'Pasta não encontrada.' });
+    }
+
+    const hasDocuments = db.prepare('select id from internal_document where folder_path = ? limit 1').get(folder.path);
+    const hasChildren = db.prepare('select id from internal_document_folder where parent_path = ? limit 1').get(folder.path);
+    if (hasDocuments || hasChildren) {
+      return res.status(400).json({ message: 'Pasta possui itens. Remova ou mova os documentos antes de excluir.' });
+    }
+
+    db.prepare('delete from internal_document_folder where id = ?').run(folder.id);
+    return res.json({ ok: true });
+  });
+
   app.get('/internal-documents', (_req, res) => {
     const rows = db.prepare(`
-      select id, title, category, notes, file_name, mime_type, file_size_bytes, created_at, updated_at
+      select id, title, category, notes, folder_path, file_name, mime_type, file_size_bytes, created_at, updated_at
       from internal_document
       order by date(updated_at) desc, title asc
     `).all();
@@ -6654,15 +7079,16 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
   
       db.prepare(`
         insert into internal_document (
-          id, title, category, notes, file_name, mime_type, file_data_base64,
+          id, title, category, notes, folder_path, file_name, mime_type, file_data_base64,
           file_size_bytes, created_at, updated_at
         )
-        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         documentId,
         payload.title.trim(),
         payload.category?.trim() || null,
         payload.notes?.trim() || null,
+        normalizeDocumentFolderPath(payload.folder_path),
         payload.file_name.trim(),
         payload.mime_type.trim() || decoded.mimeType,
         payload.file_data_base64,
@@ -6802,6 +7228,125 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
         monthly_due_soon: monthlyDueSoon,
         annual_due_soon: annualDueSoon,
         total_attention: expired.length + dueSoon.length
+      }
+    });
+  });
+
+  app.post('/licenses/import-preview', (req, res) => {
+    const parsed = licenseImportPreviewSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+
+    const { items, ignoredLines } = parseTopSolidLicenseText(parsed.data.raw_text);
+    const programRows = db.prepare(`
+      select id, name, topsolid_kind, topsolid_code
+      from license_program
+      order by name asc
+    `).all() as Array<{
+      id: string;
+      name: string;
+      topsolid_kind: TopSolidImportKind | null;
+      topsolid_code: string | null;
+    }>;
+
+    const programsByKindAndCode = new Map<string, typeof programRows[number]>();
+    const programsByCode = new Map<string, Array<typeof programRows[number]>>();
+    programRows.forEach((program) => {
+      const code = program.topsolid_code?.trim() || readLegacyTopSolidCodeFromProgramName(program.name);
+      if (!code) return;
+      if (program.topsolid_kind) {
+        programsByKindAndCode.set(`${program.topsolid_kind}:${code}`, program);
+      }
+      const existing = programsByCode.get(code) ?? [];
+      existing.push(program);
+      programsByCode.set(code, existing);
+    });
+
+    const groupsByExpiration = new Map<string, {
+      expires_at: string;
+      items: ParsedTopSolidLicenseItem[];
+      matched_programs: Array<{
+        id: string;
+        name: string;
+        topsolid_kind: TopSolidImportKind | null;
+        topsolid_code: string | null;
+        imported_kind: TopSolidImportKind;
+        imported_code: string;
+        imported_name: string;
+      }>;
+      unmatched_items: Array<{
+        kind: TopSolidImportKind;
+        code: string;
+        name: string;
+        raw_line: string;
+      }>;
+    }>();
+
+    items.forEach((item) => {
+      const group = groupsByExpiration.get(item.expires_at) ?? {
+        expires_at: item.expires_at,
+        items: [],
+        matched_programs: [],
+        unmatched_items: []
+      };
+      group.items.push(item);
+
+      const exactProgram = programsByKindAndCode.get(`${item.kind}:${item.code}`);
+      const codeCandidates = programsByCode.get(item.code) ?? [];
+      const legacyProgram = !exactProgram && codeCandidates.length === 1 && !codeCandidates[0].topsolid_kind
+        ? codeCandidates[0]
+        : null;
+      const matchedProgram = exactProgram ?? legacyProgram;
+
+      if (matchedProgram) {
+        if (!group.matched_programs.some((program) => program.id === matchedProgram.id)) {
+          group.matched_programs.push({
+            id: matchedProgram.id,
+            name: matchedProgram.name,
+            topsolid_kind: matchedProgram.topsolid_kind,
+            topsolid_code: matchedProgram.topsolid_code,
+            imported_kind: item.kind,
+            imported_code: item.code,
+            imported_name: item.name
+          });
+        }
+      } else {
+        group.unmatched_items.push({
+          kind: item.kind,
+          code: item.code,
+          name: item.name,
+          raw_line: item.raw_line
+        });
+      }
+
+      groupsByExpiration.set(item.expires_at, group);
+    });
+
+    const groups = Array.from(groupsByExpiration.values())
+      .sort((left, right) => left.expires_at.localeCompare(right.expires_at))
+      .map((group) => ({
+        expires_at: group.expires_at,
+        item_count: group.items.length,
+        matched_count: group.matched_programs.length,
+        unmatched_count: group.unmatched_items.length,
+        matched_programs: group.matched_programs,
+        unmatched_items: group.unmatched_items
+      }));
+
+    const matchedProgramIds = new Set<string>();
+    groups.forEach((group) => {
+      group.matched_programs.forEach((program) => matchedProgramIds.add(program.id));
+    });
+
+    return res.json({
+      groups,
+      summary: {
+        parsed_lines: items.length,
+        ignored_lines: ignoredLines,
+        group_count: groups.length,
+        matched_programs: matchedProgramIds.size,
+        unmatched_items: groups.reduce((total, group) => total + group.unmatched_items.length, 0)
       }
     });
   });

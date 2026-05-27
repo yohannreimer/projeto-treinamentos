@@ -65,7 +65,7 @@ type CohortScheduleDayDraft = {
 const statuses = ['Planejada', 'Aguardando_quorum', 'Confirmada', 'Concluida', 'Cancelada'];
 const periodOptions = ['Integral', 'Meio_periodo'] as const;
 const deliveryModeOptions = ['Online', 'Presencial', 'Hibrida'] as const;
-type CohortSortKey = 'code' | 'start_date' | 'delivery_mode' | 'company_names' | 'technician_name' | 'status';
+type CohortSortKey = 'module_names' | 'start_date' | 'delivery_mode' | 'company_names' | 'technician_name' | 'status';
 
 const cohortWizardSteps = [
   { id: 1, title: 'Informações', hint: 'dados básicos' },
@@ -83,6 +83,21 @@ function moduleShortLabel(name: string): string {
     .replace(/^Treinamento\s+/i, '')
     .replace(/^TopSolid'?/i, 'TopSolid')
     .trim();
+}
+
+function splitPipeList(value?: string | null): string[] {
+  return String(value ?? '')
+    .split(/\s*\|\s*/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function cohortModuleSequence(cohort: Cohort): string[] {
+  const moduleNames = splitPipeList(cohort.module_names);
+  if (moduleNames.length > 0) return moduleNames;
+
+  const fallback = String(cohort.name ?? '').trim();
+  return fallback ? [fallback] : [];
 }
 
 function moduleDurationById(modules: Module[], moduleId: string): number {
@@ -357,21 +372,26 @@ export function CohortsPage() {
   useEffect(() => {
     if (!editingId || !entryModuleId) return;
 
-    api.allocationSuggestions(editingId, entryModuleId)
-      .then((response: any) => {
-        setAllocationSuggestions(response);
-        const rows = response.companies ?? [];
-        const firstReady = rows.find((company: any) => !company.block_reason)?.id ?? rows[0]?.id ?? '';
-        setAllocationCompanyId((prev) => (rows.some((company: any) => company.id === prev) ? prev : firstReady));
-      })
-      .catch(() => setAllocationSuggestions(null));
+    void refreshAllocationSuggestions(editingId, entryModuleId);
   }, [editingId, entryModuleId]);
+
+  async function refreshAllocationSuggestions(cohortId: string, moduleId: string) {
+    try {
+      const response = await api.allocationSuggestions(cohortId, moduleId) as any;
+      setAllocationSuggestions(response);
+      const rows = response.companies ?? [];
+      const firstReady = rows.find((company: any) => !company.block_reason)?.id ?? rows[0]?.id ?? '';
+      setAllocationCompanyId((prev) => (rows.some((company: any) => company.id === prev) ? prev : firstReady));
+    } catch {
+      setAllocationSuggestions(null);
+    }
+  }
 
   const filtered = useMemo(() => {
     if (!query.trim()) return cohorts;
     const normalized = query.toLowerCase();
     return cohorts.filter((item) =>
-      `${item.code} ${item.name} ${item.company_names ?? ''} ${item.technician_name ?? ''}`.toLowerCase().includes(normalized)
+      `${item.code} ${item.name} ${item.module_names ?? ''} ${item.company_names ?? ''} ${item.technician_name ?? ''}`.toLowerCase().includes(normalized)
     );
   }, [cohorts, query]);
 
@@ -857,6 +877,7 @@ export function CohortsPage() {
       setAllocationNotes('');
 
       await loadCohortDetail(editingId);
+      await refreshAllocationSuggestions(editingId, entryModuleId);
     } catch (err) {
       setError((err as Error).message);
     }
@@ -867,6 +888,9 @@ export function CohortsPage() {
       await api.updateAllocationStatus(allocationId, { status: nextStatus });
       if (editingId) {
         await loadCohortDetail(editingId);
+        if (entryModuleId) {
+          await refreshAllocationSuggestions(editingId, entryModuleId);
+        }
       }
       setMessage(`Status da alocação atualizado para ${nextStatus}.`);
     } catch (err) {
@@ -886,6 +910,9 @@ export function CohortsPage() {
           });
           if (editingId) {
             await loadCohortDetail(editingId);
+            if (entryModuleId) {
+              await refreshAllocationSuggestions(editingId, entryModuleId);
+            }
           }
           setMessage('Status atualizado para Executado com override manual.');
           return;
@@ -895,6 +922,24 @@ export function CohortsPage() {
         }
       }
       setError(apiMessage);
+    }
+  }
+
+  async function deleteAllocation(allocation: CohortAllocation) {
+    if (!editingId) return;
+    const shouldDelete = window.confirm(`Excluir ${allocation.company_name} de ${moduleShortLabel(allocation.module_name)} nesta turma?`);
+    if (!shouldDelete) return;
+
+    try {
+      await api.deleteAllocation(allocation.id);
+      await loadCohortDetail(editingId);
+      if (entryModuleId) {
+        await refreshAllocationSuggestions(editingId, entryModuleId);
+      }
+      setMessage('Alocação excluída da turma.');
+      setError('');
+    } catch (err) {
+      setError((err as Error).message);
     }
   }
 
@@ -1180,7 +1225,7 @@ export function CohortsPage() {
           action={
             <div className="actions actions-stretch">
               <input
-                placeholder="Buscar por código, nome ou técnico"
+                placeholder="Buscar por módulo, cliente ou técnico"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
               />
@@ -1200,7 +1245,7 @@ export function CohortsPage() {
           <table className="table table-hover table-tight table-sticky-actions cohort-table">
             <thead>
               <tr>
-                <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('code')}>Turma{sortIndicator('code')}</button></th>
+                <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('module_names')}>Módulos{sortIndicator('module_names')}</button></th>
                 <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('start_date')}>Data de início{sortIndicator('start_date')}</button></th>
                 <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('company_names')}>Clientes{sortIndicator('company_names')}</button></th>
                 <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('delivery_mode')}>Formato{sortIndicator('delivery_mode')}</button></th>
@@ -1210,34 +1255,41 @@ export function CohortsPage() {
               </tr>
             </thead>
             <tbody>
-              {ordered.map((cohort) => (
-                <tr
-                  key={cohort.id}
-                  className={`row-openable ${editingId === cohort.id ? 'row-selected' : ''}`.trim()}
-                  onDoubleClick={(event) => {
-                    if (shouldIgnoreRowOpen(event.target)) return;
-                    navigate(`/turmas/${cohort.id}`);
-                  }}
-                  title="Dê dois cliques para abrir a turma"
-                >
-                  <td>
-                    <strong>{cohort.code}</strong>
-                    <div>{cohort.name}</div>
-                  </td>
-                  <td>{formatDateBr(cohort.start_date)}</td>
-                  <td className="cohort-client-cell" title={cohort.company_names || 'Sem cliente alocado'}>
-                    {cohort.company_names || 'Sem cliente alocado'}
-                  </td>
-                  <td>{statusLabel(cohort.delivery_mode ?? 'Online')} · {formatCohortSchedule(cohort.period, cohort.start_time, cohort.end_time)}</td>
-                  <td>{cohort.technician_name ?? 'Sem técnico'}</td>
-                  <td><StatusChip value={cohort.status} /></td>
-                  <td className="actions actions-compact">
-                    <button type="button" onClick={() => startEdit(cohort.id)}>Editar</button>
-                    <button type="button" onClick={() => deleteCohort(cohort)}>Excluir</button>
-                    <Link to={`/turmas/${cohort.id}`} className="action-link-button">Abrir</Link>
-                  </td>
-                </tr>
-              ))}
+              {ordered.map((cohort) => {
+                const modulesInSequence = cohortModuleSequence(cohort);
+                const moduleLabel = modulesInSequence.length > 0
+                  ? modulesInSequence.map(moduleShortLabel).join(' -> ')
+                  : 'Módulo não definido';
+                const internalLabel = [cohort.code, cohort.name].filter(Boolean).join(' · ');
+
+                return (
+                  <tr
+                    key={cohort.id}
+                    className={`row-openable ${editingId === cohort.id ? 'row-selected' : ''}`.trim()}
+                    onDoubleClick={(event) => {
+                      if (shouldIgnoreRowOpen(event.target)) return;
+                      navigate(`/turmas/${cohort.id}`);
+                    }}
+                    title="Dê dois cliques para abrir a turma"
+                  >
+                    <td className="cohort-module-cell" title={`${moduleLabel}${internalLabel ? ` (${internalLabel})` : ''}`}>
+                      <strong>{moduleLabel}</strong>
+                    </td>
+                    <td>{formatDateBr(cohort.start_date)}</td>
+                    <td className="cohort-client-cell" title={cohort.company_names || 'Sem cliente alocado'}>
+                      {cohort.company_names || 'Sem cliente alocado'}
+                    </td>
+                    <td>{statusLabel(cohort.delivery_mode ?? 'Online')} · {formatCohortSchedule(cohort.period, cohort.start_time, cohort.end_time)}</td>
+                    <td>{cohort.technician_name ?? 'Sem técnico'}</td>
+                    <td><StatusChip value={cohort.status} /></td>
+                    <td className="actions actions-compact">
+                      <button type="button" onClick={() => startEdit(cohort.id)}>Editar</button>
+                      <button type="button" onClick={() => deleteCohort(cohort)}>Excluir</button>
+                      <Link to={`/turmas/${cohort.id}`} className="action-link-button">Abrir</Link>
+                    </td>
+                  </tr>
+                );
+              })}
               {ordered.length === 0 ? (
                 <tr>
                   <td colSpan={7}>
@@ -1273,6 +1325,12 @@ export function CohortsPage() {
               )}
             >
             <form className="form form-spacious" onSubmit={(event) => event.preventDefault()}>
+            {error ? (
+              <p className="error cohort-modal-error" role="alert">
+                <span>{error}</span>
+                <button type="button" aria-label="Fechar erro" onClick={() => setError('')}>×</button>
+              </p>
+            ) : null}
             <div className="cohort-wizard-progress" aria-label="Etapas da turma">
               {cohortWizardSteps.slice(0, currentMaxWizardStep()).map((step) => (
                 <button
@@ -1679,6 +1737,9 @@ export function CohortsPage() {
                             </button>
                             <button type="button" onClick={() => updateAllocationStatus(allocation.id, 'Cancelado')}>
                               Cancelar
+                            </button>
+                            <button type="button" onClick={() => void deleteAllocation(allocation)}>
+                              Excluir
                             </button>
                           </td>
                         </tr>

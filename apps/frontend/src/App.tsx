@@ -4,6 +4,7 @@ import { Layout } from './components/Layout';
 import { PortalShell } from './portal/PortalShell';
 import { DashboardPage } from './pages/DashboardPage';
 import { CalendarPage } from './pages/CalendarPage';
+import { PlanningPage } from './pages/PlanningPage';
 import { CohortsPage } from './pages/CohortsPage';
 import { CohortDetailPage } from './pages/CohortDetailPage';
 import { ClientsPage } from './pages/ClientsPage';
@@ -16,6 +17,7 @@ import { RecruitmentPage } from './pages/RecruitmentPage';
 import { LoginPage } from './pages/LoginPage';
 import { AdminPage } from './pages/AdminPage';
 import { InternalDocsPage } from './pages/InternalDocsPage';
+import { FollowupEvaluationPage } from './pages/FollowupEvaluationPage';
 import { FinanceWorkspace } from './finance/FinanceWorkspace';
 import { FinanceOverviewPage } from './finance/pages/FinanceOverviewPage';
 import { FinanceCashflowPage } from './finance/pages/FinanceCashflowPage';
@@ -120,6 +122,14 @@ function OperationsRoutes({ user, defaultRoute }: { user: InternalSessionUser; d
         element={(
           <ProtectedRoute user={user} permissions={['calendar']} fallback={defaultRoute}>
             <CalendarPage />
+          </ProtectedRoute>
+        )}
+      />
+      <Route
+        path="/planejar"
+        element={(
+          <ProtectedRoute user={user} permissions={['calendar', 'cohorts']} fallback={defaultRoute}>
+            <PlanningPage />
           </ProtectedRoute>
         )}
       />
@@ -375,6 +385,7 @@ export function App() {
   return (
     <Routes>
       <Route path="/portal/:slug/*" element={<PortalShell />} />
+      <Route path="/acompanhamento/:token" element={<FollowupEvaluationPage />} />
       <Route path="*" element={<InternalApp />} />
     </Routes>
   );

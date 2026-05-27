@@ -15,7 +15,24 @@ const DENSITY_MODE_STORAGE_KEY = 'orquestrador_density_mode_v1';
 const viewModes = ['operational', 'management'] as const;
 const densityModes = ['compact', 'comfortable'] as const;
 
+function readStorageItem(key: string) {
+  if (typeof window === 'undefined' || typeof window.localStorage?.getItem !== 'function') return null;
+  return window.localStorage.getItem(key);
+}
+
+function writeStorageItem(key: string, value: string) {
+  if (typeof window === 'undefined' || typeof window.localStorage?.setItem !== 'function') return;
+  window.localStorage.setItem(key, value);
+}
+
 function topbarContext(pathname: string) {
+  if (pathname.startsWith('/planejar')) {
+    return {
+      title: 'Planejamento de Agenda',
+      subtitle: 'Monte turmas por cliente, módulo, técnico e horário real antes de publicar.',
+      badge: 'Rascunhos e capacidade'
+    };
+  }
   if (pathname.startsWith('/calendario')) {
     return {
       title: 'Calendário de Execução',
@@ -68,12 +85,15 @@ function topbarContext(pathname: string) {
 export function Layout({ children, loggedUser, navItems, onLogout }: LayoutProps) {
   const location = useLocation();
   const context = topbarContext(location.pathname);
+  const isPlanningRoute = location.pathname.startsWith('/planejar');
+  const [isPlanningNavExpanded, setIsPlanningNavExpanded] = useState(false);
+  const [globalError, setGlobalError] = useState('');
   const [viewMode, setViewMode] = useState<(typeof viewModes)[number]>(() => {
-    const saved = window.localStorage.getItem(VIEW_MODE_STORAGE_KEY);
+    const saved = readStorageItem(VIEW_MODE_STORAGE_KEY);
     return saved === 'management' ? 'management' : 'operational';
   });
   const [densityMode, setDensityMode] = useState<(typeof densityModes)[number]>(() => {
-    const saved = window.localStorage.getItem(DENSITY_MODE_STORAGE_KEY);
+    const saved = readStorageItem(DENSITY_MODE_STORAGE_KEY);
     return saved === 'comfortable' ? 'comfortable' : 'compact';
   });
   const todayLabel = new Date().toLocaleDateString('pt-BR', {
@@ -83,14 +103,56 @@ export function Layout({ children, loggedUser, navItems, onLogout }: LayoutProps
   });
 
   useEffect(() => {
-    window.localStorage.setItem(VIEW_MODE_STORAGE_KEY, viewMode);
+    writeStorageItem(VIEW_MODE_STORAGE_KEY, viewMode);
   }, [viewMode]);
   useEffect(() => {
-    window.localStorage.setItem(DENSITY_MODE_STORAGE_KEY, densityMode);
+    writeStorageItem(DENSITY_MODE_STORAGE_KEY, densityMode);
   }, [densityMode]);
 
+  useEffect(() => {
+    if (isPlanningRoute) {
+      setIsPlanningNavExpanded(false);
+    }
+  }, [isPlanningRoute]);
+
+  useEffect(() => {
+    function onGlobalError(event: Event) {
+      const detail = (event as CustomEvent<{ message?: string }>).detail;
+      const message = detail?.message?.trim();
+      if (message) {
+        setGlobalError(message);
+      }
+    }
+    window.addEventListener('orquestrador:global-error', onGlobalError);
+    return () => window.removeEventListener('orquestrador:global-error', onGlobalError);
+  }, []);
+
+  useEffect(() => {
+    if (!globalError) return undefined;
+    const timeoutId = window.setTimeout(() => setGlobalError(''), 15000);
+    return () => window.clearTimeout(timeoutId);
+  }, [globalError]);
+
+  const isNavCollapsed = isPlanningRoute && !isPlanningNavExpanded;
+
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${isPlanningRoute ? 'is-planning-focus' : ''} ${isNavCollapsed ? 'is-nav-collapsed' : ''}`.trim()}>
+      {globalError ? (
+        <div className="global-error-toast" role="alert" aria-live="assertive">
+          <span>{globalError}</span>
+          <button type="button" aria-label="Fechar erro" onClick={() => setGlobalError('')}>×</button>
+        </div>
+      ) : null}
+      {isPlanningRoute ? (
+        <button
+          className="planning-nav-toggle"
+          type="button"
+          aria-label={isPlanningNavExpanded ? 'Minimizar navegação' : 'Expandir navegação'}
+          onClick={() => setIsPlanningNavExpanded((current) => !current)}
+        >
+          {isPlanningNavExpanded ? '‹' : '☰'}
+        </button>
+      ) : null}
       <aside className="sidebar">
         <Link to="/calendario" className="logo">
           <img className="logo-brand-image" src={holandHorizontalLogo} alt="Holand" />

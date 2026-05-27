@@ -19,12 +19,21 @@ type ModuleEdit = {
 
 type JourneyFilter = 'all' | 'Concluido' | 'Em_execucao' | 'Planejado' | 'Nao_iniciado';
 type HoursPendingAction = 'confirm' | 'reject';
+type CertificateTechnicianChoice = {
+  moduleId: string;
+  moduleName: string;
+};
+type TechnicianOption = {
+  id: string;
+  name: string;
+};
 
 const statusOptions = ['Em_treinamento', 'Finalizado', 'Ativo', 'Inativo'] as const;
 const priorityOptions = ['Alta', 'Normal', 'Baixa', 'Parado', 'Aguardando_liberacao'] as const;
 const modalityOptions = ['Turma_Online', 'Exclusivo_Online', 'Presencial'] as const;
 const relationshipOptions = ['Nosso', 'Terceiro'] as const;
 const progressStatusOptions = ['Nao_iniciado', 'Planejado', 'Em_execucao', 'Concluido'] as const;
+const portalDeliveryModeOptions = ['ministrado', 'entregavel'] as const;
 type HistorySortKey = 'cohort_code' | 'start_date' | 'module_code' | 'entry_day' | 'status' | 'cohort_status' | 'executed_at';
 
 function formatDateTimeBr(value: string | null | undefined) {
@@ -187,6 +196,7 @@ export function ClientDetailPage() {
   const [portalSupportIntroText, setPortalSupportIntroText] = useState('');
   const [portalHiddenModuleIds, setPortalHiddenModuleIds] = useState<string[]>([]);
   const [portalDateOverrides, setPortalDateOverrides] = useState<Record<string, string>>({});
+  const [portalDeliveryModeOverrides, setPortalDeliveryModeOverrides] = useState<Record<string, 'ministrado' | 'entregavel'>>({});
   const [savingPortalAccess, setSavingPortalAccess] = useState(false);
 
   const [hoursSummary, setHoursSummary] = useState<CompanyHoursSummary | null>(null);
@@ -208,6 +218,9 @@ export function ClientDetailPage() {
   const [savingCompany, setSavingCompany] = useState(false);
   const [savingModuleId, setSavingModuleId] = useState<string | null>(null);
   const [emittingCertificateModuleId, setEmittingCertificateModuleId] = useState<string | null>(null);
+  const [certificateTechnicianChoice, setCertificateTechnicianChoice] = useState<CertificateTechnicianChoice | null>(null);
+  const [certificateTechnicianId, setCertificateTechnicianId] = useState('');
+  const [technicians, setTechnicians] = useState<TechnicianOption[]>([]);
   const [historySortKey, setHistorySortKey] = useState<HistorySortKey>('start_date');
   const [historySortDirection, setHistorySortDirection] = useState<'asc' | 'desc'>('desc');
   const [journeyFilter, setJourneyFilter] = useState<JourneyFilter>('all');
@@ -221,6 +234,10 @@ export function ClientDetailPage() {
   const [editingDurationModuleId, setEditingDurationModuleId] = useState<string | null>(null);
   const [moduleToActivate, setModuleToActivate] = useState('');
   const [activatingModule, setActivatingModule] = useState(false);
+  const [followupEvaluations, setFollowupEvaluations] = useState<any[]>([]);
+  const [followupTitle, setFollowupTitle] = useState('Avaliação de acompanhamento');
+  const [followupNotes, setFollowupNotes] = useState('');
+  const [creatingFollowup, setCreatingFollowup] = useState(false);
 
   async function loadCompanyHours(companyId: string) {
     const [summary, moduleResponse, ledgerResponse, pendingResponse] = await Promise.all([
@@ -268,10 +285,14 @@ export function ClientDetailPage() {
       api.companyHoursSummary(id),
       api.companyHoursModules(id),
       api.companyHoursLedger(id),
-      api.companyHoursPending(id)
+      api.companyHoursPending(id),
+      api.technicians(),
+      api.companyFollowupEvaluations(id)
     ])
-      .then(([response, portalAccess, summaryResponse, moduleResponse, ledgerResponse, pendingResponse]) => {
+      .then(([response, portalAccess, summaryResponse, moduleResponse, ledgerResponse, pendingResponse, technicianRows, followupRows]) => {
         setData(response);
+        setTechnicians((technicianRows ?? []) as TechnicianOption[]);
+        setFollowupEvaluations((followupRows ?? []) as any[]);
         setPortalSlug(portalAccess.slug ?? '');
         setPortalUsername(portalAccess.username ?? '');
         setPortalActive(Boolean(portalAccess.is_active));
@@ -282,6 +303,11 @@ export function ClientDetailPage() {
           acc[row.module_id] = row.next_date;
           return acc;
         }, {} as Record<string, string>));
+        setPortalDeliveryModeOverrides((portalAccess.module_delivery_mode_overrides ?? []).reduce((acc, row) => {
+          if (!row.module_id || (row.delivery_mode !== 'ministrado' && row.delivery_mode !== 'entregavel')) return acc;
+          acc[row.module_id] = row.delivery_mode;
+          return acc;
+        }, {} as Record<string, 'ministrado' | 'entregavel'>));
         setHoursSummary(summaryResponse ?? null);
         setHoursModuleInsights(moduleResponse.items ?? []);
         setHoursLedger(ledgerResponse.items ?? []);
@@ -295,6 +321,7 @@ export function ClientDetailPage() {
         setHoursModuleInsights([]);
         setHoursLedger([]);
         setHoursPending([]);
+        setFollowupEvaluations([]);
         setError(err.message);
       });
   }
@@ -678,6 +705,22 @@ export function ClientDetailPage() {
     });
   }
 
+  function updatePortalModuleDeliveryModeOverride(
+    moduleId: string,
+    deliveryMode: 'ministrado' | 'entregavel',
+    defaultDeliveryMode: 'ministrado' | 'entregavel'
+  ) {
+    setPortalDeliveryModeOverrides((prev) => {
+      const next = { ...prev };
+      if (deliveryMode === defaultDeliveryMode) {
+        delete next[moduleId];
+        return next;
+      }
+      next[moduleId] = deliveryMode;
+      return next;
+    });
+  }
+
   async function savePortalAccess() {
     if (!id) return;
     if (!portalSlug.trim()) {
@@ -702,7 +745,9 @@ export function ClientDetailPage() {
         hidden_module_ids: Array.from(new Set(portalHiddenModuleIds)),
         module_date_overrides: Object.entries(portalDateOverrides)
           .filter(([, nextDate]) => nextDate.trim().length > 0)
-          .map(([module_id, next_date]) => ({ module_id, next_date }))
+          .map(([module_id, next_date]) => ({ module_id, next_date })),
+        module_delivery_mode_overrides: Object.entries(portalDeliveryModeOverrides)
+          .map(([module_id, delivery_mode]) => ({ module_id, delivery_mode }))
       });
       setPortalPassword('');
       setMessage('Acesso do portal atualizado.');
@@ -712,6 +757,44 @@ export function ClientDetailPage() {
     } finally {
       setSavingPortalAccess(false);
     }
+  }
+
+  function followupPublicUrl(row: { public_path?: string; token?: string }) {
+    const path = row.public_path ?? `/acompanhamento/${encodeURIComponent(row.token ?? '')}`;
+    return `${window.location.origin}${path}`;
+  }
+
+  async function createFollowupEvaluation() {
+    if (!id) return;
+    if (!followupTitle.trim()) {
+      setError('Informe um título para a avaliação.');
+      return;
+    }
+
+    setCreatingFollowup(true);
+    setError('');
+    setMessage('');
+    try {
+      const created = await api.createCompanyFollowupEvaluation(id, {
+        title: followupTitle.trim(),
+        notes: followupNotes.trim() || null
+      }) as { public_path: string };
+      await load();
+      const url = `${window.location.origin}${created.public_path}`;
+      await navigator.clipboard?.writeText(url);
+      setMessage(`Link de avaliação criado e copiado: ${url}`);
+      setFollowupNotes('');
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setCreatingFollowup(false);
+    }
+  }
+
+  async function copyFollowupLink(row: { public_path?: string; token?: string }) {
+    const url = followupPublicUrl(row);
+    await navigator.clipboard?.writeText(url);
+    setMessage(`Link copiado: ${url}`);
   }
 
   async function resolveHoursPending(pendingId: string, action: HoursPendingAction) {
@@ -856,13 +939,19 @@ export function ClientDetailPage() {
 
   async function emitModuleCertificate(moduleId: string) {
     if (!id) return;
+    await downloadModuleCertificate(moduleId, null);
+  }
+
+  async function downloadModuleCertificate(moduleId: string, technicianId: string | null) {
+    if (!id) return;
     setEmittingCertificateModuleId(moduleId);
     setError('');
     setMessage('');
     try {
       const response = await fetch(api.companyModuleCertificateUrl(id, moduleId, {
         download: true,
-        format: 'pdf'
+        format: 'pdf',
+        technicianId
       }), {
         headers: createInternalAuthHeaders()
       });
@@ -885,11 +974,27 @@ export function ClientDetailPage() {
       document.body.removeChild(anchor);
       URL.revokeObjectURL(blobUrl);
       setMessage('Certificado gerado e salvo em Documentação.');
+      setCertificateTechnicianChoice(null);
+      setCertificateTechnicianId('');
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setEmittingCertificateModuleId(null);
     }
+  }
+
+  function requestModuleCertificate(moduleItem: any) {
+    if (moduleItem.last_cohort_code) {
+      void emitModuleCertificate(moduleItem.module_id);
+      return;
+    }
+    setCertificateTechnicianChoice({
+      moduleId: moduleItem.module_id,
+      moduleName: moduleItem.module_name
+    });
+    setCertificateTechnicianId('');
+    setError('');
+    setMessage('');
   }
 
   async function toggleModule(moduleId: string, currentEnabled: boolean) {
@@ -934,6 +1039,42 @@ export function ClientDetailPage() {
 
       {!data ? null : (
         <>
+          <Section title="Avaliação de acompanhamento">
+            <div className="followup-admin-grid">
+              <div className="form form-spacious">
+                <p className="form-hint">Gere um link rápido para o cliente avaliar um acompanhamento, reunião ou check-in.</p>
+                <label>
+                  Título
+                  <input value={followupTitle} onChange={(event) => setFollowupTitle(event.target.value)} />
+                </label>
+                <label>
+                  Contexto para o cliente
+                  <textarea rows={3} value={followupNotes} onChange={(event) => setFollowupNotes(event.target.value)} placeholder="Ex.: Avalie o acompanhamento feito hoje sobre implantação e próximos passos." />
+                </label>
+                <div className="actions actions-compact">
+                  <button type="button" onClick={() => void createFollowupEvaluation()} disabled={creatingFollowup}>
+                    {creatingFollowup ? 'Gerando...' : 'Gerar link e copiar'}
+                  </button>
+                </div>
+              </div>
+
+              <div className="followup-admin-list">
+                {followupEvaluations.length === 0 ? (
+                  <p className="muted">Nenhuma avaliação de acompanhamento criada para este cliente.</p>
+                ) : followupEvaluations.slice(0, 5).map((row) => (
+                  <article key={row.id} className="followup-admin-item">
+                    <div>
+                      <strong>{row.title}</strong>
+                      <span>{row.status} {row.rating ? `· nota ${row.rating}/5` : ''}</span>
+                      {row.respondent_name ? <small>Respondido por {row.respondent_name}</small> : null}
+                    </div>
+                    <button type="button" onClick={() => void copyFollowupLink(row)}>Copiar link</button>
+                  </article>
+                ))}
+              </div>
+            </div>
+          </Section>
+
           <Section
             title="Dados do cliente"
             action={(
@@ -1092,34 +1233,64 @@ export function ClientDetailPage() {
                     <tr>
                       <th>Módulo</th>
                       <th>Visível no portal</th>
+                      <th>Tipo no portal</th>
                       <th>Data exibida (opcional)</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {activeTimeline.map((moduleItem: any) => (
-                      <tr key={`portal-curation-${moduleItem.module_id}`}>
-                        <td>
-                          <strong>{moduleItem.code} - {moduleItem.name}</strong>
-                        </td>
-                        <td>
-                          <label className="checkbox-row">
+                    {activeTimeline.map((moduleItem: any) => {
+                      const defaultDeliveryMode = (moduleItem.default_delivery_mode ?? moduleItem.delivery_mode) === 'entregavel'
+                        ? 'entregavel'
+                        : 'ministrado';
+                      const selectedDeliveryMode = portalDeliveryModeOverrides[moduleItem.module_id] ?? defaultDeliveryMode;
+                      const hasDeliveryOverride = selectedDeliveryMode !== defaultDeliveryMode;
+
+                      return (
+                        <tr key={`portal-curation-${moduleItem.module_id}`}>
+                          <td>
+                            <strong>{moduleItem.code} - {moduleItem.name}</strong>
+                          </td>
+                          <td>
+                            <label className="checkbox-row">
+                              <input
+                                type="checkbox"
+                                checked={!moduleHiddenInPortal(moduleItem.module_id)}
+                                onChange={(event) => toggleModuleVisibilityInPortal(moduleItem.module_id, event.target.checked)}
+                              />
+                              {moduleHiddenInPortal(moduleItem.module_id) ? 'Oculto no portal' : 'Exibido no portal'}
+                            </label>
+                          </td>
+                          <td>
+                            <label className="portal-delivery-mode-control">
+                              <select
+                                value={selectedDeliveryMode}
+                                onChange={(event) => updatePortalModuleDeliveryModeOverride(
+                                  moduleItem.module_id,
+                                  event.target.value as 'ministrado' | 'entregavel',
+                                  defaultDeliveryMode
+                                )}
+                              >
+                                {portalDeliveryModeOptions.map((option) => (
+                                  <option key={option} value={option}>{moduleDeliveryLabel(option)}</option>
+                                ))}
+                              </select>
+                              <small>
+                                {hasDeliveryOverride
+                                  ? `Substitui o padrão: ${moduleDeliveryLabel(defaultDeliveryMode)}`
+                                  : `Padrão: ${moduleDeliveryLabel(defaultDeliveryMode)}`}
+                              </small>
+                            </label>
+                          </td>
+                          <td>
                             <input
-                              type="checkbox"
-                              checked={!moduleHiddenInPortal(moduleItem.module_id)}
-                              onChange={(event) => toggleModuleVisibilityInPortal(moduleItem.module_id, event.target.checked)}
+                              type="date"
+                              value={portalDateOverrides[moduleItem.module_id] ?? ''}
+                              onChange={(event) => updatePortalModuleDateOverride(moduleItem.module_id, event.target.value)}
                             />
-                            {moduleHiddenInPortal(moduleItem.module_id) ? 'Oculto no portal' : 'Exibido no portal'}
-                          </label>
-                        </td>
-                        <td>
-                          <input
-                            type="date"
-                            value={portalDateOverrides[moduleItem.module_id] ?? ''}
-                            onChange={(event) => updatePortalModuleDateOverride(moduleItem.module_id, event.target.value)}
-                          />
-                        </td>
-                      </tr>
-                    ))}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -1735,7 +1906,7 @@ export function ClientDetailPage() {
                               {canEmitCertificate ? (
                                 <button
                                   type="button"
-                                  onClick={() => void emitModuleCertificate(moduleItem.module_id)}
+                                  onClick={() => requestModuleCertificate(moduleItem)}
                                   disabled={emittingCertificateModuleId === moduleItem.module_id}
                                 >
                                   {emittingCertificateModuleId === moduleItem.module_id ? 'Gerando...' : 'Certificado PDF'}
@@ -1908,6 +2079,70 @@ export function ClientDetailPage() {
           </Section>
         </>
       )}
+      {certificateTechnicianChoice ? (
+        <div className="cohort-editor-overlay" role="dialog" aria-modal="true" aria-label="Escolher técnico do certificado">
+          <button
+            type="button"
+            className="cohort-editor-backdrop"
+            onClick={() => {
+              setCertificateTechnicianChoice(null);
+              setCertificateTechnicianId('');
+            }}
+            aria-label="Fechar escolha de técnico"
+          />
+          <div className="certificate-tech-modal">
+            <Section
+              title="Técnico do certificado"
+              action={(
+                <button
+                  type="button"
+                  className="cohort-editor-close-btn"
+                  onClick={() => {
+                    setCertificateTechnicianChoice(null);
+                    setCertificateTechnicianId('');
+                  }}
+                >
+                  Fechar
+                </button>
+              )}
+            >
+              <div className="certificate-tech-choice">
+                <p className="form-hint">
+                  {certificateTechnicianChoice.moduleName} não tem turma vinculada. Você pode emitir só com a assinatura administrativa ou escolher um técnico para assinar junto.
+                </p>
+                <label>
+                  Técnico
+                  <select
+                    value={certificateTechnicianId}
+                    onChange={(event) => setCertificateTechnicianId(event.target.value)}
+                  >
+                    <option value="">Sem técnico</option>
+                    {technicians.map((technician) => (
+                      <option key={technician.id} value={technician.id}>{technician.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <div className="actions actions-compact">
+                  <button
+                    type="button"
+                    onClick={() => void downloadModuleCertificate(certificateTechnicianChoice.moduleId, null)}
+                    disabled={emittingCertificateModuleId === certificateTechnicianChoice.moduleId}
+                  >
+                    Gerar sem técnico
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void downloadModuleCertificate(certificateTechnicianChoice.moduleId, certificateTechnicianId)}
+                    disabled={!certificateTechnicianId || emittingCertificateModuleId === certificateTechnicianChoice.moduleId}
+                  >
+                    {emittingCertificateModuleId === certificateTechnicianChoice.moduleId ? 'Gerando...' : 'Gerar com técnico'}
+                  </button>
+                </div>
+              </div>
+            </Section>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

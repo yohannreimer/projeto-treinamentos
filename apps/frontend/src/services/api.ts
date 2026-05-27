@@ -2,12 +2,16 @@ import type {
   CompanyHoursLedgerItem,
   CompanyHoursModuleInsight,
   CompanyHoursPendingItem,
-  CompanyHoursSummary
+  CompanyHoursSummary,
+  PlanningCohort,
+  PlanningEncounter,
+  PlanningWorkspaceDetail
 } from '../types';
 import { internalSessionStore, type InternalPermission, type InternalRole, type InternalSessionUser } from '../auth/session';
 
 const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
 const BASE_URL = env?.VITE_API_BASE_URL ?? `http://${window.location.hostname}:4000`;
+const GLOBAL_ERROR_EVENT = 'orquestrador:global-error';
 
 type CalendarActivityHoursScope = 'none' | 'client_consumption' | 'internal_effort';
 type CalendarActivityDateSchedulePayload = {
@@ -33,6 +37,23 @@ type CalendarActivityUpsertPayload = {
   linked_module_id?: string | null;
   hours_scope?: CalendarActivityHoursScope;
 };
+
+export class ApiRequestError extends Error {
+  status: number;
+  body: unknown;
+
+  constructor(message: string, status: number, body: unknown) {
+    super(message);
+    this.name = 'ApiRequestError';
+    this.status = status;
+    this.body = body;
+  }
+}
+
+function notifyGlobalError(message: string) {
+  if (!message || typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent(GLOBAL_ERROR_EVENT, { detail: { message } }));
+}
 
 function withConfirmation(path: string, confirmationPhrase?: string): string {
   const normalized = confirmationPhrase?.trim();
@@ -78,6 +99,7 @@ async function req<T = any>(path: string, init?: RequestInit): Promise<T> {
     const message = error instanceof Error && error.name === 'AbortError'
       ? 'Timeout ao conectar com a API (10s).'
       : 'Falha de conexao com a API.';
+    notifyGlobalError(message);
     throw new Error(message);
   } finally {
     window.clearTimeout(timeoutId);
@@ -86,21 +108,35 @@ async function req<T = any>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     if (response.status === 401 && authToken) {
       internalSessionStore.clear();
+      notifyGlobalError('Sessão expirada. Faça login novamente.');
       throw new Error('Sessão expirada. Faça login novamente.');
     }
     const body = await response.text();
     const oversizedMessage = 'Arquivo muito grande. Use anexos de até 20 MB.';
     if (response.status === 413) {
+      notifyGlobalError(oversizedMessage);
       throw new Error(oversizedMessage);
     }
+    let parsedBody: { message?: string } | null = null;
     try {
-      const parsed = JSON.parse(body) as { message?: string };
-      throw new Error(parsed.message || body || 'Erro na API');
+      parsedBody = JSON.parse(body) as { message?: string };
     } catch {
+      parsedBody = null;
+    }
+    if (parsedBody) {
+      const message = parsedBody.message || body || 'Erro na API';
+      notifyGlobalError(message);
+      throw new ApiRequestError(message, response.status, parsedBody);
+    }
+    {
       if (body.trim().startsWith('<')) {
-        throw new Error('Falha ao enviar anexo. Tente novamente em instantes.');
+        const message = 'Falha ao enviar anexo. Tente novamente em instantes.';
+        notifyGlobalError(message);
+        throw new Error(message);
       }
-      throw new Error(body || 'Erro na API');
+      const message = body || 'Erro na API';
+      notifyGlobalError(message);
+      throw new Error(message);
     }
   }
 
@@ -123,6 +159,105 @@ export const api = {
   dashboard: () => req('/dashboard'),
   calendar: () => req('/calendar/cohorts'),
   calendarActivities: () => req('/calendar/activities'),
+  planningWorkspaces: () =>
+    req<{ workspaces: Array<{ id: string; name: string; status: string; client_count: number; encounter_count: number }> }>('/planning/workspaces'),
+  planningWorkspace: (id: string) =>
+    req<PlanningWorkspaceDetail>(`/planning/workspaces/${id}`),
+  createPlanningWorkspace: (payload: {
+    name: string;
+    mode?: 'Manual' | 'Assistido' | 'Automatico';
+    horizon_days?: number;
+    notes?: string | null;
+    company_ids?: string[];
+  }) =>
+    req<PlanningWorkspaceDetail>('/planning/workspaces', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  deletePlanningWorkspace: (workspaceId: string) =>
+    req<{ ok: boolean }>(`/planning/workspaces/${workspaceId}`, {
+      method: 'DELETE'
+    }),
+  addPlanningWorkspaceClients: (workspaceId: string, companyIds: string[]) =>
+    req<PlanningWorkspaceDetail>(`/planning/workspaces/${workspaceId}/clients`, {
+      method: 'POST',
+      body: JSON.stringify({ company_ids: companyIds })
+    }),
+  removePlanningWorkspaceClient: (workspaceId: string, companyId: string) =>
+    req<PlanningWorkspaceDetail>(`/planning/workspaces/${workspaceId}/clients/${companyId}`, {
+      method: 'DELETE'
+    }),
+  createPlanningCohort: (workspaceId: string, payload: {
+    company_id: string;
+    module_id: string;
+    technician_id?: string | null;
+    name: string;
+    status?: string;
+    delivery_mode?: 'Online' | 'Presencial' | 'Hibrida';
+    period?: 'Integral' | 'Meio_periodo';
+    notes?: string | null;
+    encounters: Array<{
+      day_date: string;
+      start_time: string;
+      end_time: string;
+      status?: string;
+      notes?: string | null;
+    }>;
+  }) =>
+    req<{ cohort: PlanningCohort; encounters: PlanningEncounter[] }>(`/planning/workspaces/${workspaceId}/cohorts`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  addPlanningCohortEncounters: (workspaceId: string, cohortId: string, payload: {
+    technician_id?: string | null;
+    encounters: Array<{
+      day_date: string;
+      start_time: string;
+      end_time: string;
+      status?: string;
+      notes?: string | null;
+    }>;
+  }) =>
+    req<PlanningWorkspaceDetail>(`/planning/workspaces/${workspaceId}/cohorts/${cohortId}/encounters`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  planningSuggestions: (payload: {
+    module_id: string;
+    technician_ids: string[];
+    date_from: string;
+    date_to: string;
+    start_time?: string;
+    end_time?: string;
+    duration_minutes: number;
+    max_results?: number;
+  }) =>
+    req<{ suggestions: Array<{ technician_id: string; day_date: string; start_time: string; end_time: string }> }>('/planning/suggestions', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  updatePlanningEncounter: (workspaceId: string, encounterId: string, payload: {
+    technician_id?: string | null;
+    day_date?: string;
+    start_time?: string;
+    end_time?: string;
+    status?: string;
+    notes?: string | null;
+  }) =>
+    req<PlanningWorkspaceDetail>(`/planning/workspaces/${workspaceId}/encounters/${encounterId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload)
+    }),
+  validatePlanningWorkspace: (workspaceId: string) =>
+    req<{ ok: boolean; conflicts: unknown[] }>(`/planning/workspaces/${workspaceId}/validate`, {
+      method: 'POST',
+      body: JSON.stringify({})
+    }),
+  publishPlanningWorkspace: (workspaceId: string) =>
+    req<{ created_cohorts: number; updated_cohorts: number; encounter_count: number; version_number: number }>(
+      `/planning/workspaces/${workspaceId}/publish`,
+      { method: 'POST', body: JSON.stringify({}) }
+    ),
   createCalendarActivity: (payload: CalendarActivityUpsertPayload) =>
     req('/calendar/activities', {
       method: 'POST',
@@ -212,12 +347,15 @@ export const api = {
   companyModuleCertificateUrl: (
     companyId: string,
     moduleId: string,
-    options?: { download?: boolean; format?: 'pdf' | 'html' }
+    options?: { download?: boolean; format?: 'pdf' | 'html'; technicianId?: string | null }
   ) => {
     const params = new URLSearchParams();
     params.set('format', options?.format ?? 'pdf');
     if (options?.download) {
       params.set('download', '1');
+    }
+    if (options?.technicianId) {
+      params.set('technician_id', options.technicianId);
     }
     return `${BASE_URL}/companies/${encodeURIComponent(companyId)}/modules/${encodeURIComponent(moduleId)}/certificate?${params.toString()}`;
   },
@@ -243,6 +381,8 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(payload)
     }),
+  deleteAllocation: (id: string) =>
+    req(`/allocations/${id}`, { method: 'DELETE' }),
   companies: () => req('/companies'),
   createCompany: (payload: unknown) =>
     req('/companies', {
@@ -259,6 +399,31 @@ export const api = {
       method: 'DELETE'
     }),
   companyById: (id: string) => req(`/companies/${id}`),
+  companyFollowupEvaluations: (companyId: string) =>
+    req(`/companies/${companyId}/followup-evaluations`),
+  createCompanyFollowupEvaluation: (companyId: string, payload: { title: string; notes?: string | null }) =>
+    req(`/companies/${companyId}/followup-evaluations`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  followupEvaluation: (token: string) =>
+    req(`/followup-evaluations/${encodeURIComponent(token)}`),
+  submitFollowupEvaluation: (
+    token: string,
+    payload: {
+      respondent_name: string;
+      rating: number;
+      answers: {
+        what_worked?: string;
+        what_to_improve?: string;
+        next_priority?: string;
+      };
+    }
+  ) =>
+    req(`/followup-evaluations/${encodeURIComponent(token)}`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
   portalAccessByCompany: (companyId: string) =>
     req<{
       slug: string | null;
@@ -267,6 +432,7 @@ export const api = {
       support_intro_text: string | null;
       hidden_module_ids: string[];
       module_date_overrides: Array<{ module_id: string; next_date: string }>;
+      module_delivery_mode_overrides: Array<{ module_id: string; delivery_mode: 'ministrado' | 'entregavel' }>;
     }>(`/companies/${companyId}/portal-access`),
   upsertPortalAccessByCompany: (
     companyId: string,
@@ -278,6 +444,7 @@ export const api = {
       support_intro_text?: string | null;
       hidden_module_ids?: string[];
       module_date_overrides?: Array<{ module_id: string; next_date: string }>;
+      module_delivery_mode_overrides?: Array<{ module_id: string; delivery_mode: 'ministrado' | 'entregavel' }>;
     }
   ) =>
     req<{ ok: boolean; portal_client_id: string }>(`/companies/${companyId}/portal-access`, {
@@ -300,6 +467,16 @@ export const api = {
       method: 'DELETE'
     }),
   internalDocuments: () => req('/internal-documents'),
+  internalDocumentFolders: () => req('/internal-document-folders'),
+  createInternalDocumentFolder: (payload: { parent_path: string; name: string }) =>
+    req('/internal-document-folders', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  deleteInternalDocumentFolder: (id: string, confirmation_phrase?: string) =>
+    req(withConfirmation(`/internal-document-folders/${id}`, confirmation_phrase), {
+      method: 'DELETE'
+    }),
   createInternalDocument: (payload: unknown) =>
     req('/internal-documents', {
       method: 'POST',
@@ -311,6 +488,11 @@ export const api = {
     }),
   internalDocumentDownloadUrl: (id: string) => `${BASE_URL}/internal-documents/${id}/download`,
   licenses: () => req('/licenses'),
+  licenseImportPreview: (payload: unknown) =>
+    req('/licenses/import-preview', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
   createLicense: (payload: unknown) =>
     req('/licenses', {
       method: 'POST',

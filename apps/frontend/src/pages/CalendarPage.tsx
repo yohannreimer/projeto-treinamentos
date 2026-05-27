@@ -245,10 +245,13 @@ function buildBrazilHolidayMap(year: number): Record<string, string[]> {
 function buildMonthGrid(month: string, holidaysMap: Record<string, string[]>): MonthCell[] {
   const start = monthStartIso(month);
   const first = fromIso(start);
-  const jsWeekday = first.getDay();
-  const mondayIndex = (jsWeekday + 6) % 7;
-  const gridStart = addDays(start, -mondayIndex);
   const todayIso = toDateIso(new Date());
+  const isCurrentMonth = month === todayIso.slice(0, 7);
+  const anchor = isCurrentMonth ? fromIso(todayIso) : first;
+  const anchorIso = toDateIso(anchor);
+  const jsWeekday = anchor.getDay();
+  const mondayIndex = (jsWeekday + 6) % 7;
+  const gridStart = addDays(anchorIso, -mondayIndex);
 
   const cells: MonthCell[] = [];
   for (let i = 0; i < 42; i += 1) {

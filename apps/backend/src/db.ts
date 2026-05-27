@@ -217,6 +217,7 @@ export function initDb() {
       hidden_module_ids_json text not null default '[]',
       module_date_overrides_json text not null default '{}',
       module_status_overrides_json text not null default '{}',
+      module_delivery_mode_overrides_json text not null default '{}',
       created_at text not null,
       updated_at text not null,
       unique(id, company_id),
@@ -348,6 +349,25 @@ export function initDb() {
       foreign key(portal_client_id) references portal_client(id) on delete cascade,
       foreign key(cohort_id) references cohort(id) on delete cascade,
       foreign key(module_id) references module_template(id) on delete cascade
+    );
+
+    create table if not exists portal_certificate_participant_evaluation (
+      id text primary key,
+      company_id text not null,
+      portal_client_id text not null,
+      cohort_id text not null,
+      module_id text not null,
+      participant_id text not null,
+      participant_name text not null,
+      answers_json text not null,
+      created_at text not null,
+      updated_at text not null,
+      unique(company_id, cohort_id, module_id, participant_id),
+      foreign key(company_id) references company(id) on delete cascade,
+      foreign key(portal_client_id) references portal_client(id) on delete cascade,
+      foreign key(cohort_id) references cohort(id) on delete cascade,
+      foreign key(module_id) references module_template(id) on delete cascade,
+      foreign key(participant_id) references cohort_participant(id) on delete cascade
     );
 
     create table if not exists financial_account (
@@ -1099,6 +1119,8 @@ export function initDb() {
     create table if not exists license_program (
       id text primary key,
       name text not null unique,
+      topsolid_kind text,
+      topsolid_code text,
       notes text,
       created_at text not null,
       updated_at text not null
@@ -1159,17 +1181,122 @@ export function initDb() {
       foreign key(activity_id) references calendar_activity(id) on delete cascade
     );
 
+    create table if not exists planning_workspace (
+      id text primary key,
+      name text not null,
+      status text not null default 'Rascunho',
+      mode text not null default 'Manual',
+      horizon_days integer not null default 60,
+      notes text,
+      created_at text not null,
+      updated_at text not null,
+      published_at text
+    );
+
+    create table if not exists planning_workspace_client (
+      workspace_id text not null,
+      company_id text not null,
+      priority integer not null default 0,
+      created_at text not null,
+      primary key (workspace_id, company_id),
+      foreign key(workspace_id) references planning_workspace(id) on delete cascade,
+      foreign key(company_id) references company(id) on delete cascade
+    );
+
+    create table if not exists planning_cohort (
+      id text primary key,
+      workspace_id text not null,
+      company_id text not null,
+      module_id text not null,
+      technician_id text,
+      published_cohort_id text,
+      name text not null,
+      status text not null default 'Rascunho',
+      delivery_mode text not null default 'Online',
+      period text not null default 'Meio_periodo',
+      notes text,
+      created_at text not null,
+      updated_at text not null,
+      foreign key(workspace_id) references planning_workspace(id) on delete cascade,
+      foreign key(company_id) references company(id) on delete cascade,
+      foreign key(module_id) references module_template(id) on delete cascade,
+      foreign key(technician_id) references technician(id) on delete set null,
+      foreign key(published_cohort_id) references cohort(id) on delete set null
+    );
+
+    create table if not exists planning_encounter (
+      id text primary key,
+      workspace_id text not null,
+      planning_cohort_id text not null,
+      company_id text not null,
+      module_id text not null,
+      technician_id text,
+      encounter_index integer not null,
+      day_date text not null,
+      start_time text not null,
+      end_time text not null,
+      status text not null default 'Rascunho',
+      notes text,
+      published_cohort_id text,
+      created_at text not null,
+      updated_at text not null,
+      unique(planning_cohort_id, encounter_index),
+      foreign key(workspace_id) references planning_workspace(id) on delete cascade,
+      foreign key(planning_cohort_id) references planning_cohort(id) on delete cascade,
+      foreign key(company_id) references company(id) on delete cascade,
+      foreign key(module_id) references module_template(id) on delete cascade,
+      foreign key(technician_id) references technician(id) on delete set null,
+      foreign key(published_cohort_id) references cohort(id) on delete set null
+    );
+
+    create table if not exists planning_version (
+      id text primary key,
+      workspace_id text not null,
+      version_number integer not null,
+      action text not null,
+      summary_json text not null default '{}',
+      created_at text not null,
+      unique(workspace_id, version_number),
+      foreign key(workspace_id) references planning_workspace(id) on delete cascade
+    );
+
     create table if not exists internal_document (
       id text primary key,
       title text not null,
       category text,
       notes text,
+      folder_path text,
       file_name text not null,
       mime_type text not null,
       file_data_base64 text not null,
       file_size_bytes integer not null default 0,
       created_at text not null,
       updated_at text not null
+    );
+
+    create table if not exists internal_document_folder (
+      id text primary key,
+      parent_path text not null,
+      path text not null unique,
+      name text not null,
+      created_at text not null,
+      updated_at text not null
+    );
+
+    create table if not exists client_followup_evaluation (
+      id text primary key,
+      token text not null unique,
+      company_id text not null,
+      title text not null,
+      notes text,
+      status text not null default 'Aberta',
+      respondent_name text,
+      rating integer,
+      answers_json text,
+      created_at text not null,
+      submitted_at text,
+      updated_at text not null,
+      foreign key(company_id) references company(id) on delete cascade
     );
 
     create table if not exists implementation_kanban_card (
@@ -1270,6 +1397,16 @@ export function initDb() {
   ensureColumn('cohort', 'end_time', 'end_time text');
   ensureColumn('cohort', 'delivery_mode', "delivery_mode text not null default 'Online'");
   ensureColumn(
+    'cohort',
+    'planning_workspace_id',
+    'planning_workspace_id text references planning_workspace(id) on delete set null'
+  );
+  ensureColumn(
+    'cohort',
+    'planning_cohort_id',
+    'planning_cohort_id text references planning_cohort(id) on delete set null'
+  );
+  ensureColumn(
     'cohort_allocation',
     'override_installation_prereq',
     'override_installation_prereq integer not null default 0'
@@ -1280,12 +1417,15 @@ export function initDb() {
   ensureColumn('company_license', 'user_name', 'user_name text');
   ensureColumn('company_license', 'module_list', 'module_list text');
   ensureColumn('company_license', 'license_identifier', 'license_identifier text');
+  ensureColumn('license_program', 'topsolid_kind', 'topsolid_kind text');
+  ensureColumn('license_program', 'topsolid_code', 'topsolid_code text');
   ensureColumn('calendar_activity', 'selected_dates', 'selected_dates text');
   ensureColumn('module_template', 'delivery_mode', "delivery_mode text not null default 'ministrado'");
   ensureColumn('module_template', 'client_hours_policy', "client_hours_policy text not null default 'consome'");
   ensureColumn('calendar_activity', 'linked_module_id', 'linked_module_id text');
   ensureColumn('calendar_activity', 'hours_scope', "hours_scope text not null default 'none'");
   ensureColumn('calendar_activity', 'hours_consumed_snapshot', 'hours_consumed_snapshot real not null default 0');
+  ensureColumn('internal_document', 'folder_path', 'folder_path text');
   ensureColumn('technician', 'hourly_cost', 'hourly_cost real');
   ensureColumn('implementation_kanban_card', 'column_id', 'column_id text');
   ensureColumn('implementation_kanban_card', 'client_name', 'client_name text');
@@ -1311,6 +1451,7 @@ export function initDb() {
   ensureColumn('portal_client', 'hidden_module_ids_json', "hidden_module_ids_json text not null default '[]'");
   ensureColumn('portal_client', 'module_date_overrides_json', "module_date_overrides_json text not null default '{}'");
   ensureColumn('portal_client', 'module_status_overrides_json', "module_status_overrides_json text not null default '{}'");
+  ensureColumn('portal_client', 'module_delivery_mode_overrides_json', "module_delivery_mode_overrides_json text not null default '{}'");
   ensureColumn('financial_transaction', 'is_deleted', 'is_deleted integer not null default 0');
   ensureColumn(
     'financial_account',
@@ -2149,7 +2290,18 @@ export function initDb() {
     create index if not exists idx_portal_agenda_item_client_date on portal_agenda_item(portal_client_id, start_date, end_date);
     create index if not exists idx_portal_certificate_evaluation_lookup
       on portal_certificate_evaluation(company_id, cohort_id, module_id);
+    create index if not exists idx_portal_certificate_participant_evaluation_lookup
+      on portal_certificate_participant_evaluation(company_id, cohort_id, module_id, participant_id);
+    create index if not exists idx_client_followup_evaluation_company
+      on client_followup_evaluation(company_id, created_at desc);
     create unique index if not exists idx_hours_event_store_idempotency_key on hours_event_store(idempotency_key);
+    create index if not exists idx_planning_workspace_status on planning_workspace(status, updated_at desc);
+    create index if not exists idx_planning_workspace_client_company on planning_workspace_client(company_id);
+    create index if not exists idx_planning_cohort_workspace on planning_cohort(workspace_id, status);
+    create index if not exists idx_planning_cohort_company_module on planning_cohort(company_id, module_id);
+    create index if not exists idx_planning_encounter_workspace_date on planning_encounter(workspace_id, day_date);
+    create index if not exists idx_planning_encounter_technician_date on planning_encounter(technician_id, day_date);
+    create index if not exists idx_cohort_planning_links on cohort(planning_workspace_id, planning_cohort_id);
     create index if not exists idx_internal_session_user on internal_session(internal_user_id);
     create index if not exists idx_internal_session_expires on internal_session(expires_at);
     create index if not exists idx_internal_audit_created on internal_audit_log(created_at desc);
