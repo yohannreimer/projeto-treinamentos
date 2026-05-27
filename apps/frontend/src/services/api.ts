@@ -381,6 +381,10 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(payload)
     }),
+  deleteAllocation: (id: string) =>
+    req<{ ok: boolean }>(`/allocations/${id}`, {
+      method: 'DELETE'
+    }),
   companies: () => req('/companies'),
   createCompany: (payload: unknown) =>
     req('/companies', {
