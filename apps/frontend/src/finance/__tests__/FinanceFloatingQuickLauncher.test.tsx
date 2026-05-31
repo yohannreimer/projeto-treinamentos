@@ -6,6 +6,7 @@ import {
   FINANCE_QUICK_LAUNCH_CREATED_EVENT,
   FinanceFloatingQuickLauncher
 } from '../components/FinanceFloatingQuickLauncher';
+import { todayIso } from '../utils/financeFormatters';
 
 const mocks = vi.hoisted(() => ({
   createPayable: vi.fn(),
@@ -112,6 +113,8 @@ test('FinanceFloatingQuickLauncher creates a payable without leaving the current
   await user.type(screen.getByLabelText('Fornecedor'), 'Alpha');
   await user.click(await screen.findByRole('button', { name: 'Fornecedor Alpha' }));
   await user.type(screen.getByLabelText('Valor'), '6800,00');
+  await user.clear(screen.getByLabelText('Vencimento'));
+  await user.type(screen.getByLabelText('Vencimento'), '2026-06-01');
   await screen.findByRole('option', { name: 'Aluguel' });
   await user.selectOptions(screen.getByLabelText('Categoria'), 'cat-expense');
   await user.click(screen.getByLabelText('Já foi pago agora'));
@@ -124,7 +127,9 @@ test('FinanceFloatingQuickLauncher creates a payable without leaving the current
     description: 'Aluguel sala',
     amount_cents: 680000,
     paid_amount_cents: 680000,
-    status: 'paid'
+    status: 'paid',
+    due_date: '2026-06-01',
+    paid_at: todayIso()
   }));
   expect(created).toHaveBeenCalledTimes(1);
   expect(await screen.findByText('Conta a pagar lançada.')).toBeInTheDocument();
@@ -220,4 +225,57 @@ test('FinanceFloatingQuickLauncher creates a direct ledger movement from the sam
     amount_cents: 120050
   }));
   expect(await screen.findByText('Movimento direto lançado.')).toBeInTheDocument();
+});
+
+test('FinanceFloatingQuickLauncher reloads entities and clears the draft whenever it reopens', async () => {
+  const { financeApi } = await import('../api');
+  const user = userEvent.setup();
+  vi.mocked(financeApi.listEntities).mockClear();
+  vi.mocked(financeApi.listEntities)
+    .mockResolvedValueOnce([
+      {
+        id: 'ent-1',
+        organization_id: 'org-holand',
+        legal_name: 'Fornecedor Alpha LTDA',
+        trade_name: 'Fornecedor Alpha',
+        document_number: null,
+        kind: 'supplier',
+        email: null,
+        phone: null,
+        is_active: true,
+        created_at: '2026-04-22T09:00:00.000Z',
+        updated_at: '2026-04-22T09:00:00.000Z'
+      }
+    ])
+    .mockResolvedValueOnce([
+      {
+        id: 'ent-2',
+        organization_id: 'org-holand',
+        legal_name: 'Fornecedor Novo LTDA',
+        trade_name: 'Fornecedor Novo',
+        document_number: null,
+        kind: 'supplier',
+        email: null,
+        phone: null,
+        is_active: true,
+        created_at: '2026-04-22T10:00:00.000Z',
+        updated_at: '2026-04-22T10:00:00.000Z'
+      }
+    ]);
+
+  render(
+    <MemoryRouter initialEntries={['/financeiro/payables']}>
+      <FinanceFloatingQuickLauncher />
+    </MemoryRouter>
+  );
+
+  await user.click(screen.getByRole('button', { name: 'Abrir lançamento rápido' }));
+  await user.type(await screen.findByLabelText('Descrição'), 'Rascunho antigo');
+  await user.click(screen.getByRole('button', { name: 'Fechar lançamento rápido' }));
+
+  await user.click(screen.getByRole('button', { name: 'Abrir lançamento rápido' }));
+  expect(await screen.findByLabelText('Descrição')).toHaveValue('');
+  await user.type(screen.getByLabelText('Fornecedor'), 'Novo');
+  expect(await screen.findByRole('button', { name: 'Fornecedor Novo' })).toBeInTheDocument();
+  expect(financeApi.listEntities).toHaveBeenCalledTimes(2);
 });

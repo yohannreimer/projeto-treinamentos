@@ -203,6 +203,9 @@
     grid-template-columns: 1fr 1px 1fr 1px auto 1px auto;
     align-items: center; gap: 24px;
   }
+  .footer.no-technician {
+    grid-template-columns: 1fr 1px auto 1px auto;
+  }
   .footer-div { height: 34px; background: rgba(255,255,255,.1); }
 
   .sig-line { width: 110px; height: 1px; background: rgba(255,255,255,.2); margin-bottom: 5px; }
@@ -361,25 +364,19 @@
 
   <!-- EMPLOYEES -->
   <div class="employees-section">
-    <div class="employees-label">Colaboradores Certificados</div>
+    <div class="employees-label">{{EMPLOYEES_LABEL}}</div>
     <div id="employees-grid">{{EMPLOYEES_GRID}}</div>
   </div>
 
   <!-- FOOTER -->
-  <div class="footer">
+  <div class="footer {{FOOTER_CLASS}}">
     <div>
       <div class="sig-line"></div>
       <div id="sig-name-1">Leonardo Holand</div>
       <div id="sig-title-1">Diretor Administrativo</div>
     </div>
 
-    <div class="footer-div"></div>
-
-    <div>
-      <div class="sig-line"></div>
-      <div id="sig-name-2">{{TECHNICIAN_NAME}}</div>
-      <div id="sig-title-2">Técnico Responsável pelo Curso</div>
-    </div>
+    {{TECHNICIAN_SIGNATURE_HTML}}
 
     <div class="footer-div"></div>
 

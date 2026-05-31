@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
-import type { LicenseProgram, LicenseRow } from '../types';
+import type { LicenseImportPreviewGroup, LicenseImportPreviewResponse, LicenseProgram, LicenseRow } from '../types';
 import { Section } from '../components/Section';
 import { askDestructiveConfirmation } from '../utils/destructive';
 
 type RenewalCycle = 'Mensal' | 'Bimestral' | 'Trimestral' | 'Semestral' | 'Anual';
-type LicenseSortKey = 'company_name' | 'program_name' | 'user_name' | 'license_identifier' | 'renewal_cycle' | 'expires_at' | 'alert_level';
+type LicenseSortKey = 'company_name' | 'user_name' | 'license_identifier' | 'renewal_cycle' | 'expires_at' | 'alert_level';
 
 type LicenseAlertsResponse = {
   rows: LicenseRow[];
@@ -42,6 +42,46 @@ function alertRank(level: string): number {
   return 1;
 }
 
+function extractTopSolidCodes(value: string): string[] {
+  return Array.from(value.matchAll(/\((\d+)\)|(?:Module|Group):(\d+)/g))
+    .map((match) => match[1] ?? match[2])
+    .filter(Boolean);
+}
+
+function programTopSolidCode(program: LicenseProgram): string | null {
+  return program.topsolid_code?.trim() || extractTopSolidCodes(program.name)[0] || null;
+}
+
+function selectedProgramNamesFromLicense(row: LicenseRow, programs: LicenseProgram[]): string[] {
+  const selected = new Set<string>();
+  const savedNames = row.module_list
+    .split('|')
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  savedNames.forEach((name) => {
+    if (programs.some((program) => program.name === name)) {
+      selected.add(name);
+    }
+  });
+
+  const savedCodes = new Set(extractTopSolidCodes(row.module_list));
+  if (savedCodes.size > 0) {
+    programs.forEach((program) => {
+      const code = programTopSolidCode(program);
+      if (code && savedCodes.has(code)) {
+        selected.add(program.name);
+      }
+    });
+  }
+
+  if (selected.size === 0 && programs.some((program) => program.name === row.program_name)) {
+    selected.add(row.program_name);
+  }
+
+  return Array.from(selected);
+}
+
 export function LicensesPage() {
   const navigate = useNavigate();
   const [rows, setRows] = useState<LicenseRow[]>([]);
@@ -73,6 +113,10 @@ export function LicensesPage() {
   const [expiresAt, setExpiresAt] = useState(new Date().toISOString().slice(0, 10));
   const [notes, setNotes] = useState('');
   const [detailRow, setDetailRow] = useState<LicenseRow | null>(null);
+  const [importRawText, setImportRawText] = useState('');
+  const [importPreview, setImportPreview] = useState<LicenseImportPreviewResponse | null>(null);
+  const [importLoading, setImportLoading] = useState(false);
+  const [appliedImportGroupExpiresAt, setAppliedImportGroupExpiresAt] = useState<string | null>(null);
 
   async function load() {
     const [licensesResponse, companiesResponse, programsResponse] = await Promise.all([
@@ -126,15 +170,19 @@ export function LicensesPage() {
     if (!query.trim()) return rows;
     const normalized = query.toLowerCase();
     return rows.filter((row) =>
-      `${row.company_name} ${row.program_name} ${row.user_name} ${row.module_list} ${row.license_identifier} ${row.renewal_cycle}`
+      `${row.company_name} ${row.user_name} ${row.module_list} ${row.license_identifier} ${row.renewal_cycle}`
         .toLowerCase()
         .includes(normalized)
     );
   }, [rows, query]);
 
-  const attentionRows = useMemo(
-    () => [...alerts.expired, ...(alerts.due_soon ?? [...alerts.monthly_due_soon, ...alerts.annual_due_soon])],
+  const dueSoonRows = useMemo(
+    () => alerts.due_soon ?? [...alerts.monthly_due_soon, ...alerts.annual_due_soon],
     [alerts]
+  );
+  const attentionRows = useMemo(
+    () => [...alerts.expired, ...dueSoonRows],
+    [alerts.expired, dueSoonRows]
   );
 
   const sortedAttentionRows = useMemo(() => {
@@ -145,7 +193,7 @@ export function LicensesPage() {
         return String(a.expires_at).localeCompare(String(b.expires_at)) * direction;
       }
       if (attentionSortKey === 'alert_level') {
-        return (alertRank(a.alert_level) - alertRank(b.alert_level)) * direction;
+        return (alertRank(b.alert_level) - alertRank(a.alert_level)) * direction;
       }
       const left = String((a as any)[attentionSortKey] ?? '');
       const right = String((b as any)[attentionSortKey] ?? '');
@@ -153,6 +201,15 @@ export function LicensesPage() {
     });
     return list;
   }, [attentionRows, attentionSortKey, attentionSortDirection]);
+
+  const expiredCount = alerts.expired.length;
+  const dueSoonCount = dueSoonRows.length;
+  const nextAttentionRow = useMemo(() => {
+    if (dueSoonRows.length > 0) {
+      return [...dueSoonRows].sort((a, b) => String(a.expires_at).localeCompare(String(b.expires_at)))[0] ?? null;
+    }
+    return [...alerts.expired].sort((a, b) => String(b.expires_at).localeCompare(String(a.expires_at)))[0] ?? null;
+  }, [alerts.expired, dueSoonRows]);
 
   const sortedFiltered = useMemo(() => {
     const list = [...filtered];
@@ -162,7 +219,7 @@ export function LicensesPage() {
         return String(a.expires_at).localeCompare(String(b.expires_at)) * direction;
       }
       if (sortKey === 'alert_level') {
-        return (alertRank(a.alert_level) - alertRank(b.alert_level)) * direction;
+        return (alertRank(b.alert_level) - alertRank(a.alert_level)) * direction;
       }
       const left = String((a as any)[sortKey] ?? '');
       const right = String((b as any)[sortKey] ?? '');
@@ -177,7 +234,7 @@ export function LicensesPage() {
       return;
     }
     setSortKey(nextKey);
-    setSortDirection(nextKey === 'expires_at' ? 'asc' : 'desc');
+    setSortDirection(nextKey === 'expires_at' || nextKey === 'alert_level' ? 'asc' : 'desc');
   }
 
   function toggleAttentionSort(nextKey: LicenseSortKey) {
@@ -186,7 +243,7 @@ export function LicensesPage() {
       return;
     }
     setAttentionSortKey(nextKey);
-    setAttentionSortDirection(nextKey === 'expires_at' ? 'asc' : 'desc');
+    setAttentionSortDirection(nextKey === 'expires_at' || nextKey === 'alert_level' ? 'asc' : 'desc');
   }
 
   function sortIndicator(nextKey: LicenseSortKey) {
@@ -207,6 +264,9 @@ export function LicensesPage() {
     setRenewalCycle('Mensal');
     setExpiresAt(new Date().toISOString().slice(0, 10));
     setNotes('');
+    setImportRawText('');
+    setImportPreview(null);
+    setAppliedImportGroupExpiresAt(null);
   }
 
   function editLicense(row: LicenseRow) {
@@ -214,16 +274,49 @@ export function LicensesPage() {
     setEditingId(row.id);
     setCompanyId(row.company_id);
     setUserName(row.user_name);
-    const parsedProgramNames = row.module_list
-      .split('|')
-      .map((item) => item.trim())
-      .filter(Boolean);
-    const knownProgramNames = parsedProgramNames.filter((name) => programs.some((program) => program.name === name));
-    setSelectedProgramNames(knownProgramNames.length > 0 ? knownProgramNames : [row.program_name].filter((name) => programs.some((program) => program.name === name)));
+    setSelectedProgramNames(selectedProgramNamesFromLicense(row, programs));
     setLicenseIdentifier(row.license_identifier);
     setRenewalCycle(row.renewal_cycle);
     setExpiresAt(row.expires_at);
     setNotes(row.notes ?? '');
+    setImportPreview(null);
+    setAppliedImportGroupExpiresAt(null);
+  }
+
+  function applyImportGroup(group: LicenseImportPreviewGroup) {
+    const importedProgramNames = group.matched_programs.map((program) => program.name);
+    setSelectedProgramNames((prev) => Array.from(new Set([...prev, ...importedProgramNames])));
+    setExpiresAt(group.expires_at);
+    setAppliedImportGroupExpiresAt(group.expires_at);
+    setMessage(`Grupo de ${formatDate(group.expires_at)} aplicado ao cadastro.`);
+  }
+
+  async function analyzeTopSolidText() {
+    if (!importRawText.trim()) {
+      setError('Cole o texto TopSolid antes de analisar.');
+      return;
+    }
+
+    setError('');
+    setMessage('');
+    setImportLoading(true);
+    setAppliedImportGroupExpiresAt(null);
+
+    try {
+      const response = await api.licenseImportPreview({ raw_text: importRawText }) as LicenseImportPreviewResponse;
+      setImportPreview(response);
+      if (response.groups.length === 1) {
+        applyImportGroup(response.groups[0]);
+      } else if (response.groups.length === 0) {
+        setMessage('Nenhum módulo ou grupo TopSolid válido encontrado no texto.');
+      } else {
+        setMessage(`${response.groups.length} vencimentos encontrados. Escolha qual grupo aplicar.`);
+      }
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setImportLoading(false);
+    }
   }
 
   async function submitLicense() {
@@ -285,7 +378,7 @@ export function LicensesPage() {
 
   async function deleteLicense(row: LicenseRow) {
     const confirmationPhrase = askDestructiveConfirmation(
-      `Excluir licença "${row.program_name}" (ID ${row.license_identifier}) de ${row.company_name}`
+      `Excluir licença ID ${row.license_identifier} de ${row.company_name}`
     );
     if (!confirmationPhrase) {
       setMessage('Ação cancelada.');
@@ -335,22 +428,22 @@ export function LicensesPage() {
         </p>
       ) : null}
 
-      <div className="stats-grid">
-        <article className="mini-stat">
-          <span>Expiradas</span>
-          <strong>{alerts.expired.length}</strong>
+      <div className="stats-grid licenses-alert-summary">
+        <article className={`mini-stat ${expiredCount > 0 ? 'mini-stat-danger' : ''}`}>
+          <span>Vencidas</span>
+          <strong>{expiredCount}</strong>
         </article>
-        <article className="mini-stat">
-          <span>Ciclos até 7 dias</span>
-          <strong>{(alerts.due_soon ?? []).filter((row) => row.renewal_cycle !== 'Anual').length}</strong>
+        <article className={`mini-stat ${dueSoonCount > 0 ? 'mini-stat-warning' : ''}`}>
+          <span>Vencem em até 15 dias</span>
+          <strong>{dueSoonCount}</strong>
         </article>
-        <article className="mini-stat">
-          <span>Anuais (até 30 dias)</span>
-          <strong>{alerts.annual_due_soon.length}</strong>
-        </article>
-        <article className="mini-stat">
+        <article className={`mini-stat ${alerts.total_attention > 0 ? 'mini-stat-warning' : ''}`}>
           <span>Total em atenção</span>
           <strong>{alerts.total_attention}</strong>
+        </article>
+        <article className="mini-stat">
+          <span>Próximo vencimento</span>
+          <strong>{nextAttentionRow ? formatDate(nextAttentionRow.expires_at) : 'Sem alertas'}</strong>
         </article>
       </div>
 
@@ -375,7 +468,7 @@ export function LicensesPage() {
       >
         {showLicenseFormSection ? (
           <div className="form form-spacious">
-          <p className="form-hint">Preencha cliente e usuário. O programa principal será o primeiro item marcado em Programas da licença.</p>
+          <p className="form-hint">Preencha cliente e usuário, depois revise os programas do pacote, ID, renovação e vencimento.</p>
           <div className="two-col">
             <label>
               Cliente
@@ -391,6 +484,71 @@ export function LicensesPage() {
               <input value={userName} onChange={(event) => setUserName(event.target.value)} placeholder="Nome do usuário" />
             </label>
           </div>
+
+          <label className="licenses-modules-field">
+            Importar texto TopSolid
+            <div className="licenses-import-panel">
+              <textarea
+                value={importRawText}
+                onChange={(event) => setImportRawText(event.target.value)}
+                placeholder="Cole aqui o conteúdo do arquivo TopSolid..."
+                rows={6}
+              />
+              <div className="actions actions-compact">
+                <button type="button" onClick={analyzeTopSolidText} disabled={importLoading}>
+                  {importLoading ? 'Analisando...' : 'Analisar'}
+                </button>
+                {importPreview ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setImportPreview(null);
+                      setAppliedImportGroupExpiresAt(null);
+                    }}
+                  >
+                    Limpar prévia
+                  </button>
+                ) : null}
+              </div>
+              {importPreview ? (
+                <div className="licenses-import-preview">
+                  <div className="licenses-import-summary">
+                    <span>{importPreview.summary.parsed_lines} itens lidos</span>
+                    <span>{importPreview.summary.group_count} vencimento(s)</span>
+                    <span>{importPreview.summary.matched_programs} programa(s) encontrados</span>
+                    <span>{importPreview.summary.unmatched_items} pendência(s)</span>
+                    {importPreview.summary.ignored_lines > 0 ? <span>{importPreview.summary.ignored_lines} linha(s) ignorada(s)</span> : null}
+                  </div>
+                  {importPreview.groups.map((group) => (
+                    <div
+                      key={group.expires_at}
+                      className={`licenses-import-group${appliedImportGroupExpiresAt === group.expires_at ? ' is-applied' : ''}`}
+                    >
+                      <div>
+                        <strong>{formatDate(group.expires_at)}</strong>
+                        <p>
+                          {group.matched_count} encontrado(s) de {group.item_count} item(ns)
+                          {group.unmatched_count > 0 ? ` - ${group.unmatched_count} pendência(s)` : ''}
+                        </p>
+                      </div>
+                      <button type="button" onClick={() => applyImportGroup(group)}>
+                        {appliedImportGroupExpiresAt === group.expires_at ? 'Aplicado' : 'Aplicar este grupo'}
+                      </button>
+                      {group.unmatched_items.length > 0 ? (
+                        <div className="licenses-import-unmatched">
+                          {group.unmatched_items.map((item) => (
+                            <span key={`${group.expires_at}-${item.kind}-${item.code}-${item.name}`}>
+                              {item.kind}:{item.code} - {item.name}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          </label>
 
           <label className="licenses-modules-field">
             Programas da licença
@@ -420,11 +578,11 @@ export function LicensesPage() {
             <label>
               Tipo de renovação
               <select value={renewalCycle} onChange={(event) => setRenewalCycle(event.target.value as RenewalCycle)}>
-                <option value="Mensal">Mensal (alerta 7 dias antes)</option>
-                <option value="Bimestral">Bimestral (alerta 7 dias antes)</option>
-                <option value="Trimestral">Trimestral (alerta 7 dias antes)</option>
-                <option value="Semestral">Semestral (alerta 7 dias antes)</option>
-                <option value="Anual">Anual (alerta 30 dias antes)</option>
+                <option value="Mensal">Mensal (alerta 15 dias antes)</option>
+                <option value="Bimestral">Bimestral (alerta 15 dias antes)</option>
+                <option value="Trimestral">Trimestral (alerta 15 dias antes)</option>
+                <option value="Semestral">Semestral (alerta 15 dias antes)</option>
+                <option value="Anual">Anual (alerta 15 dias antes)</option>
               </select>
             </label>
           </div>
@@ -459,7 +617,6 @@ export function LicensesPage() {
             <thead>
               <tr>
                 <th><button type="button" className="table-sort-btn" onClick={() => toggleAttentionSort('company_name')}>Cliente{attentionSortIndicator('company_name')}</button></th>
-                <th><button type="button" className="table-sort-btn" onClick={() => toggleAttentionSort('program_name')}>Programa{attentionSortIndicator('program_name')}</button></th>
                 <th><button type="button" className="table-sort-btn" onClick={() => toggleAttentionSort('user_name')}>Usuário{attentionSortIndicator('user_name')}</button></th>
                 <th><button type="button" className="table-sort-btn" onClick={() => toggleAttentionSort('license_identifier')}>ID{attentionSortIndicator('license_identifier')}</button></th>
                 <th><button type="button" className="table-sort-btn" onClick={() => toggleAttentionSort('expires_at')}>Vencimento{attentionSortIndicator('expires_at')}</button></th>
@@ -470,7 +627,6 @@ export function LicensesPage() {
               {sortedAttentionRows.map((row) => (
                 <tr key={`alert-${row.id}`} className="row-openable" onDoubleClick={() => openLicenseDetail(row)}>
                   <td><div className="table-cell-clamp table-cell-clamp-compact">{row.company_name}</div></td>
-                  <td><div className="table-cell-clamp table-cell-clamp-compact">{row.program_name}</div></td>
                   <td><div className="table-cell-clamp table-cell-clamp-compact">{row.user_name}</div></td>
                   <td><div className="table-cell-clamp table-cell-clamp-compact">{row.license_identifier}</div></td>
                   <td>{formatDate(row.expires_at)}</td>
@@ -492,7 +648,7 @@ export function LicensesPage() {
         title="Base de licenças"
         action={
           <input
-            placeholder="Buscar por cliente, programa, usuário, programas, ID..."
+            placeholder="Buscar por cliente, usuário, programas, ID..."
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />
@@ -502,7 +658,6 @@ export function LicensesPage() {
         <table className="table table-hover table-tight table-readable-grid">
           <colgroup>
             <col className="licenses-col-client" />
-            <col className="licenses-col-program" />
             <col className="licenses-col-user" />
             <col className="licenses-col-modules" />
             <col className="licenses-col-id" />
@@ -514,7 +669,6 @@ export function LicensesPage() {
           <thead>
             <tr>
               <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('company_name')}>Cliente{sortIndicator('company_name')}</button></th>
-              <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('program_name')}>Programa{sortIndicator('program_name')}</button></th>
               <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('user_name')}>Usuário{sortIndicator('user_name')}</button></th>
               <th>Programas</th>
               <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('license_identifier')}>ID{sortIndicator('license_identifier')}</button></th>
@@ -528,7 +682,6 @@ export function LicensesPage() {
             {sortedFiltered.map((row) => (
               <tr key={row.id} className="row-openable" onDoubleClick={() => openLicenseDetail(row)}>
                 <td><div className="table-cell-clamp">{row.company_name}</div></td>
-                <td><div className="table-cell-clamp">{row.program_name}</div></td>
                 <td><div className="table-cell-clamp">{row.user_name}</div></td>
                 <td title={row.module_list}>
                   <div className="table-cell-clamp table-cell-clamp-tall">{row.module_list}</div>
@@ -571,10 +724,6 @@ export function LicensesPage() {
                 <span>Usuário</span>
                 <p>{detailRow.user_name}</p>
               </article>
-              <article className="read-detail-block">
-                <span>Programa principal</span>
-                <p>{detailRow.program_name}</p>
-              </article>
               <article className="read-detail-block read-detail-block-wide">
                 <span>Programas da licença</span>
                 <p>{detailRow.module_list}</p>
@@ -604,6 +753,35 @@ export function LicensesPage() {
                 </article>
               ) : null}
             </div>
+            <footer className="read-detail-actions">
+              <button
+                type="button"
+                onClick={() => {
+                  editLicense(detailRow);
+                  setDetailRow(null);
+                }}
+              >
+                Editar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setDetailRow(null);
+                  void renewLicense(detailRow);
+                }}
+              >
+                {renewalActionLabel(detailRow.renewal_cycle)}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setDetailRow(null);
+                  void deleteLicense(detailRow);
+                }}
+              >
+                Excluir
+              </button>
+            </footer>
           </section>
         </div>
       ) : null}

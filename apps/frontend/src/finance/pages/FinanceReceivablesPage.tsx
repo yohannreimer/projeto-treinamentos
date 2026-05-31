@@ -737,13 +737,16 @@ export function FinanceReceivablesPage() {
         return;
       }
 
-      setForm((current) => ({
-        ...current,
-        financial_category_id: profile.financial_category_id ?? current.financial_category_id,
-        financial_cost_center_id: profile.financial_cost_center_id ?? current.financial_cost_center_id,
-        financial_account_id: profile.financial_account_id ?? current.financial_account_id,
-        financial_payment_method_id: profile.financial_payment_method_id ?? current.financial_payment_method_id
-      }));
+      setForm((current) => {
+        if (current.financial_entity_id !== entity.id) return current;
+        return {
+          ...current,
+          financial_category_id: current.financial_category_id || profile.financial_category_id || '',
+          financial_cost_center_id: current.financial_cost_center_id || profile.financial_cost_center_id || '',
+          financial_account_id: current.financial_account_id || profile.financial_account_id || '',
+          financial_payment_method_id: current.financial_payment_method_id || profile.financial_payment_method_id || ''
+        };
+      });
       setSmartHint('Perfil padrão aplicado ao lançamento.');
     } catch {
       setSmartHint('Entidade vinculada. Não foi possível carregar os defaults agora.');

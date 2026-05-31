@@ -121,11 +121,133 @@ export type LicenseRow = {
   warning_message: string | null;
 };
 
+export type LicenseAlertSummaryItem = {
+  id: string;
+  company_name: string;
+  user_name: string;
+  license_identifier: string;
+  renewal_cycle: LicenseRow['renewal_cycle'];
+  expires_at: string;
+  alert_level: LicenseRow['alert_level'];
+  days_until_expiration: number;
+  warning_message: string | null;
+};
+
+export type LicenseAlertSummary = {
+  expired_count: number;
+  due_soon_count: number;
+  total_attention: number;
+  next_expiration_at: string | null;
+  urgent_items: LicenseAlertSummaryItem[];
+};
+
 export type LicenseProgram = {
   id: string;
   name: string;
+  topsolid_kind: 'Module' | 'Group' | null;
+  topsolid_code: string | null;
   notes: string | null;
   created_at: string;
   updated_at: string;
   usage_count: number;
+};
+
+export type LicenseImportPreviewItem = {
+  kind: 'Module' | 'Group';
+  code: string;
+  name: string;
+  raw_line?: string;
+};
+
+export type LicenseImportPreviewMatchedProgram = {
+  id: string;
+  name: string;
+  topsolid_kind: 'Module' | 'Group' | null;
+  topsolid_code: string | null;
+  imported_kind: 'Module' | 'Group';
+  imported_code: string;
+  imported_name: string;
+};
+
+export type LicenseImportPreviewGroup = {
+  expires_at: string;
+  item_count: number;
+  matched_count: number;
+  unmatched_count: number;
+  matched_programs: LicenseImportPreviewMatchedProgram[];
+  unmatched_items: LicenseImportPreviewItem[];
+};
+
+export type LicenseImportPreviewResponse = {
+  groups: LicenseImportPreviewGroup[];
+  summary: {
+    parsed_lines: number;
+    ignored_lines: number;
+    group_count: number;
+    matched_programs: number;
+    unmatched_items: number;
+  };
+};
+
+export type PlanningWorkspaceStatus = 'Rascunho' | 'Publicado' | 'Alteracao_pendente' | 'Arquivado';
+export type PlanningMode = 'Manual' | 'Assistido' | 'Automatico';
+export type PlanningEncounterStatus = 'Rascunho' | 'Confirmacao_cliente' | 'Confirmado' | 'Publicado' | 'Cancelado';
+
+export type PlanningEncounter = {
+  id: string;
+  workspace_id: string;
+  planning_cohort_id: string;
+  company_id: string;
+  module_id: string;
+  technician_id: string | null;
+  technician_name?: string | null;
+  encounter_index: number;
+  day_date: string;
+  start_time: string;
+  end_time: string;
+  status: PlanningEncounterStatus;
+  notes: string | null;
+  published_cohort_id: string | null;
+};
+
+export type PlanningCohort = {
+  id: string;
+  workspace_id: string;
+  company_id: string;
+  company_name: string;
+  module_id: string;
+  module_code: string;
+  module_name: string;
+  technician_id: string | null;
+  technician_name?: string | null;
+  published_cohort_id: string | null;
+  name: string;
+  status: string;
+  delivery_mode: 'Online' | 'Presencial' | 'Hibrida';
+  period: 'Integral' | 'Meio_periodo';
+  notes: string | null;
+  created_at?: string;
+  updated_at?: string;
+  encounters: PlanningEncounter[];
+};
+
+export type PlanningWorkspaceDetail = {
+  workspace: {
+    id: string;
+    name: string;
+    status: PlanningWorkspaceStatus;
+    mode: PlanningMode;
+    horizon_days: number;
+    notes: string | null;
+    created_at: string;
+    updated_at: string;
+    published_at: string | null;
+  };
+  clients: Array<{
+    company_id: string;
+    company_name: string;
+    priority: number;
+    available_module_ids?: string[];
+  }>;
+  cohorts: PlanningCohort[];
 };

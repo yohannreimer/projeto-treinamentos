@@ -26,6 +26,7 @@ async function createPortalReadModelsFixture(testName: string) {
 
   const app = createApp({ forceDbRefresh: true });
   const nowIso = new Date().toISOString();
+  const todayIso = nowIso.slice(0, 10);
   const passwordHash = await hashPassword('123456');
 
   db.prepare(`
@@ -63,19 +64,52 @@ async function createPortalReadModelsFixture(testName: string) {
     insert into calendar_activity (
       id, title, activity_type, start_date, end_date, all_day, company_id, status, notes, created_at, updated_at
     ) values (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
-  `).run('cal-comp-readmodels-a', 'Kickoff Planejamento', 'Implementacao', '2026-05-10', '2026-05-10', 'comp-readmodels', 'Planejada', null, nowIso, nowIso);
+  `).run(
+    'cal-comp-readmodels-a',
+    'Kickoff Planejamento',
+    'Implementacao',
+    shiftIsoDate(todayIso, 1),
+    shiftIsoDate(todayIso, 1),
+    'comp-readmodels',
+    'Planejada',
+    null,
+    nowIso,
+    nowIso
+  );
 
   db.prepare(`
     insert into calendar_activity (
       id, title, activity_type, start_date, end_date, all_day, company_id, status, notes, created_at, updated_at
     ) values (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
-  `).run('cal-comp-readmodels-b', 'Revisão Técnica', 'Suporte', '2026-05-12', '2026-05-12', 'comp-readmodels', 'Planejada', null, nowIso, nowIso);
+  `).run(
+    'cal-comp-readmodels-b',
+    'Revisão Técnica',
+    'Suporte',
+    shiftIsoDate(todayIso, 3),
+    shiftIsoDate(todayIso, 3),
+    'comp-readmodels',
+    'Planejada',
+    null,
+    nowIso,
+    nowIso
+  );
 
   db.prepare(`
     insert into calendar_activity (
       id, title, activity_type, start_date, end_date, all_day, company_id, status, notes, created_at, updated_at
     ) values (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
-  `).run('cal-comp-02', 'Atividade Outro Tenant', 'Suporte', '2026-05-11', '2026-05-11', 'comp-02', 'Planejada', null, nowIso, nowIso);
+  `).run(
+    'cal-comp-02',
+    'Atividade Outro Tenant',
+    'Suporte',
+    shiftIsoDate(todayIso, 2),
+    shiftIsoDate(todayIso, 2),
+    'comp-02',
+    'Planejada',
+    null,
+    nowIso,
+    nowIso
+  );
 
   return { app, dbPath };
 }
@@ -127,7 +161,7 @@ test('portal planning applies admin curation (hidden modules + date override)', 
       where id = ?
     `).run(
       JSON.stringify(['mod-03']),
-      JSON.stringify({ 'mod-02': '2026-06-20' }),
+      JSON.stringify({ 'mod-01': '2026-03-18', 'mod-02': '2026-06-20' }),
       'portal-client-readmodels'
     );
 
@@ -144,6 +178,11 @@ test('portal planning applies admin curation (hidden modules + date override)', 
       | undefined;
     assert.ok(overridden);
     assert.deepEqual(overridden.next_dates, ['2026-06-20']);
+    const completedOverride = planningRes.body.items.find((item: { module_id: string }) => item.module_id === 'mod-01') as
+      | { module_id: string; completed_at?: string }
+      | undefined;
+    assert.ok(completedOverride);
+    assert.equal(completedOverride.completed_at, '2026-03-18');
   } finally {
     cleanupDbFiles(dbPath);
   }
@@ -252,6 +291,97 @@ test('portal planning hours summary uses only real training consumption', async 
 
     assert.equal(overviewRes.status, 200);
     assert.deepEqual(overviewRes.body.hours_summary, planningRes.body.hours_summary);
+  } finally {
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('portal planning applies client delivery mode override to hours summary', async () => {
+  const { app, dbPath } = await createPortalReadModelsFixture('portal-readmodels-delivery-mode-override');
+
+  try {
+    db.prepare(`delete from company_module_progress where company_id = ?`).run('comp-readmodels');
+
+    db.prepare(`
+      insert into module_template (
+        id, code, category, name, description, duration_days, profile, is_mandatory, delivery_mode, client_hours_policy
+      )
+      values (?, ?, ?, ?, ?, ?, null, 1, ?, ?)
+    `).run(
+      'mod-portal-override-training',
+      'PTO-001',
+      'Treinamento',
+      'Treinamento Mantido',
+      null,
+      2,
+      'ministrado',
+      'consome'
+    );
+    db.prepare(`
+      insert into module_template (
+        id, code, category, name, description, duration_days, profile, is_mandatory, delivery_mode, client_hours_policy
+      )
+      values (?, ?, ?, ?, ?, ?, null, 1, ?, ?)
+    `).run(
+      'mod-portal-override-deliverable',
+      'PTO-002',
+      'Entregavel',
+      'Entregável feito como treinamento',
+      null,
+      3,
+      'entregavel',
+      'nao_consume'
+    );
+
+    db.prepare(`
+      insert into company_module_progress (id, company_id, module_id, status, completed_at)
+      values (?, ?, ?, 'Concluido', ?)
+    `).run('prog-portal-override-training', 'comp-readmodels', 'mod-portal-override-training', '2026-05-01');
+    db.prepare(`
+      insert into company_module_progress (id, company_id, module_id, status, completed_at)
+      values (?, ?, ?, 'Planejado', null)
+    `).run('prog-portal-override-deliverable', 'comp-readmodels', 'mod-portal-override-deliverable');
+    db.prepare(`
+      update portal_client
+      set module_delivery_mode_overrides_json = ?
+      where id = ?
+    `).run(
+      JSON.stringify({ 'mod-portal-override-deliverable': 'ministrado' }),
+      'portal-client-readmodels'
+    );
+
+    appendAndProject({
+      aggregate_type: 'module_scope',
+      aggregate_id: 'alloc-portal-override-training',
+      company_id: 'comp-readmodels',
+      event_type: 'training_encounter_completed',
+      payload: {
+        module_id: 'mod-portal-override-training',
+        hours_consumed: 8,
+        reason: 'Encontro realizado para validação do resumo com sobrescrita.'
+      },
+      idempotency_key: 'portal-override-training-8h',
+      actor_type: 'system'
+    });
+
+    const token = await loginPortal(app);
+    const planningRes = await request(app)
+      .get('/portal/api/planning')
+      .set('Authorization', `Bearer ${token}`);
+
+    assert.equal(planningRes.status, 200);
+    const overridden = planningRes.body.items.find((item: { module_id: string }) => (
+      item.module_id === 'mod-portal-override-deliverable'
+    )) as { delivery_mode: string; client_hours_policy: string } | undefined;
+    assert.ok(overridden);
+    assert.equal(overridden.delivery_mode, 'ministrado');
+    assert.equal(overridden.client_hours_policy, 'consome');
+    assert.deepEqual(planningRes.body.hours_summary, {
+      available_hours: 40,
+      consumed_hours: 8,
+      balance_hours: 32,
+      remaining_diarias: 4
+    });
   } finally {
     cleanupDbFiles(dbPath);
   }
@@ -457,6 +587,124 @@ test('portal planning and agenda derive encounter progress for meio período', a
       | undefined;
     assert.ok(journeyItem);
     assert.equal(journeyItem.total_encounters, 6);
+  } finally {
+    cleanupDbFiles(dbPath);
+  }
+});
+
+test('portal certificate evaluations are collected per cohort participant', async () => {
+  const { app, dbPath } = await createPortalReadModelsFixture('portal-certificate-participant-evaluations');
+
+  try {
+    const nowIso = new Date().toISOString();
+    const moduleId = 'mod-certificate-participants';
+    const cohortId = 'coh-certificate-participants';
+
+    db.prepare(`
+      insert into module_template (
+        id, code, category, name, description, duration_days, profile, is_mandatory, delivery_mode
+      ) values (?, ?, ?, ?, null, ?, null, 1, 'ministrado')
+    `).run(moduleId, 'CERT-001', 'Treinamento', 'Treinamento Certificado', 1);
+
+    db.prepare(`
+      insert into company_module_progress (id, company_id, module_id, status, completed_at)
+      values (?, ?, ?, 'Concluido', ?)
+    `).run('prog-certificate-participants', 'comp-readmodels', moduleId, '2026-05-12');
+
+    db.prepare(`
+      insert into cohort (
+        id, code, name, start_date, technician_id, status, capacity_companies, period, start_time, end_time, delivery_mode, notes
+      ) values (?, ?, ?, ?, null, 'Concluida', 8, 'Integral', null, null, 'Online', null)
+    `).run(cohortId, 'TUR-CERT-001', 'Turma Certificado', '2026-05-12');
+
+    db.prepare(`
+      insert into cohort_module_block (id, cohort_id, module_id, order_in_cohort, start_day_offset, duration_days)
+      values (?, ?, ?, 1, 1, 1)
+    `).run('cmb-certificate-participants', cohortId, moduleId);
+
+    db.prepare(`
+      insert into cohort_allocation (id, cohort_id, company_id, module_id, entry_day, status, notes, executed_at)
+      values (?, ?, ?, ?, 1, 'Executado', null, ?)
+    `).run('alloc-certificate-participants', cohortId, 'comp-readmodels', moduleId, nowIso);
+
+    db.prepare(`
+      insert into cohort_schedule_day (id, cohort_id, day_index, day_date, start_time, end_time)
+      values (?, ?, 1, ?, null, null)
+    `).run('csd-certificate-participants', cohortId, '2026-05-01');
+
+    db.prepare(`
+      insert into cohort_participant (id, cohort_id, company_id, participant_name, created_at)
+      values (?, ?, ?, ?, ?), (?, ?, ?, ?, ?)
+    `).run(
+      'participant-ana',
+      cohortId,
+      'comp-readmodels',
+      'Ana Cliente',
+      nowIso,
+      'participant-bruno',
+      cohortId,
+      'comp-readmodels',
+      'Bruno Cliente',
+      nowIso
+    );
+    db.prepare(`
+      insert into cohort_participant_module (participant_id, module_id)
+      values (?, ?), (?, ?)
+    `).run('participant-ana', moduleId, 'participant-bruno', moduleId);
+
+    const token = await loginPortal(app);
+    const listBefore = await request(app)
+      .get('/portal/api/certificates')
+      .set('Authorization', `Bearer ${token}`);
+
+    assert.equal(listBefore.status, 200);
+    const certificate = listBefore.body.items.find((item: { module_id: string }) => item.module_id === moduleId) as {
+      certificate_id: string;
+      download_available: boolean;
+      evaluation_total: number;
+      evaluation_submitted_count: number;
+      participants: Array<{ participant_id: string; participant_name: string; evaluation_submitted: boolean }>;
+    };
+    assert.ok(certificate, JSON.stringify(listBefore.body.items));
+    assert.equal(certificate.download_available, false);
+    assert.equal(certificate.evaluation_total, 2);
+    assert.equal(certificate.evaluation_submitted_count, 0);
+    assert.deepEqual(certificate.participants.map((participant) => participant.participant_name), [
+      'Ana Cliente',
+      'Bruno Cliente'
+    ]);
+
+    const firstSubmit = await request(app)
+      .post(`/portal/api/certificates/${encodeURIComponent(certificate.certificate_id)}/evaluation`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        participant_id: 'participant-ana',
+        answers: { q1: 5, q2: 5 }
+      });
+    assert.equal(firstSubmit.status, 201);
+
+    const listAfterOne = await request(app)
+      .get('/portal/api/certificates')
+      .set('Authorization', `Bearer ${token}`);
+    const afterOne = listAfterOne.body.items.find((item: { module_id: string }) => item.module_id === moduleId);
+    assert.equal(afterOne.download_available, false);
+    assert.equal(afterOne.evaluation_submitted_count, 1);
+
+    const secondSubmit = await request(app)
+      .post(`/portal/api/certificates/${encodeURIComponent(certificate.certificate_id)}/evaluation`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        participant_id: 'participant-bruno',
+        answers: { q1: 4, q2: 5 }
+      });
+    assert.equal(secondSubmit.status, 201);
+
+    const listAfterAll = await request(app)
+      .get('/portal/api/certificates')
+      .set('Authorization', `Bearer ${token}`);
+    const afterAll = listAfterAll.body.items.find((item: { module_id: string }) => item.module_id === moduleId);
+    assert.equal(afterAll.download_available, true);
+    assert.equal(afterAll.evaluation_submitted_count, 2);
   } finally {
     cleanupDbFiles(dbPath);
   }

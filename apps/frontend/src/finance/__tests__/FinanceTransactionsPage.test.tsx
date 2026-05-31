@@ -231,6 +231,29 @@ test('transactions page auto-fills settlement_date when creating a settled trans
   });
 });
 
+test('transactions page lets an existing movement edit the settlement date', async () => {
+  const { financeApi } = await import('../api');
+  const user = (await import('@testing-library/user-event')).default.setup();
+  render(<FinanceTransactionsPage />);
+
+  await user.click(await screen.findByRole('button', { name: /mensalidade de serviços/i }));
+  await user.click(screen.getByRole('button', { name: 'Editar linha' }));
+  await user.selectOptions(screen.getByLabelText('Status do lançamento'), 'settled');
+  await user.clear(screen.getByLabelText('Data da baixa'));
+  await user.type(screen.getByLabelText('Data da baixa'), '2026-04-28');
+  await user.click(screen.getByRole('button', { name: 'Salvar alteração' }));
+
+  await waitFor(() => {
+    expect(financeApi.updateTransaction).toHaveBeenCalledWith(
+      'ftxn-1',
+      expect.objectContaining({
+        status: 'settled',
+        settlement_date: '2026-04-28'
+      })
+    );
+  });
+});
+
 test('transactions page can open a draft and cancel it without persisting', async () => {
   const { financeApi } = await import('../api');
   const user = (await import('@testing-library/user-event')).default.setup();

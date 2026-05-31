@@ -2208,6 +2208,24 @@ function simulationItemDirection(kind: FinanceSimulationItemKind) {
   return ['manual_outflow', 'scheduled_outflow', 'partial_payment'].includes(kind) ? 'outflow' : 'inflow';
 }
 
+function financePayableSimulationStatusLabel(status: FinancePayableDto['status']) {
+  if (status === 'planned') return 'Planejado';
+  if (status === 'open') return 'Aberto';
+  if (status === 'partial') return 'Parcial';
+  if (status === 'paid') return 'Pago';
+  if (status === 'overdue') return 'Atrasado';
+  return 'Cancelado';
+}
+
+function financeReceivableSimulationStatusLabel(status: FinanceReceivableDto['status']) {
+  if (status === 'planned') return 'Planejado';
+  if (status === 'open') return 'Aberto';
+  if (status === 'partial') return 'Parcial';
+  if (status === 'received') return 'Recebido';
+  if (status === 'overdue') return 'Atrasado';
+  return 'Cancelado';
+}
+
 function buildSimulationResult(
   scenario: {
     start_date: string;
@@ -2538,6 +2556,11 @@ export function listFinanceSimulationSources(
   const startDate = scenario?.start_date ?? getOperationalTodayIso();
   const endDate = scenario?.end_date ?? getDateOffsetIso(startDate, 30);
   const recurringEndDate = getDateOffsetIso(startDate, 92);
+  const usedSourceKeys = new Set(
+    (scenario?.items ?? [])
+      .filter((item) => item.source_id)
+      .map((item) => `${item.source_type}:${item.source_id}`)
+  );
   const recurringTemplateIds = new Set(
     listFinanceRecurringRules(normalizedOrganizationId)
       .filter((rule) => rule.status === 'active')
@@ -2562,9 +2585,10 @@ export function listFinanceSimulationSources(
     .map((item): FinanceSimulationSourceDto => ({
       id: `receivable-${item.id}`,
       label: item.description,
-      detail: `${item.source === 'recurring_rule' || recurringTemplateIds.has(item.id) ? 'Recorrente · ' : ''}${item.financial_entity_name ?? item.customer_name ?? 'Cliente'} · ${item.status}`,
+      detail: `${item.source === 'recurring_rule' || recurringTemplateIds.has(item.id) ? 'Recorrente · ' : ''}${item.financial_entity_name ?? item.customer_name ?? 'Cliente'} · ${financeReceivableSimulationStatusLabel(item.status)}`,
       amount_cents: Math.max(0, item.amount_cents - item.received_amount_cents),
       event_date: clampSimulationDate(item.due_date, startDate, endDate),
+      original_event_date: item.due_date ?? null,
       kind: 'expected_inflow',
       source_type: 'receivable',
       source_id: item.id,
@@ -2577,9 +2601,10 @@ export function listFinanceSimulationSources(
     .map((item): FinanceSimulationSourceDto => ({
       id: `payable-${item.id}`,
       label: item.description,
-      detail: `${item.source === 'recurring_rule' || recurringTemplateIds.has(item.id) ? 'Recorrente · ' : ''}${item.financial_entity_name ?? item.supplier_name ?? 'Fornecedor'} · ${item.status}`,
+      detail: `${item.source === 'recurring_rule' || recurringTemplateIds.has(item.id) ? 'Recorrente · ' : ''}${item.financial_entity_name ?? item.supplier_name ?? 'Fornecedor'} · ${financePayableSimulationStatusLabel(item.status)}`,
       amount_cents: Math.max(0, item.amount_cents - item.paid_amount_cents),
       event_date: clampSimulationDate(item.due_date, startDate, endDate),
+      original_event_date: item.due_date ?? null,
       kind: 'scheduled_outflow',
       source_type: 'payable',
       source_id: item.id,
@@ -2591,6 +2616,7 @@ export function listFinanceSimulationSources(
     balance,
     sources: [...receivableSources, ...payableSources]
       .filter((source) => source.amount_cents > 0)
+      .filter((source) => !source.source_id || !usedSourceKeys.has(`${source.source_type}:${source.source_id}`))
       .filter((source) => source.cadence !== 'recurring' || source.event_date <= recurringEndDate)
       .sort((left, right) => left.event_date.localeCompare(right.event_date) || right.amount_cents - left.amount_cents)
       .slice(0, 40)

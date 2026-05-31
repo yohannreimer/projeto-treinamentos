@@ -96,6 +96,7 @@ export type PortalOperatorDisplaySettings = {
   hidden_module_ids: string[];
   module_date_overrides: Array<{ module_id: string; next_date: string }>;
   module_status_overrides: Array<{ module_id: string; status: 'Planejado' | 'Em_execucao' | 'Concluido' }>;
+  module_delivery_mode_overrides: Array<{ module_id: string; delivery_mode: 'ministrado' | 'entregavel' }>;
 };
 
 export type PortalOperatorAgendaItem = {
@@ -158,14 +159,25 @@ export type PortalCertificateItem = {
   completed_at: string | null;
   requires_evaluation: boolean;
   evaluation_submitted: boolean;
+  evaluation_total: number;
+  evaluation_submitted_count: number;
+  participants: PortalCertificateParticipant[];
   download_available: boolean;
   status_label: string;
   download_url: string;
   evaluation_url: string | null;
 };
 
+export type PortalCertificateParticipant = {
+  participant_id: string;
+  participant_name: string;
+  evaluation_submitted: boolean;
+};
+
 export type PortalCertificateEvaluation = {
   certificate: PortalCertificateItem;
+  participants: PortalCertificateParticipant[];
+  selected_participant: PortalCertificateParticipant | null;
   evaluation_submitted: boolean;
   respondent_name: string | null;
   answers: Record<string, string | number | boolean | null> | null;
@@ -173,7 +185,8 @@ export type PortalCertificateEvaluation = {
 };
 
 export type PortalCertificateEvaluationSubmitPayload = {
-  respondent_name: string;
+  participant_id?: string | null;
+  respondent_name?: string | null;
   answers: Record<string, string | number | boolean | null>;
 };
 
@@ -256,7 +269,7 @@ export type PortalAuthedApi = {
   ) => Promise<{ ok: boolean; workflow_stage: string }>;
   tickets: () => Promise<PortalTicketsResponse>;
   certificates: () => Promise<{ items: PortalCertificateItem[] }>;
-  certificateEvaluation: (certificateId: string) => Promise<PortalCertificateEvaluation>;
+  certificateEvaluation: (certificateId: string, participantId?: string | null) => Promise<PortalCertificateEvaluation>;
   submitCertificateEvaluation: (
     certificateId: string,
     payload: PortalCertificateEvaluationSubmitPayload

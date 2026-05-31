@@ -133,7 +133,6 @@ export function FinanceFloatingQuickLauncher() {
   const [form, setForm] = useState<QuickLaunchForm>(initialForm);
   const [catalog, setCatalog] = useState<FinanceCatalogSnapshot>(emptyCatalog);
   const [entities, setEntities] = useState<FinanceEntity[]>([]);
-  const [catalogLoaded, setCatalogLoaded] = useState(false);
   const [loadingCatalog, setLoadingCatalog] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -154,7 +153,7 @@ export function FinanceFloatingQuickLauncher() {
   }, []);
 
   useEffect(() => {
-    if (!open || catalogLoaded) return;
+    if (!open) return;
     let cancelled = false;
 
     setLoadingCatalog(true);
@@ -164,7 +163,6 @@ export function FinanceFloatingQuickLauncher() {
         setCatalog(nextCatalog);
         setEntities(nextEntities.filter((entity) => entity.is_active));
         setLoadingCatalog(false);
-        setCatalogLoaded(true);
       })
       .catch((loadError) => {
         if (cancelled) return;
@@ -175,7 +173,7 @@ export function FinanceFloatingQuickLauncher() {
     return () => {
       cancelled = true;
     };
-  }, [catalogLoaded, open]);
+  }, [open]);
 
   const visibleCategories = useMemo(
     () => catalog.categories.filter((category) => category.is_active && categoryAllowed(category, mode, form.transactionKind)),
@@ -199,13 +197,21 @@ export function FinanceFloatingQuickLauncher() {
   }
 
   function toggleOpen() {
-    setOpen((current) => {
-      const nextOpen = !current;
-      if (nextOpen) {
-        window.dispatchEvent(new CustomEvent(FINANCE_QUICK_LAUNCH_OPEN_EVENT));
-      }
-      return nextOpen;
+    if (open) {
+      setOpen(false);
+      return;
+    }
+
+    const nextMode = suggestedModeFromPath(location.pathname);
+    setMode(nextMode);
+    setForm({
+      ...initialForm,
+      date: todayIso()
     });
+    setError('');
+    setSuccess('');
+    window.dispatchEvent(new CustomEvent(FINANCE_QUICK_LAUNCH_OPEN_EVENT));
+    setOpen(true);
   }
 
   function resetForNextEntry() {
@@ -294,7 +300,7 @@ export function FinanceFloatingQuickLauncher() {
             status: form.immediate ? 'paid' : 'open',
             issue_date: todayIso(),
             due_date: date,
-            paid_at: form.immediate ? date : null,
+            paid_at: form.immediate ? todayIso() : null,
             note: null
           });
           if (scheduleMode === 'recurring') {
@@ -348,7 +354,7 @@ export function FinanceFloatingQuickLauncher() {
             status: form.immediate ? 'received' : 'open',
             issue_date: todayIso(),
             due_date: date,
-            received_at: form.immediate ? date : null,
+            received_at: form.immediate ? todayIso() : null,
             note: null
           });
           if (scheduleMode === 'recurring') {

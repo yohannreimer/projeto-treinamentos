@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import holandHorizontalLogo from '../../assets/holand-horizontal.svg';
 import type { PortalAuthedApi, PortalCertificateEvaluation } from '../types';
 
@@ -108,6 +108,8 @@ function formatDateBr(dateIso: string | null | undefined) {
 export function PortalCertificateEvaluationPage({ api }: PortalCertificateEvaluationPageProps) {
   const { certificateId = '' } = useParams();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const participantId = searchParams.get('participantId');
   const [data, setData] = useState<PortalCertificateEvaluation | null>(null);
   const [respondentName, setRespondentName] = useState('');
   const [answers, setAnswers] = useState<Record<string, string | number | boolean | null>>({});
@@ -119,7 +121,7 @@ export function PortalCertificateEvaluationPage({ api }: PortalCertificateEvalua
   useEffect(() => {
     let mounted = true;
     setLoading(true);
-    api.certificateEvaluation(certificateId)
+    api.certificateEvaluation(certificateId, participantId)
       .then((response) => {
         if (!mounted) return;
         setData(response);
@@ -138,7 +140,7 @@ export function PortalCertificateEvaluationPage({ api }: PortalCertificateEvalua
     return () => {
       mounted = false;
     };
-  }, [api, certificateId]);
+  }, [api, certificateId, participantId]);
 
   const missingRequired = useMemo(() => (
     requiredAnswerIds.filter((id) => !answers[id])
@@ -161,6 +163,7 @@ export function PortalCertificateEvaluationPage({ api }: PortalCertificateEvalua
     setSaving(true);
     try {
       await api.submitCertificateEvaluation(certificateId, {
+        participant_id: data?.selected_participant?.participant_id ?? null,
         respondent_name: respondentName.trim(),
         answers
       });
@@ -182,6 +185,8 @@ export function PortalCertificateEvaluationPage({ api }: PortalCertificateEvalua
   const cohortLabel = certificate.cohort_code
     ? `${certificate.cohort_code} · ${certificate.cohort_name ?? ''}`.trim()
     : certificate.cohort_name ?? 'Turma vinculada';
+  const participants = data.participants ?? certificate.participants ?? [];
+  const selectedParticipant = data.selected_participant;
 
   return (
     <section className="portal-evaluation-screen">
@@ -189,7 +194,7 @@ export function PortalCertificateEvaluationPage({ api }: PortalCertificateEvalua
         <div className="portal-evaluation-success" role="status">
           <div className="portal-evaluation-success-icon">✓</div>
           <h2>AVALIAÇÃO<br /><span>ENVIADA</span></h2>
-          <p>Obrigado pelo seu feedback. O certificado já está liberado para download na aba Certificados.</p>
+          <p>Obrigado pelo seu feedback. Quando as avaliações necessárias estiverem concluídas, o certificado ficará disponível na aba Certificados.</p>
           <button type="button" className="portal-evaluation-submit" onClick={() => navigate('../..')}>
             Voltar aos certificados
           </button>
@@ -235,7 +240,25 @@ export function PortalCertificateEvaluationPage({ api }: PortalCertificateEvalua
         </div>
       </section>
 
-      <form onSubmit={submit}>
+      {participants.length > 0 && !selectedParticipant ? (
+        <main className="portal-evaluation-participant-picker">
+          <h2>Quem está respondendo?</h2>
+          <p>Selecione seu nome para registrar a avaliação individual da turma.</p>
+          <div>
+            {participants.map((participant) => (
+              <button
+                key={participant.participant_id}
+                type="button"
+                onClick={() => setSearchParams({ participantId: participant.participant_id })}
+              >
+                {participant.participant_name}
+                <span>{participant.evaluation_submitted ? 'Já respondeu' : 'Responder agora'}</span>
+              </button>
+            ))}
+          </div>
+        </main>
+      ) : (
+        <form onSubmit={submit}>
         <main className="portal-evaluation-main">
           <label className="portal-evaluation-respondent">
             Respondido por
@@ -243,6 +266,7 @@ export function PortalCertificateEvaluationPage({ api }: PortalCertificateEvalua
               value={respondentName}
               onChange={(event) => setRespondentName(event.target.value)}
               placeholder="Nome completo"
+              disabled={Boolean(selectedParticipant)}
             />
           </label>
 
@@ -309,7 +333,8 @@ export function PortalCertificateEvaluationPage({ api }: PortalCertificateEvalua
             {saving ? 'Enviando...' : 'Enviar avaliação ›'}
           </button>
         </footer>
-      </form>
+        </form>
+      )}
     </section>
   );
 }

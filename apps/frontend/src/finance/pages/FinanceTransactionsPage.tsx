@@ -389,7 +389,7 @@ export function FinanceTransactionsPage() {
     const baseTransaction = currentDraftSource;
     const nextSettlementDate =
       form.status === 'settled'
-        ? (form.settlement_date || baseTransaction?.settlement_date || form.issue_date || todayIso())
+        ? (form.settlement_date || todayIso())
         : null;
 
     const payload: CreateFinanceTransactionPayload = {
@@ -400,9 +400,9 @@ export function FinanceTransactionsPage() {
       status: form.status,
       amount_cents: parseAmountToCents(form.amount),
       issue_date: form.issue_date || null,
-      due_date: (baseTransaction?.due_date ?? form.due_date) || null,
+      due_date: form.due_date || null,
       settlement_date: nextSettlementDate,
-      competence_date: (baseTransaction?.competence_date ?? form.competence_date) || null,
+      competence_date: form.competence_date || null,
       note: form.note.trim() || null
     };
 
@@ -665,7 +665,7 @@ const mainGridStyles = {
                         <td style={tdStatusCellStyle}>
                           <StatusBadge status={transaction.status} text={statusLabel(transaction.status)} />
                         </td>
-                        <td style={{ ...tdTextStyle, fontFamily: 'monospace' }}>{formatDate(transaction.competence_date ?? transaction.issue_date)}</td>
+                        <td style={{ ...tdTextStyle, fontFamily: 'monospace' }}>{formatDate(transaction.settlement_date ?? transaction.due_date ?? transaction.competence_date ?? transaction.issue_date)}</td>
                         <td style={{ ...tdAmountStyle, color: transaction.kind === 'income' ? '#059669' : '#ef4444' }}>
                           {transaction.kind === 'income' ? '+' : '−'} {formatCurrency(transaction.amount_cents)}
                         </td>
@@ -754,7 +754,7 @@ const mainGridStyles = {
                           status: nextStatus,
                           settlement_date:
                             nextStatus === 'settled'
-                              ? current.settlement_date || current.issue_date || todayIso()
+                              ? current.settlement_date || todayIso()
                               : current.settlement_date
                         }));
                       }}
@@ -788,17 +788,31 @@ const mainGridStyles = {
                     </select>
                   </label>
 
-                  <label style={fieldStyle}>
-                    <span style={fieldLabelInlineStyle}>Data de emissão</span>
-                    <input
-                      aria-label="Data de emissão"
-                      type="date"
-                      value={form.issue_date}
-                      onChange={(event) => updateForm('issue_date', event.target.value)}
-                      disabled={!canWrite || submitting}
-                      style={inputStyle}
-                    />
-                  </label>
+                  {form.status === 'settled' ? (
+                    <label style={fieldStyle}>
+                      <span style={fieldLabelInlineStyle}>Data da baixa</span>
+                      <input
+                        aria-label="Data da baixa"
+                        type="date"
+                        value={form.settlement_date}
+                        onChange={(event) => updateForm('settlement_date', event.target.value)}
+                        disabled={!canWrite || submitting}
+                        style={inputStyle}
+                      />
+                    </label>
+                  ) : (
+                    <label style={fieldStyle}>
+                      <span style={fieldLabelInlineStyle}>Vencimento</span>
+                      <input
+                        aria-label="Vencimento"
+                        type="date"
+                        value={form.due_date}
+                        onChange={(event) => updateForm('due_date', event.target.value)}
+                        disabled={!canWrite || submitting}
+                        style={inputStyle}
+                      />
+                    </label>
+                  )}
 
                   <div style={formActionsStyle}>
                     <button
@@ -845,7 +859,8 @@ const mainGridStyles = {
                   ['Conta', detailTransaction.financial_account_name || '—'],
                   ['Categoria', detailTransaction.financial_category_name || '—'],
                   ['Tipo', kindLabel(detailTransaction.kind)],
-                  ['Data-base', formatDate(detailTransaction.competence_date ?? detailTransaction.issue_date)],
+                  ['Vencimento', formatDate(detailTransaction.due_date)],
+                  ['Baixa', formatDate(detailTransaction.settlement_date)],
                   ['Referência', detailTransaction.id]
                 ].map(([label, value]) => (
                   <div key={label} style={detailRowStyle}>
