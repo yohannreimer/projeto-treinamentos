@@ -369,4 +369,62 @@ function InternalApp() {
         api.licenseAlertsSummary({ silent: true })
           .then((response: LicenseAlertSummary) => {
             if (!cancelled) setLicenseAlertSummary(response);
-       
+          })
+          .catch(() => {
+            if (!cancelled) setLicenseAlertSummary(null);
+          });
+      } else {
+        setLicenseAlertSummary(null);
+      }
+    };
+
+    loadAlertCounts();
+    const intervalId = window.setInterval(loadAlertCounts, 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [session, user]);
+
+  useEffect(() => {
+    if (!session || !user) return;
+    const tabInitialized = window.sessionStorage.getItem(INTERNAL_TAB_INITIALIZED_KEY) === '1';
+    if (tabInitialized) return;
+    window.sessionStorage.setItem(INTERNAL_TAB_INITIALIZED_KEY, '1');
+    if (location.pathname !== '/calendario') {
+      navigate('/calendario', { replace: true });
+    }
+  }, [session, user, location.pathname, navigate]);
+
+  if (loadingSession) {
+    return <p style={{ padding: '24px' }}>Carregando sessão...</p>;
+  }
+
+  if (!session || !user) {
+    return <LoginPage onLogin={handleLogin} />;
+  }
+
+  if (isFinanceRoute) {
+    return <FinanceModuleRoutes user={user} defaultRoute={defaultRoute} />;
+  }
+
+  return (
+    <Layout
+      onLogout={handleLogout}
+      loggedUser={user.display_name || user.username}
+      navItems={navItemsWithAlerts}
+    >
+      <OperationsRoutes user={user} defaultRoute={defaultRoute} />
+    </Layout>
+  );
+}
+
+export function App() {
+  return (
+    <Routes>
+      <Route path="/portal/:slug/*" element={<PortalShell />} />
+      <Route path="/acompanhamento/:token" element={<FollowupEvaluationPage />} />
+      <Route path="*" element={<InternalApp />} />
+    </Routes>
+  );
+}

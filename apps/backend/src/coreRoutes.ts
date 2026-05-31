@@ -9712,4 +9712,51 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
             `comp-${slugify(allocation.company_name)}`,
             `mod-${slugify(allocation.module_code)}`,
             allocation.entry_day,
-       
+            allocation.status
+          );
+          summary.allocations_inserted += 1;
+        });
+        summary.cohorts_inserted += 1;
+      });
+    });
+  
+    try {
+      tx();
+      return res.json({ ok: true, summary });
+    } catch (error) {
+      return res.status(400).json({ message: 'Falha ao criar cenário real', detail: errorMessage(error) });
+    }
+  });
+  
+  app.post('/admin/import-workbook', (req, res) => {
+    const schema = z.object({
+      file_path: z.string().optional(),
+      reset_data: z.boolean().optional(),
+      confirmation_phrase: z.string().optional()
+    });
+  
+    const parsed = schema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+  
+    const filePath = parsed.data.file_path ?? DEFAULT_WORKBOOK_PATH;
+    const absolutePath = path.resolve(filePath);
+    if (!fs.existsSync(absolutePath)) {
+      return res.status(404).json({ message: 'Arquivo nao encontrado', file_path: absolutePath });
+    }
+    const shouldResetData = parsed.data.reset_data ?? false;
+    if (shouldResetData && !hasDestructiveConfirmation(parsed.data.confirmation_phrase)) {
+      return res.status(400).json({
+        message: `Confirmação obrigatória ausente. Digite exatamente ${DESTRUCTIVE_CONFIRMATION_PHRASE} para limpar e importar.`
+      });
+    }
+  
+    try {
+      const summary = importWorkbook(absolutePath, { resetData: shouldResetData });
+      return res.json({ ok: true, summary });
+    } catch (error) {
+      return res.status(500).json({ message: 'Falha ao importar planilha', detail: errorMessage(error) });
+    }
+  });
+}
