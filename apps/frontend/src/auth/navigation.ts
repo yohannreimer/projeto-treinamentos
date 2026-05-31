@@ -78,6 +78,4 @@ export function defaultRouteForUser(user: NavigationSessionUser | null | undefin
 export function visibleNavItemsForUser(user: NavigationSessionUser | null | undefined): AppNavItem[] {
   return APP_NAV_ITEMS.filter((item) => {
     if (item.roles && (!user || !item.roles.includes(user.role))) return false;
-    return canAccessPermissions(user, item.permissions);
-  });
-}
+    return canAccessPermissions(user, ite

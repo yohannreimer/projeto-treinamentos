@@ -227,27 +227,4 @@ export type PlanningCohort = {
   period: 'Integral' | 'Meio_periodo';
   notes: string | null;
   created_at?: string;
-  updated_at?: string;
-  encounters: PlanningEncounter[];
-};
-
-export type PlanningWorkspaceDetail = {
-  workspace: {
-    id: string;
-    name: string;
-    status: PlanningWorkspaceStatus;
-    mode: PlanningMode;
-    horizon_days: number;
-    notes: string | null;
-    created_at: string;
-    updated_at: string;
-    published_at: string | null;
-  };
-  clients: Array<{
-    company_id: string;
-    company_name: string;
-    priority: number;
-    available_module_ids?: string[];
-  }>;
-  cohorts: PlanningCohort[];
-};
+  update
