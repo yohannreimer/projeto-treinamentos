@@ -223,4 +223,12 @@ export function Layout({ children, loggedUser, navItems, onLogout }: LayoutProps
             </div>
             <div className="workspace-topbar-badges">
               <small>{context.badge}</small>
-              <small>{todayLabel}</
+              <small>{todayLabel}</small>
+            </div>
+          </div>
+        </header>
+        <main className="main-content">{children}</main>
+      </div>
+    </div>
+  );
+}

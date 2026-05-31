@@ -758,4 +758,33 @@ export function LicensesPage() {
                 type="button"
                 onClick={() => {
                   editLicense(detailRow);
-              
+                  setDetailRow(null);
+                }}
+              >
+                Editar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setDetailRow(null);
+                  void renewLicense(detailRow);
+                }}
+              >
+                {renewalActionLabel(detailRow.renewal_cycle)}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setDetailRow(null);
+                  void deleteLicense(detailRow);
+                }}
+              >
+                Excluir
+              </button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
+    </div>
+  );
+}

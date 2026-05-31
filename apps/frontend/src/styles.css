@@ -10261,4 +10261,36 @@ button:focus-visible,
   .planning-quick-editor {
     position: static;
     display: grid;
-    gr
+    grid-template-columns: 1fr;
+    max-height: none;
+  }
+
+  .planning-quick-editor > button {
+    width: 100%;
+  }
+
+  .followup-admin-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .followup-evaluation-page {
+    padding: 0;
+    place-items: stretch;
+  }
+
+  .followup-evaluation-card {
+    min-height: 100vh;
+    width: 100%;
+    border-radius: 0;
+  }
+
+  .followup-evaluation-header,
+  .followup-evaluation-form {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+}
+
+/* ─── Finance visual port ─────────────────────────────────── */
