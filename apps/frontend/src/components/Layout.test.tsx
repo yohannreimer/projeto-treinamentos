@@ -17,4 +17,5 @@ describe('Layout', () => {
     expect(container.querySelector('.app-shell')).toHaveClass('is-planning-focus', 'is-nav-collapsed');
     expect(screen.getByRole('button', { name: 'Expandir navegação' })).toBeInTheDocument();
   });
-});
+
+  t

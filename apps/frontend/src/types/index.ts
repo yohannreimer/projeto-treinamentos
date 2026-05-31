@@ -121,6 +121,26 @@ export type LicenseRow = {
   warning_message: string | null;
 };
 
+export type LicenseAlertSummaryItem = {
+  id: string;
+  company_name: string;
+  user_name: string;
+  license_identifier: string;
+  renewal_cycle: LicenseRow['renewal_cycle'];
+  expires_at: string;
+  alert_level: LicenseRow['alert_level'];
+  days_until_expiration: number;
+  warning_message: string | null;
+};
+
+export type LicenseAlertSummary = {
+  expired_count: number;
+  due_soon_count: number;
+  total_attention: number;
+  next_expiration_at: string | null;
+  urgent_items: LicenseAlertSummaryItem[];
+};
+
 export type LicenseProgram = {
   id: string;
   name: string;
@@ -207,27 +227,4 @@ export type PlanningCohort = {
   period: 'Integral' | 'Meio_periodo';
   notes: string | null;
   created_at?: string;
-  updated_at?: string;
-  encounters: PlanningEncounter[];
-};
-
-export type PlanningWorkspaceDetail = {
-  workspace: {
-    id: string;
-    name: string;
-    status: PlanningWorkspaceStatus;
-    mode: PlanningMode;
-    horizon_days: number;
-    notes: string | null;
-    created_at: string;
-    updated_at: string;
-    published_at: string | null;
-  };
-  clients: Array<{
-    company_id: string;
-    company_name: string;
-    priority: number;
-    available_module_ids?: string[];
-  }>;
-  cohorts: PlanningCohort[];
-};
+  update

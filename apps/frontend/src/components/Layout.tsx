@@ -161,7 +161,10 @@ export function Layout({ children, loggedUser, navItems, onLogout }: LayoutProps
         <nav>
           {navItems.map((item) => (
             <NavLink key={item.to} to={item.to} className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
-              <span>{item.label}</span>
+              <span className="nav-item-copy">
+                <span>{item.label}</span>
+                {item.badgeDetail ? <small>{item.badgeDetail}</small> : null}
+              </span>
               {item.badgeCount && item.badgeCount > 0 ? (
                 <strong className="nav-item-alert-badge" aria-label={`${item.badgeCount} pendência(s)`}>
                   {item.badgeCount > 99 ? '99+' : item.badgeCount}
@@ -220,12 +223,4 @@ export function Layout({ children, loggedUser, navItems, onLogout }: LayoutProps
             </div>
             <div className="workspace-topbar-badges">
               <small>{context.badge}</small>
-              <small>{todayLabel}</small>
-            </div>
-          </div>
-        </header>
-        <main className="main-content">{children}</main>
-      </div>
-    </div>
-  );
-}
+              <small>{todayLabel}</

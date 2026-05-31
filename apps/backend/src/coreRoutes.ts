@@ -2722,9 +2722,42 @@ function hasTechnicianPeriodConflict(
 }
 
 type LicenseRenewalCycle = 'Mensal' | 'Bimestral' | 'Trimestral' | 'Semestral' | 'Anual';
+type LicenseAlertLevel = 'Ok' | 'Atenção' | 'Expirada';
 
-function renewalAlertWindowDays(renewalCycle: LicenseRenewalCycle): number {
-  return renewalCycle === 'Anual' ? 30 : 7;
+const LICENSE_ALERT_WINDOW_DAYS = 15;
+
+type LicenseRow = {
+  id: string;
+  company_id: string;
+  company_name: string;
+  program_id: string | null;
+  program_name: string;
+  user_name: string | null;
+  module_list: string | null;
+  license_identifier: string | null;
+  module_ids_raw: string | null;
+  module_list_from_modules: string | null;
+  renewal_cycle: LicenseRenewalCycle;
+  expires_at: string;
+  notes: string | null;
+  last_renewed_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type NormalizedLicenseRow = Omit<LicenseRow, 'user_name' | 'module_list' | 'license_identifier' | 'module_ids_raw' | 'module_list_from_modules'> & {
+  user_name: string;
+  module_ids: string[];
+  module_list: string;
+  license_identifier: string;
+  alert_window_days: number;
+  days_until_expiration: number;
+  alert_level: LicenseAlertLevel;
+  warning_message: string | null;
+};
+
+function renewalAlertWindowDays(_renewalCycle: LicenseRenewalCycle): number {
+  return LICENSE_ALERT_WINDOW_DAYS;
 }
 
 function renewalCycleLabelLower(renewalCycle: LicenseRenewalCycle): string {
@@ -2753,6 +2786,98 @@ function nextRenewalDate(currentExpiresAt: string, renewalCycle: LicenseRenewalC
     next.setDate(next.getDate() + renewalCycleDays(renewalCycle));
   }
   return isoDate(next);
+}
+
+function selectLicenseRows(): LicenseRow[] {
+  return db.prepare(`
+    select l.id, l.company_id, c.name as company_name,
+      l.program_id, coalesce(lp.name, l.name) as program_name,
+      l.user_name, l.module_list, l.license_identifier,
+      (
+        select group_concat(clm.module_id, '|')
+        from company_license_module clm
+        where clm.license_id = l.id
+      ) as module_ids_raw,
+      (
+        select group_concat(mt.name, ' | ')
+        from company_license_module clm2
+        join module_template mt on mt.id = clm2.module_id
+        where clm2.license_id = l.id
+        order by mt.code asc
+      ) as module_list_from_modules,
+      l.renewal_cycle, l.expires_at, l.notes, l.last_renewed_at, l.created_at, l.updated_at
+    from company_license l
+    join company c on c.id = l.company_id
+    left join license_program lp on lp.id = l.program_id
+    order by date(l.expires_at) asc, c.name asc, coalesce(lp.name, l.name) asc
+  `).all() as LicenseRow[];
+}
+
+function normalizeLicenseRows(rows: LicenseRow[], today = nowDateIso()): NormalizedLicenseRow[] {
+  return rows.map((row) => {
+    const alertWindowDays = renewalAlertWindowDays(row.renewal_cycle);
+    const daysUntilExpiration = dayDiff(today, row.expires_at);
+    const alertLevel: LicenseAlertLevel = daysUntilExpiration < 0
+      ? 'Expirada'
+      : daysUntilExpiration <= alertWindowDays
+        ? 'Atenção'
+        : 'Ok';
+    const warningMessage = alertLevel === 'Expirada'
+      ? `Licença expirada há ${Math.abs(daysUntilExpiration)} dia(s).`
+      : alertLevel === 'Atenção'
+        ? `Renovação ${renewalCycleLabelLower(row.renewal_cycle)} em ${daysUntilExpiration} dia(s).`
+        : null;
+    const { module_ids_raw, module_list_from_modules, ...rest } = row;
+
+    return {
+      ...rest,
+      user_name: row.user_name ?? '',
+      module_ids: module_ids_raw
+        ? module_ids_raw.split('|').map((item) => item.trim()).filter(Boolean)
+        : [],
+      module_list: module_list_from_modules ?? row.module_list ?? '',
+      license_identifier: row.license_identifier ?? '',
+      alert_window_days: alertWindowDays,
+      days_until_expiration: daysUntilExpiration,
+      alert_level: alertLevel,
+      warning_message: warningMessage
+    };
+  });
+}
+
+function buildLicenseAlertPayload(normalized: NormalizedLicenseRow[]) {
+  const expired = normalized.filter((row) => row.alert_level === 'Expirada');
+  const dueSoon = normalized.filter((row) => row.alert_level === 'Atenção');
+  const monthlyDueSoon = dueSoon.filter((row) => row.renewal_cycle === 'Mensal');
+  const annualDueSoon = dueSoon.filter((row) => row.renewal_cycle === 'Anual');
+  const urgentItems = [...expired, ...dueSoon]
+    .sort((left, right) => {
+      if (left.alert_level !== right.alert_level) {
+        return left.alert_level === 'Expirada' ? -1 : 1;
+      }
+      return left.expires_at.localeCompare(right.expires_at);
+    })
+    .slice(0, 5);
+  const nextExpirationAt = dueSoon.length > 0
+    ? [...dueSoon].sort((left, right) => left.expires_at.localeCompare(right.expires_at))[0]?.expires_at ?? null
+    : [...expired].sort((left, right) => right.expires_at.localeCompare(left.expires_at))[0]?.expires_at ?? null;
+
+  return {
+    alerts: {
+      expired,
+      due_soon: dueSoon,
+      monthly_due_soon: monthlyDueSoon,
+      annual_due_soon: annualDueSoon,
+      total_attention: expired.length + dueSoon.length
+    },
+    summary: {
+      expired_count: expired.length,
+      due_soon_count: dueSoon.length,
+      total_attention: expired.length + dueSoon.length,
+      next_expiration_at: nextExpirationAt,
+      urgent_items: urgentItems
+    }
+  };
 }
 
 function findTechnicianConflict(params: {
@@ -6897,14 +7022,11 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       updated_at: string;
     }>;
 
-    return res.json(rows.map((row) => {
-      const { answers_json, ...publicRow } = row;
-      return {
-        ...publicRow,
-        answers: answers_json ? JSON.parse(answers_json) : null,
-        public_path: `/acompanhamento/${encodeURIComponent(row.token)}`
-      };
-    }));
+    return res.json(rows.map((row) => ({
+      ...row,
+      answers: row.answers_json ? JSON.parse(row.answers_json) : null,
+      public_path: `/acompanhamento/${encodeURIComponent(row.token)}`
+    })));
   });
 
   app.post('/companies/:companyId/followup-evaluations', (req, res) => {
@@ -6969,10 +7091,9 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       return res.status(404).json({ message: 'Avaliação não encontrada.' });
     }
 
-    const { answers_json, ...publicRow } = row;
     return res.json({
-      ...publicRow,
-      answers: answers_json ? JSON.parse(answers_json) : null
+      ...row,
+      answers: row.answers_json ? JSON.parse(row.answers_json) : null
     });
   });
 
@@ -7149,91 +7270,20 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
   });
   
   app.get('/licenses', (_req, res) => {
-    const rows = db.prepare(`
-      select l.id, l.company_id, c.name as company_name,
-        l.program_id, coalesce(lp.name, l.name) as program_name,
-        l.user_name, l.module_list, l.license_identifier,
-        (
-          select group_concat(clm.module_id, '|')
-          from company_license_module clm
-          where clm.license_id = l.id
-        ) as module_ids_raw,
-        (
-          select group_concat(mt.name, ' | ')
-          from company_license_module clm2
-          join module_template mt on mt.id = clm2.module_id
-          where clm2.license_id = l.id
-          order by mt.code asc
-        ) as module_list_from_modules,
-        l.renewal_cycle, l.expires_at, l.notes, l.last_renewed_at, l.created_at, l.updated_at
-      from company_license l
-      join company c on c.id = l.company_id
-      left join license_program lp on lp.id = l.program_id
-      order by date(l.expires_at) asc, c.name asc, coalesce(lp.name, l.name) asc
-    `).all() as Array<{
-      id: string;
-      company_id: string;
-      company_name: string;
-      program_id: string | null;
-      program_name: string;
-      user_name: string | null;
-      module_list: string | null;
-      license_identifier: string | null;
-      module_ids_raw: string | null;
-      module_list_from_modules: string | null;
-      renewal_cycle: LicenseRenewalCycle;
-      expires_at: string;
-      notes: string | null;
-      last_renewed_at: string | null;
-      created_at: string;
-      updated_at: string;
-    }>;
-  
-    const today = nowDateIso();
-    const normalized = rows.map((row) => {
-      const alertWindowDays = renewalAlertWindowDays(row.renewal_cycle);
-      const daysUntilExpiration = dayDiff(today, row.expires_at);
-      const alertLevel = daysUntilExpiration < 0
-        ? 'Expirada'
-        : daysUntilExpiration <= alertWindowDays
-          ? 'Atenção'
-          : 'Ok';
-      const warningMessage = alertLevel === 'Expirada'
-        ? `Licença expirada há ${Math.abs(daysUntilExpiration)} dia(s).`
-        : alertLevel === 'Atenção'
-          ? `Renovação ${renewalCycleLabelLower(row.renewal_cycle)} em ${daysUntilExpiration} dia(s).`
-          : null;
-  
-      return {
-        ...row,
-        user_name: row.user_name ?? '',
-        module_ids: row.module_ids_raw
-          ? row.module_ids_raw.split('|').map((item) => item.trim()).filter(Boolean)
-          : [],
-        module_list: row.module_list_from_modules ?? row.module_list ?? '',
-        license_identifier: row.license_identifier ?? '',
-        alert_window_days: alertWindowDays,
-        days_until_expiration: daysUntilExpiration,
-        alert_level: alertLevel,
-        warning_message: warningMessage
-      };
-    });
-  
-    const expired = normalized.filter((row) => row.alert_level === 'Expirada');
-    const dueSoon = normalized.filter((row) => row.alert_level === 'Atenção');
-    const monthlyDueSoon = normalized.filter((row) => row.alert_level === 'Atenção' && row.renewal_cycle === 'Mensal');
-    const annualDueSoon = normalized.filter((row) => row.alert_level === 'Atenção' && row.renewal_cycle === 'Anual');
+    const rows = normalizeLicenseRows(selectLicenseRows());
+    const { alerts, summary } = buildLicenseAlertPayload(rows);
   
     return res.json({
-      rows: normalized,
-      alerts: {
-        expired,
-        due_soon: dueSoon,
-        monthly_due_soon: monthlyDueSoon,
-        annual_due_soon: annualDueSoon,
-        total_attention: expired.length + dueSoon.length
-      }
+      rows,
+      alerts,
+      summary
     });
+  });
+
+  app.get('/licenses/alerts-summary', (_req, res) => {
+    const rows = normalizeLicenseRows(selectLicenseRows());
+    const { summary } = buildLicenseAlertPayload(rows);
+    return res.json(summary);
   });
 
   app.post('/licenses/import-preview', (req, res) => {
@@ -9662,51 +9712,4 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
             `comp-${slugify(allocation.company_name)}`,
             `mod-${slugify(allocation.module_code)}`,
             allocation.entry_day,
-            allocation.status
-          );
-          summary.allocations_inserted += 1;
-        });
-        summary.cohorts_inserted += 1;
-      });
-    });
-  
-    try {
-      tx();
-      return res.json({ ok: true, summary });
-    } catch (error) {
-      return res.status(400).json({ message: 'Falha ao criar cenário real', detail: errorMessage(error) });
-    }
-  });
-  
-  app.post('/admin/import-workbook', (req, res) => {
-    const schema = z.object({
-      file_path: z.string().optional(),
-      reset_data: z.boolean().optional(),
-      confirmation_phrase: z.string().optional()
-    });
-  
-    const parsed = schema.safeParse(req.body ?? {});
-    if (!parsed.success) {
-      return res.status(400).json(parsed.error.flatten());
-    }
-  
-    const filePath = parsed.data.file_path ?? DEFAULT_WORKBOOK_PATH;
-    const absolutePath = path.resolve(filePath);
-    if (!fs.existsSync(absolutePath)) {
-      return res.status(404).json({ message: 'Arquivo nao encontrado', file_path: absolutePath });
-    }
-    const shouldResetData = parsed.data.reset_data ?? false;
-    if (shouldResetData && !hasDestructiveConfirmation(parsed.data.confirmation_phrase)) {
-      return res.status(400).json({
-        message: `Confirmação obrigatória ausente. Digite exatamente ${DESTRUCTIVE_CONFIRMATION_PHRASE} para limpar e importar.`
-      });
-    }
-  
-    try {
-      const summary = importWorkbook(absolutePath, { resetData: shouldResetData });
-      return res.json({ ok: true, summary });
-    } catch (error) {
-      return res.status(500).json({ message: 'Falha ao importar planilha', detail: errorMessage(error) });
-    }
-  });
-}
+       
