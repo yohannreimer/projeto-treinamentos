@@ -66,6 +66,11 @@ function formatLicenseAlertDetail(summary: LicenseAlertSummary | null): string |
   return `${summary.due_soon_count} até 15 dias`;
 }
 
+function formatKanbanAlertDetail(count: number): string | undefined {
+  if (count <= 0) return undefined;
+  return `${count > 99 ? '99+' : count} pendentes há +2 dias`;
+}
+
 function ProtectedRoute({
   user,
   permissions,
@@ -321,10 +326,18 @@ function InternalApp() {
   const navItems = useMemo(() => visibleNavItemsForUser(user), [user]);
   const navItemsWithAlerts = useMemo(() => navItems.map((item) => {
     if (item.to === '/implementacao') {
-      return { ...item, badgeCount: kanbanAlertCounts.implementation };
+      return {
+        ...item,
+        badgeCount: kanbanAlertCounts.implementation,
+        badgeDetail: formatKanbanAlertDetail(kanbanAlertCounts.implementation)
+      };
     }
     if (item.to === '/suporte') {
-      return { ...item, badgeCount: kanbanAlertCounts.support };
+      return {
+        ...item,
+        badgeCount: kanbanAlertCounts.support,
+        badgeDetail: formatKanbanAlertDetail(kanbanAlertCounts.support)
+      };
     }
     if (item.to === '/licencas' && licenseAlertSummary && licenseAlertSummary.total_attention > 0) {
       return {
