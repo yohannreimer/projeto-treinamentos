@@ -143,6 +143,17 @@ function todayIso() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function currentWeekMondayIso() {
+  const today = new Date();
+  const daysSinceMonday = (today.getDay() + 6) % 7;
+  const monday = new Date(today);
+  monday.setDate(today.getDate() - daysSinceMonday);
+  const year = monday.getFullYear();
+  const month = String(monday.getMonth() + 1).padStart(2, '0');
+  const day = String(monday.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 function addDaysIso(dateIso: string, amount: number) {
   const [year, month, day] = dateIso.split('-').map(Number);
   const date = new Date(Date.UTC(year, month - 1, day + amount));
@@ -398,7 +409,7 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
   const [activities, setActivities] = useState<PlanningActivity[]>([]);
   const [externalCohorts, setExternalCohorts] = useState<PlanningCalendarCohort[]>([]);
   const [viewMode, setViewMode] = useState<PlanningViewMode>('range');
-  const [rangeStartDate, setRangeStartDate] = useState(todayIso());
+  const [rangeStartDate, setRangeStartDate] = useState(currentWeekMondayIso());
   const [technicianFilterId, setTechnicianFilterId] = useState('');
   const [clientFilterId, setClientFilterId] = useState('');
   const [expandedClientId, setExpandedClientId] = useState('');

@@ -170,6 +170,33 @@ describe('PlanningPage', () => {
     expect(screen.queryByText('Montar turma')).not.toBeInTheDocument();
   });
 
+  test('starts the planning map on the current week monday', async () => {
+    vi.setSystemTime(new Date('2026-06-02T12:00:00-03:00'));
+    vi.mocked(api.planningWorkspaces).mockResolvedValue({
+      workspaces: [{ id: 'pln-1', name: 'Planejamento Junho', status: 'Rascunho', client_count: 0, encounter_count: 0 }]
+    });
+    vi.mocked(api.planningWorkspace).mockResolvedValue({
+      workspace: {
+        id: 'pln-1',
+        name: 'Planejamento Junho',
+        status: 'Rascunho',
+        mode: 'Manual',
+        horizon_days: 60,
+        notes: null,
+        created_at: '2026-06-02',
+        updated_at: '2026-06-02',
+        published_at: null
+      },
+      clients: [],
+      cohorts: []
+    });
+
+    render(<PlanningPage />);
+
+    expect(await screen.findByLabelText('Data inicial da agenda')).toHaveValue('2026-06-01');
+    expect(screen.getByText(/Equipe toda · 01\/06 a 30\/07/i)).toBeInTheDocument();
+  });
+
   test('archives the selected planning workspace from the rail', async () => {
     const user = userEvent.setup();
     vi.spyOn(window, 'confirm').mockReturnValue(true);
