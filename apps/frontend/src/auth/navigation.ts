@@ -6,7 +6,6 @@ export type AppNavItem = {
   permissions: InternalPermission[];
   roles?: InternalRole[];
   badgeCount?: number;
-  badgeDetail?: string;
 };
 
 type NavigationSessionUser = Omit<InternalSessionUser, 'permissions'> & {

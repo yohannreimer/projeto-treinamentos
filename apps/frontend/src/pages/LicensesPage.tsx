@@ -176,13 +176,9 @@ export function LicensesPage() {
     );
   }, [rows, query]);
 
-  const dueSoonRows = useMemo(
-    () => alerts.due_soon ?? [...alerts.monthly_due_soon, ...alerts.annual_due_soon],
-    [alerts]
-  );
   const attentionRows = useMemo(
-    () => [...alerts.expired, ...dueSoonRows],
-    [alerts.expired, dueSoonRows]
+    () => [...alerts.expired, ...(alerts.due_soon ?? [...alerts.monthly_due_soon, ...alerts.annual_due_soon])],
+    [alerts]
   );
 
   const sortedAttentionRows = useMemo(() => {
@@ -193,7 +189,7 @@ export function LicensesPage() {
         return String(a.expires_at).localeCompare(String(b.expires_at)) * direction;
       }
       if (attentionSortKey === 'alert_level') {
-        return (alertRank(b.alert_level) - alertRank(a.alert_level)) * direction;
+        return (alertRank(a.alert_level) - alertRank(b.alert_level)) * direction;
       }
       const left = String((a as any)[attentionSortKey] ?? '');
       const right = String((b as any)[attentionSortKey] ?? '');
@@ -201,15 +197,6 @@ export function LicensesPage() {
     });
     return list;
   }, [attentionRows, attentionSortKey, attentionSortDirection]);
-
-  const expiredCount = alerts.expired.length;
-  const dueSoonCount = dueSoonRows.length;
-  const nextAttentionRow = useMemo(() => {
-    if (dueSoonRows.length > 0) {
-      return [...dueSoonRows].sort((a, b) => String(a.expires_at).localeCompare(String(b.expires_at)))[0] ?? null;
-    }
-    return [...alerts.expired].sort((a, b) => String(b.expires_at).localeCompare(String(a.expires_at)))[0] ?? null;
-  }, [alerts.expired, dueSoonRows]);
 
   const sortedFiltered = useMemo(() => {
     const list = [...filtered];
@@ -219,7 +206,7 @@ export function LicensesPage() {
         return String(a.expires_at).localeCompare(String(b.expires_at)) * direction;
       }
       if (sortKey === 'alert_level') {
-        return (alertRank(b.alert_level) - alertRank(a.alert_level)) * direction;
+        return (alertRank(a.alert_level) - alertRank(b.alert_level)) * direction;
       }
       const left = String((a as any)[sortKey] ?? '');
       const right = String((b as any)[sortKey] ?? '');
@@ -234,7 +221,7 @@ export function LicensesPage() {
       return;
     }
     setSortKey(nextKey);
-    setSortDirection(nextKey === 'expires_at' || nextKey === 'alert_level' ? 'asc' : 'desc');
+    setSortDirection(nextKey === 'expires_at' ? 'asc' : 'desc');
   }
 
   function toggleAttentionSort(nextKey: LicenseSortKey) {
@@ -243,7 +230,7 @@ export function LicensesPage() {
       return;
     }
     setAttentionSortKey(nextKey);
-    setAttentionSortDirection(nextKey === 'expires_at' || nextKey === 'alert_level' ? 'asc' : 'desc');
+    setAttentionSortDirection(nextKey === 'expires_at' ? 'asc' : 'desc');
   }
 
   function sortIndicator(nextKey: LicenseSortKey) {
@@ -428,22 +415,22 @@ export function LicensesPage() {
         </p>
       ) : null}
 
-      <div className="stats-grid licenses-alert-summary">
-        <article className={`mini-stat ${expiredCount > 0 ? 'mini-stat-danger' : ''}`}>
-          <span>Vencidas</span>
-          <strong>{expiredCount}</strong>
-        </article>
-        <article className={`mini-stat ${dueSoonCount > 0 ? 'mini-stat-warning' : ''}`}>
-          <span>Vencem em até 15 dias</span>
-          <strong>{dueSoonCount}</strong>
-        </article>
-        <article className={`mini-stat ${alerts.total_attention > 0 ? 'mini-stat-warning' : ''}`}>
-          <span>Total em atenção</span>
-          <strong>{alerts.total_attention}</strong>
+      <div className="stats-grid">
+        <article className="mini-stat">
+          <span>Expiradas</span>
+          <strong>{alerts.expired.length}</strong>
         </article>
         <article className="mini-stat">
-          <span>Próximo vencimento</span>
-          <strong>{nextAttentionRow ? formatDate(nextAttentionRow.expires_at) : 'Sem alertas'}</strong>
+          <span>Ciclos até 7 dias</span>
+          <strong>{(alerts.due_soon ?? []).filter((row) => row.renewal_cycle !== 'Anual').length}</strong>
+        </article>
+        <article className="mini-stat">
+          <span>Anuais (até 30 dias)</span>
+          <strong>{alerts.annual_due_soon.length}</strong>
+        </article>
+        <article className="mini-stat">
+          <span>Total em atenção</span>
+          <strong>{alerts.total_attention}</strong>
         </article>
       </div>
 
@@ -578,11 +565,11 @@ export function LicensesPage() {
             <label>
               Tipo de renovação
               <select value={renewalCycle} onChange={(event) => setRenewalCycle(event.target.value as RenewalCycle)}>
-                <option value="Mensal">Mensal (alerta 15 dias antes)</option>
-                <option value="Bimestral">Bimestral (alerta 15 dias antes)</option>
-                <option value="Trimestral">Trimestral (alerta 15 dias antes)</option>
-                <option value="Semestral">Semestral (alerta 15 dias antes)</option>
-                <option value="Anual">Anual (alerta 15 dias antes)</option>
+                <option value="Mensal">Mensal (alerta 7 dias antes)</option>
+                <option value="Bimestral">Bimestral (alerta 7 dias antes)</option>
+                <option value="Trimestral">Trimestral (alerta 7 dias antes)</option>
+                <option value="Semestral">Semestral (alerta 7 dias antes)</option>
+                <option value="Anual">Anual (alerta 30 dias antes)</option>
               </select>
             </label>
           </div>

@@ -121,26 +121,6 @@ export type LicenseRow = {
   warning_message: string | null;
 };
 
-export type LicenseAlertSummaryItem = {
-  id: string;
-  company_name: string;
-  user_name: string;
-  license_identifier: string;
-  renewal_cycle: LicenseRow['renewal_cycle'];
-  expires_at: string;
-  alert_level: LicenseRow['alert_level'];
-  days_until_expiration: number;
-  warning_message: string | null;
-};
-
-export type LicenseAlertSummary = {
-  expired_count: number;
-  due_soon_count: number;
-  total_attention: number;
-  next_expiration_at: string | null;
-  urgent_items: LicenseAlertSummaryItem[];
-};
-
 export type LicenseProgram = {
   id: string;
   name: string;

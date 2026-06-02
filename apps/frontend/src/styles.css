@@ -171,31 +171,6 @@ h1, h2, h3, h4, h5, h6,
   line-height: 1;
 }
 
-.nav-item-copy {
-  min-width: 0;
-  display: grid;
-  gap: 2px;
-}
-
-.nav-item-copy > span,
-.nav-item-copy > small {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.nav-item-copy > small {
-  color: #884235;
-  font-size: 0.68rem;
-  font-weight: 800;
-}
-
-.nav-item:has(.nav-item-alert-badge) {
-  background: #fff8f6;
-  border-color: #f2c7bf;
-}
-
 .nav-item.active,
 .nav-item:hover {
   background: #f6f0ef;
@@ -2298,20 +2273,6 @@ button:focus-visible,
 
 .licenses-page .table-readable-grid {
   min-width: 1540px;
-}
-
-.licenses-alert-summary .mini-stat {
-  border-color: #d8dde1;
-}
-
-.licenses-alert-summary .mini-stat-danger {
-  border-color: #f2c7bf;
-  background: #fff5f3;
-}
-
-.licenses-alert-summary .mini-stat-warning {
-  border-color: #f0d6a0;
-  background: #fff9ed;
 }
 
 .licenses-col-client { width: 170px; }

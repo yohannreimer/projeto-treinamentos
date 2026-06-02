@@ -30,7 +30,6 @@ import { FinanceTransactionsPage } from './finance/pages/FinanceTransactionsPage
 import { FinanceAdvancedPage } from './finance/pages/FinanceAdvancedPage';
 import { FinanceSimulationPage } from './finance/pages/FinanceSimulationPage';
 import { api } from './services/api';
-import type { LicenseAlertSummary } from './types';
 import {
   INTERNAL_AUTH_CHANGED_EVENT,
   hasAnyPermission,
@@ -54,17 +53,6 @@ type KanbanAlertCounts = {
   implementation: number;
   support: number;
 };
-
-function formatLicenseAlertDetail(summary: LicenseAlertSummary | null): string | undefined {
-  if (!summary || summary.total_attention <= 0) return undefined;
-  if (summary.expired_count > 0 && summary.due_soon_count > 0) {
-    return `${summary.expired_count} vencida(s) - ${summary.due_soon_count} até 15 dias`;
-  }
-  if (summary.expired_count > 0) {
-    return `${summary.expired_count} vencida(s)`;
-  }
-  return `${summary.due_soon_count} até 15 dias`;
-}
 
 function ProtectedRoute({
   user,
@@ -253,7 +241,6 @@ function InternalApp() {
     implementation: 0,
     support: 0
   });
-  const [licenseAlertSummary, setLicenseAlertSummary] = useState<LicenseAlertSummary | null>(null);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -326,65 +313,40 @@ function InternalApp() {
     if (item.to === '/suporte') {
       return { ...item, badgeCount: kanbanAlertCounts.support };
     }
-    if (item.to === '/licencas' && licenseAlertSummary && licenseAlertSummary.total_attention > 0) {
-      return {
-        ...item,
-        badgeCount: licenseAlertSummary.total_attention,
-        badgeDetail: formatLicenseAlertDetail(licenseAlertSummary)
-      };
-    }
     return item;
-  }), [navItems, kanbanAlertCounts, licenseAlertSummary]);
+  }), [navItems, kanbanAlertCounts]);
   const defaultRoute = defaultRouteForUser(user);
   const isFinanceRoute = location.pathname.startsWith('/financeiro');
 
   useEffect(() => {
     if (!session || !user) {
       setKanbanAlertCounts({ implementation: 0, support: 0 });
-      setLicenseAlertSummary(null);
       return;
     }
 
     let cancelled = false;
-    const loadAlertCounts = () => {
-      const canViewKanbanAlerts = user.permissions.includes('implementation') || user.permissions.includes('support');
-      if (canViewKanbanAlerts) {
-        api.implementationKanban({ silent: true })
-          .then((response: any) => {
-            if (cancelled) return;
-            const cards = (response.columns ?? []).flatMap((column: any) => column.cards ?? []);
-            setKanbanAlertCounts({
-              implementation: cards.filter((card: any) => card.subcategory !== 'Suporte' && card.support_alert_level !== 'none').length,
-              support: cards.filter((card: any) => card.subcategory === 'Suporte' && card.support_alert_level !== 'none').length
-            });
-          })
-          .catch(() => {
-            if (!cancelled) setKanbanAlertCounts({ implementation: 0, support: 0 });
+    const loadKanbanAlertCounts = () => {
+      api.implementationKanban()
+        .then((response: any) => {
+          if (cancelled) return;
+          const cards = (response.columns ?? []).flatMap((column: any) => column.cards ?? []);
+          setKanbanAlertCounts({
+            implementation: cards.filter((card: any) => card.subcategory !== 'Suporte' && card.support_alert_level !== 'none').length,
+            support: cards.filter((card: any) => card.subcategory === 'Suporte' && card.support_alert_level !== 'none').length
           });
-      } else {
-        setKanbanAlertCounts({ implementation: 0, support: 0 });
-      }
-
-      if (user.permissions.includes('licenses')) {
-        api.licenseAlertsSummary({ silent: true })
-          .then((response: LicenseAlertSummary) => {
-            if (!cancelled) setLicenseAlertSummary(response);
-          })
-          .catch(() => {
-            if (!cancelled) setLicenseAlertSummary(null);
-          });
-      } else {
-        setLicenseAlertSummary(null);
-      }
+        })
+        .catch(() => {
+          if (!cancelled) setKanbanAlertCounts({ implementation: 0, support: 0 });
+        });
     };
 
-    loadAlertCounts();
-    const intervalId = window.setInterval(loadAlertCounts, 60_000);
+    loadKanbanAlertCounts();
+    const intervalId = window.setInterval(loadKanbanAlertCounts, 60_000);
     return () => {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [session, user]);
+  }, [session, user, location.pathname]);
 
   useEffect(() => {
     if (!session || !user) return;

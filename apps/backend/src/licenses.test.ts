@@ -54,8 +54,7 @@ function addDaysIso(dateIso: string, days: number): string {
   return `${nextYear}-${nextMonth}-${nextDay}`;
 }
 
-test('licenses support intermediate renewal cycles with matching renewal duration', async (t) => {
-  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-05-31T12:00:00.000Z') });
+test('licenses support intermediate renewal cycles with matching renewal duration', async () => {
   const dbPath = assignTestDbPath('licenses-renewal-cycles');
   cleanupDbFiles(dbPath);
 
@@ -82,7 +81,7 @@ test('licenses support intermediate renewal cycles with matching renewal duratio
   const list = await request(app).get('/licenses').set(authHeader);
   assert.equal(list.status, 200);
   assert.equal(list.body.rows[0].renewal_cycle, 'Bimestral');
-  assert.equal(list.body.rows[0].alert_window_days, 15);
+  assert.equal(list.body.rows[0].alert_window_days, 7);
   assert.equal(list.body.rows[0].warning_message, 'Renovação bimestral em 7 dia(s).');
 
   const renew = await request(app)
@@ -92,87 +91,6 @@ test('licenses support intermediate renewal cycles with matching renewal duratio
   assert.equal(renew.status, 200);
   assert.equal(renew.body.renewal_cycle, 'Bimestral');
   assert.equal(renew.body.expires_at, addDaysIso(expiresAt, 60));
-
-  cleanupDbFiles(dbPath);
-});
-
-test('license alert summary uses a 15 day window for every renewal cycle', async (t) => {
-  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-05-31T12:00:00.000Z') });
-  const dbPath = assignTestDbPath('licenses-alert-summary-15-days');
-  cleanupDbFiles(dbPath);
-
-  const app = createApp({ forceDbRefresh: true, seedDb: false });
-  const authHeader = await loginWithLicensesPermission(app);
-  seedLicenseFixtures();
-
-  const today = nowDateIso();
-  const insertLicense = db.prepare(`
-    insert into company_license (
-      id, company_id, name, program_id, user_name, module_list, license_identifier,
-      renewal_cycle, expires_at, notes, last_renewed_at, created_at, updated_at
-    )
-    values (?, ?, ?, ?, ?, ?, ?, ?, ?, null, null, ?, ?)
-  `);
-
-  insertLicense.run(
-    'license-expired',
-    'company-license-test',
-    'TopSolid Teste',
-    'program-license-test',
-    'Usuario Expirado',
-    'TopSolid Teste',
-    'LIC-EXP',
-    'Mensal',
-    addDaysIso(today, -1),
-    today,
-    today
-  );
-  insertLicense.run(
-    'license-annual-15',
-    'company-license-test',
-    'TopSolid Teste',
-    'program-license-test',
-    'Usuario Anual',
-    'TopSolid Teste',
-    'LIC-ANUAL-15',
-    'Anual',
-    addDaysIso(today, 15),
-    today,
-    today
-  );
-  insertLicense.run(
-    'license-monthly-16',
-    'company-license-test',
-    'TopSolid Teste',
-    'program-license-test',
-    'Usuario Mensal',
-    'TopSolid Teste',
-    'LIC-MENSAL-16',
-    'Mensal',
-    addDaysIso(today, 16),
-    today,
-    today
-  );
-
-  const list = await request(app).get('/licenses').set(authHeader);
-  assert.equal(list.status, 200);
-  const annual = list.body.rows.find((row: any) => row.id === 'license-annual-15');
-  const monthly = list.body.rows.find((row: any) => row.id === 'license-monthly-16');
-  assert.equal(annual.alert_window_days, 15);
-  assert.equal(annual.alert_level, 'Atenção');
-  assert.equal(monthly.alert_window_days, 15);
-  assert.equal(monthly.alert_level, 'Ok');
-
-  const summary = await request(app).get('/licenses/alerts-summary').set(authHeader);
-  assert.equal(summary.status, 200);
-  assert.equal(summary.body.expired_count, 1);
-  assert.equal(summary.body.due_soon_count, 1);
-  assert.equal(summary.body.total_attention, 2);
-  assert.equal(summary.body.next_expiration_at, addDaysIso(today, -1));
-  assert.deepEqual(
-    summary.body.urgent_items.map((item: any) => item.id),
-    ['license-expired', 'license-annual-15']
-  );
 
   cleanupDbFiles(dbPath);
 });

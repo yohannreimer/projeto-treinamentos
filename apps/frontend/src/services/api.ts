@@ -77,15 +77,10 @@ export function createInternalAuthHeaders(init?: HeadersInit): Headers {
   return headers;
 }
 
-type ApiRequestInit = RequestInit & {
-  silent?: boolean;
-};
-
-async function req<T = any>(path: string, init?: ApiRequestInit): Promise<T> {
-  const { silent = false, ...requestInit } = init ?? {};
+async function req<T = any>(path: string, init?: RequestInit): Promise<T> {
   const currentSession = internalSessionStore.read();
   const authToken = currentSession?.token ?? null;
-  const headers = createInternalAuthHeaders(requestInit.headers);
+  const headers = createInternalAuthHeaders(init?.headers);
   if (!headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
@@ -96,15 +91,15 @@ async function req<T = any>(path: string, init?: ApiRequestInit): Promise<T> {
   let response: Response;
   try {
     response = await fetch(`${BASE_URL}${path}`, {
-      ...requestInit,
       headers,
-      signal: controller.signal
+      signal: controller.signal,
+      ...init
     });
   } catch (error) {
     const message = error instanceof Error && error.name === 'AbortError'
       ? 'Timeout ao conectar com a API (10s).'
-      : 'Falha de conexão com a API.';
-    if (!silent) notifyGlobalError(message);
+      : 'Falha de conexao com a API.';
+    notifyGlobalError(message);
     throw new Error(message);
   } finally {
     window.clearTimeout(timeoutId);
@@ -113,13 +108,13 @@ async function req<T = any>(path: string, init?: ApiRequestInit): Promise<T> {
   if (!response.ok) {
     if (response.status === 401 && authToken) {
       internalSessionStore.clear();
-      if (!silent) notifyGlobalError('Sessão expirada. Faça login novamente.');
+      notifyGlobalError('Sessão expirada. Faça login novamente.');
       throw new Error('Sessão expirada. Faça login novamente.');
     }
     const body = await response.text();
     const oversizedMessage = 'Arquivo muito grande. Use anexos de até 20 MB.';
     if (response.status === 413) {
-      if (!silent) notifyGlobalError(oversizedMessage);
+      notifyGlobalError(oversizedMessage);
       throw new Error(oversizedMessage);
     }
     let parsedBody: { message?: string } | null = null;
@@ -130,17 +125,17 @@ async function req<T = any>(path: string, init?: ApiRequestInit): Promise<T> {
     }
     if (parsedBody) {
       const message = parsedBody.message || body || 'Erro na API';
-      if (!silent) notifyGlobalError(message);
+      notifyGlobalError(message);
       throw new ApiRequestError(message, response.status, parsedBody);
     }
     {
       if (body.trim().startsWith('<')) {
         const message = 'Falha ao enviar anexo. Tente novamente em instantes.';
-        if (!silent) notifyGlobalError(message);
+        notifyGlobalError(message);
         throw new Error(message);
       }
       const message = body || 'Erro na API';
-      if (!silent) notifyGlobalError(message);
+      notifyGlobalError(message);
       throw new Error(message);
     }
   }
@@ -492,7 +487,6 @@ export const api = {
       method: 'DELETE'
     }),
   internalDocumentDownloadUrl: (id: string) => `${BASE_URL}/internal-documents/${id}/download`,
-  licenseAlertsSummary: (options?: { silent?: boolean }) => req('/licenses/alerts-summary', { silent: options?.silent }),
   licenses: () => req('/licenses'),
   licenseImportPreview: (payload: unknown) =>
     req('/licenses/import-preview', {
@@ -593,7 +587,7 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(payload)
     }),
-  implementationKanban: (options?: { silent?: boolean }) => req('/implementation/kanban', { silent: options?.silent }),
+  implementationKanban: () => req('/implementation/kanban'),
   implementationKanbanConversation: (cardId: string) =>
     req<{
       linked: boolean;
