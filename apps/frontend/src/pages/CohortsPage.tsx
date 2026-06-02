@@ -10,7 +10,7 @@ import { askDestructiveConfirmation } from '../utils/destructive';
 type BlockDraft = {
   key: string;
   module_id: string;
-  duration_days: number;
+  duration_days: number | string;
 };
 
 type CohortBlock = {
@@ -114,7 +114,7 @@ function normalizeHalfDayDuration(value: unknown): number {
   return Math.max(0.5, Math.round(numeric * 2) / 2);
 }
 
-function formatHalfDayAmount(value: number): string {
+function formatHalfDayAmount(value: unknown): string {
   const normalized = normalizeHalfDayDuration(value);
   return Number.isInteger(normalized)
     ? String(normalized)
@@ -123,6 +123,10 @@ function formatHalfDayAmount(value: number): string {
 
 function hasFractionalDuration(draft: BlockDraft[]): boolean {
   return draft.some((block) => !Number.isInteger(normalizeHalfDayDuration(block.duration_days)));
+}
+
+function canKeepEditingHalfDayAmount(value: string): boolean {
+  return /^\d*(?:[,.]\d?)?$/.test(value);
 }
 
 function formatDateBr(dateIso: string): string {
@@ -1528,12 +1532,23 @@ export function CohortsPage() {
                       <label>
                         Diárias
                         <input
-                          type="number"
-                          min={0.5}
-                          step={0.5}
+                          type="text"
+                          inputMode="decimal"
                           value={block.duration_days}
                           onChange={(event) => {
-                            updateBlock(block.key, { duration_days: normalizeHalfDayDuration(event.target.value) });
+                            const nextValue = event.target.value;
+                            if (!canKeepEditingHalfDayAmount(nextValue)) return;
+                            updateBlock(block.key, { duration_days: nextValue });
+                            if (!Number.isInteger(normalizeHalfDayDuration(nextValue))) {
+                              setPeriod('Meio_periodo');
+                            }
+                          }}
+                          onBlur={() => {
+                            const formattedValue = formatHalfDayAmount(block.duration_days);
+                            updateBlock(block.key, { duration_days: formattedValue });
+                            if (!Number.isInteger(normalizeHalfDayDuration(formattedValue))) {
+                              setPeriod('Meio_periodo');
+                            }
                           }}
                         />
                       </label>
@@ -1595,9 +1610,9 @@ export function CohortsPage() {
                       <tr>
                         <th>{period === 'Meio_periodo' ? 'Encontro' : 'Dia'}</th>
                         <th>Data</th>
-                        <th>Técnico</th>
                         <th>Início</th>
                         <th>Fim</th>
+                        <th>Técnico</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1615,22 +1630,6 @@ export function CohortsPage() {
                                 )));
                               }}
                             />
-                          </td>
-                          <td>
-                            <select
-                              value={day.technician_id}
-                              onChange={(event) => {
-                                const nextValue = event.target.value;
-                                setScheduleDays((prev) => prev.map((item) => (
-                                  item.key === day.key ? { ...item, technician_id: nextValue } : item
-                                )));
-                              }}
-                            >
-                              <option value="">Técnico da turma: {defaultTechnicianName}</option>
-                              {technicians.map((technician) => (
-                                <option key={technician.id} value={technician.id}>{technician.name}</option>
-                              ))}
-                            </select>
                           </td>
                           <td>
                             <input
@@ -1655,6 +1654,22 @@ export function CohortsPage() {
                                 )));
                               }}
                             />
+                          </td>
+                          <td>
+                            <select
+                              value={day.technician_id}
+                              onChange={(event) => {
+                                const nextValue = event.target.value;
+                                setScheduleDays((prev) => prev.map((item) => (
+                                  item.key === day.key ? { ...item, technician_id: nextValue } : item
+                                )));
+                              }}
+                            >
+                              <option value="">Técnico da turma: {defaultTechnicianName}</option>
+                              {technicians.map((technician) => (
+                                <option key={technician.id} value={technician.id}>{technician.name}</option>
+                              ))}
+                            </select>
                           </td>
                         </tr>
                       ))}
