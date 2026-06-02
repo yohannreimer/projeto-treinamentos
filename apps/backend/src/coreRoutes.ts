@@ -1988,6 +1988,32 @@ function assertNoActivityTechnicianConflicts(args: {
   `;
   const queryWithExclude = db.prepare(`${baseSql} and ca.id <> ?`);
   const queryWithoutExclude = db.prepare(baseSql);
+  const cohortCandidatesByTechnician = db.prepare(`
+    select distinct c.id, c.code, c.name, c.start_date, c.technician_id, c.period, c.start_time, c.end_time
+    from cohort c
+    where c.status <> 'Cancelada'
+      and (
+        c.technician_id = ?
+        or exists (
+          select 1
+          from cohort_schedule_day csd
+          where csd.cohort_id = c.id
+            and csd.technician_id = ?
+        )
+      )
+  `);
+  const cohortBlocksById = db.prepare(`
+    select start_day_offset, duration_days
+    from cohort_module_block
+    where cohort_id = ?
+    order by order_in_cohort asc
+  `);
+  const cohortScheduleDaysById = db.prepare(`
+    select day_index, day_date, start_time, end_time, technician_id
+    from cohort_schedule_day
+    where cohort_id = ?
+    order by day_index asc
+  `);
 
   for (const technicianId of args.technicianIds) {
     for (const schedule of args.schedules) {
@@ -2021,6 +2047,58 @@ function assertNoActivityTechnicianConflicts(args: {
           end_time: conflict.end_time
         });
         return `Conflito de agenda do técnico em ${dateLabel}: novo horário ${requestedLabel} conflita com "${conflict.title}" (${existingLabel}).`;
+      }
+
+      const cohortRows = cohortCandidatesByTechnician.all(technicianId, technicianId) as Array<{
+        id: string;
+        code: string;
+        name: string;
+        start_date: string;
+        technician_id: string | null;
+        period: (typeof COHORT_PERIOD_VALUES)[number] | null;
+        start_time: string | null;
+        end_time: string | null;
+      }>;
+      for (const cohort of cohortRows) {
+        const period = cohort.period ?? 'Integral';
+        const blocks = cohortBlocksById.all(cohort.id) as Array<{ start_day_offset: number; duration_days: number }>;
+        const scheduleDays = cohortScheduleDaysById.all(cohort.id) as Array<{
+          day_index: number;
+          day_date: string;
+          start_time: string | null;
+          end_time: string | null;
+          technician_id: string | null;
+        }>;
+        const cohortSlots = resolveCohortDateSlots({
+          startDate: cohort.start_date,
+          blocks,
+          period,
+          startTime: cohort.start_time ?? null,
+          endTime: cohort.end_time ?? null,
+          scheduleDays
+        });
+        const conflictingSlot = cohortSlots.find((slot) => {
+          const effectiveTechnicianId = slot.technician_id ?? cohort.technician_id;
+          if (effectiveTechnicianId !== technicianId) return false;
+          if (slot.day_date !== schedule.day_date) return false;
+          return activitySlotsOverlap(schedule, {
+            day_date: slot.day_date,
+            all_day: period !== 'Meio_periodo',
+            start_time: slot.start_time,
+            end_time: slot.end_time
+          });
+        });
+        if (conflictingSlot) {
+          const dateLabel = parseIsoDate(schedule.day_date).toLocaleDateString('pt-BR');
+          const requestedLabel = activitySlotLabel(schedule);
+          const cohortLabel = activitySlotLabel({
+            day_date: conflictingSlot.day_date,
+            all_day: period !== 'Meio_periodo',
+            start_time: conflictingSlot.start_time,
+            end_time: conflictingSlot.end_time
+          });
+          return `Conflito de agenda do técnico em ${dateLabel}: novo horário ${requestedLabel} conflita com a turma ${cohort.code} - ${cohort.name} (${cohortLabel}).`;
+        }
       }
     }
   }

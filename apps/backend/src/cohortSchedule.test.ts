@@ -173,6 +173,42 @@ test('cohort half-day blocks persist schedule technicians and validate conflicts
     assert.equal(detail.body.schedule_days.length, 3);
     assert.equal(detail.body.schedule_days[2].technician_id, 'tech-override-half');
 
+    const fallbackTechnicianActivity = await request(app)
+      .post('/calendar/activities')
+      .send({
+        title: 'Visita conflitante com técnico principal',
+        activity_type: 'Visita_cliente',
+        start_date: '2026-06-02',
+        end_date: '2026-06-02',
+        selected_dates: ['2026-06-02'],
+        all_day: false,
+        start_time: '09:00',
+        end_time: '11:00',
+        technician_ids: ['tech-main-half'],
+        status: 'Planejada'
+      });
+
+    assert.equal(fallbackTechnicianActivity.status, 409);
+    assert.match(fallbackTechnicianActivity.body.message, /Conflito de agenda do técnico/);
+
+    const overrideTechnicianActivity = await request(app)
+      .post('/calendar/activities')
+      .send({
+        title: 'Visita conflitante com técnico do encontro',
+        activity_type: 'Visita_cliente',
+        start_date: '2026-06-02',
+        end_date: '2026-06-02',
+        selected_dates: ['2026-06-02'],
+        all_day: false,
+        start_time: '14:00',
+        end_time: '16:00',
+        technician_ids: ['tech-override-half'],
+        status: 'Planejada'
+      });
+
+    assert.equal(overrideTechnicianActivity.status, 409);
+    assert.match(overrideTechnicianActivity.body.message, /Conflito de agenda do técnico/);
+
     const conflicting = await request(app)
       .post('/cohorts')
       .send({
