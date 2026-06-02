@@ -125,18 +125,27 @@ const internalDocumentDataUrlSchema = z
   .max(12_000_000)
   .refine((value) => /^data:(application\/pdf|image\/[a-zA-Z0-9.+-]+);base64,/.test(value), 'Arquivo inválido.');
 
+function isHalfDayIncrement(value: number): boolean {
+  return Number.isFinite(value) && value > 0 && Math.abs((value * 2) - Math.round(value * 2)) < 0.0001;
+}
+
+const halfDayDurationSchema = z.number()
+  .positive()
+  .refine(isHalfDayIncrement, 'Use incrementos de 0,5 diária.');
+
 const cohortBlockSchema = z.object({
   module_id: z.string(),
   order_in_cohort: z.number().int().positive(),
-  start_day_offset: z.number().int().positive(),
-  duration_days: z.number().int().positive()
+  start_day_offset: halfDayDurationSchema,
+  duration_days: halfDayDurationSchema
 });
 
 const cohortScheduleDaySchema = z.object({
   day_index: z.number().int().positive(),
   day_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   start_time: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
-  end_time: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional()
+  end_time: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
+  technician_id: z.string().nullable().optional()
 });
 
 const createCohortSchema = z.object({
@@ -178,7 +187,7 @@ function deriveCohortStartDateFromScheduleDays(scheduleDays: Array<{ day_index: 
   ))[0]?.day_date ?? null;
 }
 
-function normalizeScheduleDaysChronologically<T extends { day_index: number; day_date: string; start_time?: string | null; end_time?: string | null }>(
+function normalizeScheduleDaysChronologically<T extends { day_index: number; day_date: string; start_time?: string | null; end_time?: string | null; technician_id?: string | null }>(
   scheduleDays: T[]
 ) {
   return [...scheduleDays]
@@ -209,7 +218,7 @@ const guidedAllocationSchema = z.object({
 });
 
 const technicianConflictCheckSchema = z.object({
-  technician_id: z.string(),
+  technician_id: z.string().nullable().optional(),
   start_date: z.string().min(10),
   status: z.enum(['Planejada', 'Aguardando_quorum', 'Confirmada', 'Concluida', 'Cancelada']).default('Planejada'),
   period: z.enum(COHORT_PERIOD_VALUES).default('Integral'),
@@ -1597,7 +1606,10 @@ function validateBlocks(blocks: Array<{
     if (block.order_in_cohort !== expectedOrder) {
       throw new Error('A ordem dos blocos deve ser sequencial (1..N)');
     }
-    if (block.start_day_offset !== expectedStart) {
+    if (!isHalfDayIncrement(block.start_day_offset) || !isHalfDayIncrement(block.duration_days)) {
+      throw new Error('Duração e início dos blocos devem usar incrementos de 0,5 diária.');
+    }
+    if (Math.abs(block.start_day_offset - expectedStart) > 0.0001) {
       throw new Error('Blocos devem ser sequenciais sem gaps. Ajuste os dias de inicio.');
     }
     expectedStart += block.duration_days;
@@ -2057,7 +2069,7 @@ function totalCohortDays(blocks: Array<{ start_day_offset: number; duration_days
   return blocks.length === 0
     ? 1
     : Math.max(
-      1,
+      0.5,
       ...blocks.map((block) => block.start_day_offset + block.duration_days - 1)
     );
 }
@@ -2066,14 +2078,23 @@ function totalScheduleSlots(
   period: (typeof COHORT_PERIOD_VALUES)[number],
   blocks: Array<{ start_day_offset: number; duration_days: number }>
 ): number {
+  if (period === 'Meio_periodo') {
+    if (blocks.length === 0) return 1;
+    return Math.max(
+      1,
+      ...blocks.map((block) => (
+        Math.round((block.start_day_offset - 1) * 2) + Math.round(block.duration_days * 2)
+      ))
+    );
+  }
   const totalDays = totalCohortDays(blocks);
-  return period === 'Meio_periodo' ? totalDays * 2 : totalDays;
+  return Math.ceil(totalDays);
 }
 
 function normalizeScheduleDays(
-  scheduleDays: Array<{ day_index: number; day_date: string; start_time?: string | null; end_time?: string | null }> | undefined,
+  scheduleDays: Array<{ day_index: number; day_date: string; start_time?: string | null; end_time?: string | null; technician_id?: string | null }> | undefined,
   totalDays: number
-): Array<{ day_index: number; day_date: string; start_time: string | null; end_time: string | null }> | null {
+): Array<{ day_index: number; day_date: string; start_time: string | null; end_time: string | null; technician_id: string | null }> | null {
   if (!scheduleDays || scheduleDays.length === 0) return null;
   if (scheduleDays.length !== totalDays) return null;
 
@@ -2083,7 +2104,8 @@ function normalizeScheduleDays(
       day_index: Number(item.day_index),
       day_date: item.day_date,
       start_time: item.start_time ?? null,
-      end_time: item.end_time ?? null
+      end_time: item.end_time ?? null,
+      technician_id: item.technician_id ?? null
     }))
     .sort((a, b) => a.day_index - b.day_index);
 
@@ -2100,8 +2122,11 @@ function normalizeScheduleDays(
 function validateScheduleDays(
   period: (typeof COHORT_PERIOD_VALUES)[number],
   blocks: Array<{ start_day_offset: number; duration_days: number }>,
-  scheduleDays: Array<{ day_index: number; day_date: string; start_time?: string | null; end_time?: string | null }> | undefined
+  scheduleDays: Array<{ day_index: number; day_date: string; start_time?: string | null; end_time?: string | null; technician_id?: string | null }> | undefined
 ): string | null {
+  if (period !== 'Meio_periodo' && blocks.some((block) => !Number.isInteger(block.duration_days) || !Number.isInteger(block.start_day_offset))) {
+    return 'Duração fracionada exige turma de meio período.';
+  }
   if (!scheduleDays || scheduleDays.length === 0) return null;
   const totalDays = totalScheduleSlots(period, blocks);
   const normalized = normalizeScheduleDays(scheduleDays, totalDays);
@@ -2130,7 +2155,7 @@ function resolveCohortDateSlots(params: {
   period: (typeof COHORT_PERIOD_VALUES)[number];
   startTime: string | null;
   endTime: string | null;
-  scheduleDays?: Array<{ day_index: number; day_date: string; start_time?: string | null; end_time?: string | null }>;
+  scheduleDays?: Array<{ day_index: number; day_date: string; start_time?: string | null; end_time?: string | null; technician_id?: string | null }>;
 }) {
   const totalDays = totalScheduleSlots(params.period, params.blocks);
   const normalized = normalizeScheduleDays(params.scheduleDays, totalDays);
@@ -2139,7 +2164,8 @@ function resolveCohortDateSlots(params: {
       day_index: row.day_index,
       day_date: row.day_date,
       start_time: row.start_time ?? params.startTime ?? null,
-      end_time: row.end_time ?? params.endTime ?? null
+      end_time: row.end_time ?? params.endTime ?? null,
+      technician_id: row.technician_id ?? null
     }));
   }
 
@@ -2147,7 +2173,8 @@ function resolveCohortDateSlots(params: {
     day_index: index + 1,
     day_date: addBusinessDays(params.startDate, index),
     start_time: params.period === 'Meio_periodo' ? params.startTime : null,
-    end_time: params.period === 'Meio_periodo' ? params.endTime : null
+    end_time: params.period === 'Meio_periodo' ? params.endTime : null,
+    technician_id: null
   }));
 }
 
@@ -2251,7 +2278,7 @@ function syncCohortLifecycleStatuses() {
     duration_days: number;
   }>;
   const scheduleRows = db.prepare(`
-    select cohort_id, day_index, day_date, start_time, end_time
+    select cohort_id, day_index, day_date, start_time, end_time, technician_id
     from cohort_schedule_day
     where cohort_id in (${placeholders})
     order by cohort_id asc, day_index asc
@@ -2261,6 +2288,7 @@ function syncCohortLifecycleStatuses() {
     day_date: string;
     start_time: string | null;
     end_time: string | null;
+    technician_id: string | null;
   }>;
 
   const blocksByCohort = new Map<string, Array<{ start_day_offset: number; duration_days: number }>>();
@@ -2273,14 +2301,15 @@ function syncCohortLifecycleStatuses() {
     blocksByCohort.set(row.cohort_id, list);
   });
 
-  const scheduleByCohort = new Map<string, Array<{ day_index: number; day_date: string; start_time?: string | null; end_time?: string | null }>>();
+  const scheduleByCohort = new Map<string, Array<{ day_index: number; day_date: string; start_time?: string | null; end_time?: string | null; technician_id?: string | null }>>();
   scheduleRows.forEach((row) => {
     const list = scheduleByCohort.get(row.cohort_id) ?? [];
     list.push({
       day_index: Number(row.day_index) || 1,
       day_date: row.day_date,
       start_time: row.start_time,
-      end_time: row.end_time
+      end_time: row.end_time,
+      technician_id: row.technician_id
     });
     scheduleByCohort.set(row.cohort_id, list);
   });
@@ -2370,7 +2399,7 @@ function syncConfirmedCohortExecutions() {
   if (cohortIds.length > 0) {
     const placeholders = cohortIds.map(() => '?').join(',');
     const scheduleRows = db.prepare(`
-      select cohort_id, day_index, day_date, start_time, end_time
+      select cohort_id, day_index, day_date, start_time, end_time, technician_id
       from cohort_schedule_day
       where cohort_id in (${placeholders})
     `).all(...cohortIds) as Array<{
@@ -2379,6 +2408,7 @@ function syncConfirmedCohortExecutions() {
       day_date: string;
       start_time: string | null;
       end_time: string | null;
+      technician_id: string | null;
     }>;
     scheduleRows.forEach((row) => {
       scheduleByCohortAndIndex.set(`${row.cohort_id}:${row.day_index}`, {
@@ -2470,7 +2500,10 @@ function syncConfirmedCohortExecutions() {
       const startSlot = normalizedPeriod === 'Meio_periodo'
         ? (entryDay * 2) - 1
         : entryDay;
-      const totalSlots = Math.max(1, Number(candidate.duration_days || 1)) * (normalizedPeriod === 'Meio_periodo' ? 2 : 1);
+      const durationDays = Math.max(0.5, Number(candidate.duration_days || 1));
+      const totalSlots = normalizedPeriod === 'Meio_periodo'
+        ? Math.max(1, Math.round(durationDays * 2))
+        : Math.max(1, Math.ceil(durationDays));
       const endSlot = startSlot + totalSlots - 1;
 
       const slotStart = resolveSlotMeta({
@@ -2606,15 +2639,17 @@ function refreshCompanyModuleProgressFromAllocations(companyId: string, moduleId
 
   rows.forEach((row) => {
     const period = row.period ?? 'Integral';
-    const durationDays = Math.max(1, Number(row.duration_days || 1));
-    const totalSlots = durationDays * (period === 'Meio_periodo' ? 2 : 1);
+    const durationDays = Math.max(0.5, Number(row.duration_days || 1));
+    const totalSlots = period === 'Meio_periodo'
+      ? Math.max(1, Math.round(durationDays * 2))
+      : Math.max(1, Math.ceil(durationDays));
     const startSlot = period === 'Meio_periodo'
       ? (Math.max(1, Number(row.entry_day || 1)) * 2) - 1
       : Math.max(1, Number(row.entry_day || 1));
     const endSlot = startSlot + totalSlots - 1;
 
     const scheduleRows = db.prepare(`
-      select day_index, day_date, start_time, end_time
+      select day_index, day_date, start_time, end_time, technician_id
       from cohort_schedule_day
       where cohort_id = ?
         and day_index in (?, ?)
@@ -2623,6 +2658,7 @@ function refreshCompanyModuleProgressFromAllocations(companyId: string, moduleId
       day_date: string;
       start_time: string | null;
       end_time: string | null;
+      technician_id: string | null;
     }>;
     const scheduleByIndex = new Map(scheduleRows.map((schedule) => [Number(schedule.day_index), schedule]));
     const startSchedule = scheduleByIndex.get(startSlot);
@@ -2882,36 +2918,52 @@ function buildLicenseAlertPayload(normalized: NormalizedLicenseRow[]) {
 
 function findTechnicianConflict(params: {
   technicianId: string;
+  defaultTechnicianId: string | null;
   startDate: string;
   period: (typeof COHORT_PERIOD_VALUES)[number];
   startTime: string | null;
   endTime: string | null;
-  scheduleDays?: Array<{ day_index: number; day_date: string; start_time?: string | null; end_time?: string | null }>;
+  scheduleDays?: Array<{ day_index: number; day_date: string; start_time?: string | null; end_time?: string | null; technician_id?: string | null }>;
   blocks: Array<{ start_day_offset: number; duration_days: number }>;
   excludeCohortId?: string;
 }): { id: string; code: string; name: string; conflictDate: string } | null {
   const rows = params.excludeCohortId
     ? db.prepare(`
-      select id, code, name, start_date, period, start_time, end_time
-      from cohort
-      where technician_id = ?
+      select id, code, name, start_date, technician_id, period, start_time, end_time
+      from cohort c
+      where (
+          c.technician_id = ?
+          or exists (
+            select 1
+            from cohort_schedule_day csd
+            where csd.cohort_id = c.id and csd.technician_id = ?
+          )
+        )
         and status <> 'Cancelada'
-        and id <> ?
+        and c.id <> ?
       order by date(start_date) asc
-    `).all(params.technicianId, params.excludeCohortId)
+    `).all(params.technicianId, params.technicianId, params.excludeCohortId)
     : db.prepare(`
-      select id, code, name, start_date, period, start_time, end_time
-      from cohort
-      where technician_id = ?
+      select id, code, name, start_date, technician_id, period, start_time, end_time
+      from cohort c
+      where (
+          c.technician_id = ?
+          or exists (
+            select 1
+            from cohort_schedule_day csd
+            where csd.cohort_id = c.id and csd.technician_id = ?
+          )
+        )
         and status <> 'Cancelada'
       order by date(start_date) asc
-    `).all(params.technicianId);
+    `).all(params.technicianId, params.technicianId);
 
   const candidateCohorts = rows as Array<{
     id: string;
     code: string;
     name: string;
     start_date: string;
+    technician_id: string | null;
     period: (typeof COHORT_PERIOD_VALUES)[number] | null;
     start_time: string | null;
     end_time: string | null;
@@ -2923,8 +2975,7 @@ function findTechnicianConflict(params: {
     startTime: params.startTime,
     endTime: params.endTime,
     scheduleDays: params.scheduleDays
-  });
-  const newSlotByDate = new Map(newSlots.map((slot) => [slot.day_date, slot]));
+  }).filter((slot) => (slot.technician_id ?? params.defaultTechnicianId) === params.technicianId);
   const selectBlocks = db.prepare(`
     select start_day_offset, duration_days
     from cohort_module_block
@@ -2932,7 +2983,7 @@ function findTechnicianConflict(params: {
     order by order_in_cohort asc
   `);
   const selectScheduleDays = db.prepare(`
-    select day_index, day_date, start_time, end_time
+    select day_index, day_date, start_time, end_time, technician_id
     from cohort_schedule_day
     where cohort_id = ?
     order by day_index asc
@@ -2945,6 +2996,7 @@ function findTechnicianConflict(params: {
       day_date: string;
       start_time: string | null;
       end_time: string | null;
+      technician_id: string | null;
     }>;
     const existingSlots = resolveCohortDateSlots({
       startDate: cohort.start_date,
@@ -2953,39 +3005,83 @@ function findTechnicianConflict(params: {
       startTime: cohort.start_time ?? null,
       endTime: cohort.end_time ?? null,
       scheduleDays: existingScheduleDays
-    });
-    const overlapDates = existingSlots
-      .map((slot) => slot.day_date)
-      .filter((dateIso) => newSlotByDate.has(dateIso));
-    if (overlapDates.length === 0) {
-      continue;
-    }
+    }).filter((slot) => (slot.technician_id ?? cohort.technician_id) === params.technicianId);
 
-    for (const overlapDate of overlapDates) {
-      const newSlot = newSlotByDate.get(overlapDate);
-      const existingSlot = existingSlots.find((slot) => slot.day_date === overlapDate);
-      if (!newSlot || !existingSlot) continue;
+    for (const newSlot of newSlots) {
+      for (const existingSlot of existingSlots) {
+        if (newSlot.day_date !== existingSlot.day_date) continue;
 
-      const hasPeriodConflict = hasTechnicianPeriodConflict(
-        params.period,
-        newSlot.start_time,
-        newSlot.end_time,
-        cohort.period ?? 'Integral',
-        existingSlot.start_time,
-        existingSlot.end_time
-      );
+        const hasPeriodConflict = hasTechnicianPeriodConflict(
+          params.period,
+          newSlot.start_time,
+          newSlot.end_time,
+          cohort.period ?? 'Integral',
+          existingSlot.start_time,
+          existingSlot.end_time
+        );
 
-      if (hasPeriodConflict) {
-        return {
-          id: cohort.id,
-          code: cohort.code,
-          name: cohort.name,
-          conflictDate: overlapDate
-        };
+        if (hasPeriodConflict) {
+          return {
+            id: cohort.id,
+            code: cohort.code,
+            name: cohort.name,
+            conflictDate: newSlot.day_date
+          };
+        }
       }
     }
   }
 
+  return null;
+}
+
+function technicianIdsForCohortSchedule(
+  defaultTechnicianId: string | null | undefined,
+  scheduleDays: Array<{ technician_id?: string | null }> | undefined
+): string[] {
+  const ids = new Set<string>();
+  if (defaultTechnicianId) ids.add(defaultTechnicianId);
+  scheduleDays?.forEach((day) => {
+    if (day.technician_id) ids.add(day.technician_id);
+  });
+  return Array.from(ids);
+}
+
+function unknownTechnicianId(technicianIds: string[]): string | null {
+  if (technicianIds.length === 0) return null;
+  const selectTechnician = db.prepare('select id from technician where id = ?');
+  for (const technicianId of technicianIds) {
+    const technician = selectTechnician.get(technicianId) as { id: string } | undefined;
+    if (!technician) return technicianId;
+  }
+  return null;
+}
+
+function findCohortScheduleConflict(params: {
+  defaultTechnicianId: string | null;
+  scheduleDays?: Array<{ technician_id?: string | null; day_index: number; day_date: string; start_time?: string | null; end_time?: string | null }>;
+  startDate: string;
+  period: (typeof COHORT_PERIOD_VALUES)[number];
+  startTime: string | null;
+  endTime: string | null;
+  blocks: Array<{ start_day_offset: number; duration_days: number }>;
+  excludeCohortId?: string;
+}) {
+  const technicianIds = technicianIdsForCohortSchedule(params.defaultTechnicianId, params.scheduleDays);
+  for (const technicianId of technicianIds) {
+    const conflict = findTechnicianConflict({
+      technicianId,
+      defaultTechnicianId: params.defaultTechnicianId,
+      startDate: params.startDate,
+      period: params.period,
+      startTime: params.startTime,
+      endTime: params.endTime,
+      scheduleDays: params.scheduleDays,
+      blocks: params.blocks,
+      excludeCohortId: params.excludeCohortId
+    });
+    if (conflict) return conflict;
+  }
   return null;
 }
 
@@ -3582,11 +3678,12 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
         coalesce((
           select group_concat(sd_entry, ' || ')
           from (
-            select printf('%d::%s::%s::%s',
+            select printf('%d::%s::%s::%s::%s',
               csd.day_index,
               csd.day_date,
               coalesce(csd.start_time, ''),
-              coalesce(csd.end_time, '')
+              coalesce(csd.end_time, ''),
+              coalesce(csd.technician_id, '')
             ) as sd_entry
             from cohort_schedule_day csd
             where csd.cohort_id = c.id
@@ -4204,7 +4301,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       order by a.entry_day asc, c.name asc
     `).all(req.params.id);
     const schedule_days_raw = db.prepare(`
-      select day_index, day_date, start_time, end_time
+      select day_index, day_date, start_time, end_time, technician_id
       from cohort_schedule_day
       where cohort_id = ?
       order by day_index asc
@@ -4213,6 +4310,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       day_date: string;
       start_time: string | null;
       end_time: string | null;
+      technician_id: string | null;
     }>;
     const schedule_days = normalizeScheduleDaysChronologically(schedule_days_raw);
     const firstScheduleDate = (schedule_days as Array<{ day_date: string }>)[0]?.day_date ?? null;
@@ -4509,16 +4607,13 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       return res.json({ has_conflict: false });
     }
   
-    const technician = db.prepare('select id, name from technician where id = ?').get(payload.technician_id) as {
-      id: string;
-      name: string;
-    } | undefined;
-    if (!technician) {
+    const technicianIds = technicianIdsForCohortSchedule(payload.technician_id ?? null, payload.schedule_days);
+    if (unknownTechnicianId(technicianIds)) {
       return res.status(404).json({ message: 'Técnico não encontrado' });
     }
   
-    const conflict = findTechnicianConflict({
-      technicianId: payload.technician_id,
+    const conflict = findCohortScheduleConflict({
+      defaultTechnicianId: payload.technician_id ?? null,
       startDate: payload.start_date,
       period: payload.period,
       startTime: payload.start_time ?? null,
@@ -4566,9 +4661,14 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       return res.status(400).json({ message: scheduleDaysError });
     }
   
-    if (payload.technician_id && payload.status !== 'Cancelada') {
-      const conflict = findTechnicianConflict({
-        technicianId: payload.technician_id,
+    const technicianIds = technicianIdsForCohortSchedule(payload.technician_id ?? null, payload.schedule_days);
+    if (unknownTechnicianId(technicianIds)) {
+      return res.status(404).json({ message: 'Técnico não encontrado' });
+    }
+  
+    if (payload.status !== 'Cancelada') {
+      const conflict = findCohortScheduleConflict({
+        defaultTechnicianId: payload.technician_id ?? null,
         startDate: payload.start_date,
         period: payload.period,
         startTime: payload.period === 'Meio_periodo' ? (payload.start_time ?? null) : null,
@@ -4626,8 +4726,8 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
   
       if (payload.schedule_days && payload.schedule_days.length > 0) {
         const insertSchedule = db.prepare(`
-          insert into cohort_schedule_day (id, cohort_id, day_index, day_date, start_time, end_time)
-          values (?, ?, ?, ?, ?, ?)
+          insert into cohort_schedule_day (id, cohort_id, day_index, day_date, start_time, end_time, technician_id)
+          values (?, ?, ?, ?, ?, ?, ?)
         `);
         payload.schedule_days.forEach((day) => {
           insertSchedule.run(
@@ -4636,7 +4736,8 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
             day.day_index,
             day.day_date,
             day.start_time ?? null,
-            day.end_time ?? null
+            day.end_time ?? null,
+            day.technician_id ?? null
           );
         });
       }
@@ -4675,7 +4776,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
   
     const payload = parsed.data;
     const existingScheduleDays = db.prepare(`
-      select day_index, day_date, start_time, end_time
+      select day_index, day_date, start_time, end_time, technician_id
       from cohort_schedule_day
       where cohort_id = ?
       order by day_index asc
@@ -4684,6 +4785,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       day_date: string;
       start_time: string | null;
       end_time: string | null;
+      technician_id: string | null;
     }>;
     if (payload.blocks) {
       try {
@@ -4749,9 +4851,14 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       return res.status(400).json({ message: scheduleDaysError });
     }
   
-    if (nextTechnicianId && nextStatus !== 'Cancelada') {
-      const conflict = findTechnicianConflict({
-        technicianId: nextTechnicianId,
+    const technicianIds = technicianIdsForCohortSchedule(nextTechnicianId ?? null, nextScheduleDays);
+    if (unknownTechnicianId(technicianIds)) {
+      return res.status(404).json({ message: 'Técnico não encontrado' });
+    }
+  
+    if (nextStatus !== 'Cancelada') {
+      const conflict = findCohortScheduleConflict({
+        defaultTechnicianId: nextTechnicianId ?? null,
         startDate: nextStartDate,
         period: nextPeriod,
         startTime: nextPeriod === 'Meio_periodo' ? nextStartTime : null,
@@ -4832,8 +4939,8 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
         db.prepare('delete from cohort_schedule_day where cohort_id = ?').run(req.params.id);
         if (payload.schedule_days.length > 0) {
           const insertSchedule = db.prepare(`
-            insert into cohort_schedule_day (id, cohort_id, day_index, day_date, start_time, end_time)
-            values (?, ?, ?, ?, ?, ?)
+            insert into cohort_schedule_day (id, cohort_id, day_index, day_date, start_time, end_time, technician_id)
+            values (?, ?, ?, ?, ?, ?, ?)
           `);
           payload.schedule_days.forEach((day) => {
             insertSchedule.run(
@@ -4842,7 +4949,8 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
               day.day_index,
               day.day_date,
               day.start_time ?? null,
-              day.end_time ?? null
+              day.end_time ?? null,
+              day.technician_id ?? null
             );
           });
         }

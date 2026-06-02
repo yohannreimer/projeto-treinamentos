@@ -1008,8 +1008,8 @@ export function initDb() {
       cohort_id text not null,
       module_id text not null,
       order_in_cohort integer not null,
-      start_day_offset integer not null,
-      duration_days integer not null,
+      start_day_offset real not null,
+      duration_days real not null,
       unique(cohort_id, order_in_cohort),
       foreign key(cohort_id) references cohort(id) on delete cascade,
       foreign key(module_id) references module_template(id) on delete restrict
@@ -1022,8 +1022,10 @@ export function initDb() {
       day_date text not null,
       start_time text,
       end_time text,
+      technician_id text,
       unique(cohort_id, day_index),
-      foreign key(cohort_id) references cohort(id) on delete cascade
+      foreign key(cohort_id) references cohort(id) on delete cascade,
+      foreign key(technician_id) references technician(id) on delete set null
     );
 
     create table if not exists cohort_allocation (
@@ -1396,6 +1398,7 @@ export function initDb() {
   ensureColumn('cohort', 'start_time', 'start_time text');
   ensureColumn('cohort', 'end_time', 'end_time text');
   ensureColumn('cohort', 'delivery_mode', "delivery_mode text not null default 'Online'");
+  ensureColumn('cohort_schedule_day', 'technician_id', 'technician_id text references technician(id) on delete set null');
   ensureColumn(
     'cohort',
     'planning_workspace_id',

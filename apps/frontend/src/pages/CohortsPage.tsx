@@ -43,6 +43,7 @@ type CohortDetail = Cohort & {
     day_date: string;
     start_time: string | null;
     end_time: string | null;
+    technician_id: string | null;
   }>;
   participants?: Array<{
     id: string;
@@ -60,6 +61,7 @@ type CohortScheduleDayDraft = {
   day_date: string;
   start_time: string;
   end_time: string;
+  technician_id: string;
 };
 
 const statuses = ['Planejada', 'Aguardando_quorum', 'Confirmada', 'Concluida', 'Cancelada'];
@@ -102,7 +104,25 @@ function cohortModuleSequence(cohort: Cohort): string[] {
 
 function moduleDurationById(modules: Module[], moduleId: string): number {
   const duration = modules.find((module) => module.id === moduleId)?.duration_days;
-  return Math.max(1, Number(duration) || 1);
+  return normalizeHalfDayDuration(duration ?? 1);
+}
+
+function normalizeHalfDayDuration(value: unknown): number {
+  const normalizedValue = typeof value === 'string' ? value.replace(',', '.') : value;
+  const numeric = Number(normalizedValue);
+  if (!Number.isFinite(numeric)) return 0.5;
+  return Math.max(0.5, Math.round(numeric * 2) / 2);
+}
+
+function formatHalfDayAmount(value: number): string {
+  const normalized = normalizeHalfDayDuration(value);
+  return Number.isInteger(normalized)
+    ? String(normalized)
+    : String(normalized).replace('.', ',');
+}
+
+function hasFractionalDuration(draft: BlockDraft[]): boolean {
+  return draft.some((block) => !Number.isInteger(normalizeHalfDayDuration(block.duration_days)));
 }
 
 function formatDateBr(dateIso: string): string {
@@ -159,15 +179,26 @@ function totalScheduleEntriesFromBlocks(
   draft: BlockDraft[],
   selectedPeriod: (typeof periodOptions)[number]
 ) {
-  const baseDays = Math.max(1, totalDaysFromDraftBlocks(draft));
-  return selectedPeriod === 'Meio_periodo' ? baseDays * 2 : baseDays;
+  if (selectedPeriod === 'Meio_periodo') {
+    let startOffset = 1;
+    let maxSlot = 1;
+    draft.forEach((block) => {
+      const duration = normalizeHalfDayDuration(block.duration_days);
+      const endSlot = Math.round((startOffset - 1) * 2) + Math.round(duration * 2);
+      maxSlot = Math.max(maxSlot, endSlot);
+      startOffset += duration;
+    });
+    return maxSlot;
+  }
+  const baseDays = Math.max(0.5, totalDaysFromDraftBlocks(draft));
+  return Math.max(1, Math.ceil(baseDays));
 }
 
 function totalDaysFromDraftBlocks(draft: BlockDraft[]) {
   let day = 1;
-  let maxEnd = 1;
+  let maxEnd = 0.5;
   draft.forEach((block) => {
-    const duration = Math.max(1, Number(block.duration_days) || 1);
+    const duration = normalizeHalfDayDuration(block.duration_days);
     const endDay = day + duration - 1;
     maxEnd = Math.max(maxEnd, endDay);
     day += duration;
@@ -239,7 +270,7 @@ export function CohortsPage() {
   function toBlockPayload(draft: BlockDraft[]) {
     let day = 1;
     return draft.map((block, index) => {
-      const duration = Math.max(1, Number(block.duration_days) || 1);
+      const duration = normalizeHalfDayDuration(block.duration_days);
       const payload = {
         module_id: block.module_id,
         order_in_cohort: index + 1,
@@ -267,7 +298,8 @@ export function CohortsPage() {
         day_index: index,
         day_date: existing?.day_date ?? addBusinessDays(startDateValue, index - 1),
         start_time: existing?.start_time ?? defaultStartTime,
-        end_time: existing?.end_time ?? defaultEndTime
+        end_time: existing?.end_time ?? defaultEndTime,
+        technician_id: existing?.technician_id ?? ''
       });
     }
     return rows;
@@ -334,7 +366,7 @@ export function CohortsPage() {
     setCohortEndTime('17:00');
     setDeliveryMode('Online');
     setNotes('');
-    const nextBlocks = firstModule ? [{ key: randomKey(), module_id: firstModule.id, duration_days: firstModule.duration_days || 1 }] : [];
+    const nextBlocks = firstModule ? [{ key: randomKey(), module_id: firstModule.id, duration_days: moduleDurationById(availableModules, firstModule.id) }] : [];
     setBlocks(nextBlocks);
     setScheduleDays(buildScheduleDraft(
       new Date().toISOString().slice(0, 10),
@@ -572,9 +604,11 @@ export function CohortsPage() {
     const noTech = cohorts.filter((cohort) => !cohort.technician_id).length;
     return { total: cohorts.length, open, confirmed, noTech };
   }, [cohorts]);
+  const defaultTechnicianName = technicians.find((technician) => technician.id === technicianId)?.name ?? 'sem técnico principal';
+  const hasAnyScheduleTechnician = Boolean(technicianId) || scheduleDays.some((day) => Boolean(day.technician_id));
 
   useEffect(() => {
-    if (!technicianId || !startDate || blockPreview.length === 0 || status === 'Cancelada') {
+    if (!hasAnyScheduleTechnician || !startDate || blockPreview.length === 0 || status === 'Cancelada') {
       setIsCheckingTechnicianConflict(false);
       setHasTechnicianConflict(false);
       setTechnicianConflictMessage('');
@@ -585,7 +619,7 @@ export function CohortsPage() {
     let active = true;
     setIsCheckingTechnicianConflict(true);
     api.checkTechnicianConflict({
-      technician_id: technicianId,
+      technician_id: technicianId || null,
       start_date: startDate,
       status,
       period,
@@ -595,7 +629,8 @@ export function CohortsPage() {
         day_index: day.day_index,
         day_date: day.day_date,
         start_time: day.start_time || null,
-        end_time: day.end_time || null
+        end_time: day.end_time || null,
+        technician_id: day.technician_id || null
       })),
       blocks: blockPreview,
       exclude_cohort_id: editingId ?? undefined
@@ -622,7 +657,7 @@ export function CohortsPage() {
     return () => {
       active = false;
     };
-  }, [technicianId, startDate, status, period, cohortStartTime, cohortEndTime, scheduleDays, blockPreview, editingId]);
+  }, [technicianId, hasAnyScheduleTechnician, startDate, status, period, cohortStartTime, cohortEndTime, scheduleDays, blockPreview, editingId]);
 
   useEffect(() => {
     const totalDays = totalScheduleEntriesFromBlocks(blocks, period);
@@ -729,6 +764,10 @@ export function CohortsPage() {
         setError('Não repita o mesmo módulo na mesma turma.');
         return false;
       }
+      if (period !== 'Meio_periodo' && hasFractionalDuration(blocks)) {
+        setError('Duração fracionada exige turma de meio período.');
+        return false;
+      }
     }
 
     if (step === 3) {
@@ -794,7 +833,7 @@ export function CohortsPage() {
       const nextBlocks = (detail.blocks ?? []).map((block) => ({
         key: randomKey(),
         module_id: block.module_id,
-        duration_days: Number(block.duration_days) || 1
+        duration_days: normalizeHalfDayDuration(block.duration_days)
       }));
       const nextTotalDays = totalScheduleEntriesFromBlocks(nextBlocks, (detail.period ?? 'Integral') as (typeof periodOptions)[number]);
       scheduleBasisRef.current = {
@@ -808,7 +847,8 @@ export function CohortsPage() {
         day_index: Number(day.day_index),
         day_date: day.day_date,
         start_time: day.start_time ?? '',
-        end_time: day.end_time ?? ''
+        end_time: day.end_time ?? '',
+        technician_id: day.technician_id ?? ''
       }));
       setScheduleDays(buildScheduleDraft(
         detail.start_date,
@@ -1106,6 +1146,10 @@ export function CohortsPage() {
       setError('Não repita o mesmo módulo na mesma turma.');
       return;
     }
+    if (period !== 'Meio_periodo' && hasFractionalDuration(blocks)) {
+      setError('Duração fracionada exige turma de meio período.');
+      return;
+    }
 
     if (isCheckingTechnicianConflict) {
       setError('Aguarde a validação da agenda do técnico.');
@@ -1155,7 +1199,8 @@ export function CohortsPage() {
         day_index: day.day_index,
         day_date: day.day_date,
         start_time: period === 'Meio_periodo' ? (day.start_time || null) : null,
-        end_time: period === 'Meio_periodo' ? (day.end_time || null) : null
+        end_time: period === 'Meio_periodo' ? (day.end_time || null) : null,
+        technician_id: day.technician_id || null
       })),
       delivery_mode: deliveryMode,
       notes: notes.trim() || null,
@@ -1427,10 +1472,10 @@ export function CohortsPage() {
                   </select>
                 </label>
               </div>
-              {technicianId && status !== 'Cancelada' ? (
+              {hasAnyScheduleTechnician && status !== 'Cancelada' ? (
                 <div className="form-subcard">
                   {isCheckingTechnicianConflict ? (
-                    <p className="muted">Verificando conflito de agenda do técnico...</p>
+                    <p className="muted">Verificando conflito de agenda dos técnicos...</p>
                   ) : hasTechnicianConflict ? (
                     <div className="stack">
                       <p className="error">{technicianConflictMessage}</p>
@@ -1441,7 +1486,7 @@ export function CohortsPage() {
                   ) : technicianConflictMessage ? (
                     <p className="warn-text">{technicianConflictMessage}</p>
                   ) : (
-                    <p className="ok-text">Agenda do técnico disponível para esta turma.</p>
+                    <p className="ok-text">Agenda dos técnicos disponível para esta turma.</p>
                   )}
                 </div>
               ) : null}
@@ -1484,10 +1529,11 @@ export function CohortsPage() {
                         Diárias
                         <input
                           type="number"
-                          min={1}
+                          min={0.5}
+                          step={0.5}
                           value={block.duration_days}
                           onChange={(event) => {
-                            updateBlock(block.key, { duration_days: Math.max(1, Number(event.target.value) || 1) });
+                            updateBlock(block.key, { duration_days: normalizeHalfDayDuration(event.target.value) });
                           }}
                         />
                       </label>
@@ -1498,6 +1544,7 @@ export function CohortsPage() {
                   </div>
                 ))}
                 <button type="button" onClick={addBlock}>Adicionar bloco</button>
+                <p className="form-hint">Use incrementos de 0,5 para meia diária. Durações quebradas exigem meio período.</p>
               </div>
             </div>
             ) : null}
@@ -1519,14 +1566,16 @@ export function CohortsPage() {
                 <tbody>
                   {blockPreview.map((block) => {
                     const module = modules.find((item) => item.id === block.module_id);
-                    const endDay = block.start_day_offset + block.duration_days - 1;
+                    const endDay = period === 'Meio_periodo'
+                      ? (Math.round((block.start_day_offset - 1) * 2) + Math.round(block.duration_days * 2)) / 2
+                      : block.start_day_offset + block.duration_days - 1;
                     return (
                       <tr key={block.order_in_cohort}>
                         <td>{block.order_in_cohort}</td>
                         <td>{module ? moduleShortLabel(module.name) : block.module_id}</td>
-                        <td>Dia {block.start_day_offset}</td>
-                        <td>{block.duration_days}</td>
-                        <td>Dia {endDay}</td>
+                        <td>Dia {formatHalfDayAmount(block.start_day_offset)}</td>
+                        <td>{formatHalfDayAmount(block.duration_days)}</td>
+                        <td>Dia {formatHalfDayAmount(endDay)}</td>
                       </tr>
                     );
                   })}
@@ -1546,6 +1595,7 @@ export function CohortsPage() {
                       <tr>
                         <th>{period === 'Meio_periodo' ? 'Encontro' : 'Dia'}</th>
                         <th>Data</th>
+                        <th>Técnico</th>
                         <th>Início</th>
                         <th>Fim</th>
                       </tr>
@@ -1565,6 +1615,22 @@ export function CohortsPage() {
                                 )));
                               }}
                             />
+                          </td>
+                          <td>
+                            <select
+                              value={day.technician_id}
+                              onChange={(event) => {
+                                const nextValue = event.target.value;
+                                setScheduleDays((prev) => prev.map((item) => (
+                                  item.key === day.key ? { ...item, technician_id: nextValue } : item
+                                )));
+                              }}
+                            >
+                              <option value="">Técnico da turma: {defaultTechnicianName}</option>
+                              {technicians.map((technician) => (
+                                <option key={technician.id} value={technician.id}>{technician.name}</option>
+                              ))}
+                            </select>
                           </td>
                           <td>
                             <input
@@ -1667,7 +1733,7 @@ export function CohortsPage() {
                         <span className="allocation-module-title">
                           {block.order_in_cohort}. {moduleShortLabel(block.module_name)}
                         </span>
-                        <small>Dia {block.start_day_offset} • {block.duration_days} diária(s)</small>
+                        <small>Dia {formatHalfDayAmount(block.start_day_offset)} • {formatHalfDayAmount(block.duration_days)} diária(s)</small>
                       </label>
                     );
                   })}
@@ -1680,7 +1746,7 @@ export function CohortsPage() {
                       {allocationBlocks.map((block) => (
                         <div key={block.id} className="event-item">
                           <span>{moduleShortLabel(block.module_name)}</span>
-                          <span>Dia {block.start_day_offset}</span>
+                          <span>Dia {formatHalfDayAmount(block.start_day_offset)}</span>
                         </div>
                       ))}
                     </div>
@@ -1719,7 +1785,7 @@ export function CohortsPage() {
                         <tr key={allocation.id}>
                           <td>{allocation.company_name}</td>
                           <td>{moduleShortLabel(allocation.module_name)}</td>
-                          <td>Dia {allocation.entry_day}</td>
+                          <td>Dia {formatHalfDayAmount(allocation.entry_day)}</td>
                           <td>
                             <StatusChip value={allocation.status} />
                             {allocation.override_installation_prereq ? (

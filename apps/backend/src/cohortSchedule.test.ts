@@ -123,3 +123,87 @@ test('cohort reads derive start date from first scheduled day for existing stale
     cleanupDbFiles(dbPath);
   }
 });
+
+test('cohort half-day blocks persist schedule technicians and validate conflicts per encounter', { concurrency: false }, async () => {
+  const dbPath = assignTestDbPath('cohort-half-day-schedule-technician');
+  cleanupDbFiles(dbPath);
+
+  try {
+    const app = createApp({ forceDbRefresh: true, seedDb: false });
+
+    db.prepare(`
+      insert into module_template (
+        id, code, category, name, description, duration_days, profile, is_mandatory
+      ) values (?, ?, ?, ?, null, ?, null, 1)
+    `).run('mod-half-day', 'HALF-001', 'Treinamento', 'Meio período avançado', 1);
+
+    db.prepare('insert into technician (id, name, availability_notes) values (?, ?, null)')
+      .run('tech-main-half', 'Técnico principal');
+    db.prepare('insert into technician (id, name, availability_notes) values (?, ?, null)')
+      .run('tech-override-half', 'Técnico do encontro');
+
+    const created = await request(app)
+      .post('/cohorts')
+      .send({
+        code: 'TUR-HALF',
+        name: 'Turma com meia diária',
+        start_date: '2026-06-01',
+        technician_id: 'tech-main-half',
+        status: 'Planejada',
+        capacity_companies: 8,
+        period: 'Meio_periodo',
+        start_time: '13:30',
+        end_time: '17:00',
+        delivery_mode: 'Online',
+        blocks: [
+          { module_id: 'mod-half-day', order_in_cohort: 1, start_day_offset: 1, duration_days: 1.5 }
+        ],
+        schedule_days: [
+          { day_index: 1, day_date: '2026-06-01', start_time: '13:30', end_time: '17:00' },
+          { day_index: 2, day_date: '2026-06-02', start_time: '08:00', end_time: '12:00' },
+          { day_index: 3, day_date: '2026-06-02', start_time: '13:30', end_time: '17:00', technician_id: 'tech-override-half' }
+        ]
+      });
+
+    assert.equal(created.status, 201);
+
+    const detail = await request(app).get(`/cohorts/${created.body.id}`);
+    assert.equal(detail.status, 200);
+    assert.equal(detail.body.blocks[0].duration_days, 1.5);
+    assert.equal(detail.body.schedule_days.length, 3);
+    assert.equal(detail.body.schedule_days[2].technician_id, 'tech-override-half');
+
+    const conflicting = await request(app)
+      .post('/cohorts')
+      .send({
+        code: 'TUR-HALF-CONFLICT',
+        name: 'Turma conflitante',
+        start_date: '2026-06-02',
+        technician_id: 'tech-main-half',
+        status: 'Planejada',
+        capacity_companies: 8,
+        period: 'Meio_periodo',
+        start_time: '14:00',
+        end_time: '16:00',
+        delivery_mode: 'Online',
+        blocks: [
+          { module_id: 'mod-half-day', order_in_cohort: 1, start_day_offset: 1, duration_days: 0.5 }
+        ],
+        schedule_days: [
+          {
+            day_index: 1,
+            day_date: '2026-06-02',
+            start_time: '14:00',
+            end_time: '16:00',
+            technician_id: 'tech-override-half'
+          }
+        ]
+      });
+
+    assert.equal(conflicting.status, 400);
+    assert.match(conflicting.body.message, /Técnico já está alocado/);
+  } finally {
+    db.close();
+    cleanupDbFiles(dbPath);
+  }
+});

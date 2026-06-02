@@ -280,7 +280,7 @@ export const api = {
   createCohort: (payload: unknown) =>
     req('/cohorts', { method: 'POST', body: JSON.stringify(payload) }),
   checkTechnicianConflict: (payload: {
-    technician_id: string;
+    technician_id?: string | null;
     start_date: string;
     status: string;
     period?: 'Integral' | 'Meio_periodo';
@@ -291,6 +291,7 @@ export const api = {
       day_date: string;
       start_time?: string | null;
       end_time?: string | null;
+      technician_id?: string | null;
     }>;
     blocks: Array<{
       module_id: string;
