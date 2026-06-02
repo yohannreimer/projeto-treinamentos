@@ -4301,16 +4301,21 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       order by a.entry_day asc, c.name asc
     `).all(req.params.id);
     const schedule_days_raw = db.prepare(`
-      select day_index, day_date, start_time, end_time, technician_id
-      from cohort_schedule_day
-      where cohort_id = ?
-      order by day_index asc
+      select csd.day_index, csd.day_date, csd.start_time, csd.end_time, csd.technician_id,
+        st.name as technician_name,
+        st.calendar_color as technician_calendar_color
+      from cohort_schedule_day csd
+      left join technician st on st.id = csd.technician_id
+      where csd.cohort_id = ?
+      order by csd.day_index asc
     `).all(req.params.id) as Array<{
       day_index: number;
       day_date: string;
       start_time: string | null;
       end_time: string | null;
       technician_id: string | null;
+      technician_name: string | null;
+      technician_calendar_color: string | null;
     }>;
     const schedule_days = normalizeScheduleDaysChronologically(schedule_days_raw);
     const firstScheduleDate = (schedule_days as Array<{ day_date: string }>)[0]?.day_date ?? null;

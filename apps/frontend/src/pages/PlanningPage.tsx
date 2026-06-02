@@ -77,6 +77,7 @@ type PlanningCalendarCohort = {
     day_date: string;
     start_time: string | null;
     end_time: string | null;
+    technician_id: string | null;
   }>;
 };
 
@@ -175,6 +176,10 @@ function splitPipeList(value: string) {
   return value.split('|').map((item) => item.trim()).filter(Boolean);
 }
 
+function externalCohortOccurrenceTechnicianId(externalCohort: PlanningCalendarCohort, occurrence: PlanningCalendarCohort['occurrences'][number]) {
+  return occurrence.technician_id ?? externalCohort.technician_id ?? null;
+}
+
 function normalizeActivityRows(rows: Array<Record<string, unknown>>): PlanningActivity[] {
   return rows.map((row) => {
     const selectedDates = splitPipeList(String(row.selected_dates_raw ?? ''));
@@ -219,12 +224,13 @@ function normalizeCalendarCohortRows(rows: Array<Record<string, unknown>>): Plan
     const rawSchedule = String(row.schedule_days_raw ?? '');
     const scheduleOccurrences = rawSchedule.split(' || ').map((entry) => entry.trim()).filter(Boolean).map((entry) => {
       const parts = entry.includes('::') ? entry.split('::') : entry.split('|');
-      const [dayIndexRaw, dayDate, startTime, endTime] = parts;
+      const [dayIndexRaw, dayDate, startTime, endTime, technicianId] = parts;
       return {
         day_index: Number(dayIndexRaw) || 0,
         day_date: dayDate,
         start_time: startTime || String(row.start_time ?? '').trim() || null,
-        end_time: endTime || String(row.end_time ?? '').trim() || null
+        end_time: endTime || String(row.end_time ?? '').trim() || null,
+        technician_id: technicianId || null
       };
     }).filter((occurrence) => occurrence.day_date);
     const fallbackDuration = Math.max(1, Number(row.total_duration_days ?? 1) || 1);
@@ -232,7 +238,8 @@ function normalizeCalendarCohortRows(rows: Array<Record<string, unknown>>): Plan
       day_index: index,
       day_date: dayDate,
       start_time: String(row.start_time ?? '').trim() || null,
-      end_time: String(row.end_time ?? '').trim() || null
+      end_time: String(row.end_time ?? '').trim() || null,
+      technician_id: null
     }));
 
     return {
@@ -671,7 +678,7 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
       .filter(({ externalCohort, occurrence }) => (
         occurrence.day_date >= rangeStartDate &&
         occurrence.day_date <= endDate &&
-        (!technicianFilterId || externalCohort.technician_id === technicianFilterId) &&
+        (!technicianFilterId || externalCohortOccurrenceTechnicianId(externalCohort, occurrence) === technicianFilterId) &&
         (!clientFilterId || externalCohort.company_ids.includes(clientFilterId))
       ));
   }, [activeView.days, clientFilterId, externalCohorts, linkedPublishedCohortIds, rangeStartDate, technicianFilterId]);
@@ -692,6 +699,17 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
   const activeModuleTemplate = activeModule ? modules.find((module) => module.id === activeModule.moduleId) : undefined;
   const activeCompany = activeModule ? clientRows.find((company) => company.id === activeModule.companyId) : undefined;
   const selectedTechnician = technicians.find((technician) => technician.id === technicianFilterId);
+
+  function externalCohortOccurrenceTechnicianName(
+    externalCohort: PlanningCalendarCohort,
+    occurrence: PlanningCalendarCohort['occurrences'][number]
+  ) {
+    const technicianId = externalCohortOccurrenceTechnicianId(externalCohort, occurrence);
+    if (!technicianId) return 'Sem técnico';
+    return technicians.find((technician) => technician.id === technicianId)?.name
+      ?? externalCohort.technician_name
+      ?? 'Sem técnico';
+  }
   const isSelectedEncounterAllocated = Boolean(
     selectedEncounter && selectedCohort && encounterHasAllocation(selectedCohort, selectedEncounter)
   );
@@ -1116,7 +1134,8 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
         day_index: occurrence.day_index,
         day_date: index === occurrenceIndex ? targetDate : occurrence.day_date,
         start_time: occurrence.start_time,
-        end_time: occurrence.end_time
+        end_time: occurrence.end_time,
+        technician_id: occurrence.technician_id
       }))
       .sort((left, right) => (
         left.day_date.localeCompare(right.day_date) ||
@@ -1367,8 +1386,8 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
 
     const externalCohortConflict = externalCohorts.some((externalCohort) => (
       externalCohort.id !== cohort.published_cohort_id &&
-      externalCohort.technician_id === technicianId &&
       externalCohort.occurrences.some((occurrence) => (
+        externalCohortOccurrenceTechnicianId(externalCohort, occurrence) === technicianId &&
         occurrence.day_date === encounter.day_date &&
         timeSlotsOverlap(encounter.start_time, encounter.end_time, occurrence.start_time, occurrence.end_time)
       ))
@@ -1435,7 +1454,7 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
       >
         <strong>Turma · {startTime} - {endTime}</strong>
         <span>{companyLabel}</span>
-        <small>{moduleLabel} · {externalCohort.technician_name ?? 'sem técnico'}</small>
+        <small>{moduleLabel} · {externalCohortOccurrenceTechnicianName(externalCohort, occurrence)}</small>
       </button>
     );
   }
@@ -1762,13 +1781,13 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
         }
       });
     });
-    visibleExternalCohortOccurrences.forEach(({ externalCohort }) => {
-      const id = externalCohort.technician_id ?? '__none__';
+    visibleExternalCohortOccurrences.forEach(({ externalCohort, occurrence }) => {
+      const id = externalCohortOccurrenceTechnicianId(externalCohort, occurrence) ?? '__none__';
       if (technicianFilterId && id !== technicianFilterId) return;
       if (!rowMap.has(id)) {
         rowMap.set(id, {
           id,
-          name: externalCohort.technician_name ?? 'Sem técnico'
+          name: externalCohortOccurrenceTechnicianName(externalCohort, occurrence)
         });
       }
     });
@@ -1800,8 +1819,8 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
                 const dayExternalCohorts = visibleExternalCohortOccurrences.filter(({ externalCohort, occurrence }) => (
                   occurrence.day_date === date &&
                   (technician.id === '__none__'
-                    ? !externalCohort.technician_id
-                    : externalCohort.technician_id === technician.id)
+                    ? !externalCohortOccurrenceTechnicianId(externalCohort, occurrence)
+                    : externalCohortOccurrenceTechnicianId(externalCohort, occurrence) === technician.id)
                 ));
 
                 return (
@@ -1880,7 +1899,7 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
             <strong>{occurrence.start_time ?? '08:00'} - {occurrence.end_time ?? '18:00'}</strong>
             <span>{externalCohort.company_names.join(', ') || 'Cliente'}</span>
             <span>{externalCohort.module_names[0] ? moduleDisplayLabel(externalCohort.module_names[0]) : externalCohort.name || 'Turma publicada'}</span>
-            <span>{externalCohort.technician_name ?? 'Sem técnico'}</span>
+            <span>{externalCohortOccurrenceTechnicianName(externalCohort, occurrence)}</span>
             <small>Turma já criada</small>
           </button>
         ))}

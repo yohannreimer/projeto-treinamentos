@@ -28,6 +28,9 @@ type CohortCalendarOccurrence = Cohort & {
   total_business_days: number;
   day_start_time?: string | null;
   day_end_time?: string | null;
+  occurrence_technician_id?: string | null;
+  occurrence_technician_name?: string | null;
+  occurrence_technician_calendar_color?: string | null;
 };
 type ActivityDaySchedule = {
   day_date: string;
@@ -277,20 +280,21 @@ function splitPipeList(value?: string | null): string[] {
     .filter(Boolean);
 }
 
-function parseScheduleDaysRaw(raw?: string): Array<{ day_index: number; day_date: string; start_time: string | null; end_time: string | null }> {
+function parseScheduleDaysRaw(raw?: string): Array<{ day_index: number; day_date: string; start_time: string | null; end_time: string | null; technician_id: string | null }> {
   if (!raw) return [];
   return raw
     .split(' || ')
     .map((entry) => entry.trim())
     .filter(Boolean)
     .map((entry) => {
-      const [dayIndexRaw, dayDate, startTimeRaw, endTimeRaw] = entry.split('::');
+      const [dayIndexRaw, dayDate, startTimeRaw, endTimeRaw, technicianIdRaw] = entry.split('::');
       const dayIndex = Number(dayIndexRaw);
       return {
         day_index: Number.isFinite(dayIndex) ? dayIndex : 0,
         day_date: dayDate ?? '',
         start_time: startTimeRaw ? startTimeRaw : null,
-        end_time: endTimeRaw ? endTimeRaw : null
+        end_time: endTimeRaw ? endTimeRaw : null,
+        technician_id: technicianIdRaw ? technicianIdRaw : null
       };
     })
     .filter((item) => item.day_index > 0 && Boolean(item.day_date))
@@ -364,7 +368,7 @@ export function CalendarPage() {
   const [rows, setRows] = useState<Cohort[]>([]);
   const [activities, setActivities] = useState<CalendarActivity[]>([]);
   const [modules, setModules] = useState<Module[]>([]);
-  const [technicians, setTechnicians] = useState<Array<{ id: string; name: string }>>([]);
+  const [technicians, setTechnicians] = useState<Array<{ id: string; name: string; calendar_color?: string | null }>>([]);
   const [companies, setCompanies] = useState<Array<{ id: string; name: string }>>([]);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -447,7 +451,7 @@ export function CalendarPage() {
     }) as CalendarActivity[];
     setActivities(normalizedActivities);
     setModules(modulesRows as Module[]);
-    setTechnicians(techRows as Array<{ id: string; name: string }>);
+    setTechnicians(techRows as Array<{ id: string; name: string; calendar_color?: string | null }>);
     setCompanies(companyRows as Array<{ id: string; name: string }>);
     return {
       rows: calendarRows as Cohort[],
@@ -507,10 +511,9 @@ export function CalendarPage() {
   const filteredRows = useMemo(() => {
     return rows.filter((item) => {
       if (statusFilter && item.status !== statusFilter) return false;
-      if (technicianFilter && item.technician_name !== technicianFilter) return false;
       return true;
     });
-  }, [rows, statusFilter, technicianFilter]);
+  }, [rows, statusFilter]);
 
   const filteredActivities = useMemo(() => {
     return activities.filter((item) => {
@@ -521,6 +524,7 @@ export function CalendarPage() {
   }, [activities, statusFilter, technicianFilter]);
 
   const cohortEventsByDate = useMemo(() => {
+    const technicianById = new Map(technicians.map((technician) => [technician.id, technician]));
     return filteredRows.reduce<Record<string, CohortCalendarOccurrence[]>>((acc, item) => {
       const totalBusinessDays = Math.max(1, Number(item.total_duration_days) || 1);
       const scheduleDays = parseScheduleDaysRaw(item.schedule_days_raw);
@@ -528,6 +532,10 @@ export function CalendarPage() {
       for (let dayIndex = 1; dayIndex <= totalBusinessDays; dayIndex += 1) {
         const scheduleDay = scheduleByIndex.get(dayIndex);
         const calendarDate = scheduleDay?.day_date ?? addBusinessDays(item.start_date, dayIndex - 1);
+        const occurrenceTechnician = scheduleDay?.technician_id ? technicianById.get(scheduleDay.technician_id) : null;
+        const occurrenceTechnicianId = scheduleDay?.technician_id ?? item.technician_id ?? null;
+        const occurrenceTechnicianName = occurrenceTechnician?.name ?? item.technician_name ?? null;
+        if (technicianFilter && occurrenceTechnicianName !== technicianFilter) continue;
         acc[calendarDate] = acc[calendarDate] ?? [];
         acc[calendarDate].push({
           ...item,
@@ -535,12 +543,15 @@ export function CalendarPage() {
           day_index: dayIndex,
           total_business_days: totalBusinessDays,
           day_start_time: scheduleDay?.start_time ?? null,
-          day_end_time: scheduleDay?.end_time ?? null
+          day_end_time: scheduleDay?.end_time ?? null,
+          occurrence_technician_id: occurrenceTechnicianId,
+          occurrence_technician_name: occurrenceTechnicianName,
+          occurrence_technician_calendar_color: occurrenceTechnician?.calendar_color ?? item.technician_calendar_color ?? null
         });
       }
       return acc;
     }, {});
-  }, [filteredRows]);
+  }, [filteredRows, technicianFilter, technicians]);
 
   const activitiesByDate = useMemo(() => {
     return filteredActivities.reduce<Record<string, CalendarActivityOccurrence[]>>((acc, activity) => {
@@ -592,7 +603,7 @@ export function CalendarPage() {
     monthDates.forEach((date) => {
       (cohortEventsByDate[date] ?? []).forEach((event) => {
         activeCohortIds.add(event.id);
-        if (event.technician_name) activeTechnicians.add(event.technician_name);
+        if (event.occurrence_technician_name) activeTechnicians.add(event.occurrence_technician_name);
       });
       (activitiesByDate[date] ?? []).forEach((activity) => {
         activeActivityIds.add(activity.id);
@@ -635,7 +646,7 @@ export function CalendarPage() {
           break;
         }
         case 'technician_name': {
-          const compare = String(a.technician_name ?? '').localeCompare(String(b.technician_name ?? ''));
+          const compare = String(a.occurrence_technician_name ?? '').localeCompare(String(b.occurrence_technician_name ?? ''));
           if (compare !== 0) return compare * direction;
           break;
         }
@@ -674,9 +685,11 @@ export function CalendarPage() {
   const technicianOptions = useMemo(
     () => Array.from(new Set([
       ...rows.map((r) => r.technician_name),
+      ...rows.flatMap((row) => parseScheduleDaysRaw(row.schedule_days_raw)
+        .map((day) => day.technician_id ? technicians.find((technician) => technician.id === day.technician_id)?.name : null)),
       ...activities.flatMap((r) => r.technician_names)
     ].filter(Boolean) as string[])).sort(),
-    [rows, activities]
+    [rows, activities, technicians]
   );
   const createBlocksPreview = useMemo(() => {
     let day = 1;
@@ -1303,7 +1316,7 @@ export function CalendarPage() {
                       <div
                         key={`${event.id}-${event.day_index}`}
                         className="calendar-event-card"
-                        style={calendarCardStyle(event.technician_calendar_color)}
+                        style={calendarCardStyle(event.occurrence_technician_calendar_color)}
                         onClick={(domEvent) => {
                           domEvent.stopPropagation();
                           openCohort(event, cell.date);
@@ -1320,7 +1333,7 @@ export function CalendarPage() {
                         <p className="calendar-event-title" title={`${event.code} · ${event.name}`}>
                           {event.name}
                         </p>
-                        <p className="calendar-event-meta">Técnico: {event.technician_name ?? '-'}</p>
+                        <p className="calendar-event-meta">Técnico: {event.occurrence_technician_name ?? '-'}</p>
                         <p className="calendar-event-meta">Dia {event.day_index}/{event.total_business_days}</p>
                         <p className="calendar-event-meta">
                           {statusLabel(event.delivery_mode ?? 'Online')} · {formatCohortSchedule(event.period, event.start_time, event.end_time)}
@@ -1418,7 +1431,7 @@ export function CalendarPage() {
                           className={selectedId === event.id ? 'row-selected' : ''}
                         >
                           <td>{event.name} (dia {event.day_index}/{event.total_business_days})</td>
-                          <td>{event.technician_name ?? '-'}</td>
+                          <td>{event.occurrence_technician_name ?? '-'}</td>
                           <td className="calendar-ops-only" title={collapseList(splitPipeList(event.company_names || event.participant_names), 100)}>
                             {collapseList(splitPipeList(event.company_names || event.participant_names), 3)}
                           </td>

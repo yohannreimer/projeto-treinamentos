@@ -157,7 +157,7 @@ describe('PlanningPage', () => {
         client_hours_policy: 'consome'
       }
     ]);
-    vi.mocked(api.technicians).mockResolvedValue([{ id: 'tech-1', name: 'Ana' }]);
+    vi.mocked(api.technicians).mockResolvedValue([{ id: 'tech-1', name: 'Ana' }, { id: 'tech-2', name: 'André' }]);
 
     render(<PlanningPage />);
 
@@ -293,7 +293,7 @@ describe('PlanningPage', () => {
     vi.mocked(api.planningWorkspace).mockResolvedValue(detail('pln-1', 'Carteira Maio', 'Delta Ferramentaria', [
       { id: 'enc-1', time: '08:00', notes: 'Primeiro dia', dayDate: '2026-05-20' }
     ]));
-    vi.mocked(api.technicians).mockResolvedValue([{ id: 'tech-1', name: 'Ana' }]);
+    vi.mocked(api.technicians).mockResolvedValue([{ id: 'tech-1', name: 'Ana' }, { id: 'tech-2', name: 'André' }]);
 
     render(<PlanningPage />);
 
@@ -761,7 +761,7 @@ describe('PlanningPage', () => {
       clients: [{ company_id: 'comp-delta', company_name: 'Delta Ferramentaria', priority: 0 }],
       cohorts: []
     });
-    vi.mocked(api.technicians).mockResolvedValue([{ id: 'tech-1', name: 'Ana' }]);
+    vi.mocked(api.technicians).mockResolvedValue([{ id: 'tech-1', name: 'Ana' }, { id: 'tech-2', name: 'André' }]);
     vi.mocked(api.calendar).mockResolvedValue([
       {
         id: 'coh-existing',
@@ -777,13 +777,13 @@ describe('PlanningPage', () => {
         start_time: '10:00',
         end_time: '14:00',
         total_duration_days: 1,
-        schedule_days_raw: '1::2026-05-20::10:00::14:00'
+        schedule_days_raw: '1::2026-05-20::10:00::14:00::tech-2'
       }
     ]);
 
     render(<PlanningPage />);
 
-    expect(await screen.findByRole('button', { name: /Turma.*10:00 - 14:00.*Delta Ferramentaria.*Design Basico.*Ana/i })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /Turma.*10:00 - 14:00.*Delta Ferramentaria.*Design Basico.*André/i })).toBeInTheDocument();
   });
 
   test('clears old workspace detail while the next workspace loads', async () => {

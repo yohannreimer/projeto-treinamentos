@@ -133,6 +133,7 @@ export function CohortDetailPage() {
                         <th>Dia</th>
                         <th>Data</th>
                         <th>Horário</th>
+                        <th>Técnico</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -141,6 +142,7 @@ export function CohortDetailPage() {
                           <td>Dia {day.day_index}</td>
                           <td>{formatDateBr(day.day_date)}</td>
                           <td>{formatTimeRange(day.start_time ?? data.start_time, day.end_time ?? data.end_time)}</td>
+                          <td>{day.technician_name ?? data.technician_name ?? 'Sem técnico'}</td>
                         </tr>
                       ))}
                     </tbody>
