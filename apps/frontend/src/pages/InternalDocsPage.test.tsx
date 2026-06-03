@@ -5,12 +5,14 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { internalSessionStore } from '../auth/session';
 import { InternalDocsPage } from './InternalDocsPage';
 
+// Documento na pasta /Interna que é exibido por padrão ao abrir a página
 const rows = [
   {
     id: 'doc-1',
     title: 'Certificado - Metal Forte - Instalacao TopSolid',
     category: 'Certificados',
     notes: null,
+    folder_path: '/Interna',
     file_name: 'certificado-metal-forte.pdf',
     mime_type: 'application/pdf',
     file_size_bytes: 1234,
@@ -18,6 +20,19 @@ const rows = [
     updated_at: '2026-05-08'
   }
 ];
+
+const emptyJson = (value: unknown) =>
+  new Response(JSON.stringify(value), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' }
+  });
+
+// Fábrica — cria nova Response a cada chamada para evitar body already consumed
+const makePdfBlob = () =>
+  new Response(new Blob(['PDF'], { type: 'application/pdf' }), {
+    status: 200,
+    headers: { 'Content-Disposition': "attachment; filename*=UTF-8''procedimento.pdf" }
+  });
 
 describe('InternalDocsPage', () => {
   afterEach(() => {
@@ -38,16 +53,6 @@ describe('InternalDocsPage', () => {
       }
     });
 
-    vi.stubGlobal('fetch', vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify(rows), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' }
-      }))
-      .mockResolvedValueOnce(new Response(new Blob(['PDF'], { type: 'application/pdf' }), {
-        status: 200,
-        headers: { 'Content-Disposition': "attachment; filename*=UTF-8''procedimento.pdf" }
-      })));
-
     vi.stubGlobal('URL', {
       ...URL,
       createObjectURL: vi.fn(() => 'blob:documento'),
@@ -55,7 +60,22 @@ describe('InternalDocsPage', () => {
     });
   });
 
+  function setupFetchMock() {
+    // loadAll() faz 4 chamadas paralelas + 1 extra silenciosa para doc-pages
+    // + 1 para a ação do usuário
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(emptyJson(rows))     // /internal-documents
+      .mockResolvedValueOnce(emptyJson([]))        // /internal-document-folders
+      .mockResolvedValueOnce(emptyJson([]))        // /companies
+      .mockResolvedValueOnce(emptyJson([]))        // /modules
+      .mockResolvedValueOnce(emptyJson([]))        // /api/internal/doc-pages (silencioso)
+      .mockResolvedValueOnce(makePdfBlob())        // ação do usuário (download / preview)
+    );
+  }
+
   test('downloads internal documents with the internal auth token', async () => {
+    setupFetchMock();
+
     const user = userEvent.setup();
     const appendChildSpy = vi.spyOn(document.body, 'appendChild');
     const removeChildSpy = vi.spyOn(document.body, 'removeChild');
@@ -71,10 +91,11 @@ describe('InternalDocsPage', () => {
 
     render(<InternalDocsPage />);
 
-    await user.click(await screen.findByRole('button', { name: 'Download' }));
+    await user.click(await screen.findByRole('button', { name: /Download/i }));
 
-    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
-    const downloadRequest = vi.mocked(fetch).mock.calls[1];
+    // 4 chamadas de loadAll + 1 doc-pages + 1 download = 6
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(6));
+    const downloadRequest = vi.mocked(fetch).mock.calls[5];
     expect(downloadRequest[0]).toBe('http://localhost:4000/internal-documents/doc-1/download');
     expect((downloadRequest[1]?.headers as Headers).get('Authorization')).toBe('Bearer token-documentos');
     expect(anchorClick).toHaveBeenCalledTimes(1);
@@ -83,14 +104,17 @@ describe('InternalDocsPage', () => {
   });
 
   test('previews certificate PDFs without downloading raw document data', async () => {
+    setupFetchMock();
+
     const user = userEvent.setup();
 
     render(<InternalDocsPage />);
 
-    await user.click(await screen.findByRole('button', { name: 'Visualizar' }));
+    await user.click(await screen.findByRole('button', { name: /Visualizar/i }));
 
-    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
-    const previewRequest = vi.mocked(fetch).mock.calls[1];
+    // 4 chamadas de loadAll + 1 doc-pages + 1 preview = 6
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(6));
+    const previewRequest = vi.mocked(fetch).mock.calls[5];
     expect(previewRequest[0]).toBe('http://localhost:4000/internal-documents/doc-1/download');
     expect((previewRequest[1]?.headers as Headers).get('Authorization')).toBe('Bearer token-documentos');
     expect(screen.getByRole('dialog', { name: /Certificado - Metal Forte/i })).toBeInTheDocument();

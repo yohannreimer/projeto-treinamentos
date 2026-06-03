@@ -125,18 +125,27 @@ const internalDocumentDataUrlSchema = z
   .max(12_000_000)
   .refine((value) => /^data:(application\/pdf|image\/[a-zA-Z0-9.+-]+);base64,/.test(value), 'Arquivo inválido.');
 
+function isHalfDayIncrement(value: number): boolean {
+  return Number.isFinite(value) && value > 0 && Math.abs((value * 2) - Math.round(value * 2)) < 0.0001;
+}
+
+const halfDayDurationSchema = z.number()
+  .positive()
+  .refine(isHalfDayIncrement, 'Use incrementos de 0,5 diária.');
+
 const cohortBlockSchema = z.object({
   module_id: z.string(),
   order_in_cohort: z.number().int().positive(),
-  start_day_offset: z.number().int().positive(),
-  duration_days: z.number().int().positive()
+  start_day_offset: halfDayDurationSchema,
+  duration_days: halfDayDurationSchema
 });
 
 const cohortScheduleDaySchema = z.object({
   day_index: z.number().int().positive(),
   day_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   start_time: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
-  end_time: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional()
+  end_time: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
+  technician_id: z.string().nullable().optional()
 });
 
 const createCohortSchema = z.object({
@@ -178,7 +187,7 @@ function deriveCohortStartDateFromScheduleDays(scheduleDays: Array<{ day_index: 
   ))[0]?.day_date ?? null;
 }
 
-function normalizeScheduleDaysChronologically<T extends { day_index: number; day_date: string; start_time?: string | null; end_time?: string | null }>(
+function normalizeScheduleDaysChronologically<T extends { day_index: number; day_date: string; start_time?: string | null; end_time?: string | null; technician_id?: string | null }>(
   scheduleDays: T[]
 ) {
   return [...scheduleDays]
@@ -209,7 +218,7 @@ const guidedAllocationSchema = z.object({
 });
 
 const technicianConflictCheckSchema = z.object({
-  technician_id: z.string(),
+  technician_id: z.string().nullable().optional(),
   start_date: z.string().min(10),
   status: z.enum(['Planejada', 'Aguardando_quorum', 'Confirmada', 'Concluida', 'Cancelada']).default('Planejada'),
   period: z.enum(COHORT_PERIOD_VALUES).default('Integral'),
@@ -1597,7 +1606,10 @@ function validateBlocks(blocks: Array<{
     if (block.order_in_cohort !== expectedOrder) {
       throw new Error('A ordem dos blocos deve ser sequencial (1..N)');
     }
-    if (block.start_day_offset !== expectedStart) {
+    if (!isHalfDayIncrement(block.start_day_offset) || !isHalfDayIncrement(block.duration_days)) {
+      throw new Error('Duração e início dos blocos devem usar incrementos de 0,5 diária.');
+    }
+    if (Math.abs(block.start_day_offset - expectedStart) > 0.0001) {
       throw new Error('Blocos devem ser sequenciais sem gaps. Ajuste os dias de inicio.');
     }
     expectedStart += block.duration_days;
@@ -1976,6 +1988,32 @@ function assertNoActivityTechnicianConflicts(args: {
   `;
   const queryWithExclude = db.prepare(`${baseSql} and ca.id <> ?`);
   const queryWithoutExclude = db.prepare(baseSql);
+  const cohortCandidatesByTechnician = db.prepare(`
+    select distinct c.id, c.code, c.name, c.start_date, c.technician_id, c.period, c.start_time, c.end_time
+    from cohort c
+    where c.status <> 'Cancelada'
+      and (
+        c.technician_id = ?
+        or exists (
+          select 1
+          from cohort_schedule_day csd
+          where csd.cohort_id = c.id
+            and csd.technician_id = ?
+        )
+      )
+  `);
+  const cohortBlocksById = db.prepare(`
+    select start_day_offset, duration_days
+    from cohort_module_block
+    where cohort_id = ?
+    order by order_in_cohort asc
+  `);
+  const cohortScheduleDaysById = db.prepare(`
+    select day_index, day_date, start_time, end_time, technician_id
+    from cohort_schedule_day
+    where cohort_id = ?
+    order by day_index asc
+  `);
 
   for (const technicianId of args.technicianIds) {
     for (const schedule of args.schedules) {
@@ -2009,6 +2047,58 @@ function assertNoActivityTechnicianConflicts(args: {
           end_time: conflict.end_time
         });
         return `Conflito de agenda do técnico em ${dateLabel}: novo horário ${requestedLabel} conflita com "${conflict.title}" (${existingLabel}).`;
+      }
+
+      const cohortRows = cohortCandidatesByTechnician.all(technicianId, technicianId) as Array<{
+        id: string;
+        code: string;
+        name: string;
+        start_date: string;
+        technician_id: string | null;
+        period: (typeof COHORT_PERIOD_VALUES)[number] | null;
+        start_time: string | null;
+        end_time: string | null;
+      }>;
+      for (const cohort of cohortRows) {
+        const period = cohort.period ?? 'Integral';
+        const blocks = cohortBlocksById.all(cohort.id) as Array<{ start_day_offset: number; duration_days: number }>;
+        const scheduleDays = cohortScheduleDaysById.all(cohort.id) as Array<{
+          day_index: number;
+          day_date: string;
+          start_time: string | null;
+          end_time: string | null;
+          technician_id: string | null;
+        }>;
+        const cohortSlots = resolveCohortDateSlots({
+          startDate: cohort.start_date,
+          blocks,
+          period,
+          startTime: cohort.start_time ?? null,
+          endTime: cohort.end_time ?? null,
+          scheduleDays
+        });
+        const conflictingSlot = cohortSlots.find((slot) => {
+          const effectiveTechnicianId = slot.technician_id ?? cohort.technician_id;
+          if (effectiveTechnicianId !== technicianId) return false;
+          if (slot.day_date !== schedule.day_date) return false;
+          return activitySlotsOverlap(schedule, {
+            day_date: slot.day_date,
+            all_day: period !== 'Meio_periodo',
+            start_time: slot.start_time,
+            end_time: slot.end_time
+          });
+        });
+        if (conflictingSlot) {
+          const dateLabel = parseIsoDate(schedule.day_date).toLocaleDateString('pt-BR');
+          const requestedLabel = activitySlotLabel(schedule);
+          const cohortLabel = activitySlotLabel({
+            day_date: conflictingSlot.day_date,
+            all_day: period !== 'Meio_periodo',
+            start_time: conflictingSlot.start_time,
+            end_time: conflictingSlot.end_time
+          });
+          return `Conflito de agenda do técnico em ${dateLabel}: novo horário ${requestedLabel} conflita com a turma ${cohort.code} - ${cohort.name} (${cohortLabel}).`;
+        }
       }
     }
   }
@@ -2057,7 +2147,7 @@ function totalCohortDays(blocks: Array<{ start_day_offset: number; duration_days
   return blocks.length === 0
     ? 1
     : Math.max(
-      1,
+      0.5,
       ...blocks.map((block) => block.start_day_offset + block.duration_days - 1)
     );
 }
@@ -2066,14 +2156,23 @@ function totalScheduleSlots(
   period: (typeof COHORT_PERIOD_VALUES)[number],
   blocks: Array<{ start_day_offset: number; duration_days: number }>
 ): number {
+  if (period === 'Meio_periodo') {
+    if (blocks.length === 0) return 1;
+    return Math.max(
+      1,
+      ...blocks.map((block) => (
+        Math.round((block.start_day_offset - 1) * 2) + Math.round(block.duration_days * 2)
+      ))
+    );
+  }
   const totalDays = totalCohortDays(blocks);
-  return period === 'Meio_periodo' ? totalDays * 2 : totalDays;
+  return Math.ceil(totalDays);
 }
 
 function normalizeScheduleDays(
-  scheduleDays: Array<{ day_index: number; day_date: string; start_time?: string | null; end_time?: string | null }> | undefined,
+  scheduleDays: Array<{ day_index: number; day_date: string; start_time?: string | null; end_time?: string | null; technician_id?: string | null }> | undefined,
   totalDays: number
-): Array<{ day_index: number; day_date: string; start_time: string | null; end_time: string | null }> | null {
+): Array<{ day_index: number; day_date: string; start_time: string | null; end_time: string | null; technician_id: string | null }> | null {
   if (!scheduleDays || scheduleDays.length === 0) return null;
   if (scheduleDays.length !== totalDays) return null;
 
@@ -2083,7 +2182,8 @@ function normalizeScheduleDays(
       day_index: Number(item.day_index),
       day_date: item.day_date,
       start_time: item.start_time ?? null,
-      end_time: item.end_time ?? null
+      end_time: item.end_time ?? null,
+      technician_id: item.technician_id ?? null
     }))
     .sort((a, b) => a.day_index - b.day_index);
 
@@ -2100,8 +2200,11 @@ function normalizeScheduleDays(
 function validateScheduleDays(
   period: (typeof COHORT_PERIOD_VALUES)[number],
   blocks: Array<{ start_day_offset: number; duration_days: number }>,
-  scheduleDays: Array<{ day_index: number; day_date: string; start_time?: string | null; end_time?: string | null }> | undefined
+  scheduleDays: Array<{ day_index: number; day_date: string; start_time?: string | null; end_time?: string | null; technician_id?: string | null }> | undefined
 ): string | null {
+  if (period !== 'Meio_periodo' && blocks.some((block) => !Number.isInteger(block.duration_days) || !Number.isInteger(block.start_day_offset))) {
+    return 'Duração fracionada exige turma de meio período.';
+  }
   if (!scheduleDays || scheduleDays.length === 0) return null;
   const totalDays = totalScheduleSlots(period, blocks);
   const normalized = normalizeScheduleDays(scheduleDays, totalDays);
@@ -2130,7 +2233,7 @@ function resolveCohortDateSlots(params: {
   period: (typeof COHORT_PERIOD_VALUES)[number];
   startTime: string | null;
   endTime: string | null;
-  scheduleDays?: Array<{ day_index: number; day_date: string; start_time?: string | null; end_time?: string | null }>;
+  scheduleDays?: Array<{ day_index: number; day_date: string; start_time?: string | null; end_time?: string | null; technician_id?: string | null }>;
 }) {
   const totalDays = totalScheduleSlots(params.period, params.blocks);
   const normalized = normalizeScheduleDays(params.scheduleDays, totalDays);
@@ -2139,7 +2242,8 @@ function resolveCohortDateSlots(params: {
       day_index: row.day_index,
       day_date: row.day_date,
       start_time: row.start_time ?? params.startTime ?? null,
-      end_time: row.end_time ?? params.endTime ?? null
+      end_time: row.end_time ?? params.endTime ?? null,
+      technician_id: row.technician_id ?? null
     }));
   }
 
@@ -2147,7 +2251,8 @@ function resolveCohortDateSlots(params: {
     day_index: index + 1,
     day_date: addBusinessDays(params.startDate, index),
     start_time: params.period === 'Meio_periodo' ? params.startTime : null,
-    end_time: params.period === 'Meio_periodo' ? params.endTime : null
+    end_time: params.period === 'Meio_periodo' ? params.endTime : null,
+    technician_id: null
   }));
 }
 
@@ -2251,7 +2356,7 @@ function syncCohortLifecycleStatuses() {
     duration_days: number;
   }>;
   const scheduleRows = db.prepare(`
-    select cohort_id, day_index, day_date, start_time, end_time
+    select cohort_id, day_index, day_date, start_time, end_time, technician_id
     from cohort_schedule_day
     where cohort_id in (${placeholders})
     order by cohort_id asc, day_index asc
@@ -2261,6 +2366,7 @@ function syncCohortLifecycleStatuses() {
     day_date: string;
     start_time: string | null;
     end_time: string | null;
+    technician_id: string | null;
   }>;
 
   const blocksByCohort = new Map<string, Array<{ start_day_offset: number; duration_days: number }>>();
@@ -2273,14 +2379,15 @@ function syncCohortLifecycleStatuses() {
     blocksByCohort.set(row.cohort_id, list);
   });
 
-  const scheduleByCohort = new Map<string, Array<{ day_index: number; day_date: string; start_time?: string | null; end_time?: string | null }>>();
+  const scheduleByCohort = new Map<string, Array<{ day_index: number; day_date: string; start_time?: string | null; end_time?: string | null; technician_id?: string | null }>>();
   scheduleRows.forEach((row) => {
     const list = scheduleByCohort.get(row.cohort_id) ?? [];
     list.push({
       day_index: Number(row.day_index) || 1,
       day_date: row.day_date,
       start_time: row.start_time,
-      end_time: row.end_time
+      end_time: row.end_time,
+      technician_id: row.technician_id
     });
     scheduleByCohort.set(row.cohort_id, list);
   });
@@ -2370,7 +2477,7 @@ function syncConfirmedCohortExecutions() {
   if (cohortIds.length > 0) {
     const placeholders = cohortIds.map(() => '?').join(',');
     const scheduleRows = db.prepare(`
-      select cohort_id, day_index, day_date, start_time, end_time
+      select cohort_id, day_index, day_date, start_time, end_time, technician_id
       from cohort_schedule_day
       where cohort_id in (${placeholders})
     `).all(...cohortIds) as Array<{
@@ -2379,6 +2486,7 @@ function syncConfirmedCohortExecutions() {
       day_date: string;
       start_time: string | null;
       end_time: string | null;
+      technician_id: string | null;
     }>;
     scheduleRows.forEach((row) => {
       scheduleByCohortAndIndex.set(`${row.cohort_id}:${row.day_index}`, {
@@ -2470,7 +2578,10 @@ function syncConfirmedCohortExecutions() {
       const startSlot = normalizedPeriod === 'Meio_periodo'
         ? (entryDay * 2) - 1
         : entryDay;
-      const totalSlots = Math.max(1, Number(candidate.duration_days || 1)) * (normalizedPeriod === 'Meio_periodo' ? 2 : 1);
+      const durationDays = Math.max(0.5, Number(candidate.duration_days || 1));
+      const totalSlots = normalizedPeriod === 'Meio_periodo'
+        ? Math.max(1, Math.round(durationDays * 2))
+        : Math.max(1, Math.ceil(durationDays));
       const endSlot = startSlot + totalSlots - 1;
 
       const slotStart = resolveSlotMeta({
@@ -2606,15 +2717,17 @@ function refreshCompanyModuleProgressFromAllocations(companyId: string, moduleId
 
   rows.forEach((row) => {
     const period = row.period ?? 'Integral';
-    const durationDays = Math.max(1, Number(row.duration_days || 1));
-    const totalSlots = durationDays * (period === 'Meio_periodo' ? 2 : 1);
+    const durationDays = Math.max(0.5, Number(row.duration_days || 1));
+    const totalSlots = period === 'Meio_periodo'
+      ? Math.max(1, Math.round(durationDays * 2))
+      : Math.max(1, Math.ceil(durationDays));
     const startSlot = period === 'Meio_periodo'
       ? (Math.max(1, Number(row.entry_day || 1)) * 2) - 1
       : Math.max(1, Number(row.entry_day || 1));
     const endSlot = startSlot + totalSlots - 1;
 
     const scheduleRows = db.prepare(`
-      select day_index, day_date, start_time, end_time
+      select day_index, day_date, start_time, end_time, technician_id
       from cohort_schedule_day
       where cohort_id = ?
         and day_index in (?, ?)
@@ -2623,6 +2736,7 @@ function refreshCompanyModuleProgressFromAllocations(companyId: string, moduleId
       day_date: string;
       start_time: string | null;
       end_time: string | null;
+      technician_id: string | null;
     }>;
     const scheduleByIndex = new Map(scheduleRows.map((schedule) => [Number(schedule.day_index), schedule]));
     const startSchedule = scheduleByIndex.get(startSlot);
@@ -2722,9 +2836,42 @@ function hasTechnicianPeriodConflict(
 }
 
 type LicenseRenewalCycle = 'Mensal' | 'Bimestral' | 'Trimestral' | 'Semestral' | 'Anual';
+type LicenseAlertLevel = 'Ok' | 'Atenção' | 'Expirada';
 
-function renewalAlertWindowDays(renewalCycle: LicenseRenewalCycle): number {
-  return renewalCycle === 'Anual' ? 30 : 7;
+const LICENSE_ALERT_WINDOW_DAYS = 15;
+
+type LicenseRow = {
+  id: string;
+  company_id: string;
+  company_name: string;
+  program_id: string | null;
+  program_name: string;
+  user_name: string | null;
+  module_list: string | null;
+  license_identifier: string | null;
+  module_ids_raw: string | null;
+  module_list_from_modules: string | null;
+  renewal_cycle: LicenseRenewalCycle;
+  expires_at: string;
+  notes: string | null;
+  last_renewed_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type NormalizedLicenseRow = Omit<LicenseRow, 'user_name' | 'module_list' | 'license_identifier' | 'module_ids_raw' | 'module_list_from_modules'> & {
+  user_name: string;
+  module_ids: string[];
+  module_list: string;
+  license_identifier: string;
+  alert_window_days: number;
+  days_until_expiration: number;
+  alert_level: LicenseAlertLevel;
+  warning_message: string | null;
+};
+
+function renewalAlertWindowDays(_renewalCycle: LicenseRenewalCycle): number {
+  return LICENSE_ALERT_WINDOW_DAYS;
 }
 
 function renewalCycleLabelLower(renewalCycle: LicenseRenewalCycle): string {
@@ -2755,38 +2902,146 @@ function nextRenewalDate(currentExpiresAt: string, renewalCycle: LicenseRenewalC
   return isoDate(next);
 }
 
+function selectLicenseRows(): LicenseRow[] {
+  return db.prepare(`
+    select l.id, l.company_id, c.name as company_name,
+      l.program_id, coalesce(lp.name, l.name) as program_name,
+      l.user_name, l.module_list, l.license_identifier,
+      (
+        select group_concat(clm.module_id, '|')
+        from company_license_module clm
+        where clm.license_id = l.id
+      ) as module_ids_raw,
+      (
+        select group_concat(mt.name, ' | ')
+        from company_license_module clm2
+        join module_template mt on mt.id = clm2.module_id
+        where clm2.license_id = l.id
+        order by mt.code asc
+      ) as module_list_from_modules,
+      l.renewal_cycle, l.expires_at, l.notes, l.last_renewed_at, l.created_at, l.updated_at
+    from company_license l
+    join company c on c.id = l.company_id
+    left join license_program lp on lp.id = l.program_id
+    order by date(l.expires_at) asc, c.name asc, coalesce(lp.name, l.name) asc
+  `).all() as LicenseRow[];
+}
+
+function normalizeLicenseRows(rows: LicenseRow[], today = nowDateIso()): NormalizedLicenseRow[] {
+  return rows.map((row) => {
+    const alertWindowDays = renewalAlertWindowDays(row.renewal_cycle);
+    const daysUntilExpiration = dayDiff(today, row.expires_at);
+    const alertLevel: LicenseAlertLevel = daysUntilExpiration < 0
+      ? 'Expirada'
+      : daysUntilExpiration <= alertWindowDays
+        ? 'Atenção'
+        : 'Ok';
+    const warningMessage = alertLevel === 'Expirada'
+      ? `Licença expirada há ${Math.abs(daysUntilExpiration)} dia(s).`
+      : alertLevel === 'Atenção'
+        ? `Renovação ${renewalCycleLabelLower(row.renewal_cycle)} em ${daysUntilExpiration} dia(s).`
+        : null;
+    const { module_ids_raw, module_list_from_modules, ...rest } = row;
+
+    return {
+      ...rest,
+      user_name: row.user_name ?? '',
+      module_ids: module_ids_raw
+        ? module_ids_raw.split('|').map((item) => item.trim()).filter(Boolean)
+        : [],
+      module_list: module_list_from_modules ?? row.module_list ?? '',
+      license_identifier: row.license_identifier ?? '',
+      alert_window_days: alertWindowDays,
+      days_until_expiration: daysUntilExpiration,
+      alert_level: alertLevel,
+      warning_message: warningMessage
+    };
+  });
+}
+
+function buildLicenseAlertPayload(normalized: NormalizedLicenseRow[]) {
+  const expired = normalized.filter((row) => row.alert_level === 'Expirada');
+  const dueSoon = normalized.filter((row) => row.alert_level === 'Atenção');
+  const monthlyDueSoon = dueSoon.filter((row) => row.renewal_cycle === 'Mensal');
+  const annualDueSoon = dueSoon.filter((row) => row.renewal_cycle === 'Anual');
+  const urgentItems = [...expired, ...dueSoon]
+    .sort((left, right) => {
+      if (left.alert_level !== right.alert_level) {
+        return left.alert_level === 'Expirada' ? -1 : 1;
+      }
+      return left.expires_at.localeCompare(right.expires_at);
+    })
+    .slice(0, 5);
+  const nextExpirationAt = dueSoon.length > 0
+    ? [...dueSoon].sort((left, right) => left.expires_at.localeCompare(right.expires_at))[0]?.expires_at ?? null
+    : [...expired].sort((left, right) => right.expires_at.localeCompare(left.expires_at))[0]?.expires_at ?? null;
+
+  return {
+    alerts: {
+      expired,
+      due_soon: dueSoon,
+      monthly_due_soon: monthlyDueSoon,
+      annual_due_soon: annualDueSoon,
+      total_attention: expired.length + dueSoon.length
+    },
+    summary: {
+      expired_count: expired.length,
+      due_soon_count: dueSoon.length,
+      total_attention: expired.length + dueSoon.length,
+      next_expiration_at: nextExpirationAt,
+      urgent_items: urgentItems
+    }
+  };
+}
+
 function findTechnicianConflict(params: {
   technicianId: string;
+  defaultTechnicianId: string | null;
   startDate: string;
   period: (typeof COHORT_PERIOD_VALUES)[number];
   startTime: string | null;
   endTime: string | null;
-  scheduleDays?: Array<{ day_index: number; day_date: string; start_time?: string | null; end_time?: string | null }>;
+  scheduleDays?: Array<{ day_index: number; day_date: string; start_time?: string | null; end_time?: string | null; technician_id?: string | null }>;
   blocks: Array<{ start_day_offset: number; duration_days: number }>;
   excludeCohortId?: string;
 }): { id: string; code: string; name: string; conflictDate: string } | null {
   const rows = params.excludeCohortId
     ? db.prepare(`
-      select id, code, name, start_date, period, start_time, end_time
-      from cohort
-      where technician_id = ?
+      select id, code, name, start_date, technician_id, period, start_time, end_time
+      from cohort c
+      where (
+          c.technician_id = ?
+          or exists (
+            select 1
+            from cohort_schedule_day csd
+            where csd.cohort_id = c.id and csd.technician_id = ?
+          )
+        )
         and status <> 'Cancelada'
-        and id <> ?
+        and c.id <> ?
       order by date(start_date) asc
-    `).all(params.technicianId, params.excludeCohortId)
+    `).all(params.technicianId, params.technicianId, params.excludeCohortId)
     : db.prepare(`
-      select id, code, name, start_date, period, start_time, end_time
-      from cohort
-      where technician_id = ?
+      select id, code, name, start_date, technician_id, period, start_time, end_time
+      from cohort c
+      where (
+          c.technician_id = ?
+          or exists (
+            select 1
+            from cohort_schedule_day csd
+            where csd.cohort_id = c.id and csd.technician_id = ?
+          )
+        )
         and status <> 'Cancelada'
       order by date(start_date) asc
-    `).all(params.technicianId);
+    `).all(params.technicianId, params.technicianId);
 
   const candidateCohorts = rows as Array<{
     id: string;
     code: string;
     name: string;
     start_date: string;
+    technician_id: string | null;
     period: (typeof COHORT_PERIOD_VALUES)[number] | null;
     start_time: string | null;
     end_time: string | null;
@@ -2798,8 +3053,7 @@ function findTechnicianConflict(params: {
     startTime: params.startTime,
     endTime: params.endTime,
     scheduleDays: params.scheduleDays
-  });
-  const newSlotByDate = new Map(newSlots.map((slot) => [slot.day_date, slot]));
+  }).filter((slot) => (slot.technician_id ?? params.defaultTechnicianId) === params.technicianId);
   const selectBlocks = db.prepare(`
     select start_day_offset, duration_days
     from cohort_module_block
@@ -2807,7 +3061,7 @@ function findTechnicianConflict(params: {
     order by order_in_cohort asc
   `);
   const selectScheduleDays = db.prepare(`
-    select day_index, day_date, start_time, end_time
+    select day_index, day_date, start_time, end_time, technician_id
     from cohort_schedule_day
     where cohort_id = ?
     order by day_index asc
@@ -2820,6 +3074,7 @@ function findTechnicianConflict(params: {
       day_date: string;
       start_time: string | null;
       end_time: string | null;
+      technician_id: string | null;
     }>;
     const existingSlots = resolveCohortDateSlots({
       startDate: cohort.start_date,
@@ -2828,39 +3083,83 @@ function findTechnicianConflict(params: {
       startTime: cohort.start_time ?? null,
       endTime: cohort.end_time ?? null,
       scheduleDays: existingScheduleDays
-    });
-    const overlapDates = existingSlots
-      .map((slot) => slot.day_date)
-      .filter((dateIso) => newSlotByDate.has(dateIso));
-    if (overlapDates.length === 0) {
-      continue;
-    }
+    }).filter((slot) => (slot.technician_id ?? cohort.technician_id) === params.technicianId);
 
-    for (const overlapDate of overlapDates) {
-      const newSlot = newSlotByDate.get(overlapDate);
-      const existingSlot = existingSlots.find((slot) => slot.day_date === overlapDate);
-      if (!newSlot || !existingSlot) continue;
+    for (const newSlot of newSlots) {
+      for (const existingSlot of existingSlots) {
+        if (newSlot.day_date !== existingSlot.day_date) continue;
 
-      const hasPeriodConflict = hasTechnicianPeriodConflict(
-        params.period,
-        newSlot.start_time,
-        newSlot.end_time,
-        cohort.period ?? 'Integral',
-        existingSlot.start_time,
-        existingSlot.end_time
-      );
+        const hasPeriodConflict = hasTechnicianPeriodConflict(
+          params.period,
+          newSlot.start_time,
+          newSlot.end_time,
+          cohort.period ?? 'Integral',
+          existingSlot.start_time,
+          existingSlot.end_time
+        );
 
-      if (hasPeriodConflict) {
-        return {
-          id: cohort.id,
-          code: cohort.code,
-          name: cohort.name,
-          conflictDate: overlapDate
-        };
+        if (hasPeriodConflict) {
+          return {
+            id: cohort.id,
+            code: cohort.code,
+            name: cohort.name,
+            conflictDate: newSlot.day_date
+          };
+        }
       }
     }
   }
 
+  return null;
+}
+
+function technicianIdsForCohortSchedule(
+  defaultTechnicianId: string | null | undefined,
+  scheduleDays: Array<{ technician_id?: string | null }> | undefined
+): string[] {
+  const ids = new Set<string>();
+  if (defaultTechnicianId) ids.add(defaultTechnicianId);
+  scheduleDays?.forEach((day) => {
+    if (day.technician_id) ids.add(day.technician_id);
+  });
+  return Array.from(ids);
+}
+
+function unknownTechnicianId(technicianIds: string[]): string | null {
+  if (technicianIds.length === 0) return null;
+  const selectTechnician = db.prepare('select id from technician where id = ?');
+  for (const technicianId of technicianIds) {
+    const technician = selectTechnician.get(technicianId) as { id: string } | undefined;
+    if (!technician) return technicianId;
+  }
+  return null;
+}
+
+function findCohortScheduleConflict(params: {
+  defaultTechnicianId: string | null;
+  scheduleDays?: Array<{ technician_id?: string | null; day_index: number; day_date: string; start_time?: string | null; end_time?: string | null }>;
+  startDate: string;
+  period: (typeof COHORT_PERIOD_VALUES)[number];
+  startTime: string | null;
+  endTime: string | null;
+  blocks: Array<{ start_day_offset: number; duration_days: number }>;
+  excludeCohortId?: string;
+}) {
+  const technicianIds = technicianIdsForCohortSchedule(params.defaultTechnicianId, params.scheduleDays);
+  for (const technicianId of technicianIds) {
+    const conflict = findTechnicianConflict({
+      technicianId,
+      defaultTechnicianId: params.defaultTechnicianId,
+      startDate: params.startDate,
+      period: params.period,
+      startTime: params.startTime,
+      endTime: params.endTime,
+      scheduleDays: params.scheduleDays,
+      blocks: params.blocks,
+      excludeCohortId: params.excludeCohortId
+    });
+    if (conflict) return conflict;
+  }
   return null;
 }
 
@@ -3075,6 +3374,7 @@ function isPublicOrPortalPath(pathname: string): boolean {
   if (pathname.startsWith('/auth/')) return true;
   if (pathname === '/portal/api' || pathname.startsWith('/portal/api/')) return true;
   if (pathname.startsWith('/followup-evaluations/')) return true;
+  if (pathname.startsWith('/p/')) return true; // links públicos de documentos/páginas
   return false;
 }
 
@@ -3457,11 +3757,12 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
         coalesce((
           select group_concat(sd_entry, ' || ')
           from (
-            select printf('%d::%s::%s::%s',
+            select printf('%d::%s::%s::%s::%s',
               csd.day_index,
               csd.day_date,
               coalesce(csd.start_time, ''),
-              coalesce(csd.end_time, '')
+              coalesce(csd.end_time, ''),
+              coalesce(csd.technician_id, '')
             ) as sd_entry
             from cohort_schedule_day csd
             where csd.cohort_id = c.id
@@ -4079,15 +4380,21 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       order by a.entry_day asc, c.name asc
     `).all(req.params.id);
     const schedule_days_raw = db.prepare(`
-      select day_index, day_date, start_time, end_time
-      from cohort_schedule_day
-      where cohort_id = ?
-      order by day_index asc
+      select csd.day_index, csd.day_date, csd.start_time, csd.end_time, csd.technician_id,
+        st.name as technician_name,
+        st.calendar_color as technician_calendar_color
+      from cohort_schedule_day csd
+      left join technician st on st.id = csd.technician_id
+      where csd.cohort_id = ?
+      order by csd.day_index asc
     `).all(req.params.id) as Array<{
       day_index: number;
       day_date: string;
       start_time: string | null;
       end_time: string | null;
+      technician_id: string | null;
+      technician_name: string | null;
+      technician_calendar_color: string | null;
     }>;
     const schedule_days = normalizeScheduleDaysChronologically(schedule_days_raw);
     const firstScheduleDate = (schedule_days as Array<{ day_date: string }>)[0]?.day_date ?? null;
@@ -4384,16 +4691,13 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       return res.json({ has_conflict: false });
     }
   
-    const technician = db.prepare('select id, name from technician where id = ?').get(payload.technician_id) as {
-      id: string;
-      name: string;
-    } | undefined;
-    if (!technician) {
+    const technicianIds = technicianIdsForCohortSchedule(payload.technician_id ?? null, payload.schedule_days);
+    if (unknownTechnicianId(technicianIds)) {
       return res.status(404).json({ message: 'Técnico não encontrado' });
     }
   
-    const conflict = findTechnicianConflict({
-      technicianId: payload.technician_id,
+    const conflict = findCohortScheduleConflict({
+      defaultTechnicianId: payload.technician_id ?? null,
       startDate: payload.start_date,
       period: payload.period,
       startTime: payload.start_time ?? null,
@@ -4441,9 +4745,14 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       return res.status(400).json({ message: scheduleDaysError });
     }
   
-    if (payload.technician_id && payload.status !== 'Cancelada') {
-      const conflict = findTechnicianConflict({
-        technicianId: payload.technician_id,
+    const technicianIds = technicianIdsForCohortSchedule(payload.technician_id ?? null, payload.schedule_days);
+    if (unknownTechnicianId(technicianIds)) {
+      return res.status(404).json({ message: 'Técnico não encontrado' });
+    }
+  
+    if (payload.status !== 'Cancelada') {
+      const conflict = findCohortScheduleConflict({
+        defaultTechnicianId: payload.technician_id ?? null,
         startDate: payload.start_date,
         period: payload.period,
         startTime: payload.period === 'Meio_periodo' ? (payload.start_time ?? null) : null,
@@ -4501,8 +4810,8 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
   
       if (payload.schedule_days && payload.schedule_days.length > 0) {
         const insertSchedule = db.prepare(`
-          insert into cohort_schedule_day (id, cohort_id, day_index, day_date, start_time, end_time)
-          values (?, ?, ?, ?, ?, ?)
+          insert into cohort_schedule_day (id, cohort_id, day_index, day_date, start_time, end_time, technician_id)
+          values (?, ?, ?, ?, ?, ?, ?)
         `);
         payload.schedule_days.forEach((day) => {
           insertSchedule.run(
@@ -4511,7 +4820,8 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
             day.day_index,
             day.day_date,
             day.start_time ?? null,
-            day.end_time ?? null
+            day.end_time ?? null,
+            day.technician_id ?? null
           );
         });
       }
@@ -4550,7 +4860,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
   
     const payload = parsed.data;
     const existingScheduleDays = db.prepare(`
-      select day_index, day_date, start_time, end_time
+      select day_index, day_date, start_time, end_time, technician_id
       from cohort_schedule_day
       where cohort_id = ?
       order by day_index asc
@@ -4559,6 +4869,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       day_date: string;
       start_time: string | null;
       end_time: string | null;
+      technician_id: string | null;
     }>;
     if (payload.blocks) {
       try {
@@ -4624,9 +4935,14 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
       return res.status(400).json({ message: scheduleDaysError });
     }
   
-    if (nextTechnicianId && nextStatus !== 'Cancelada') {
-      const conflict = findTechnicianConflict({
-        technicianId: nextTechnicianId,
+    const technicianIds = technicianIdsForCohortSchedule(nextTechnicianId ?? null, nextScheduleDays);
+    if (unknownTechnicianId(technicianIds)) {
+      return res.status(404).json({ message: 'Técnico não encontrado' });
+    }
+  
+    if (nextStatus !== 'Cancelada') {
+      const conflict = findCohortScheduleConflict({
+        defaultTechnicianId: nextTechnicianId ?? null,
         startDate: nextStartDate,
         period: nextPeriod,
         startTime: nextPeriod === 'Meio_periodo' ? nextStartTime : null,
@@ -4707,8 +5023,8 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
         db.prepare('delete from cohort_schedule_day where cohort_id = ?').run(req.params.id);
         if (payload.schedule_days.length > 0) {
           const insertSchedule = db.prepare(`
-            insert into cohort_schedule_day (id, cohort_id, day_index, day_date, start_time, end_time)
-            values (?, ?, ?, ?, ?, ?)
+            insert into cohort_schedule_day (id, cohort_id, day_index, day_date, start_time, end_time, technician_id)
+            values (?, ?, ?, ?, ?, ?, ?)
           `);
           payload.schedule_days.forEach((day) => {
             insertSchedule.run(
@@ -4717,7 +5033,8 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
               day.day_index,
               day.day_date,
               day.start_time ?? null,
-              day.end_time ?? null
+              day.end_time ?? null,
+              day.technician_id ?? null
             );
           });
         }
@@ -7145,91 +7462,20 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
   });
   
   app.get('/licenses', (_req, res) => {
-    const rows = db.prepare(`
-      select l.id, l.company_id, c.name as company_name,
-        l.program_id, coalesce(lp.name, l.name) as program_name,
-        l.user_name, l.module_list, l.license_identifier,
-        (
-          select group_concat(clm.module_id, '|')
-          from company_license_module clm
-          where clm.license_id = l.id
-        ) as module_ids_raw,
-        (
-          select group_concat(mt.name, ' | ')
-          from company_license_module clm2
-          join module_template mt on mt.id = clm2.module_id
-          where clm2.license_id = l.id
-          order by mt.code asc
-        ) as module_list_from_modules,
-        l.renewal_cycle, l.expires_at, l.notes, l.last_renewed_at, l.created_at, l.updated_at
-      from company_license l
-      join company c on c.id = l.company_id
-      left join license_program lp on lp.id = l.program_id
-      order by date(l.expires_at) asc, c.name asc, coalesce(lp.name, l.name) asc
-    `).all() as Array<{
-      id: string;
-      company_id: string;
-      company_name: string;
-      program_id: string | null;
-      program_name: string;
-      user_name: string | null;
-      module_list: string | null;
-      license_identifier: string | null;
-      module_ids_raw: string | null;
-      module_list_from_modules: string | null;
-      renewal_cycle: LicenseRenewalCycle;
-      expires_at: string;
-      notes: string | null;
-      last_renewed_at: string | null;
-      created_at: string;
-      updated_at: string;
-    }>;
-  
-    const today = nowDateIso();
-    const normalized = rows.map((row) => {
-      const alertWindowDays = renewalAlertWindowDays(row.renewal_cycle);
-      const daysUntilExpiration = dayDiff(today, row.expires_at);
-      const alertLevel = daysUntilExpiration < 0
-        ? 'Expirada'
-        : daysUntilExpiration <= alertWindowDays
-          ? 'Atenção'
-          : 'Ok';
-      const warningMessage = alertLevel === 'Expirada'
-        ? `Licença expirada há ${Math.abs(daysUntilExpiration)} dia(s).`
-        : alertLevel === 'Atenção'
-          ? `Renovação ${renewalCycleLabelLower(row.renewal_cycle)} em ${daysUntilExpiration} dia(s).`
-          : null;
-  
-      return {
-        ...row,
-        user_name: row.user_name ?? '',
-        module_ids: row.module_ids_raw
-          ? row.module_ids_raw.split('|').map((item) => item.trim()).filter(Boolean)
-          : [],
-        module_list: row.module_list_from_modules ?? row.module_list ?? '',
-        license_identifier: row.license_identifier ?? '',
-        alert_window_days: alertWindowDays,
-        days_until_expiration: daysUntilExpiration,
-        alert_level: alertLevel,
-        warning_message: warningMessage
-      };
-    });
-  
-    const expired = normalized.filter((row) => row.alert_level === 'Expirada');
-    const dueSoon = normalized.filter((row) => row.alert_level === 'Atenção');
-    const monthlyDueSoon = normalized.filter((row) => row.alert_level === 'Atenção' && row.renewal_cycle === 'Mensal');
-    const annualDueSoon = normalized.filter((row) => row.alert_level === 'Atenção' && row.renewal_cycle === 'Anual');
+    const rows = normalizeLicenseRows(selectLicenseRows());
+    const { alerts, summary } = buildLicenseAlertPayload(rows);
   
     return res.json({
-      rows: normalized,
-      alerts: {
-        expired,
-        due_soon: dueSoon,
-        monthly_due_soon: monthlyDueSoon,
-        annual_due_soon: annualDueSoon,
-        total_attention: expired.length + dueSoon.length
-      }
+      rows,
+      alerts,
+      summary
     });
+  });
+
+  app.get('/licenses/alerts-summary', (_req, res) => {
+    const rows = normalizeLicenseRows(selectLicenseRows());
+    const { summary } = buildLicenseAlertPayload(rows);
+    return res.json(summary);
   });
 
   app.post('/licenses/import-preview', (req, res) => {
@@ -9704,5 +9950,265 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
     } catch (error) {
       return res.status(500).json({ message: 'Falha ao importar planilha', detail: errorMessage(error) });
     }
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // Doc Pages — páginas wiki internas
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // Garante que as tabelas existem (executa apenas uma vez por boot)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS doc_pages (
+      id          TEXT PRIMARY KEY,
+      folder_path TEXT NOT NULL,
+      title       TEXT NOT NULL,
+      content     TEXT NOT NULL DEFAULT '',
+      tags        TEXT NOT NULL DEFAULT '[]',
+      is_draft    INTEGER NOT NULL DEFAULT 1,
+      created_by  TEXT,
+      created_at  TEXT NOT NULL,
+      updated_at  TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS doc_share_links (
+      id              TEXT PRIMARY KEY,
+      resource_type   TEXT NOT NULL,
+      resource_id     TEXT NOT NULL,
+      token           TEXT NOT NULL UNIQUE,
+      allow_download  INTEGER NOT NULL DEFAULT 1,
+      expires_at      TEXT,
+      created_by      TEXT,
+      created_at      TEXT NOT NULL
+    );
+  `);
+
+  // ── Helpers de serialização ──────────────────────────────────────────────
+
+  type DocPageRow = {
+    id: string;
+    folder_path: string;
+    title: string;
+    content: string;
+    tags: string;
+    is_draft: number;
+    created_by: string | null;
+    created_at: string;
+    updated_at: string;
+  };
+
+  function serializePage(row: DocPageRow) {
+    return {
+      ...row,
+      tags: (() => { try { return JSON.parse(row.tags) as string[]; } catch { return []; } })(),
+      is_draft: row.is_draft === 1
+    };
+  }
+
+  type DocShareLinkRow = {
+    id: string;
+    resource_type: string;
+    resource_id: string;
+    token: string;
+    allow_download: number;
+    expires_at: string | null;
+    created_by: string | null;
+    created_at: string;
+  };
+
+  function serializeShareLink(row: DocShareLinkRow) {
+    return { ...row, allow_download: row.allow_download === 1 };
+  }
+
+  // ── GET /api/internal/doc-pages ──────────────────────────────────────────
+  app.get('/api/internal/doc-pages', (_req, res) => {
+    const rows = db.prepare(`
+      SELECT id, folder_path, title, content, tags, is_draft, created_by, created_at, updated_at
+      FROM doc_pages
+      ORDER BY updated_at DESC
+    `).all() as DocPageRow[];
+    return res.json(rows.map(serializePage));
+  });
+
+  // ── POST /api/internal/doc-pages ─────────────────────────────────────────
+  const docPageCreateSchema = z.object({
+    folder_path: z.string().min(1),
+    title: z.string().min(1).max(400),
+    content: z.string().default(''),
+    tags: z.array(z.string()).default([]),
+    is_draft: z.boolean().default(true)
+  });
+
+  app.post('/api/internal/doc-pages', (req, res) => {
+    const parsed = docPageCreateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+
+    const { folder_path, title, content, tags, is_draft } = parsed.data;
+    const id = uuid('page');
+    const now = nowDateIso();
+    const createdBy = (req as Request & { internalUser?: { username: string } }).internalUser?.username ?? null;
+
+    db.prepare(`
+      INSERT INTO doc_pages (id, folder_path, title, content, tags, is_draft, created_by, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, folder_path, title, content, JSON.stringify(tags), is_draft ? 1 : 0, createdBy, now, now);
+
+    const row = db.prepare('SELECT * FROM doc_pages WHERE id = ?').get(id) as DocPageRow;
+    return res.status(201).json(serializePage(row));
+  });
+
+  // ── GET /api/internal/doc-pages/:id ──────────────────────────────────────
+  app.get('/api/internal/doc-pages/:id', (req, res) => {
+    const row = db.prepare('SELECT * FROM doc_pages WHERE id = ?').get(req.params.id) as DocPageRow | undefined;
+    if (!row) return res.status(404).json({ message: 'Página não encontrada.' });
+    return res.json(serializePage(row));
+  });
+
+  // ── PATCH /api/internal/doc-pages/:id ────────────────────────────────────
+  const docPageUpdateSchema = z.object({
+    title: z.string().min(1).max(400).optional(),
+    content: z.string().optional(),
+    tags: z.array(z.string()).optional(),
+    is_draft: z.boolean().optional(),
+    folder_path: z.string().min(1).optional()
+  });
+
+  app.patch('/api/internal/doc-pages/:id', (req, res) => {
+    const existing = db.prepare('SELECT * FROM doc_pages WHERE id = ?').get(req.params.id) as DocPageRow | undefined;
+    if (!existing) return res.status(404).json({ message: 'Página não encontrada.' });
+
+    const parsed = docPageUpdateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+
+    const { title, content, tags, is_draft, folder_path } = parsed.data;
+    const now = nowDateIso();
+
+    db.prepare(`
+      UPDATE doc_pages SET
+        title       = COALESCE(?, title),
+        content     = COALESCE(?, content),
+        tags        = COALESCE(?, tags),
+        is_draft    = COALESCE(?, is_draft),
+        folder_path = COALESCE(?, folder_path),
+        updated_at  = ?
+      WHERE id = ?
+    `).run(
+      title ?? null,
+      content ?? null,
+      tags !== undefined ? JSON.stringify(tags) : null,
+      is_draft !== undefined ? (is_draft ? 1 : 0) : null,
+      folder_path ?? null,
+      now,
+      req.params.id
+    );
+
+    const updated = db.prepare('SELECT * FROM doc_pages WHERE id = ?').get(req.params.id) as DocPageRow;
+    return res.json(serializePage(updated));
+  });
+
+  // ── DELETE /api/internal/doc-pages/:id ───────────────────────────────────
+  app.delete('/api/internal/doc-pages/:id', (req, res) => {
+    const row = db.prepare('SELECT id FROM doc_pages WHERE id = ?').get(req.params.id);
+    if (!row) return res.status(404).json({ message: 'Página não encontrada.' });
+    db.prepare('DELETE FROM doc_pages WHERE id = ?').run(req.params.id);
+    // Remove share links associados também
+    db.prepare(`DELETE FROM doc_share_links WHERE resource_type = 'page' AND resource_id = ?`).run(req.params.id);
+    return res.json({ ok: true });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // Share Links — links públicos de documentos e páginas
+  // ══════════════════════════════════════════════════════════════════════════
+
+  const shareLinkCreateSchema = z.object({
+    resource_type: z.enum(['document', 'page']),
+    resource_id: z.string().min(1),
+    allow_download: z.boolean().default(true),
+    expires_at: z.string().datetime().nullable().default(null)
+  });
+
+  // ── POST /api/internal/share-links ───────────────────────────────────────
+  app.post('/api/internal/share-links', (req, res) => {
+    const parsed = shareLinkCreateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+
+    const { resource_type, resource_id, allow_download, expires_at } = parsed.data;
+    const createdBy = (req as Request & { internalUser?: { username: string } }).internalUser?.username ?? null;
+    const now = nowDateIso();
+
+    // Remove link anterior do mesmo recurso (um recurso = um link ativo)
+    db.prepare(`
+      DELETE FROM doc_share_links WHERE resource_type = ? AND resource_id = ?
+    `).run(resource_type, resource_id);
+
+    const id = uuid('share');
+    db.prepare(`
+      INSERT INTO doc_share_links (id, resource_type, resource_id, allow_download, expires_at, created_by, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(id, resource_type, resource_id, allow_download ? 1 : 0, expires_at, createdBy, now);
+
+    const row = db.prepare('SELECT * FROM doc_share_links WHERE id = ?').get(id) as DocShareLinkRow;
+    return res.status(201).json(serializeShareLink(row));
+  });
+
+  // ── DELETE /api/internal/share-links/:id ────────────────────────────────
+  app.delete('/api/internal/share-links/:id', (req, res) => {
+    const row = db.prepare('SELECT id FROM doc_share_links WHERE id = ?').get(req.params.id);
+    if (!row) return res.status(404).json({ message: 'Link não encontrado.' });
+    db.prepare('DELETE FROM doc_share_links WHERE id = ?').run(req.params.id);
+    return res.json({ ok: true });
+  });
+
+  // ── GET /p/:token — rota pública sem autenticação ────────────────────────
+  app.get('/p/:token', (req, res) => {
+    const link = db.prepare('SELECT * FROM doc_share_links WHERE token = ?').get(req.params.token) as DocShareLinkRow | undefined;
+
+    if (!link) {
+      return res.status(404).json({ message: 'Link não encontrado ou revogado.' });
+    }
+
+    // Verifica expiração
+    if (link.expires_at && new Date(link.expires_at) < new Date()) {
+      return res.status(410).json({ message: 'Este link expirou.' });
+    }
+
+    // Busca o conteúdo conforme resource_type
+    if (link.resource_type === 'page') {
+      const page = db.prepare('SELECT id, title, content, tags, is_draft, updated_at FROM doc_pages WHERE id = ?').get(link.resource_id) as DocPageRow | undefined;
+      if (!page) return res.status(404).json({ message: 'Conteúdo não encontrado.' });
+      if (page.is_draft) return res.status(403).json({ message: 'Esta página ainda é rascunho e não está disponível publicamente.' });
+
+      return res.json({
+        type: 'page',
+        allow_download: serializeShareLink(link).allow_download,
+        title: page.title,
+        content: page.content,
+        tags: (() => { try { return JSON.parse(page.tags) as string[]; } catch { return []; } })(),
+        updated_at: page.updated_at
+      });
+    }
+
+    if (link.resource_type === 'document') {
+      const doc = db.prepare(`
+        SELECT id, title, file_name, mime_type, file_size_bytes, created_at
+        FROM internal_document WHERE id = ?
+      `).get(link.resource_id) as { id: string; title: string; file_name: string; mime_type: string; file_size_bytes: number; created_at: string } | undefined;
+
+      if (!doc) return res.status(404).json({ message: 'Documento não encontrado.' });
+
+      return res.json({
+        type: 'document',
+        allow_download: serializeShareLink(link).allow_download,
+        title: doc.title,
+        file_name: doc.file_name,
+        mime_type: doc.mime_type,
+        file_size_bytes: doc.file_size_bytes,
+        // Download disponível somente se allow_download = true
+        download_url: serializeShareLink(link).allow_download
+          ? `/internal-documents/${doc.id}/download`
+          : null
+      });
+    }
+
+    return res.status(400).json({ message: 'Tipo de recurso inválido.' });
   });
 }
