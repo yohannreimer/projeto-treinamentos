@@ -3224,6 +3224,12 @@ button:focus-visible,
   opacity: 0.88;
 }
 
+.calendar-day-cell-empty {
+  visibility: hidden;
+  pointer-events: none;
+  cursor: default;
+}
+
 .calendar-day-cell.weekend {
   background: #fafbfc;
 }

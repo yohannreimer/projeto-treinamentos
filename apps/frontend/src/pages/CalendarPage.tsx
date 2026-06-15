@@ -6,20 +6,13 @@ import { StatusChip } from '../components/StatusChip';
 import { Section } from '../components/Section';
 import { statusLabel } from '../utils/labels';
 import { askDestructiveConfirmation } from '../utils/destructive';
+import { buildMonthGrid, type CalendarGridMode } from '../utils/calendarGrid';
 import { INTERNAL_AUTH_CHANGED_EVENT, internalSessionStore } from '../auth/session';
 
 type BlockDraft = {
   key: string;
   module_id: string;
   duration_days: number;
-};
-
-type MonthCell = {
-  date: string;
-  inMonth: boolean;
-  isWeekend: boolean;
-  isToday: boolean;
-  holidays: string[];
 };
 
 type CohortCalendarOccurrence = Cohort & {
@@ -245,33 +238,6 @@ function buildBrazilHolidayMap(year: number): Record<string, string[]> {
   return map;
 }
 
-function buildMonthGrid(month: string, holidaysMap: Record<string, string[]>): MonthCell[] {
-  const start = monthStartIso(month);
-  const first = fromIso(start);
-  const todayIso = toDateIso(new Date());
-  const isCurrentMonth = month === todayIso.slice(0, 7);
-  const anchor = isCurrentMonth ? fromIso(todayIso) : first;
-  const anchorIso = toDateIso(anchor);
-  const jsWeekday = anchor.getDay();
-  const mondayIndex = (jsWeekday + 6) % 7;
-  const gridStart = addDays(anchorIso, -mondayIndex);
-
-  const cells: MonthCell[] = [];
-  for (let i = 0; i < 42; i += 1) {
-    const date = addDays(gridStart, i);
-    const weekday = fromIso(date).getDay();
-    cells.push({
-      date,
-      inMonth: date.slice(0, 7) === month,
-      isWeekend: weekday === 0 || weekday === 6,
-      isToday: date === todayIso,
-      holidays: holidaysMap[date] ?? []
-    });
-  }
-
-  return cells;
-}
-
 function splitPipeList(value?: string | null): string[] {
   if (!value) return [];
   return value
@@ -375,6 +341,7 @@ export function CalendarPage() {
   const [detail, setDetail] = useState<any>(null);
 
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [calendarGridMode, setCalendarGridMode] = useState<CalendarGridMode>('rolling');
   const [selectedDate, setSelectedDate] = useState(toDateIso(new Date()));
   const [isDayPanelOpen, setIsDayPanelOpen] = useState(false);
   const [isControlsCollapsed, setIsControlsCollapsed] = useState<boolean>(() => {
@@ -586,7 +553,7 @@ export function CalendarPage() {
       .flatMap(([date, names]) => names.map((holidayName) => ({ date, holidayName })));
   }, [holidaysMap, month]);
 
-  const monthCells = useMemo(() => buildMonthGrid(month, holidaysMap), [month, holidaysMap]);
+  const monthCells = useMemo(() => buildMonthGrid(month, holidaysMap, { mode: calendarGridMode }), [month, holidaysMap, calendarGridMode]);
 
   const monthMetrics = useMemo(() => {
     const monthDates = Array.from(
@@ -614,7 +581,7 @@ export function CalendarPage() {
     const monthBusinessDays = monthCells.filter((cell) => cell.inMonth && !cell.isWeekend).length;
     const busyBusinessDays = monthCells.filter(
       (cell) => cell.inMonth && !cell.isWeekend &&
-        ((cohortEventsByDate[cell.date]?.length ?? 0) + (activitiesByDate[cell.date]?.length ?? 0) > 0)
+        cell.date && ((cohortEventsByDate[cell.date]?.length ?? 0) + (activitiesByDate[cell.date]?.length ?? 0) > 0)
     ).length;
 
     return {
@@ -1178,13 +1145,23 @@ export function CalendarPage() {
           <div className="calendar-toolbar-main">
             <h3 className="month-title">{monthLabel(month)}</h3>
             <div className="actions actions-compact calendar-month-nav">
-              <button type="button" className="calendar-nav-btn" onClick={() => setMonth(prevMonth(month))}>Mês anterior</button>
+              <button
+                type="button"
+                className="calendar-nav-btn"
+                onClick={() => {
+                  setCalendarGridMode('rolling');
+                  setMonth(prevMonth(month));
+                }}
+              >
+                Mês anterior
+              </button>
               <button
                 type="button"
                 className="calendar-nav-btn calendar-nav-btn-today"
                 onClick={() => {
                   const currentMonth = new Date().toISOString().slice(0, 7);
                   const today = toDateIso(new Date());
+                  setCalendarGridMode('rolling');
                   setMonth(currentMonth);
                   setSelectedDate(today);
                   setIsDayPanelOpen(true);
@@ -1192,7 +1169,16 @@ export function CalendarPage() {
               >
                 Hoje
               </button>
-              <button type="button" className="calendar-nav-btn" onClick={() => setMonth(nextMonth(month))}>Próximo mês</button>
+              <button
+                type="button"
+                className="calendar-nav-btn"
+                onClick={() => {
+                  setCalendarGridMode('rolling');
+                  setMonth(nextMonth(month));
+                }}
+              >
+                Próximo mês
+              </button>
             </div>
           </div>
           {isControlsCollapsed ? (
@@ -1209,7 +1195,17 @@ export function CalendarPage() {
               <div className="calendar-toolbar-filters">
                 <label className="calendar-filter-field">
                   Ir para mês
-                  <input type="month" value={month} onChange={(event) => setMonth(event.target.value)} />
+                  <input
+                    type="month"
+                    value={month}
+                    onChange={(event) => {
+                      const targetMonth = event.target.value;
+                      if (!targetMonth) return;
+                      setCalendarGridMode('month');
+                      setMonth(targetMonth);
+                      setSelectedDate(monthStartIso(targetMonth));
+                    }}
+                  />
                 </label>
                 <label className="calendar-filter-field">
                   Técnico
@@ -1276,6 +1272,10 @@ export function CalendarPage() {
 
         <div className="calendar-grid-body">
           {monthCells.map((cell) => {
+            if (!cell.date) {
+              return <div key={cell.key} className="calendar-day-cell calendar-day-cell-empty" aria-hidden="true" />;
+            }
+
             const cohortEvents = (cohortEventsByDate[cell.date] ?? []).sort((a, b) => {
               if (a.code === b.code) return a.day_index - b.day_index;
               return a.code.localeCompare(b.code);
@@ -1287,7 +1287,7 @@ export function CalendarPage() {
 
             return (
               <div
-                key={cell.date}
+                key={cell.key}
                 className={`calendar-day-cell ${cell.inMonth ? '' : 'outside'} ${isSelected ? 'selected' : ''} ${cell.isWeekend ? 'weekend' : ''} ${hasHoliday ? 'holiday' : ''} ${cell.isToday ? 'today' : ''}`}
                 onClick={() => openDayPanel(cell.date)}
                 onKeyDown={(domEvent) => {
