@@ -474,6 +474,7 @@ export const api = {
     }),
   internalDocuments: () => req('/internal-documents'),
   internalDocumentFolders: () => req('/internal-document-folders'),
+  internalDocumentCompanyModules: () => req('/internal-documents/company-modules'),
   createInternalDocumentFolder: (payload: { parent_path: string; name: string }) =>
     req('/internal-document-folders', {
       method: 'POST',

@@ -45,6 +45,11 @@ export type ModuleRow = {
   delivery_mode?: string;
 };
 
+export type CompanyModuleLinkRow = {
+  company_id: string;
+  module_id: string;
+};
+
 export const ROOT_PATH = '/';
 export const CLIENTS_PATH = '/Clientes';
 export const INTERNAL_PATH = '/Interna';
@@ -101,6 +106,28 @@ export function fileFolderPath(row: InternalDocumentRow): string {
   return `${INTERNAL_PATH}/${pathSegment(category)}`;
 }
 
+function moduleDisplayName(module: ModuleRow | undefined, moduleId: string): string {
+  if (!module) return folderDisplayName(moduleId);
+  return module.code ? `${module.code} · ${module.name}` : module.name;
+}
+
+function addModuleReference(
+  map: Map<string, Set<string>>,
+  companyId: string | undefined,
+  moduleId: string | undefined
+) {
+  if (!companyId || !moduleId) return;
+  const modules = map.get(companyId) ?? new Set<string>();
+  modules.add(moduleId);
+  map.set(companyId, modules);
+}
+
+function addModuleReferenceFromPath(map: Map<string, Set<string>>, path?: string | null) {
+  const normalized = normalizeFolderPath(path);
+  const match = normalized.match(/^\/Clientes\/([^/]+)\/modulos\/([^/]+)/);
+  addModuleReference(map, match?.[1], match?.[2]);
+}
+
 export function ensureNode(
   map: Map<string, FolderNode>,
   path: string,
@@ -145,9 +172,12 @@ export function buildTree(
   companies: CompanyRow[],
   modules: ModuleRow[],
   folders: InternalDocumentFolderRow[],
-  rows: InternalDocumentRow[]
+  rows: InternalDocumentRow[],
+  companyModuleLinks: CompanyModuleLinkRow[] = []
 ): FolderNode {
   const map = new Map<string, FolderNode>();
+  const moduleById = new Map(modules.map((module) => [module.id, module]));
+  const moduleIdsByCompany = new Map<string, Set<string>>();
 
   ensureNode(map, ROOT_PATH, 'Documentação');
   ensureNode(map, CLIENTS_PATH, 'Clientes');
@@ -159,17 +189,32 @@ export function buildTree(
   ensureNode(map, '/Templates', 'Templates');
   ensureNode(map, '/Base', 'Base de Conhecimento');
 
+  companyModuleLinks.forEach((link) => {
+    addModuleReference(moduleIdsByCompany, link.company_id, link.module_id);
+  });
+  folders.forEach((folder) => {
+    addModuleReferenceFromPath(moduleIdsByCompany, folder.path);
+    addModuleReferenceFromPath(moduleIdsByCompany, folder.parent_path);
+  });
+  rows.forEach((row) => {
+    addModuleReferenceFromPath(moduleIdsByCompany, fileFolderPath(row));
+  });
+
   companies.forEach((company) => {
     const companyPath = `${CLIENTS_PATH}/${company.id}`;
     ensureNode(map, companyPath, company.name);
     ensureNode(map, `${companyPath}/Documentos`, 'Documentos do cliente');
     ensureNode(map, `${companyPath}/modulos`, 'Módulos');
     ensureNode(map, `${companyPath}/${SATISFACTION_SEGMENT}`, 'Pesquisa de satisfação');
-    modules.forEach((module) => {
-      const modulePath = `${companyPath}/modulos/${module.id}`;
-      ensureNode(map, modulePath, module.code ? `${module.code} · ${module.name}` : module.name);
-      ensureNode(map, `${modulePath}/Certificados`, 'Certificados');
-    });
+    Array.from(moduleIdsByCompany.get(company.id) ?? [])
+      .sort((a, b) => (
+        moduleDisplayName(moduleById.get(a), a).localeCompare(moduleDisplayName(moduleById.get(b), b))
+      ))
+      .forEach((moduleId) => {
+        const modulePath = `${companyPath}/modulos/${moduleId}`;
+        ensureNode(map, modulePath, moduleDisplayName(moduleById.get(moduleId), moduleId));
+        ensureNode(map, `${modulePath}/Certificados`, 'Certificados');
+      });
   });
 
   folders.forEach((folder) => {

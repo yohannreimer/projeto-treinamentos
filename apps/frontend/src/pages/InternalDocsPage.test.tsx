@@ -159,6 +159,55 @@ describe('InternalDocsPage', () => {
     expect(css).toMatch(/\.dv2-grid--list\s+\.dv2-file-card/);
   });
 
+  test('uploads arbitrary file types up to the document limit', async () => {
+    setupFetchMock({ rows: [], companies, pages: [], action: emptyJson({ id: 'doc-new' }) });
+    const user = userEvent.setup();
+
+    render(<InternalDocsPage />);
+
+    await user.click(await screen.findByRole('button', { name: /Clientes/i }));
+    await user.click(await screen.findByRole('button', { name: /Agile2 Consultoria LTDA/i }));
+    await user.click(await screen.findByRole('button', { name: /Documentos do cliente/i }));
+    await user.click(screen.getByRole('button', { name: /Novo/i }));
+    await user.click(screen.getByRole('button', { name: /Enviar arquivo/i }));
+
+    const customFile = new File(['conteudo'], 'arquivo.yrdnegocios', { type: '' });
+    await user.upload(screen.getByLabelText(/Arquivo/i), customFile);
+    await user.click(screen.getByRole('button', { name: /Salvar na pasta/i }));
+
+    await waitFor(() => {
+      expect(vi.mocked(fetch).mock.calls.some(([url, init]) =>
+        String(url).endsWith('/internal-documents') && init?.method === 'POST'
+      )).toBe(true);
+    });
+
+    const createRequest = vi.mocked(fetch).mock.calls.find(([url, init]) =>
+      String(url).endsWith('/internal-documents') && init?.method === 'POST'
+    );
+    const body = JSON.parse(String(createRequest?.[1]?.body));
+    expect(body.file_name).toBe('arquivo.yrdnegocios');
+    expect(body.mime_type).toBe('application/octet-stream');
+    expect(body.file_data_base64).toMatch(/^data:application\/octet-stream;base64,/);
+  });
+
+  test('shows folder share errors as temporary toast alerts', async () => {
+    vi.useFakeTimers();
+    setupFetchMock({ rows: [], companies });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+
+    render(<InternalDocsPage />);
+
+    await user.click(await screen.findByRole('button', { name: /Gerar link público/i }));
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Selecione uma página ou arquivo para compartilhar.');
+
+    vi.advanceTimersByTime(7000);
+
+    await waitFor(() => {
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    });
+  });
+
   test('collapses the selected sidebar folder when clicked again', async () => {
     setupFetchMock({ rows: [], companies });
     const user = userEvent.setup();

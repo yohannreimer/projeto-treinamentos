@@ -19,7 +19,8 @@ import {
   type InternalDocumentRow,
   type InternalDocumentFolderRow,
   type CompanyRow,
-  type ModuleRow
+  type ModuleRow,
+  type CompanyModuleLinkRow
 } from '../components/docs/treeUtils';
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -55,7 +56,8 @@ type PreviewDocument = {
 // Helpers
 // ────────────────────────────────────────────────────────────────────────────
 
-const MAX_DOC_UPLOAD_BYTES = 6_000_000;
+const MAX_DOC_UPLOAD_BYTES = 100_000_000;
+const DEFAULT_FILE_MIME_TYPE = 'application/octet-stream';
 
 function toDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -64,6 +66,27 @@ function toDataUrl(file: File): Promise<string> {
     reader.onerror = () => reject(new Error('Não foi possível ler o arquivo.'));
     reader.readAsDataURL(file);
   });
+}
+
+function normalizeFileDataUrl(dataUrl: string, mimeType: string): string {
+  if (dataUrl.startsWith('data:;base64,')) {
+    return dataUrl.replace('data:;base64,', `data:${mimeType || DEFAULT_FILE_MIME_TYPE};base64,`);
+  }
+  return dataUrl;
+}
+
+async function fileDraftFromFile(file: File): Promise<NonNullable<FileDraft>> {
+  if (file.size > MAX_DOC_UPLOAD_BYTES) {
+    throw new Error('Arquivo muito grande. Limite de 100 MB.');
+  }
+  const mimeType = file.type || DEFAULT_FILE_MIME_TYPE;
+  const dataUrl = await toDataUrl(file);
+  return {
+    file_name: file.name,
+    mime_type: mimeType,
+    file_data_base64: normalizeFileDataUrl(dataUrl, mimeType),
+    file_size_bytes: file.size
+  };
 }
 
 function fileNameFromContentDisposition(contentDisposition: string, fallback: string): string {
@@ -113,6 +136,7 @@ export function InternalDocsPage() {
   const [folders, setFolders] = useState<InternalDocumentFolderRow[]>([]);
   const [companies, setCompanies] = useState<CompanyRow[]>([]);
   const [modules, setModules] = useState<ModuleRow[]>([]);
+  const [companyModuleLinks, setCompanyModuleLinks] = useState<CompanyModuleLinkRow[]>([]);
   const [pages, setPages] = useState<DocPage[]>([]);
   const [followupsByCompany, setFollowupsByCompany] = useState<Record<string, FollowupEvaluationRow[]>>({});
 
@@ -171,16 +195,18 @@ export function InternalDocsPage() {
   // ────────────────────────────────────────────────────────────────────────
 
   async function loadAll() {
-    const [docRows, folderRows, companyRows, moduleRows] = await Promise.all([
+    const [docRows, folderRows, companyRows, moduleRows, companyModuleRows] = await Promise.all([
       api.internalDocuments() as Promise<InternalDocumentRow[]>,
       api.internalDocumentFolders() as Promise<InternalDocumentFolderRow[]>,
       api.companies() as Promise<CompanyRow[]>,
-      api.modules() as Promise<ModuleRow[]>
+      api.modules() as Promise<ModuleRow[]>,
+      api.internalDocumentCompanyModules() as Promise<CompanyModuleLinkRow[]>
     ]);
     setRows(docRows ?? []);
     setFolders(folderRows ?? []);
     setCompanies(companyRows ?? []);
     setModules(moduleRows ?? []);
+    setCompanyModuleLinks(companyModuleRows ?? []);
 
     // Carrega páginas wiki (endpoint já disponível)
     try {
@@ -208,6 +234,12 @@ export function InternalDocsPage() {
     return () => window.clearTimeout(timeout);
   }, [message]);
 
+  useEffect(() => {
+    if (!error) return undefined;
+    const timeout = window.setTimeout(() => setError(''), 7000);
+    return () => window.clearTimeout(timeout);
+  }, [error]);
+
   useEffect(() => () => {
     if (previewDocument?.objectUrl) window.URL.revokeObjectURL(previewDocument.objectUrl);
   }, [previewDocument]);
@@ -225,8 +257,8 @@ export function InternalDocsPage() {
   // ────────────────────────────────────────────────────────────────────────
 
   const tree = useMemo(
-    () => buildTree(companies, modules, folders, rows),
-    [companies, modules, folders, rows]
+    () => buildTree(companies, modules, folders, rows, companyModuleLinks),
+    [companies, modules, folders, rows, companyModuleLinks]
   );
 
   const selectedNode = useMemo(() => {
@@ -247,13 +279,9 @@ export function InternalDocsPage() {
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file) return;
-    const isPdf = file.type === 'application/pdf';
-    const isImage = file.type.startsWith('image/');
-    if (!isPdf && !isImage) { setError('Envie apenas PDF ou imagem.'); return; }
-    if (file.size > MAX_DOC_UPLOAD_BYTES) { setError('Arquivo muito grande. Limite de 6 MB.'); return; }
     try {
-      const dataUrl = await toDataUrl(file);
-      setFileDraft({ file_name: file.name, mime_type: file.type, file_data_base64: dataUrl, file_size_bytes: file.size });
+      const draft = await fileDraftFromFile(file);
+      setFileDraft(draft);
       setError('');
       if (!title.trim()) setTitle(file.name.replace(/\.[^.]+$/, ''));
     } catch (err) { setError((err as Error).message); }
@@ -262,13 +290,9 @@ export function InternalDocsPage() {
   async function handleFileDrop(fileList: FileList) {
     const file = fileList[0];
     if (!file) return;
-    const isPdf = file.type === 'application/pdf';
-    const isImage = file.type.startsWith('image/');
-    if (!isPdf && !isImage) { setError('Envie apenas PDF ou imagem.'); return; }
-    if (file.size > MAX_DOC_UPLOAD_BYTES) { setError('Arquivo muito grande. Limite de 6 MB.'); return; }
     try {
-      const dataUrl = await toDataUrl(file);
-      setFileDraft({ file_name: file.name, mime_type: file.type, file_data_base64: dataUrl, file_size_bytes: file.size });
+      const draft = await fileDraftFromFile(file);
+      setFileDraft(draft);
       setTitle(file.name.replace(/\.[^.]+$/, ''));
       setError('');
       setUploadPanelOpen(true);
@@ -296,7 +320,7 @@ export function InternalDocsPage() {
   async function createDocument() {
     if (selectedNode.path === ROOT_PATH) { setError('Escolha uma pasta antes de salvar.'); return; }
     if (!title.trim()) { setError('Informe o título.'); return; }
-    if (!fileDraft) { setError('Selecione um arquivo PDF ou imagem.'); return; }
+    if (!fileDraft) { setError('Selecione um arquivo.'); return; }
     setError(''); setMessage('');
     try {
       await api.createInternalDocument({
@@ -481,41 +505,47 @@ export function InternalDocsPage() {
         <p>Hub de conhecimento: clientes, processos, templates e base de conhecimento.</p>
       </header>
 
-      {error && <p className="error">{error}</p>}
-      {message && <p className="info internal-docs-page__toast" role="status">{message}</p>}
+      {error && <p className="error internal-docs-page__toast internal-docs-page__toast--error" role="alert">{error}</p>}
+      {!error && message && <p className="info internal-docs-page__toast" role="status">{message}</p>}
 
       {/* ── Upload modal / drawer ── */}
       {uploadPanelOpen && (
         <div className="internal-doc-preview-backdrop" role="presentation" onClick={() => setUploadPanelOpen(false)}>
           <section
-            className="internal-doc-preview-modal"
+            className="internal-doc-preview-modal dv2-create-modal dv2-create-modal--upload"
             style={{ maxWidth: 520, height: 'auto', maxHeight: 'calc(100vh - 80px)' }}
             role="dialog"
             aria-modal="true"
             aria-label="Enviar arquivo"
             onClick={(e) => e.stopPropagation()}
           >
-            <header className="internal-doc-preview-header">
-              <div><h2>Enviar arquivo</h2><p>Pasta: {selectedNode.name}</p></div>
-              <button type="button" onClick={() => setUploadPanelOpen(false)}>Fechar</button>
+            <header className="internal-doc-preview-header dv2-create-modal__header">
+              <div className="dv2-create-modal__title-block">
+                <span className="dv2-create-modal__eyebrow">Upload</span>
+                <h2>Enviar arquivo</h2>
+                <p>Pasta: {selectedNode.name}</p>
+              </div>
+              <button type="button" className="dv2-create-modal__close" onClick={() => setUploadPanelOpen(false)}>Fechar</button>
             </header>
-            <div style={{ padding: 20, overflow: 'auto', display: 'grid', gap: 12 }}>
-              <label className="form-label">Título
+            <div className="dv2-create-modal__body">
+              <label className="form-label dv2-create-field">Título
                 <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Ex.: Checklist de implantação" />
               </label>
-              <label className="form-label">Categoria
+              <label className="form-label dv2-create-field">Categoria
                 <input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Ex.: Suporte, Certificados" />
               </label>
-              <label className="form-label">Descrição
+              <label className="form-label dv2-create-field dv2-create-field--full">Descrição
                 <textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Contexto rápido do arquivo." />
               </label>
-              <label className="form-label">Arquivo (PDF ou imagem, máx. 6 MB)
-                <input ref={fileInputRef} type="file" accept="application/pdf,image/*" onChange={onPickFile} />
+              <label className="form-label dv2-create-file">
+                <span>Arquivo</span>
+                <strong>Qualquer tipo, até 100 MB</strong>
+                <input ref={fileInputRef} type="file" onChange={onPickFile} />
               </label>
               {fileDraft && (
-                <p className="form-hint">Selecionado: <strong>{fileDraft.file_name}</strong> ({formatBytes(fileDraft.file_size_bytes)})</p>
+                <p className="form-hint dv2-create-file__selected">Selecionado: <strong>{fileDraft.file_name}</strong> ({formatBytes(fileDraft.file_size_bytes)})</p>
               )}
-              <button type="button" className="btn btn-primary" onClick={() => void createDocument()}>
+              <button type="button" className="btn btn-primary dv2-create-modal__primary" onClick={() => void createDocument()}>
                 Salvar na pasta
               </button>
             </div>
@@ -527,19 +557,23 @@ export function InternalDocsPage() {
       {newFolderPanelOpen && (
         <div className="internal-doc-preview-backdrop" role="presentation" onClick={() => setNewFolderPanelOpen(false)}>
           <section
-            className="internal-doc-preview-modal"
+            className="internal-doc-preview-modal dv2-create-modal dv2-create-modal--folder"
             style={{ maxWidth: 420, height: 'auto' }}
             role="dialog"
             aria-modal="true"
             aria-label="Nova pasta"
             onClick={(e) => e.stopPropagation()}
           >
-            <header className="internal-doc-preview-header">
-              <div><h2>Nova pasta</h2><p>Em: {selectedNode.name}</p></div>
-              <button type="button" onClick={() => setNewFolderPanelOpen(false)}>Fechar</button>
+            <header className="internal-doc-preview-header dv2-create-modal__header">
+              <div className="dv2-create-modal__title-block">
+                <span className="dv2-create-modal__eyebrow">Organizar</span>
+                <h2>Nova pasta</h2>
+                <p>Em: {selectedNode.name}</p>
+              </div>
+              <button type="button" className="dv2-create-modal__close" onClick={() => setNewFolderPanelOpen(false)}>Fechar</button>
             </header>
-            <div style={{ padding: 20, display: 'grid', gap: 12 }}>
-              <label className="form-label">Nome
+            <div className="dv2-create-modal__body">
+              <label className="form-label dv2-create-field dv2-create-field--full">Nome
                 <input
                   value={newFolderName}
                   onChange={(e) => setNewFolderName(e.target.value)}
@@ -548,7 +582,7 @@ export function InternalDocsPage() {
                   onKeyDown={(e) => { if (e.key === 'Enter') void createFolder(); }}
                 />
               </label>
-              <button type="button" className="btn btn-primary" disabled={creatingFolder} onClick={() => void createFolder()}>
+              <button type="button" className="btn btn-primary dv2-create-modal__primary" disabled={creatingFolder} onClick={() => void createFolder()}>
                 {creatingFolder ? 'Criando…' : 'Criar pasta'}
               </button>
             </div>

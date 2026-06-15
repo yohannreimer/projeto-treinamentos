@@ -64,6 +64,8 @@ const DUMMY_PASSWORD_HASH = 'scrypt:00112233445566778899aabbccddeeff:5232aa4cb85
 const ISO_DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const PORTAL_ATTACHMENT_MAX_BYTES = 20_000_000;
 const PORTAL_ATTACHMENT_DATA_URL_MAX_CHARS = 30_000_000;
+const INTERNAL_DOCUMENT_MAX_BYTES = 100_000_000;
+const INTERNAL_DOCUMENT_DATA_URL_MAX_CHARS = 140_000_000;
 const IMPLEMENTATION_KANBAN_DEFAULT_COLUMNS = [
   { id: 'kcol-todo', title: 'A fazer', color: '#7b8ea8' },
   { id: 'kcol-doing', title: 'Em andamento', color: '#b17613' },
@@ -122,8 +124,8 @@ const kanbanCardFileDataSchema = z
 
 const internalDocumentDataUrlSchema = z
   .string()
-  .max(12_000_000)
-  .refine((value) => /^data:(application\/pdf|image\/[a-zA-Z0-9.+-]+);base64,/.test(value), 'Arquivo inválido.');
+  .max(INTERNAL_DOCUMENT_DATA_URL_MAX_CHARS)
+  .refine((value) => /^data:[a-zA-Z0-9.+-]+\/[a-zA-Z0-9.+-]+;base64,/.test(value), 'Arquivo inválido.');
 
 function isHalfDayIncrement(value: number): boolean {
   return Number.isFinite(value) && value > 0 && Math.abs((value * 2) - Math.round(value * 2)) < 0.0001;
@@ -1138,6 +1140,17 @@ function decodeDataUrl(dataUrl: string): { mimeType: string; buffer: Buffer } {
     mimeType,
     buffer: Buffer.from(base64, 'base64')
   };
+}
+
+function validateInternalDocumentDataUrl(dataUrl: string): { mimeType: string; buffer: Buffer } {
+  const decoded = decodeDataUrl(dataUrl);
+  if (decoded.buffer.length === 0) {
+    throw new Error('Arquivo inválido.');
+  }
+  if (decoded.buffer.length > INTERNAL_DOCUMENT_MAX_BYTES) {
+    throw new Error('Arquivo excede 100 MB.');
+  }
+  return decoded;
 }
 
 function normalizeDocumentFolderPath(value?: string | null) {
@@ -7336,6 +7349,23 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
     return res.json(rows);
   });
 
+  app.get('/internal-documents/company-modules', (_req, res) => {
+    const rows = db.prepare(`
+      select distinct cmp.company_id, cmp.module_id
+      from company_module_progress cmp
+      left join company_module_activation cma
+        on cma.company_id = cmp.company_id
+        and cma.module_id = cmp.module_id
+      where coalesce(cma.is_enabled, 1) = 1
+      union
+      select distinct cma.company_id, cma.module_id
+      from company_module_activation cma
+      where cma.is_enabled = 1
+      order by company_id asc, module_id asc
+    `).all();
+    return res.json(rows);
+  });
+
   app.post('/internal-document-folders', (req, res) => {
     const parsed = internalDocumentFolderCreateSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -7390,7 +7420,7 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
   
     try {
       const payload = parsed.data;
-      const decoded = decodeDataUrl(payload.file_data_base64);
+      const decoded = validateInternalDocumentDataUrl(payload.file_data_base64);
       const documentId = uuid('doc');
       const nowIso = nowDateIso();
   
