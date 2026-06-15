@@ -878,5 +878,34 @@ export const api = {
     req('/admin/import-workbook', {
       method: 'POST',
       body: JSON.stringify(payload)
-    })
+    }),
+
+  // ── Doc Pages ──────────────────────────────────────────────────────────
+  docPages: () => req('/api/internal/doc-pages'),
+  createDocPage: (payload: {
+    folder_path: string;
+    title: string;
+    content: string;
+    tags: string[];
+    is_draft: boolean;
+  }) => req('/api/internal/doc-pages', { method: 'POST', body: JSON.stringify(payload) }),
+  updateDocPage: (id: string, payload: {
+    title?: string;
+    content?: string;
+    tags?: string[];
+    is_draft?: boolean;
+    folder_path?: string;
+  }) => req(`/api/internal/doc-pages/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  deleteDocPage: (id: string) =>
+    req(`/api/internal/doc-pages/${id}`, { method: 'DELETE' }),
+
+  // ── Share Links ────────────────────────────────────────────────────────
+  createShareLink: (payload: {
+    resource_type: 'document' | 'page';
+    resource_id: string;
+    allow_download: boolean;
+    expires_at: string | null;
+  }) => req('/api/internal/share-links', { method: 'POST', body: JSON.stringify(payload) }),
+  revokeShareLink: (id: string) =>
+    req(`/api/internal/share-links/${id}`, { method: 'DELETE' })
 };

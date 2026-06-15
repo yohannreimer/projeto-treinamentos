@@ -3374,6 +3374,7 @@ function isPublicOrPortalPath(pathname: string): boolean {
   if (pathname.startsWith('/auth/')) return true;
   if (pathname === '/portal/api' || pathname.startsWith('/portal/api/')) return true;
   if (pathname.startsWith('/followup-evaluations/')) return true;
+  if (pathname.startsWith('/p/')) return true; // links públicos de documentos/páginas
   return false;
 }
 
@@ -9949,5 +9950,265 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
     } catch (error) {
       return res.status(500).json({ message: 'Falha ao importar planilha', detail: errorMessage(error) });
     }
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // Doc Pages — páginas wiki internas
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // Garante que as tabelas existem (executa apenas uma vez por boot)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS doc_pages (
+      id          TEXT PRIMARY KEY,
+      folder_path TEXT NOT NULL,
+      title       TEXT NOT NULL,
+      content     TEXT NOT NULL DEFAULT '',
+      tags        TEXT NOT NULL DEFAULT '[]',
+      is_draft    INTEGER NOT NULL DEFAULT 1,
+      created_by  TEXT,
+      created_at  TEXT NOT NULL,
+      updated_at  TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS doc_share_links (
+      id              TEXT PRIMARY KEY,
+      resource_type   TEXT NOT NULL,
+      resource_id     TEXT NOT NULL,
+      token           TEXT NOT NULL UNIQUE,
+      allow_download  INTEGER NOT NULL DEFAULT 1,
+      expires_at      TEXT,
+      created_by      TEXT,
+      created_at      TEXT NOT NULL
+    );
+  `);
+
+  // ── Helpers de serialização ──────────────────────────────────────────────
+
+  type DocPageRow = {
+    id: string;
+    folder_path: string;
+    title: string;
+    content: string;
+    tags: string;
+    is_draft: number;
+    created_by: string | null;
+    created_at: string;
+    updated_at: string;
+  };
+
+  function serializePage(row: DocPageRow) {
+    return {
+      ...row,
+      tags: (() => { try { return JSON.parse(row.tags) as string[]; } catch { return []; } })(),
+      is_draft: row.is_draft === 1
+    };
+  }
+
+  type DocShareLinkRow = {
+    id: string;
+    resource_type: string;
+    resource_id: string;
+    token: string;
+    allow_download: number;
+    expires_at: string | null;
+    created_by: string | null;
+    created_at: string;
+  };
+
+  function serializeShareLink(row: DocShareLinkRow) {
+    return { ...row, allow_download: row.allow_download === 1 };
+  }
+
+  // ── GET /api/internal/doc-pages ──────────────────────────────────────────
+  app.get('/api/internal/doc-pages', (_req, res) => {
+    const rows = db.prepare(`
+      SELECT id, folder_path, title, content, tags, is_draft, created_by, created_at, updated_at
+      FROM doc_pages
+      ORDER BY updated_at DESC
+    `).all() as DocPageRow[];
+    return res.json(rows.map(serializePage));
+  });
+
+  // ── POST /api/internal/doc-pages ─────────────────────────────────────────
+  const docPageCreateSchema = z.object({
+    folder_path: z.string().min(1),
+    title: z.string().min(1).max(400),
+    content: z.string().default(''),
+    tags: z.array(z.string()).default([]),
+    is_draft: z.boolean().default(true)
+  });
+
+  app.post('/api/internal/doc-pages', (req, res) => {
+    const parsed = docPageCreateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+
+    const { folder_path, title, content, tags, is_draft } = parsed.data;
+    const id = uuid('page');
+    const now = nowDateIso();
+    const createdBy = (req as Request & { internalUser?: { username: string } }).internalUser?.username ?? null;
+
+    db.prepare(`
+      INSERT INTO doc_pages (id, folder_path, title, content, tags, is_draft, created_by, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, folder_path, title, content, JSON.stringify(tags), is_draft ? 1 : 0, createdBy, now, now);
+
+    const row = db.prepare('SELECT * FROM doc_pages WHERE id = ?').get(id) as DocPageRow;
+    return res.status(201).json(serializePage(row));
+  });
+
+  // ── GET /api/internal/doc-pages/:id ──────────────────────────────────────
+  app.get('/api/internal/doc-pages/:id', (req, res) => {
+    const row = db.prepare('SELECT * FROM doc_pages WHERE id = ?').get(req.params.id) as DocPageRow | undefined;
+    if (!row) return res.status(404).json({ message: 'Página não encontrada.' });
+    return res.json(serializePage(row));
+  });
+
+  // ── PATCH /api/internal/doc-pages/:id ────────────────────────────────────
+  const docPageUpdateSchema = z.object({
+    title: z.string().min(1).max(400).optional(),
+    content: z.string().optional(),
+    tags: z.array(z.string()).optional(),
+    is_draft: z.boolean().optional(),
+    folder_path: z.string().min(1).optional()
+  });
+
+  app.patch('/api/internal/doc-pages/:id', (req, res) => {
+    const existing = db.prepare('SELECT * FROM doc_pages WHERE id = ?').get(req.params.id) as DocPageRow | undefined;
+    if (!existing) return res.status(404).json({ message: 'Página não encontrada.' });
+
+    const parsed = docPageUpdateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+
+    const { title, content, tags, is_draft, folder_path } = parsed.data;
+    const now = nowDateIso();
+
+    db.prepare(`
+      UPDATE doc_pages SET
+        title       = COALESCE(?, title),
+        content     = COALESCE(?, content),
+        tags        = COALESCE(?, tags),
+        is_draft    = COALESCE(?, is_draft),
+        folder_path = COALESCE(?, folder_path),
+        updated_at  = ?
+      WHERE id = ?
+    `).run(
+      title ?? null,
+      content ?? null,
+      tags !== undefined ? JSON.stringify(tags) : null,
+      is_draft !== undefined ? (is_draft ? 1 : 0) : null,
+      folder_path ?? null,
+      now,
+      req.params.id
+    );
+
+    const updated = db.prepare('SELECT * FROM doc_pages WHERE id = ?').get(req.params.id) as DocPageRow;
+    return res.json(serializePage(updated));
+  });
+
+  // ── DELETE /api/internal/doc-pages/:id ───────────────────────────────────
+  app.delete('/api/internal/doc-pages/:id', (req, res) => {
+    const row = db.prepare('SELECT id FROM doc_pages WHERE id = ?').get(req.params.id);
+    if (!row) return res.status(404).json({ message: 'Página não encontrada.' });
+    db.prepare('DELETE FROM doc_pages WHERE id = ?').run(req.params.id);
+    // Remove share links associados também
+    db.prepare(`DELETE FROM doc_share_links WHERE resource_type = 'page' AND resource_id = ?`).run(req.params.id);
+    return res.json({ ok: true });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // Share Links — links públicos de documentos e páginas
+  // ══════════════════════════════════════════════════════════════════════════
+
+  const shareLinkCreateSchema = z.object({
+    resource_type: z.enum(['document', 'page']),
+    resource_id: z.string().min(1),
+    allow_download: z.boolean().default(true),
+    expires_at: z.string().datetime().nullable().default(null)
+  });
+
+  // ── POST /api/internal/share-links ───────────────────────────────────────
+  app.post('/api/internal/share-links', (req, res) => {
+    const parsed = shareLinkCreateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+
+    const { resource_type, resource_id, allow_download, expires_at } = parsed.data;
+    const createdBy = (req as Request & { internalUser?: { username: string } }).internalUser?.username ?? null;
+    const now = nowDateIso();
+
+    // Remove link anterior do mesmo recurso (um recurso = um link ativo)
+    db.prepare(`
+      DELETE FROM doc_share_links WHERE resource_type = ? AND resource_id = ?
+    `).run(resource_type, resource_id);
+
+    const id = uuid('share');
+    db.prepare(`
+      INSERT INTO doc_share_links (id, resource_type, resource_id, allow_download, expires_at, created_by, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(id, resource_type, resource_id, allow_download ? 1 : 0, expires_at, createdBy, now);
+
+    const row = db.prepare('SELECT * FROM doc_share_links WHERE id = ?').get(id) as DocShareLinkRow;
+    return res.status(201).json(serializeShareLink(row));
+  });
+
+  // ── DELETE /api/internal/share-links/:id ────────────────────────────────
+  app.delete('/api/internal/share-links/:id', (req, res) => {
+    const row = db.prepare('SELECT id FROM doc_share_links WHERE id = ?').get(req.params.id);
+    if (!row) return res.status(404).json({ message: 'Link não encontrado.' });
+    db.prepare('DELETE FROM doc_share_links WHERE id = ?').run(req.params.id);
+    return res.json({ ok: true });
+  });
+
+  // ── GET /p/:token — rota pública sem autenticação ────────────────────────
+  app.get('/p/:token', (req, res) => {
+    const link = db.prepare('SELECT * FROM doc_share_links WHERE token = ?').get(req.params.token) as DocShareLinkRow | undefined;
+
+    if (!link) {
+      return res.status(404).json({ message: 'Link não encontrado ou revogado.' });
+    }
+
+    // Verifica expiração
+    if (link.expires_at && new Date(link.expires_at) < new Date()) {
+      return res.status(410).json({ message: 'Este link expirou.' });
+    }
+
+    // Busca o conteúdo conforme resource_type
+    if (link.resource_type === 'page') {
+      const page = db.prepare('SELECT id, title, content, tags, is_draft, updated_at FROM doc_pages WHERE id = ?').get(link.resource_id) as DocPageRow | undefined;
+      if (!page) return res.status(404).json({ message: 'Conteúdo não encontrado.' });
+      if (page.is_draft) return res.status(403).json({ message: 'Esta página ainda é rascunho e não está disponível publicamente.' });
+
+      return res.json({
+        type: 'page',
+        allow_download: serializeShareLink(link).allow_download,
+        title: page.title,
+        content: page.content,
+        tags: (() => { try { return JSON.parse(page.tags) as string[]; } catch { return []; } })(),
+        updated_at: page.updated_at
+      });
+    }
+
+    if (link.resource_type === 'document') {
+      const doc = db.prepare(`
+        SELECT id, title, file_name, mime_type, file_size_bytes, created_at
+        FROM internal_document WHERE id = ?
+      `).get(link.resource_id) as { id: string; title: string; file_name: string; mime_type: string; file_size_bytes: number; created_at: string } | undefined;
+
+      if (!doc) return res.status(404).json({ message: 'Documento não encontrado.' });
+
+      return res.json({
+        type: 'document',
+        allow_download: serializeShareLink(link).allow_download,
+        title: doc.title,
+        file_name: doc.file_name,
+        mime_type: doc.mime_type,
+        file_size_bytes: doc.file_size_bytes,
+        // Download disponível somente se allow_download = true
+        download_url: serializeShareLink(link).allow_download
+          ? `/internal-documents/${doc.id}/download`
+          : null
+      });
+    }
+
+    return res.status(400).json({ message: 'Tipo de recurso inválido.' });
   });
 }

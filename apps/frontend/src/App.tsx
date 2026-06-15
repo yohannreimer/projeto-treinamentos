@@ -17,6 +17,7 @@ import { RecruitmentPage } from './pages/RecruitmentPage';
 import { LoginPage } from './pages/LoginPage';
 import { AdminPage } from './pages/AdminPage';
 import { InternalDocsPage } from './pages/InternalDocsPage';
+import { PublicDocPage } from './pages/PublicDocPage';
 import { FollowupEvaluationPage } from './pages/FollowupEvaluationPage';
 import { FinanceWorkspace } from './finance/FinanceWorkspace';
 import { FinanceOverviewPage } from './finance/pages/FinanceOverviewPage';
@@ -437,6 +438,7 @@ export function App() {
     <Routes>
       <Route path="/portal/:slug/*" element={<PortalShell />} />
       <Route path="/acompanhamento/:token" element={<FollowupEvaluationPage />} />
+      <Route path="/p/:token" element={<PublicDocPage />} />
       <Route path="*" element={<InternalApp />} />
     </Routes>
   );

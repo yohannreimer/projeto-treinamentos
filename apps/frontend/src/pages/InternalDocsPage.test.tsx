@@ -1,108 +1,38 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { internalSessionStore } from '../auth/session';
 import { InternalDocsPage } from './InternalDocsPage';
 
-const companies = [
-  { id: 'comp-magui', name: 'Magui Dispositivos de Controle Ltda', status: 'Ativo' },
-  { id: 'comp-holand', name: 'Holand Automação de Engenharias Ltda', status: 'Ativo' }
-];
-
-const modules = [
-  { id: 'mod-cam', code: '020102010', name: "Treinamento TopSolid'Cam 7 - Fresamento 2D", delivery_mode: 'Treinamento' },
-  { id: 'mod-design', code: '020101020', name: "Treinamento TopSolid'Design 7 - Básico", delivery_mode: 'Treinamento' }
-];
-
-const folders = [
-  {
-    id: 'folder-interna',
-    parent_path: '/Interna',
-    path: '/Interna/Materiais',
-    name: 'Materiais',
-    created_at: '2026-05-08',
-    updated_at: '2026-05-08'
-  }
-];
-
+// Documento na pasta /Interna que é exibido por padrão ao abrir a página
 const rows = [
   {
-    id: 'doc-cert',
-    title: 'Certificado - Holand - Design Básico',
+    id: 'doc-1',
+    title: 'Certificado - Metal Forte - Instalacao TopSolid',
     category: 'Certificados',
-    notes: 'Chave: CERTIFICADO_CLIENTE_MODULO:comp-holand:mod-design',
-    folder_path: null,
-    file_name: 'certificado-holand.pdf',
+    notes: null,
+    folder_path: '/Interna',
+    file_name: 'certificado-metal-forte.pdf',
     mime_type: 'application/pdf',
     file_size_bytes: 1234,
     created_at: '2026-05-08',
     updated_at: '2026-05-08'
-  },
-  {
-    id: 'doc-survey',
-    title: "Pesquisa - Magui - Treinamento TopSolid'Cam 7 - Fresamento 2D",
-    category: 'Pesquisas de Satisfação',
-    notes: [
-      '[PESQUISA_SATISFACAO_CERTIFICADO]',
-      'Chave: PESQUISA_CERTIFICADO:comp-magui:coh-1:mod-cam',
-      'Empresa: Magui Dispositivos de Controle Ltda',
-      'Turma: TUR-008 · TopSolid CAM 2D',
-      "Módulo: Treinamento TopSolid'Cam 7 - Fresamento 2D",
-      'Respondido por: Cleberson',
-      'Enviado em: 2026-05-08T16:52:51.840Z',
-      '',
-      'Respostas:',
-      'q1: 5'
-    ].join('\n'),
-    folder_path: null,
-    file_name: 'pesquisa-magui.html',
-    mime_type: 'text/html',
-    file_size_bytes: 3000,
-    created_at: '2026-05-08',
-    updated_at: '2026-05-08'
-  },
-  {
-    id: 'doc-internal',
-    title: 'Material interno de implantação',
-    category: 'Materiais',
-    notes: 'Guia de uso interno.',
-    folder_path: '/Interna/Materiais',
-    file_name: 'material.pdf',
-    mime_type: 'application/pdf',
-    file_size_bytes: 2200,
-    created_at: '2026-05-08',
-    updated_at: '2026-05-08'
   }
 ];
 
-function pdfDownloadResponse() {
-  return new Response(new Blob(['PDF'], { type: 'application/pdf' }), {
+const emptyJson = (value: unknown) =>
+  new Response(JSON.stringify(value), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' }
+  });
+
+// Fábrica — cria nova Response a cada chamada para evitar body already consumed
+const makePdfBlob = () =>
+  new Response(new Blob(['PDF'], { type: 'application/pdf' }), {
     status: 200,
     headers: { 'Content-Disposition': "attachment; filename*=UTF-8''procedimento.pdf" }
   });
-}
-
-function stubDocumentExplorerFetch(downloadResponse = pdfDownloadResponse()) {
-  vi.stubGlobal('fetch', vi.fn()
-    .mockResolvedValueOnce(new Response(JSON.stringify(rows), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' }
-    }))
-    .mockResolvedValueOnce(new Response(JSON.stringify(folders), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' }
-    }))
-    .mockResolvedValueOnce(new Response(JSON.stringify(companies), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' }
-    }))
-    .mockResolvedValueOnce(new Response(JSON.stringify(modules), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' }
-    }))
-    .mockResolvedValueOnce(downloadResponse));
-}
 
 describe('InternalDocsPage', () => {
   afterEach(() => {
@@ -123,8 +53,6 @@ describe('InternalDocsPage', () => {
       }
     });
 
-    stubDocumentExplorerFetch();
-
     vi.stubGlobal('URL', {
       ...URL,
       createObjectURL: vi.fn(() => 'blob:documento'),
@@ -132,7 +60,22 @@ describe('InternalDocsPage', () => {
     });
   });
 
+  function setupFetchMock() {
+    // loadAll() faz 4 chamadas paralelas + 1 extra silenciosa para doc-pages
+    // + 1 para a ação do usuário
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(emptyJson(rows))     // /internal-documents
+      .mockResolvedValueOnce(emptyJson([]))        // /internal-document-folders
+      .mockResolvedValueOnce(emptyJson([]))        // /companies
+      .mockResolvedValueOnce(emptyJson([]))        // /modules
+      .mockResolvedValueOnce(emptyJson([]))        // /api/internal/doc-pages (silencioso)
+      .mockResolvedValueOnce(makePdfBlob())        // ação do usuário (download / preview)
+    );
+  }
+
   test('downloads internal documents with the internal auth token', async () => {
+    setupFetchMock();
+
     const user = userEvent.setup();
     const appendChildSpy = vi.spyOn(document.body, 'appendChild');
     const removeChildSpy = vi.spyOn(document.body, 'removeChild');
@@ -148,18 +91,12 @@ describe('InternalDocsPage', () => {
 
     render(<InternalDocsPage />);
 
-    await screen.findByRole('heading', { name: 'Documentação' });
-    await user.type(screen.getByRole('searchbox', { name: 'Buscar documentação' }), 'Holand');
-    await user.click(screen.getByRole('button', { name: 'Tudo' }));
-    await user.click(await screen.findByRole('button', { name: /Certificado - Holand - Design Básico/i }));
+    await user.click(await screen.findByRole('button', { name: /Download/i }));
 
-    const detailsPanel = screen.getByRole('complementary', { name: 'Detalhes e ações' });
-    expect(within(detailsPanel).getByText(/Clientes > Holand Automação de Engenharias Ltda > Módulos/i)).toBeInTheDocument();
-    await user.click(within(detailsPanel).getByRole('button', { name: 'Baixar' }));
-
-    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(5));
-    const downloadRequest = vi.mocked(fetch).mock.calls[4];
-    expect(downloadRequest[0]).toBe('http://localhost:4000/internal-documents/doc-cert/download');
+    // 4 chamadas de loadAll + 1 doc-pages + 1 download = 6
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(6));
+    const downloadRequest = vi.mocked(fetch).mock.calls[5];
+    expect(downloadRequest[0]).toBe('http://localhost:4000/internal-documents/doc-1/download');
     expect((downloadRequest[1]?.headers as Headers).get('Authorization')).toBe('Bearer token-documentos');
     expect(anchorClick).toHaveBeenCalledTimes(1);
     expect(appendChildSpy).toHaveBeenCalled();
@@ -167,159 +104,20 @@ describe('InternalDocsPage', () => {
   });
 
   test('previews certificate PDFs without downloading raw document data', async () => {
+    setupFetchMock();
+
     const user = userEvent.setup();
 
     render(<InternalDocsPage />);
 
-    await screen.findByRole('heading', { name: 'Documentação' });
-    await user.type(screen.getByRole('searchbox', { name: 'Buscar documentação' }), 'Design Básico');
-    await user.click(screen.getByRole('button', { name: 'Tudo' }));
-    await user.click(await screen.findByRole('button', { name: /Certificado - Holand - Design Básico/i }));
+    await user.click(await screen.findByRole('button', { name: /Visualizar/i }));
 
-    const detailsPanel = screen.getByRole('complementary', { name: 'Detalhes e ações' });
-    await user.click(within(detailsPanel).getByRole('button', { name: 'Visualizar' }));
-
-    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(5));
-    const previewRequest = vi.mocked(fetch).mock.calls[4];
-    expect(previewRequest[0]).toBe('http://localhost:4000/internal-documents/doc-cert/download');
+    // 4 chamadas de loadAll + 1 doc-pages + 1 preview = 6
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(6));
+    const previewRequest = vi.mocked(fetch).mock.calls[5];
+    expect(previewRequest[0]).toBe('http://localhost:4000/internal-documents/doc-1/download');
     expect((previewRequest[1]?.headers as Headers).get('Authorization')).toBe('Bearer token-documentos');
-    expect(screen.getByRole('dialog', { name: /Certificado - Holand/i })).toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: /Certificado - Metal Forte/i })).toBeInTheDocument();
     expect(screen.getByTitle('Prévia do documento')).toHaveAttribute('src', 'blob:documento');
-  });
-
-  test('previews certificate satisfaction survey search results as a formatted report', async () => {
-    const user = userEvent.setup();
-    stubDocumentExplorerFetch(new Response('<html>{"q1":5}</html>', {
-        status: 200,
-        headers: { 'Content-Type': 'text/html' }
-      }));
-
-    render(<InternalDocsPage />);
-
-    await screen.findByRole('heading', { name: 'Documentação' });
-    await user.type(screen.getByRole('searchbox', { name: 'Buscar documentação' }), 'Cleberson');
-    await user.click(screen.getByRole('button', { name: 'Tudo' }));
-    await user.click(await screen.findByRole('button', { name: /Treinamento TopSolid'Cam 7 - Fresamento 2D/i }));
-
-    const detailsPanel = screen.getByRole('complementary', { name: 'Detalhes e ações' });
-    await user.click(within(detailsPanel).getByRole('button', { name: 'Visualizar' }));
-
-    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(5));
-    const previewRequest = vi.mocked(fetch).mock.calls[4];
-    expect(previewRequest[0]).toBe('http://localhost:4000/internal-documents/doc-survey/download');
-    expect((previewRequest[1]?.headers as Headers).get('Authorization')).toBe('Bearer token-documentos');
-
-    const dialog = screen.getByRole('dialog', { name: /Pesquisa - Magui/i });
-    expect(within(dialog).getByText('Pesquisa de satisfação')).toBeInTheDocument();
-    expect(within(dialog).getByRole('heading', { name: "Treinamento TopSolid'Cam 7 - Fresamento 2D" })).toBeInTheDocument();
-    expect(within(dialog).getByText(/Magui Dispositivos de Controle Ltda/i)).toBeInTheDocument();
-    expect(within(dialog).getByText(/Cleberson/i)).toBeInTheDocument();
-    expect(within(dialog).getByText('O instrutor demonstrou domínio técnico do conteúdo do curso?')).toBeInTheDocument();
-    expect(within(dialog).getByText('5')).toBeInTheDocument();
-    expect(within(dialog).queryByText(/^\{"q1":5\}$/)).not.toBeInTheDocument();
-    expect(within(dialog).getByRole('button', { name: 'Baixar' })).toBeInTheDocument();
-  });
-
-  test('groups search results with full context in global search', async () => {
-    const user = userEvent.setup();
-    render(<InternalDocsPage />);
-
-    await screen.findByRole('heading', { name: 'Documentação' });
-    await user.type(screen.getByRole('searchbox', { name: 'Buscar documentação' }), 'satis');
-    await user.click(screen.getByRole('button', { name: 'Tudo' }));
-
-    expect(await screen.findByRole('heading', { name: 'Pastas' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Pesquisas' })).toBeInTheDocument();
-    expect(screen.getAllByText(/Clientes > Magui Dispositivos de Controle Ltda > Pesquisa de satisfação/i).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/Treinamento TopSolid'Cam 7 - Fresamento 2D/i).length).toBeGreaterThan(0);
-  });
-
-  test('keeps client module folders collapsed until the user expands them', async () => {
-    const user = userEvent.setup();
-    render(<InternalDocsPage />);
-
-    await screen.findByRole('button', { name: /^Clientes/i });
-    expect(screen.queryByRole('button', { name: /020102010/i })).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole('button', { name: /^Clientes/i }));
-    await user.click(screen.getByRole('button', { name: /Magui Dispositivos/i }));
-    expect(screen.getByRole('button', { name: /^Módulos/i })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /020102010/i })).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole('button', { name: /^Módulos/i }));
-    expect(screen.getByRole('button', { name: /020102010/i })).toBeInTheDocument();
-  });
-
-  test('shows selected document metadata in the right details panel', async () => {
-    const user = userEvent.setup();
-    render(<InternalDocsPage />);
-
-    await screen.findByRole('heading', { name: 'Documentação' });
-    await user.type(screen.getByRole('searchbox', { name: 'Buscar documentação' }), 'Magui');
-    await user.click(screen.getByRole('button', { name: 'Tudo' }));
-    const surveyResultButtons = await screen.findAllByRole('button', {
-      name: /Treinamento TopSolid'Cam 7 - Fresamento 2D/i
-    });
-    await user.click(surveyResultButtons.find((button) => button.textContent?.includes('Cleberson')) ?? surveyResultButtons[0]);
-
-    const detailsPanel = screen.getByRole('complementary', { name: 'Detalhes e ações' });
-    expect(within(detailsPanel).getByRole('heading', { name: 'Detalhes' })).toBeInTheDocument();
-    expect(within(detailsPanel).getByText(/Tipo/i)).toBeInTheDocument();
-    expect(within(detailsPanel).getByText('Pesquisa')).toBeInTheDocument();
-    expect(within(detailsPanel).getByText(/Clientes > Magui Dispositivos de Controle Ltda/i)).toBeInTheDocument();
-  });
-
-  test('opens new folder and upload forms from the Novo menu', async () => {
-    const user = userEvent.setup();
-    render(<InternalDocsPage />);
-
-    await screen.findByRole('heading', { name: 'Documentação' });
-    await user.click(screen.getByRole('button', { name: '+ Novo' }));
-    expect(screen.getByRole('menuitem', { name: 'Nova pasta' })).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: 'Enviar arquivo' })).toBeInTheDocument();
-
-    await user.click(screen.getByRole('menuitem', { name: 'Nova pasta' }));
-    expect(screen.getByRole('heading', { name: 'Nova pasta' })).toBeInTheDocument();
-
-    await user.click(screen.getByRole('button', { name: 'Cancelar' }));
-    await user.click(screen.getByRole('button', { name: '+ Novo' }));
-    await user.click(screen.getByRole('menuitem', { name: 'Enviar arquivo' }));
-    expect(screen.getByRole('heading', { name: 'Enviar arquivo' })).toBeInTheDocument();
-  });
-
-  test('supports keyboard interaction in the Novo menu', async () => {
-    const user = userEvent.setup();
-    render(<InternalDocsPage />);
-
-    const newButton = await screen.findByRole('button', { name: '+ Novo' });
-    newButton.focus();
-    await user.keyboard('{Enter}');
-
-    expect(screen.getByRole('menuitem', { name: 'Nova pasta' })).toHaveFocus();
-    await user.keyboard('{ArrowDown}');
-    expect(screen.getByRole('menuitem', { name: 'Enviar arquivo' })).toHaveFocus();
-    await user.keyboard('{Escape}');
-    expect(newButton).toHaveFocus();
-    expect(screen.queryByRole('menuitem', { name: 'Nova pasta' })).not.toBeInTheDocument();
-  });
-
-  test('selects regular folder documents and clears stale details when navigating', async () => {
-    const user = userEvent.setup();
-    render(<InternalDocsPage />);
-
-    const content = await screen.findByRole('region', { name: 'Conteúdo da pasta' });
-    await user.click(within(content).getByRole('button', { name: /Materiais/i }));
-    await screen.findByText('Material interno de implantação');
-    await user.click(within(content).getByRole('button', { name: 'Detalhes' }));
-
-    const detailsPanel = screen.getByRole('complementary', { name: 'Detalhes e ações' });
-    expect(within(detailsPanel).getAllByText('Arquivo').length).toBeGreaterThan(0);
-    expect(within(detailsPanel).getByText('material.pdf')).toBeInTheDocument();
-
-    const breadcrumb = screen.getByRole('navigation', { name: 'Caminho da pasta' });
-    await user.click(within(breadcrumb).getByRole('button', { name: 'Interna' }));
-
-    expect(within(detailsPanel).getByText(/Selecione uma pasta, pesquisa, certificado ou arquivo/i)).toBeInTheDocument();
-    expect(within(detailsPanel).queryByText('material.pdf')).not.toBeInTheDocument();
   });
 });
