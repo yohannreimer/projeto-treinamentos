@@ -2478,6 +2478,30 @@ button:focus-visible,
   color: #114a75;
 }
 
+.internal-docs-page__toast {
+  position: fixed;
+  right: 24px;
+  top: 92px;
+  z-index: 70;
+  width: min(360px, calc(100vw - 32px));
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 10px;
+  box-shadow: 0 16px 38px rgba(21, 28, 34, 0.16);
+  animation: internal-doc-toast-in 0.16s ease-out;
+}
+
+@keyframes internal-doc-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .error {
   color: var(--danger);
   font-weight: 600;
@@ -10657,6 +10681,68 @@ button:focus-visible,
   gap: 10px;
   padding: 14px;
   overflow-y: auto;
+}
+
+.dv2-grid--list {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 7px;
+}
+
+.dv2-grid--list .dv2-folder-card,
+.dv2-grid--list .dv2-wiki-card,
+.dv2-grid--list .dv2-file-card {
+  min-height: 54px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  align-content: center;
+  column-gap: 12px;
+  padding: 9px 12px;
+}
+
+.dv2-grid--list .dv2-folder-card__bar,
+.dv2-grid--list .dv2-wiki-card__bar {
+  bottom: 0;
+  right: auto;
+  width: 3px;
+  height: auto;
+  border-radius: 9px 0 0 9px;
+}
+
+.dv2-grid--list .dv2-folder-card__icon,
+.dv2-grid--list .dv2-wiki-card__head,
+.dv2-grid--list .dv2-file-card__head {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+}
+
+.dv2-grid--list .dv2-folder-card__name,
+.dv2-grid--list .dv2-wiki-card__title,
+.dv2-grid--list .dv2-file-card__name {
+  grid-column: 2;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dv2-grid--list .dv2-folder-card__pills,
+.dv2-grid--list .dv2-wiki-card__foot,
+.dv2-grid--list .dv2-file-card__meta {
+  grid-column: 3;
+  justify-content: flex-end;
+  margin-top: 0;
+  white-space: nowrap;
+}
+
+.dv2-grid--list .dv2-wiki-card__excerpt,
+.dv2-grid--list .dv2-file-card__meta {
+  display: none;
+}
+
+.dv2-grid--list .dv2-file-card__actions {
+  grid-column: 3;
+  justify-content: flex-end;
+  margin-top: 0;
 }
 
 /* --- FolderCard --- */

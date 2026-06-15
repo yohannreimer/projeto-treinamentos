@@ -22,6 +22,7 @@ type DocsDetailPanelProps = {
   onEditPage?: (page: DocPage) => void;
   onShareFile?: (row: InternalDocumentRow) => void;
   onDeleteFile?: (row: InternalDocumentRow) => void;
+  onDeletePage?: (page: DocPage) => void;
   onDownloadFile?: (row: InternalDocumentRow) => void;
   onPreviewFile?: (row: InternalDocumentRow) => void;
   onFileDrop?: (files: FileList) => void;
@@ -46,6 +47,7 @@ export function DocsDetailPanel({
   onEditPage,
   onShareFile,
   onDeleteFile,
+  onDeletePage,
   onDownloadFile,
   onPreviewFile,
   onFileDrop
@@ -255,6 +257,17 @@ export function DocsDetailPanel({
             <DocsIcon name="share" size={14} />
             Compartilhar página
           </button>
+          {onDeletePage && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              style={{ width: '100%', justifyContent: 'center', color: '#b91c1c', borderColor: '#f2c7bf' }}
+              onClick={() => onDeletePage(page)}
+            >
+              <DocsIcon name="trash" size={14} />
+              Excluir página
+            </button>
+          )}
         </div>
         {page.tags.length > 0 && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>

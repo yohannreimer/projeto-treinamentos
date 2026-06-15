@@ -189,11 +189,24 @@ export function InternalDocsPage() {
     } catch {
       // Silencioso: endpoint pode não existir em dev mais antigo
     }
+
+    try {
+      const linkRows = await api.shareLinks() as ShareLink[];
+      setShareLinks(linkRows ?? []);
+    } catch {
+      // Silencioso: endpoint pode não existir em dev mais antigo
+    }
   }
 
   useEffect(() => {
     loadAll().catch((err: Error) => setError(err.message));
   }, []);
+
+  useEffect(() => {
+    if (!message) return undefined;
+    const timeout = window.setTimeout(() => setMessage(''), 6000);
+    return () => window.clearTimeout(timeout);
+  }, [message]);
 
   useEffect(() => () => {
     if (previewDocument?.objectUrl) window.URL.revokeObjectURL(previewDocument.objectUrl);
@@ -321,9 +334,11 @@ export function InternalDocsPage() {
       if (editingPage) {
         const updated = await api.updateDocPage(editingPage.id, payload) as DocPage;
         setPages((cur) => cur.map((p) => p.id === updated.id ? updated : p));
+        setDetailItem((cur) => cur?.type === 'page' && cur.page.id === updated.id ? { type: 'page', page: updated } : cur);
       } else {
         const created = await api.createDocPage({ ...payload, folder_path: selectedPath }) as DocPage;
         setPages((cur) => [...cur, created]);
+        setDetailItem({ type: 'page', page: created });
       }
       setMessage(editingPage ? 'Página atualizada.' : 'Página criada.');
     } finally {
@@ -343,6 +358,19 @@ export function InternalDocsPage() {
     setPageEditorOpen(true);
   }
 
+  async function deletePage(page: DocPage) {
+    const phrase = askDestructiveConfirmation(`Excluir página "${page.title}"`);
+    if (!phrase) return;
+    setError(''); setMessage('');
+    try {
+      await api.deleteDocPage(page.id);
+      setPages((cur) => cur.filter((item) => item.id !== page.id));
+      setShareLinks((cur) => cur.filter((link) => !(link.resource_type === 'page' && link.resource_id === page.id)));
+      setDetailItem(null);
+      setMessage('Página removida.');
+    } catch (err) { setError((err as Error).message); }
+  }
+
   // ── Share link handlers ───────────────────────────────────────────────────
 
   function openShareForFile(row: InternalDocumentRow) {
@@ -353,6 +381,18 @@ export function InternalDocsPage() {
   function openShareForPage(page: DocPage) {
     setShareTarget({ type: 'page', id: page.id, name: page.title });
     setShareLinkOpen(true);
+  }
+
+  function openShareForSelectedDetail() {
+    if (resolvedDetailItem.type === 'page') {
+      openShareForPage(resolvedDetailItem.page);
+      return;
+    }
+    if (resolvedDetailItem.type === 'file') {
+      openShareForFile(resolvedDetailItem.row);
+      return;
+    }
+    setError('Selecione uma página ou arquivo para compartilhar.');
   }
 
   async function createShareLink(payload: Parameters<typeof api.createShareLink>[0]) {
@@ -442,7 +482,7 @@ export function InternalDocsPage() {
       </header>
 
       {error && <p className="error">{error}</p>}
-      {message && <p className="info">{message}</p>}
+      {message && <p className="info internal-docs-page__toast" role="status">{message}</p>}
 
       {/* ── Upload modal / drawer ── */}
       {uploadPanelOpen && (
@@ -557,11 +597,14 @@ export function InternalDocsPage() {
           certCount={certCount}
           onNewPage={openNewPage}
           onNewFolder={() => setNewFolderPanelOpen(true)}
-          onGenerateLink={() => setShareLinkOpen(true)}
           onPreviewFile={(row) => void previewDocument_(row)}
           onDownloadFile={(row) => void downloadDocument(row)}
           onDeleteFile={(row) => void deleteDocument(row)}
+          onEditPage={openEditPage}
+          onShareFile={openShareForFile}
+          onDeletePage={(page) => void deletePage(page)}
           onFileDrop={(files) => void handleFileDrop(files)}
+          onGenerateLink={openShareForSelectedDetail}
         />
       </div>
 

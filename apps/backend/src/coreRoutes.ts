@@ -10126,6 +10126,29 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
     expires_at: z.string().datetime().nullable().default(null)
   });
 
+  // ── GET /api/internal/share-links ────────────────────────────────────────
+  app.get('/api/internal/share-links', (req, res) => {
+    const resourceType = typeof req.query.resource_type === 'string' ? req.query.resource_type : null;
+    const resourceId = typeof req.query.resource_id === 'string' ? req.query.resource_id : null;
+
+    if ((resourceType && !['document', 'page'].includes(resourceType)) || (resourceId && !resourceType)) {
+      return res.status(400).json({ message: 'Filtro de link inválido.' });
+    }
+
+    const rows = resourceType && resourceId
+      ? db.prepare(`
+          SELECT * FROM doc_share_links
+          WHERE resource_type = ? AND resource_id = ?
+          ORDER BY created_at DESC
+        `).all(resourceType, resourceId) as DocShareLinkRow[]
+      : db.prepare(`
+          SELECT * FROM doc_share_links
+          ORDER BY created_at DESC
+        `).all() as DocShareLinkRow[];
+
+    return res.json(rows.map(serializeShareLink));
+  });
+
   // ── POST /api/internal/share-links ───────────────────────────────────────
   app.post('/api/internal/share-links', (req, res) => {
     const parsed = shareLinkCreateSchema.safeParse(req.body);
@@ -10141,10 +10164,11 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
     `).run(resource_type, resource_id);
 
     const id = uuid('share');
+    const token = uuid('doc-share').replace(/^doc-share-/, '');
     db.prepare(`
-      INSERT INTO doc_share_links (id, resource_type, resource_id, allow_download, expires_at, created_by, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(id, resource_type, resource_id, allow_download ? 1 : 0, expires_at, createdBy, now);
+      INSERT INTO doc_share_links (id, resource_type, resource_id, token, allow_download, expires_at, created_by, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, resource_type, resource_id, token, allow_download ? 1 : 0, expires_at, createdBy, now);
 
     const row = db.prepare('SELECT * FROM doc_share_links WHERE id = ?').get(id) as DocShareLinkRow;
     return res.status(201).json(serializeShareLink(row));

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { DocsIcon } from './DocsIcon';
 import {
   CLIENTS_PATH,
@@ -59,7 +59,13 @@ function TreeItem({
   // Quando o path selecionado muda para dentro deste nó, expandir
   const shouldExpand = selectedPath.startsWith(node.path + '/') || isSelected;
 
-  const displayExpanded = expanded || (shouldExpand && hasChildren);
+  useEffect(() => {
+    if (shouldExpand && hasChildren) {
+      setExpanded(true);
+    }
+  }, [hasChildren, shouldExpand]);
+
+  const displayExpanded = expanded && hasChildren;
 
   function handleClick() {
     onSelect(node.path);

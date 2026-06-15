@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { DocsIcon } from './DocsIcon';
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -58,6 +58,7 @@ export function ShareLinkModal({
   );
   const [copied, setCopied] = useState(false);
   const [confirmRevoke, setConfirmRevoke] = useState(false);
+  const requestedCreateFor = useRef<string | null>(null);
 
   // Fecha com Escape
   useEffect(() => {
@@ -68,9 +69,28 @@ export function ShareLinkModal({
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
 
+  useEffect(() => {
+    setEnabled(true);
+    setAllowDownload(existingLink?.allow_download ?? true);
+    setExpiry(existingLink?.expires_at ? '30d' : 'none');
+    setConfirmRevoke(false);
+    requestedCreateFor.current = null;
+  }, [existingLink, resourceId, resourceType]);
+
   const publicUrl = existingLink
     ? `https://${BASE_PUBLIC_URL}/${existingLink.token}`
     : null;
+
+  useEffect(() => {
+    if (!enabled || existingLink || isCreating) return;
+    const key = `${resourceType}:${resourceId}`;
+    if (requestedCreateFor.current === key) return;
+    requestedCreateFor.current = key;
+    const expiresAt = expiry === '30d'
+      ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+      : null;
+    void onCreate({ resource_type: resourceType, resource_id: resourceId, allow_download: allowDownload, expires_at: expiresAt });
+  }, [allowDownload, enabled, existingLink, expiry, isCreating, onCreate, resourceId, resourceType]);
 
   async function handleToggle(next: boolean) {
     setEnabled(next);

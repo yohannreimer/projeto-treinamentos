@@ -182,6 +182,7 @@ export function DocsMainArea({
             type="button"
             className={`dv2-icon-btn${viewMode === 'grid' ? ' is-active' : ''}`}
             title="Visualização em grade"
+            aria-pressed={viewMode === 'grid'}
             onClick={() => setView('grid')}
           >
             <DocsIcon name="grid" size={14} />
@@ -190,6 +191,7 @@ export function DocsMainArea({
             type="button"
             className={`dv2-icon-btn${viewMode === 'list' ? ' is-active' : ''}`}
             title="Visualização em lista"
+            aria-pressed={viewMode === 'list'}
             onClick={() => setView('list')}
           >
             <DocsIcon name="list" size={14} />
@@ -244,7 +246,7 @@ export function DocsMainArea({
           <p style={{ margin: '12px 0 0' }}>Pasta vazia. Crie uma subpasta, página ou envie um arquivo.</p>
         </div>
       ) : (
-        <div className={viewMode === 'grid' ? 'dv2-grid' : 'dv2-grid dv2-grid--list'}>
+        <div className={viewMode === 'grid' ? 'dv2-grid' : 'dv2-grid dv2-grid--list'} data-view-mode={viewMode}>
           {/* Subpastas */}
           {childFolders.map((folder) => (
             <FolderCard

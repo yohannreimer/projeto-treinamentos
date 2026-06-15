@@ -73,13 +73,19 @@ export function PageEditorModal({ page, folderPath, isSaving, onSave, onClose }:
   const [error, setError] = useState('');
 
   const titleRef = useRef<HTMLInputElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const hasFocusedEditor = useRef(false);
 
   useEffect(() => {
-    if (mode === 'edit') {
-      (title ? textareaRef : titleRef).current?.focus();
+    if (mode !== 'edit') {
+      hasFocusedEditor.current = false;
+      return;
     }
-  }, [mode, title]);
+    if (hasFocusedEditor.current) return;
+    hasFocusedEditor.current = true;
+    if (mode === 'edit') {
+      titleRef.current?.focus();
+    }
+  }, [mode]);
 
   // Fecha com Escape
   useEffect(() => {
@@ -202,7 +208,6 @@ export function PageEditorModal({ page, folderPath, isSaving, onSave, onClose }:
 
               {/* Área de conteúdo Markdown */}
               <textarea
-                ref={textareaRef}
                 className="dv2-editor-modal__textarea"
                 placeholder="Escreva em Markdown…&#10;&#10;# Título&#10;## Seção&#10;**negrito**, *itálico*, `código`"
                 value={content}

@@ -900,6 +900,7 @@ export const api = {
     req(`/api/internal/doc-pages/${id}`, { method: 'DELETE' }),
 
   // ── Share Links ────────────────────────────────────────────────────────
+  shareLinks: () => req('/api/internal/share-links'),
   createShareLink: (payload: {
     resource_type: 'document' | 'page';
     resource_id: string;
