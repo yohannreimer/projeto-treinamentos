@@ -51,10 +51,13 @@ export function formatLongDate(value: string): string {
 
 export function addDays(value: string, days: number): string {
   if (!value) return "___/___/______";
-  const date = new Date(value);
-  date.setDate(date.getDate() + days);
-  const [year, month, day] = date.toISOString().split("T")[0].split("-");
-  return `${day}/${month}/${year}`;
+  const [year, month, day] = value.split("-").map((part) => Number.parseInt(part, 10));
+  const date = new Date(Date.UTC(year, month - 1, day));
+  date.setUTCDate(date.getUTCDate() + days);
+  const resultYear = date.getUTCFullYear();
+  const resultMonth = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const resultDay = String(date.getUTCDate()).padStart(2, "0");
+  return `${resultDay}/${resultMonth}/${resultYear}`;
 }
 
 export function calculateProposalTotals(input: ProposalTotalsInput): ProposalTotals {

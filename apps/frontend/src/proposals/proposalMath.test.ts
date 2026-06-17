@@ -17,6 +17,10 @@ describe("proposalMath", () => {
     expect(addDays("", 11)).toBe("___/___/______");
   });
 
+  it("adds validity days across daylight saving boundaries", () => {
+    expect(addDays("2026-03-07", 2)).toBe("09/03/2026");
+  });
+
   it("calculates subtotal, discount, taxes, final total, and total days", () => {
     const totals = calculateProposalTotals({
       selectedServices: [
