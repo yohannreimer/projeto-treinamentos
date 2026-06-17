@@ -9,6 +9,7 @@ import { CohortsPage } from './pages/CohortsPage';
 import { CohortDetailPage } from './pages/CohortDetailPage';
 import { ClientsPage } from './pages/ClientsPage';
 import { ClientDetailPage } from './pages/ClientDetailPage';
+import { ProposalsPage } from './pages/ProposalsPage';
 import { TechniciansPage } from './pages/TechniciansPage';
 import { ImplementationPage } from './pages/ImplementationPage';
 import { LicensesPage } from './pages/LicensesPage';
@@ -180,6 +181,14 @@ function OperationsRoutes({ user, defaultRoute }: { user: InternalSessionUser; d
         element={(
           <ProtectedRoute user={user} permissions={['clients']} fallback={defaultRoute}>
             <ClientDetailPage />
+          </ProtectedRoute>
+        )}
+      />
+      <Route
+        path="/propostas"
+        element={(
+          <ProtectedRoute user={user} permissions={['clients']} fallback={defaultRoute}>
+            <ProposalsPage />
           </ProtectedRoute>
         )}
       />
