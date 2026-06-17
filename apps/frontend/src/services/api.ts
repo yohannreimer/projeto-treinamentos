@@ -493,6 +493,11 @@ export const api = {
     req(withConfirmation(`/internal-documents/${id}`, confirmation_phrase), {
       method: 'DELETE'
     }),
+  updateInternalDocumentPortalVisibility: (id: string, payload: { visible: boolean }) =>
+    req(`/internal-documents/${id}/portal`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload)
+    }),
   internalDocumentDownloadUrl: (id: string) => `${BASE_URL}/internal-documents/${id}/download`,
   licenseAlertsSummary: (options?: { silent?: boolean }) => req('/licenses/alerts-summary', { silent: options?.silent }),
   licenses: () => req('/licenses'),

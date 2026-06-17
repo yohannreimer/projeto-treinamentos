@@ -1429,6 +1429,8 @@ export function initDb() {
   ensureColumn('calendar_activity', 'hours_scope', "hours_scope text not null default 'none'");
   ensureColumn('calendar_activity', 'hours_consumed_snapshot', 'hours_consumed_snapshot real not null default 0');
   ensureColumn('internal_document', 'folder_path', 'folder_path text');
+  ensureColumn('internal_document', 'portal_visible', 'portal_visible integer not null default 0');
+  ensureColumn('internal_document', 'portal_published_at', 'portal_published_at text');
   ensureColumn('technician', 'hourly_cost', 'hourly_cost real');
   ensureColumn('implementation_kanban_card', 'column_id', 'column_id text');
   ensureColumn('implementation_kanban_card', 'client_name', 'client_name text');

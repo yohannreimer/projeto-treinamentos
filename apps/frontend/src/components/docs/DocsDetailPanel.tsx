@@ -22,10 +22,13 @@ type DocsDetailPanelProps = {
   onEditPage?: (page: DocPage) => void;
   onShareFile?: (row: InternalDocumentRow) => void;
   onDeleteFile?: (row: InternalDocumentRow) => void;
+  onTogglePortalFile?: (row: InternalDocumentRow) => void;
   onDeletePage?: (page: DocPage) => void;
   onDownloadFile?: (row: InternalDocumentRow) => void;
   onPreviewFile?: (row: InternalDocumentRow) => void;
   onFileDrop?: (files: FileList) => void;
+  canTogglePortalFile?: (row: InternalDocumentRow) => boolean;
+  portalFileUpdatingId?: string | null;
 };
 
 function formatDateBr(iso?: string | null): string {
@@ -47,10 +50,13 @@ export function DocsDetailPanel({
   onEditPage,
   onShareFile,
   onDeleteFile,
+  onTogglePortalFile,
   onDeletePage,
   onDownloadFile,
   onPreviewFile,
-  onFileDrop
+  onFileDrop,
+  canTogglePortalFile,
+  portalFileUpdatingId
 }: DocsDetailPanelProps) {
   const [isDragging, setIsDragging] = useState(false);
   const dropRef = useRef<HTMLDivElement>(null);
@@ -159,6 +165,8 @@ export function DocsDetailPanel({
   if (selectedItem.type === 'file') {
     const { row } = selectedItem;
     const canPreview = row.mime_type === 'application/pdf' || row.mime_type.startsWith('image/');
+    const isPortalVisible = Boolean(row.portal_visible);
+    const canTogglePortal = canTogglePortalFile?.(row) ?? false;
     return (
       <aside className="dv2-panel dv2-detail">
         <div className="dv2-detail__header">
@@ -203,6 +211,27 @@ export function DocsDetailPanel({
               >
                 <DocsIcon name="share" size={14} />
                 Compartilhar
+              </button>
+            )}
+            {canTogglePortal && onTogglePortalFile && (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                style={{
+                  width: '100%',
+                  justifyContent: 'center',
+                  color: isPortalVisible ? '#9a3412' : '#1f6b48',
+                  borderColor: isPortalVisible ? '#fed7aa' : '#b8dfc8'
+                }}
+                onClick={() => onTogglePortalFile(row)}
+                disabled={portalFileUpdatingId === row.id}
+              >
+                <DocsIcon name={isPortalVisible ? 'eye-off' : 'eye'} size={14} />
+                {portalFileUpdatingId === row.id
+                  ? 'Atualizando...'
+                  : isPortalVisible
+                    ? 'Remover do portal'
+                    : 'Adicionar ao portal'}
               </button>
             )}
             {onDeleteFile && (

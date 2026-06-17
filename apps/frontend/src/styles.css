@@ -6300,6 +6300,12 @@ button:focus-visible,
   color: #5f5149;
 }
 
+.portal-table-mode-chip.is-file {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1f4f78;
+}
+
 .portal-table-inline {
   color: #415462;
   font-size: 0.84rem;
@@ -7627,6 +7633,10 @@ button:focus-visible,
   border-radius: 8px;
   background: #ffffff;
   box-shadow: 0 16px 34px rgba(29, 40, 48, 0.06);
+}
+
+.portal-file-card {
+  border-color: rgba(31, 79, 120, 0.14);
 }
 
 .portal-certificate-main {
@@ -10652,20 +10662,27 @@ button:focus-visible,
   display: grid;
   grid-template-rows: auto auto 1fr;
   min-height: 600px;
+  overflow: visible;
+  position: relative;
+  z-index: 2;
 }
 
 /* Breadcrumb */
 .dv2-breadcrumb {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 4px;
   padding: 10px 14px;
   border-bottom: 1px solid var(--line, #d6dbe0);
   background: #f9fbfc;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .dv2-breadcrumb__item {
+  max-width: min(280px, 32vw);
+  min-width: 0;
   min-height: 26px;
   padding: 3px 9px;
   border: none;
@@ -10674,6 +10691,9 @@ button:focus-visible,
   color: #506070;
   font-size: 0.78rem;
   font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   cursor: pointer;
   transition: background 0.1s;
 }
@@ -10698,11 +10718,13 @@ button:focus-visible,
 
 /* Toolbar */
 .dv2-toolbar {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 158px;
   align-items: center;
   gap: 10px;
   padding: 12px 14px;
   border-bottom: 1px solid var(--line, #d6dbe0);
+  min-width: 0;
 }
 
 .dv2-toolbar__title {
@@ -10739,7 +10761,10 @@ button:focus-visible,
 .dv2-toolbar__actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 6px;
+  width: 158px;
+  min-width: 158px;
 }
 
 .dv2-icon-btn {
@@ -10770,12 +10795,16 @@ button:focus-visible,
 /* Dropdown "Novo" */
 .dv2-new-btn {
   position: relative;
+  flex: 0 0 auto;
 }
 
 .dv2-new-btn__trigger {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
+  width: 78px;
+  min-width: 78px;
   min-height: 32px;
   padding: 0 12px;
   border: none;
@@ -10784,6 +10813,7 @@ button:focus-visible,
   color: #ffffff;
   font-size: 0.82rem;
   font-weight: 700;
+  white-space: nowrap;
   cursor: pointer;
   transition: background 0.12s;
 }
@@ -10797,7 +10827,8 @@ button:focus-visible,
   top: calc(100% + 4px);
   right: 0;
   z-index: 40;
-  min-width: 180px;
+  width: 214px;
+  min-width: 214px;
   border: 1px solid var(--line, #d6dbe0);
   border-radius: 9px;
   background: #ffffff;
@@ -10807,6 +10838,7 @@ button:focus-visible,
 
 .dv2-dropdown__item {
   width: 100%;
+  min-width: 0;
   min-height: 38px;
   display: flex;
   align-items: center;
@@ -10817,8 +10849,13 @@ button:focus-visible,
   color: #3d4e5f;
   font-size: 0.84rem;
   text-align: left;
+  white-space: nowrap;
   cursor: pointer;
   transition: background 0.1s;
+}
+
+.dv2-dropdown__item svg {
+  flex: 0 0 auto;
 }
 
 .dv2-dropdown__item:hover {

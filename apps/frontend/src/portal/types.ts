@@ -168,6 +168,19 @@ export type PortalCertificateItem = {
   evaluation_url: string | null;
 };
 
+export type PortalFileItem = {
+  id: string;
+  title: string;
+  category: string | null;
+  notes: string | null;
+  folder_path: string | null;
+  file_name: string;
+  mime_type: string;
+  file_size_bytes: number;
+  published_at: string;
+  download_url: string;
+};
+
 export type PortalCertificateParticipant = {
   participant_id: string;
   participant_name: string;
@@ -269,6 +282,7 @@ export type PortalAuthedApi = {
   ) => Promise<{ ok: boolean; workflow_stage: string }>;
   tickets: () => Promise<PortalTicketsResponse>;
   certificates: () => Promise<{ items: PortalCertificateItem[] }>;
+  files: () => Promise<{ items: PortalFileItem[] }>;
   certificateEvaluation: (certificateId: string, participantId?: string | null) => Promise<PortalCertificateEvaluation>;
   submitCertificateEvaluation: (
     certificateId: string,

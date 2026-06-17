@@ -392,6 +392,10 @@ const internalDocumentFolderCreateSchema = z.object({
   name: z.string().trim().min(1).max(120)
 });
 
+const internalDocumentPortalVisibilitySchema = z.object({
+  visible: z.boolean()
+});
+
 const followupEvaluationCreateSchema = z.object({
   title: z.string().trim().min(2).max(160).default('Avaliação de acompanhamento'),
   notes: z.string().trim().max(1000).nullable().optional()
@@ -1160,6 +1164,11 @@ function normalizeDocumentFolderPath(value?: string | null) {
   return withSlash
     .replace(/\/{2,}/g, '/')
     .replace(/\/$/, '') || '/Interna';
+}
+
+function clientIdFromDocumentFolderPath(value?: string | null) {
+  const match = normalizeDocumentFolderPath(value).match(/^\/Clientes\/([^/]+)(?:\/|$)/);
+  return match?.[1] ?? null;
 }
 
 function documentFolderSegment(name: string) {
@@ -7405,7 +7414,19 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
 
   app.get('/internal-documents', (_req, res) => {
     const rows = db.prepare(`
-      select id, title, category, notes, folder_path, file_name, mime_type, file_size_bytes, created_at, updated_at
+      select
+        id,
+        title,
+        category,
+        notes,
+        folder_path,
+        file_name,
+        mime_type,
+        file_size_bytes,
+        portal_visible,
+        portal_published_at,
+        created_at,
+        updated_at
       from internal_document
       order by date(updated_at) desc, title asc
     `).all();
@@ -7475,6 +7496,59 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
     } catch (error) {
       return res.status(500).json({ message: 'Arquivo corrompido.', detail: errorMessage(error) });
     }
+  });
+
+  app.patch('/internal-documents/:id/portal', (req, res) => {
+    const parsed = internalDocumentPortalVisibilitySchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+
+    const row = db.prepare(`
+      select id, title, folder_path, portal_visible, portal_published_at
+      from internal_document
+      where id = ?
+    `).get(req.params.id) as
+      | { id: string; title: string; folder_path: string | null; portal_visible: number; portal_published_at: string | null }
+      | undefined;
+
+    if (!row) {
+      return res.status(404).json({ message: 'Documento não encontrado.' });
+    }
+
+    const companyId = clientIdFromDocumentFolderPath(row.folder_path);
+    if (!companyId) {
+      return res.status(400).json({ message: 'Só arquivos dentro de uma pasta de cliente podem aparecer no portal.' });
+    }
+
+    const nowIso = new Date().toISOString();
+    const portalPublishedAt = parsed.data.visible ? (row.portal_published_at ?? nowIso) : null;
+    db.prepare(`
+      update internal_document
+      set portal_visible = ?,
+        portal_published_at = ?,
+        updated_at = ?
+      where id = ?
+    `).run(parsed.data.visible ? 1 : 0, portalPublishedAt, nowIso, row.id);
+
+    const updated = db.prepare(`
+      select
+        id,
+        title,
+        category,
+        notes,
+        folder_path,
+        file_name,
+        mime_type,
+        file_size_bytes,
+        portal_visible,
+        portal_published_at,
+        created_at,
+        updated_at
+      from internal_document
+      where id = ?
+    `).get(row.id);
+    return res.json(updated);
   });
   
   app.delete('/internal-documents/:id', (req, res) => {

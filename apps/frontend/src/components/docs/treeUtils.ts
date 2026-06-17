@@ -19,6 +19,8 @@ export type InternalDocumentRow = {
   file_name: string;
   mime_type: string;
   file_size_bytes: number;
+  portal_visible?: number | boolean | null;
+  portal_published_at?: string | null;
   created_at: string;
   updated_at: string;
 };

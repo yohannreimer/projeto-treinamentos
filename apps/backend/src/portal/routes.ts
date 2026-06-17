@@ -139,6 +139,19 @@ type PortalCertificateRecord = {
   status_label: string;
 };
 
+type PortalDocumentRecord = {
+  id: string;
+  title: string;
+  category: string | null;
+  notes: string | null;
+  folder_path: string | null;
+  file_name: string;
+  mime_type: string;
+  file_size_bytes: number;
+  portal_published_at: string | null;
+  updated_at: string;
+};
+
 function buildLoginThrottleKey(ip: string, userAgent: string, slug: string, username: string) {
   return `${ip}::${userAgent}::${slug.trim().toLowerCase()}::${username.trim().toLowerCase()}`;
 }
@@ -789,6 +802,30 @@ function decodeAttachmentDataUrl(dataUrl: string) {
     mimeType,
     fileSizeBytes: binary.length
   };
+}
+
+function decodePortalDocumentDataUrl(dataUrl: string) {
+  const match = dataUrl.match(/^data:([a-zA-Z0-9.+-]+\/[a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=\s]+)$/);
+  if (!match) {
+    throw new Error('Arquivo inválido.');
+  }
+
+  return {
+    mimeType: match[1] ?? 'application/octet-stream',
+    buffer: Buffer.from((match[2] ?? '').replace(/\s+/g, ''), 'base64')
+  };
+}
+
+function normalizePortalDocumentFolderPath(value?: string | null) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '/Interna';
+  const withSlash = raw.startsWith('/') ? raw : `/${raw}`;
+  return withSlash.replace(/\/{2,}/g, '/').replace(/\/$/, '') || '/Interna';
+}
+
+function portalDocumentBelongsToCompany(folderPath: string | null | undefined, companyId: string) {
+  const normalized = normalizePortalDocumentFolderPath(folderPath);
+  return normalized === `/Clientes/${companyId}` || normalized.startsWith(`/Clientes/${companyId}/`);
 }
 
 type PortalClientDisplaySettings = {
@@ -2521,6 +2558,80 @@ export function registerPortalRoutes(app: Express) {
     } catch (error) {
       return res.status(500).json({
         message: 'Erro ao gerar certificado.',
+        detail: error instanceof Error ? error.message : String(error)
+      });
+    }
+  });
+
+  router.get('/files', requirePortalAuth, (_req, res) => {
+    const context = getPortalContextOrNull(res);
+    if (!context) {
+      return res.status(401).json({ message: 'Sessão inválida ou expirada.' });
+    }
+
+    const companyRoot = `/Clientes/${context.company_id}`;
+    const rows = db.prepare(`
+      select
+        id,
+        title,
+        category,
+        notes,
+        folder_path,
+        file_name,
+        mime_type,
+        file_size_bytes,
+        portal_published_at,
+        updated_at
+      from internal_document
+      where portal_visible = 1
+        and (folder_path = ? or folder_path like ?)
+      order by datetime(coalesce(portal_published_at, updated_at)) desc, title asc
+    `).all(companyRoot, `${companyRoot}/%`) as PortalDocumentRecord[];
+
+    const items = rows.map((row) => ({
+      id: row.id,
+      title: row.title,
+      category: row.category,
+      notes: row.notes,
+      folder_path: row.folder_path,
+      file_name: row.file_name,
+      mime_type: row.mime_type,
+      file_size_bytes: row.file_size_bytes,
+      published_at: row.portal_published_at ?? row.updated_at,
+      download_url: `/portal/api/files/${encodeURIComponent(row.id)}/download`
+    }));
+
+    return res.status(200).json({ items });
+  });
+
+  router.get('/files/:documentId/download', requirePortalAuth, (req, res) => {
+    const context = getPortalContextOrNull(res);
+    if (!context) {
+      return res.status(401).json({ message: 'Sessão inválida ou expirada.' });
+    }
+
+    const row = db.prepare(`
+      select id, folder_path, file_name, mime_type, file_data_base64
+      from internal_document
+      where id = ?
+        and portal_visible = 1
+      limit 1
+    `).get(req.params.documentId) as
+      | { id: string; folder_path: string | null; file_name: string; mime_type: string; file_data_base64: string }
+      | undefined;
+
+    if (!row || !portalDocumentBelongsToCompany(row.folder_path, context.company_id)) {
+      return res.status(404).json({ message: 'Arquivo não encontrado.' });
+    }
+
+    try {
+      const decoded = decodePortalDocumentDataUrl(row.file_data_base64);
+      res.setHeader('Content-Type', row.mime_type || decoded.mimeType || 'application/octet-stream');
+      res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(row.file_name)}`);
+      return res.status(200).send(decoded.buffer);
+    } catch (error) {
+      return res.status(500).json({
+        message: 'Arquivo corrompido.',
         detail: error instanceof Error ? error.message : String(error)
       });
     }

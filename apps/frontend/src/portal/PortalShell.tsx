@@ -7,6 +7,7 @@ import { PortalAgendaPage } from './pages/PortalAgendaPage';
 import { PortalLoginPage } from './pages/PortalLoginPage';
 import { PortalCertificateEvaluationPage } from './pages/PortalCertificateEvaluationPage';
 import { PortalCertificatesPage } from './pages/PortalCertificatesPage';
+import { PortalFilesPage } from './pages/PortalFilesPage';
 import { PortalPlanningPage } from './pages/PortalPlanningPage';
 import { PortalTicketsPage } from './pages/PortalTicketsPage';
 import holandHorizontalLogo from '../assets/holand-horizontal.svg';
@@ -119,6 +120,7 @@ export function PortalShell() {
           <NavLink to="planejamento" className={({ isActive }) => isActive ? 'is-active' : ''}>Planejamento</NavLink>
           <NavLink to="agenda" className={({ isActive }) => isActive ? 'is-active' : ''}>Agenda</NavLink>
           <NavLink to="certificados" className={({ isActive }) => isActive ? 'is-active' : ''}>Certificados</NavLink>
+          <NavLink to="arquivos" className={({ isActive }) => isActive ? 'is-active' : ''}>Arquivos</NavLink>
           <NavLink to="suporte" className={({ isActive }) => isActive ? 'is-active' : ''}>Suporte</NavLink>
         </nav>
         <div className="portal-sidebar-footer">
@@ -144,6 +146,7 @@ export function PortalShell() {
           <Route path="planejamento" element={<PortalPlanningPage api={apiClient} isInternal={Boolean(profile?.is_internal)} />} />
           <Route path="agenda" element={<PortalAgendaPage api={apiClient} isInternal={Boolean(profile?.is_internal)} />} />
           <Route path="certificados" element={<PortalCertificatesPage api={apiClient} sessionToken={session.token} />} />
+          <Route path="arquivos" element={<PortalFilesPage api={apiClient} sessionToken={session.token} />} />
           <Route path="certificados/:certificateId/avaliacao" element={<PortalCertificateEvaluationPage api={apiClient} />} />
           <Route
             path="suporte"
