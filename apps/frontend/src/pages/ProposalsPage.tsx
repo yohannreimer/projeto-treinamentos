@@ -338,10 +338,10 @@ function ProposalPreview({ client, proposal, selectedServices, observations, tax
         Agradecemos seu interesse pelos serviços de consultoria, suporte técnico e treinamentos em sistemas PDM/CAD/CAM oferecidos pela HOLAND.
       </p>
 
-      <h2>I - Objeto</h2>
+      <h2>I – Objeto</h2>
       <p>Serviços de Treinamento, Implantação e Consultoria.</p>
 
-      <h2>II - Especificações</h2>
+      <h2>II – Especificações</h2>
       <p>
         Os treinamentos abaixo orçados serão ministrados na modalidade <strong>{modalityText}</strong>.
         <br />
@@ -404,7 +404,7 @@ function ProposalPreview({ client, proposal, selectedServices, observations, tax
       </div>
 
       <div className="proposal-commercial">
-        <strong>IV - Condições Comerciais</strong>
+        <strong>IV – Condições Comerciais</strong>
         <p>
           <strong>Treinamento, Implantação, Consultoria e Acompanhamento.</strong>
         </p>
@@ -413,13 +413,13 @@ function ProposalPreview({ client, proposal, selectedServices, observations, tax
       </div>
 
       <div className="proposal-tax-copy">
-        <strong>VIII - Impostos</strong>
+        <strong>VIII – Impostos</strong>
         <br />
         Composição dos impostos para serviços: {taxLabel(taxPercent)}%
       </div>
 
       <div className="proposal-validity">
-        <strong>IX - Considerações Finais</strong>
+        <strong>IX – Considerações Finais</strong>
         <br />
         Esta proposta tem validade até <strong>{validityDate}</strong>.
         <br />
