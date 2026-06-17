@@ -6,6 +6,7 @@ import { ProposalsPage } from "./ProposalsPage";
 
 describe("ProposalsPage", () => {
   beforeEach(() => {
+    localStorage.clear();
     vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.setSystemTime(new Date("2026-06-17T12:00:00-03:00"));
   });
@@ -93,6 +94,59 @@ describe("ProposalsPage", () => {
     const preview = screen.getByRole("region", { name: "Prévia da proposta" });
     expect(within(preview).getByText("020102090 - Treinamento Robodrill Especial")).toBeInTheDocument();
     expect(within(preview).getByText("Ajustes e rotinas sob medida.")).toBeInTheDocument();
+  });
+
+  test("resets target discount after selected services or amounts change", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<ProposalsPage />);
+
+    await user.click(screen.getByRole("checkbox", { name: "Selecionar Treinamento TopSolid'Design 7 - Básico" }));
+    await user.click(screen.getByRole("button", { name: "Editar Treinamento TopSolid'Design 7 - Básico" }));
+    await user.clear(screen.getByLabelText("Valor por dia de Treinamento TopSolid'Design 7 - Básico"));
+    await user.type(screen.getByLabelText("Valor por dia de Treinamento TopSolid'Design 7 - Básico"), "60000");
+    await user.click(screen.getByRole("button", { name: "Desconto para R$ 54.000" }));
+
+    const totals = screen.getByRole("region", { name: "Totais da proposta" });
+    expect(within(totals).getByText("R$ 54.000,00")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("checkbox", { name: "Selecionar Treinamento TopSolid'Design 7 - Montagem" }));
+
+    expect(within(totals).queryByText("R$ 54.000,00")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Desconto de .* aplicado/i)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Desconto para R$ 54.000" }));
+    expect(within(totals).getByText("R$ 54.000,00")).toBeInTheDocument();
+
+    await user.clear(screen.getByLabelText("Valor por dia de Treinamento TopSolid'Design 7 - Básico"));
+    await user.type(screen.getByLabelText("Valor por dia de Treinamento TopSolid'Design 7 - Básico"), "61000");
+
+    expect(within(totals).queryByText("R$ 54.000,00")).not.toBeInTheDocument();
+  });
+
+  test("keeps observations blank when the textarea is cleared", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<ProposalsPage />);
+
+    await user.clear(screen.getByLabelText("Observações"));
+
+    const preview = screen.getByRole("region", { name: "Prévia da proposta" });
+    expect(within(preview).queryByText(/A utilização do TopSolid 7/i)).not.toBeInTheDocument();
+    expect(within(preview).queryByText(/O suporte técnico on-line/i)).not.toBeInTheDocument();
+  });
+
+  test("clamps negative custom module values to zero", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<ProposalsPage />);
+
+    await user.click(screen.getByRole("button", { name: "Adicionar módulo personalizado" }));
+    await user.type(screen.getByLabelText("Nome do módulo personalizado"), "Módulo com valor negativo");
+    await user.clear(screen.getByLabelText("Valor por dia do módulo personalizado"));
+    await user.type(screen.getByLabelText("Valor por dia do módulo personalizado"), "-50");
+    await user.clear(screen.getByLabelText("Dias padrão do módulo personalizado"));
+    await user.type(screen.getByLabelText("Dias padrão do módulo personalizado"), "2");
+    await user.click(screen.getByRole("button", { name: "Salvar módulo" }));
+
+    expect(screen.getByText("R$ 0,00 / dia · 2 dia(s)")).toBeInTheDocument();
   });
 
   test("print button calls window.print", async () => {

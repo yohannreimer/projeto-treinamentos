@@ -398,7 +398,7 @@ function ProposalPreview({ client, proposal, selectedServices, observations, tax
       )}
 
       <div className="proposal-notes">
-        {(observations || DEFAULT_OBSERVATIONS).split("\n").map((line, index) =>
+        {observations.split("\n").map((line, index) =>
           line ? <p key={`${line}-${index}`}>{line}</p> : <br key={`blank-${index}`} />,
         )}
       </div>
@@ -495,6 +495,11 @@ export function ProposalsPage() {
     snapTo54000: snapToTarget,
   });
 
+  function resetTargetDiscount() {
+    setSnapToTarget(false);
+    setSnapMessage("");
+  }
+
   function setClientField(field: keyof ClientFields, value: string) {
     setClient((previous) => ({ ...previous, [field]: value }));
   }
@@ -504,6 +509,7 @@ export function ProposalsPage() {
   }
 
   function toggleSelected(id: string) {
+    resetTargetDiscount();
     setSelectedIds((previous) => {
       const next = new Set(previous);
       if (next.has(id)) {
@@ -531,6 +537,7 @@ export function ProposalsPage() {
     const service = services.find((item) => item.id === id);
     if (!service) return;
 
+    resetTargetDiscount();
     setServiceEdits((previous) => {
       const next = updateServiceEditValue(previous, service, field, value);
       saveProposalServiceEdits(next);
@@ -539,6 +546,7 @@ export function ProposalsPage() {
   }
 
   function resetService(id: string) {
+    resetTargetDiscount();
     setServiceEdits((previous) => {
       const next = { ...previous };
       delete next[id];
@@ -551,7 +559,7 @@ export function ProposalsPage() {
     const name = customDraft.name.trim();
     if (!name) return;
 
-    const valuePerDay = numericValue(customDraft.valuePerDay, 1000);
+    const valuePerDay = Math.max(0, numericValue(customDraft.valuePerDay, 1000));
     const durationDays = positiveIntegerValue(customDraft.days, 1);
     const service: ProposalService = {
       id: `custom_${Date.now()}`,
@@ -563,6 +571,7 @@ export function ProposalsPage() {
       custom: true,
     };
 
+    resetTargetDiscount();
     setCustomServices((previous) => {
       const next = [...previous, service];
       saveProposalCustomServices(next);
@@ -575,6 +584,7 @@ export function ProposalsPage() {
   function deleteCustomService(id: string) {
     if (!window.confirm("Excluir este módulo permanentemente?")) return;
 
+    resetTargetDiscount();
     setCustomServices((previous) => {
       const next = previous.filter((service) => service.id !== id);
       saveProposalCustomServices(next);
@@ -704,10 +714,22 @@ export function ProposalsPage() {
           <div className="proposal-panel-title-row">
             <h2>Serviços</h2>
             <div>
-              <button type="button" onClick={() => setSelectedIds(new Set(services.map((service) => service.id)))}>
+              <button
+                type="button"
+                onClick={() => {
+                  resetTargetDiscount();
+                  setSelectedIds(new Set(services.map((service) => service.id)));
+                }}
+              >
                 Todos
               </button>
-              <button type="button" onClick={() => setSelectedIds(new Set())}>
+              <button
+                type="button"
+                onClick={() => {
+                  resetTargetDiscount();
+                  setSelectedIds(new Set());
+                }}
+              >
                 Nenhum
               </button>
             </div>
