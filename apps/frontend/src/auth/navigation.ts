@@ -18,7 +18,7 @@ export const APP_NAV_ITEMS: AppNavItem[] = [
   { to: '/planejar', label: 'Planejar', permissions: ['calendar', 'cohorts'] },
   { to: '/turmas', label: 'Turmas', permissions: ['cohorts'] },
   { to: '/clientes', label: 'Clientes', permissions: ['clients'] },
-  { to: '/propostas', label: 'Propostas', permissions: ['clients'] },
+  { to: '/propostas', label: 'Propostas', permissions: ['proposals'] },
   { to: '/tecnicos', label: 'Técnicos', permissions: ['technicians'] },
   { to: '/implementacao', label: 'Implementação', permissions: ['implementation'] },
   { to: '/suporte', label: 'Suporte', permissions: ['support', 'implementation'] },

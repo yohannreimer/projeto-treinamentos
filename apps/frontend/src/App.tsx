@@ -68,7 +68,7 @@ function createLocalDevSession(): InternalSessionData {
       username: 'local-dev',
       display_name: 'Acesso Local',
       role: 'custom',
-      permissions: ['clients'],
+      permissions: ['proposals'],
       preferences: {
         calendar_vivid_mode: false
       }
@@ -219,7 +219,7 @@ function OperationsRoutes({ user, defaultRoute }: { user: InternalSessionUser; d
       <Route
         path="/propostas"
         element={(
-          <ProtectedRoute user={user} permissions={['clients']} fallback={defaultRoute}>
+          <ProtectedRoute user={user} permissions={['proposals']} fallback={defaultRoute}>
             <ProposalsPage />
           </ProtectedRoute>
         )}

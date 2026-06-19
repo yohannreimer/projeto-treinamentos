@@ -64,10 +64,15 @@ const FINANCE_PERMISSION_KEYS = new Set<InternalPermission>([
   'finance.close',
   'finance.billing'
 ]);
+const INTERMEDIARIO_EXCLUDED_PERMISSION_KEYS = new Set<InternalPermission>([
+  'admin',
+  'proposals',
+  ...FINANCE_PERMISSION_KEYS
+]);
 
 const ROLE_PRESETS: Record<InternalRole, InternalPermission[]> = {
   supremo: [...INTERNAL_PERMISSION_KEYS],
-  intermediario: INTERNAL_PERMISSION_KEYS.filter((item) => item !== 'admin' && !FINANCE_PERMISSION_KEYS.has(item)),
+  intermediario: INTERNAL_PERMISSION_KEYS.filter((item) => !INTERMEDIARIO_EXCLUDED_PERMISSION_KEYS.has(item)),
   junior: ['calendar', 'cohorts', 'implementation', 'support', 'licenses', 'docs'],
   custom: []
 };
@@ -746,7 +751,7 @@ export function AdminPage() {
 
       <Section title="Usuários internos e permissões">
         <p className="form-hint">
-          Perfis recomendados: <strong>Supremo</strong> (tudo), <strong>Intermediário</strong> (tudo menos Administração) e <strong>Júnior</strong> (Calendário, Turmas, Implementação, Suporte, Licenças e Documentação).
+          Perfis recomendados: <strong>Supremo</strong> (tudo), <strong>Intermediário</strong> (tudo menos Administração, Financeiro e Propostas) e <strong>Júnior</strong> (Calendário, Turmas, Implementação, Suporte, Licenças e Documentação).
         </p>
         <div className="two-col admin-security-grid">
           <div className="form-subcard">
