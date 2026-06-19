@@ -8,7 +8,18 @@ export type ProposalService = {
   custom?: boolean;
 };
 
+export type ProposalProduct = {
+  id: string;
+  code: string;
+  name: string;
+  unitValueUsd: number;
+  defaultQuantity: number;
+  description: string;
+  custom?: boolean;
+};
+
 export const DEFAULT_TAX_PERCENT = 12;
+export const DEFAULT_EXCHANGE_RATE = 5.8;
 export const DEFAULT_VALIDITY_DAYS = 11;
 export const SNAP_TOTAL_TARGET = 54000;
 
@@ -119,5 +130,98 @@ export const PROPOSAL_SERVICES: ProposalService[] = [
     valuePerDay: 615,
     defaultDurationDays: 1,
     description: "Serviços de instalação e configuração de software e hardware.",
+  },
+];
+
+export const PROPOSAL_PRODUCTS: ProposalProduct[] = [
+  {
+    id: "p1",
+    code: "1120",
+    name: "TopSolid'Pdm Server 7",
+    unitValueUsd: 1000,
+    defaultQuantity: 1,
+    description: "Gestão do fluxo de dados entre o servidor e os usuários.",
+  },
+  {
+    id: "p2",
+    code: "1130",
+    name: "TopSolid'Pdm Explorer",
+    unitValueUsd: 500,
+    defaultQuantity: 1,
+    description: "Visualização e edição do status dos documentos acessando diretamente os dados no cofre do servidor.",
+  },
+  {
+    id: "p3",
+    code: "0030",
+    name: "TopSolid'Design Pro 7",
+    unitValueUsd: 6500,
+    defaultQuantity: 1,
+    description:
+      "Modelamento de peças e montagens 3D em sólidos e superfícies, desenho de fabricação 2D, criação de BOM e documentos avançados. Biblioteca de componentes inteligentes (Normas IS0, ANSI, AFNOR, DIN...) e funcionalidades de caldeiraria, tubulação e de mecanismos avançados. Simulação FEA Express. PDM Local (Stand Alone) e PDM Client (possibilitando a troca de dados entre vários usuários). Interfaces (SolidWorks, SolidEdge, Inventor, DXF/DWG, IGES, STEP, Parasolid, ACIS).",
+  },
+  {
+    id: "p4",
+    code: "0500",
+    name: "Ext/Cam M2 Milling 7",
+    unitValueUsd: 5500,
+    defaultQuantity: 1,
+    description:
+      "Fresamento de 2 1/2 eixos + 4/5 eixos indexado. Fresamento axial 4 eixos. Furação axial e radial em 4 eixos. Gestor de documentos, de processo, e de ferramentas. Criação/Uso de simulação de máquinas.\n*Exige o Módulo - 0020 ou 0030",
+  },
+  {
+    id: "p5",
+    code: "0510",
+    name: "Ext/Cam M3 Milling 7",
+    unitValueUsd: 3000,
+    defaultQuantity: 1,
+    description: "Fresamento 3D (Desbaste vertical, acabamentos, redução de cantos).\n*Exige o Módulo - 0500",
+  },
+  {
+    id: "p6",
+    code: "3511",
+    name: "PP/Fanuc Milling 2D/3D Módulo",
+    unitValueUsd: 900,
+    defaultQuantity: 1,
+    description: "Pp base para Fanuc. (Fresamento 2D/3D).",
+  },
+  {
+    id: "p7",
+    code: "1300",
+    name: "Ext/Split 7",
+    unitValueUsd: 1500,
+    defaultQuantity: 1,
+    description: "Criação da partição, blocos de cavidade e insertos, para desenvolvimento do molde.\n*Exige o Módulo - 0020 ou 0030",
+  },
+  {
+    id: "p8",
+    code: "1310",
+    name: "Ext/Mold 7",
+    unitValueUsd: 5000,
+    defaultQuantity: 1,
+    description: "Módulo completo para desenvolvimento de moldes.",
+  },
+  {
+    id: "p9",
+    code: "0003",
+    name: "Admin/Float",
+    unitValueUsd: 500,
+    defaultQuantity: 1,
+    description: "Gerenciador de senhas eletrônicas flutuantes.",
+  },
+  {
+    id: "p10",
+    code: "0002",
+    name: "Float-Lic",
+    unitValueUsd: 140,
+    defaultQuantity: 6,
+    description: "Custo por módulo a ser adicionada no Admin/Float.\n*Necessário multiplicar pelos módulos.",
+  },
+  {
+    id: "p11",
+    code: "0001",
+    name: "Senha Eletrônica",
+    unitValueUsd: 200,
+    defaultQuantity: 1,
+    description: "Senha eletrônica de proteção para a linha de produtos TopSolid.",
   },
 ];
