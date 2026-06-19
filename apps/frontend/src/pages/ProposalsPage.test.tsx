@@ -267,21 +267,29 @@ describe("ProposalsPage", () => {
     expect(screen.getByRole("option", { name: "João Silva - Vendedor da Holand Automação de Engenharias Ltda" })).toBeInTheDocument();
   });
 
-  test("adds the TopSolid requirements terms as a second page without signature fields", async () => {
+  test("moves acceptance and signatures to the requirements page when terms are included", async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    render(<ProposalsPage />);
+    const { container } = render(<ProposalsPage />);
 
     expect(screen.queryByRole("region", { name: "Termo de requisitos TopSolid" })).not.toBeInTheDocument();
+    expect(screen.getByText("Data do Aceite: _____ / _____ / _____")).toBeInTheDocument();
+    expect(screen.getByText("Assinatura 1: Responsável Legal [Razão Social]")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Acrescentar termo de requisitos" }));
 
+    const mainPage = container.querySelector(".proposal-main-page");
     const term = screen.getByRole("region", { name: "Termo de requisitos TopSolid" });
     expect(within(term).getByText("Requisitos de Estação de Trabalho - TopSolid 7.18")).toBeInTheDocument();
     expect(within(term).getByText("Windows 10 Pro (64 bits) · Windows 11 Pro (64 bits)")).toBeInTheDocument();
     expect(within(term).getAllByText("NVIDIA GeForce RTX Series").length).toBeGreaterThan(0);
     expect(within(term).getByText("TopSolid'Pdm Local requer Microsoft SQL Express (quando sem Pdm Server).")).toBeInTheDocument();
     expect(within(term).queryByText("Termo de Responsabilidade")).not.toBeInTheDocument();
-    expect(within(term).queryByText("ASSINATURA")).not.toBeInTheDocument();
+    expect(mainPage ? within(mainPage as HTMLElement).queryByText("Data do Aceite: _____ / _____ / _____") : null).not.toBeInTheDocument();
+    expect(mainPage ? within(mainPage as HTMLElement).queryByText("Assinatura 1: Responsável Legal [Razão Social]") : null).not.toBeInTheDocument();
+    expect(within(term).getByText("Data do Aceite: _____ / _____ / _____")).toBeInTheDocument();
+    expect(within(term).getByText("Assinatura 1: Responsável Legal [Razão Social]")).toBeInTheDocument();
+    expect(within(term).getByText("Assinatura 2: Testemunha")).toBeInTheDocument();
+    expect(within(term).getByText("Assinatura 3: Representante Legal Holand")).toBeInTheDocument();
   });
 
   test("clamps negative custom module values to zero", async () => {

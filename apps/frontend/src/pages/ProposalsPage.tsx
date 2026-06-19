@@ -155,6 +155,13 @@ type ProposalPreviewProps = {
   includeRequirementsTerm: boolean;
 };
 
+type ProposalAcceptanceSignaturesProps = {
+  clientName: string;
+  representative: ProposalRepresentative;
+};
+
+type ProposalRequirementsTermProps = ProposalAcceptanceSignaturesProps;
+
 const EMPTY_CLIENT: ClientFields = {
   companyName: "",
   address: "",
@@ -721,7 +728,35 @@ function ServiceEditorPanel({ service, onEdit, onSaveDefault, onReset, onClose }
   );
 }
 
-function ProposalRequirementsTerm() {
+function ProposalAcceptanceSignatures({ clientName, representative }: ProposalAcceptanceSignaturesProps) {
+  return (
+    <>
+      <div className="proposal-acceptance">Data do Aceite: _____ / _____ / _____</div>
+
+      <div className="proposal-signatures">
+        <div>
+          <strong>Assinatura 1: Responsável Legal {clientName}</strong>
+          <span>Nome: ________________________________</span>
+          <span>Cargo: ________________________________</span>
+          <i>{clientName}</i>
+        </div>
+        <div>
+          <strong>Assinatura 2: Testemunha</strong>
+          <span>Nome: ________________________________</span>
+          <span>Cargo: ________________________________</span>
+          <i>{clientName}</i>
+        </div>
+        <div className="proposal-holand-signature">
+          <strong>Assinatura 3: Representante Legal Holand</strong>
+          <span>{representative.name}</span>
+          <i>{representative.role}</i>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function ProposalRequirementsTerm({ clientName, representative }: ProposalRequirementsTermProps) {
   const hardwareRows = [
     ["Processador", "Intel Core i7, 12ª Geração", "Intel Core i7, 12ª Geração"],
     ["Memória RAM", "32 GB", "64 GB"],
@@ -796,6 +831,10 @@ function ProposalRequirementsTerm() {
             <li>Docking Stations não são suportadas com o hardlock.</li>
           </ul>
         </div>
+      </div>
+
+      <div className="proposal-requirements-signature-block">
+        <ProposalAcceptanceSignatures clientName={clientName} representative={representative} />
       </div>
 
       <footer>Holand Tecnologia · Distribuidor Autorizado TopSolid · www.holand.com.br</footer>
@@ -1033,27 +1072,7 @@ function ProposalPreview({
 
       <p className="proposal-kind-regards">Cordialmente,</p>
 
-      <div className="proposal-acceptance">Data do Aceite: _____ / _____ / _____</div>
-
-      <div className="proposal-signatures">
-        <div>
-          <strong>Assinatura 1: Responsável Legal {clientName}</strong>
-          <span>Nome: ________________________________</span>
-          <span>Cargo: ________________________________</span>
-          <i>{clientName}</i>
-        </div>
-        <div>
-          <strong>Assinatura 2: Testemunha</strong>
-          <span>Nome: ________________________________</span>
-          <span>Cargo: ________________________________</span>
-          <i>{clientName}</i>
-        </div>
-        <div className="proposal-holand-signature">
-          <strong>Assinatura 3: Representante Legal Holand</strong>
-          <span>{representative.name}</span>
-          <i>{representative.role}</i>
-        </div>
-      </div>
+      {includeRequirementsTerm ? null : <ProposalAcceptanceSignatures clientName={clientName} representative={representative} />}
 
       <footer>
         Holand Automação de Engenharias Ltda | Av. Juscelino Kubitscheck, 350 - Centro, Joinville - SC, 89201-100
@@ -1061,7 +1080,7 @@ function ProposalPreview({
         Fone: (47) 98859-3553 | www.holand.com.br | leonardo@holand.com.br
       </footer>
       </div>
-      {includeRequirementsTerm ? <ProposalRequirementsTerm /> : null}
+      {includeRequirementsTerm ? <ProposalRequirementsTerm clientName={clientName} representative={representative} /> : null}
     </section>
   );
 }

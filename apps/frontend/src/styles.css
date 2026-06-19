@@ -12899,6 +12899,10 @@ button:focus-visible,
   margin-bottom: 6px;
 }
 
+.proposals-page .proposal-requirements-signature-block {
+  margin-top: 28px;
+}
+
 @media (max-width: 980px) {
   .proposals-page {
     grid-template-columns: 1fr;
@@ -13206,6 +13210,10 @@ button:focus-visible,
 
   .proposals-page .proposal-requirements-section li {
     margin-bottom: 3px;
+  }
+
+  .proposals-page .proposal-requirements-signature-block {
+    margin-top: 12mm;
   }
 
   .proposals-page .proposal-services-table tr,
