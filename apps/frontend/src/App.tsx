@@ -9,6 +9,7 @@ import { CohortsPage } from './pages/CohortsPage';
 import { CohortDetailPage } from './pages/CohortDetailPage';
 import { ClientsPage } from './pages/ClientsPage';
 import { ClientDetailPage } from './pages/ClientDetailPage';
+import { ProposalsPage } from './pages/ProposalsPage';
 import { TechniciansPage } from './pages/TechniciansPage';
 import { ImplementationPage } from './pages/ImplementationPage';
 import { LicensesPage } from './pages/LicensesPage';
@@ -51,6 +52,38 @@ const FINANCE_PERMISSIONS: InternalPermission[] = [
   'finance.close',
   'finance.billing'
 ];
+
+function isLocalDevAuthRequest(): boolean {
+  if (!import.meta.env.DEV) return false;
+  const isLocalHost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  return isLocalHost && new URLSearchParams(window.location.search).get('devAuth') === '1';
+}
+
+function createLocalDevSession(): InternalSessionData {
+  const session: InternalSessionData = {
+    token: 'local-dev-token',
+    expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    user: {
+      id: 'local-dev',
+      username: 'local-dev',
+      display_name: 'Acesso Local',
+      role: 'custom',
+      permissions: ['clients'],
+      preferences: {
+        calendar_vivid_mode: false
+      }
+    }
+  };
+
+  internalSessionStore.save(session);
+  window.sessionStorage.setItem(INTERNAL_TAB_INITIALIZED_KEY, '1');
+  return session;
+}
+
+function isLocalDevSession(session: InternalSessionData | null): boolean {
+  return Boolean(import.meta.env.DEV && session?.token === 'local-dev-token');
+}
+
 type KanbanAlertCounts = {
   implementation: number;
   support: number;
@@ -184,6 +217,14 @@ function OperationsRoutes({ user, defaultRoute }: { user: InternalSessionUser; d
         )}
       />
       <Route
+        path="/propostas"
+        element={(
+          <ProtectedRoute user={user} permissions={['clients']} fallback={defaultRoute}>
+            <ProposalsPage />
+          </ProtectedRoute>
+        )}
+      />
+      <Route
         path="/tecnicos"
         element={(
           <ProtectedRoute user={user} permissions={['technicians']} fallback={defaultRoute}>
@@ -253,7 +294,9 @@ function OperationsRoutes({ user, defaultRoute }: { user: InternalSessionUser; d
 }
 
 function InternalApp() {
-  const [session, setSession] = useState<InternalSessionData | null>(() => internalSessionStore.read());
+  const [session, setSession] = useState<InternalSessionData | null>(() => (
+    isLocalDevAuthRequest() ? createLocalDevSession() : internalSessionStore.read()
+  ));
   const [loadingSession, setLoadingSession] = useState(true);
   const [kanbanAlertCounts, setKanbanAlertCounts] = useState<KanbanAlertCounts>({
     implementation: 0,
@@ -273,6 +316,11 @@ function InternalApp() {
     let cancelled = false;
     const current = internalSessionStore.read();
     if (!current) {
+      setLoadingSession(false);
+      return;
+    }
+    if (isLocalDevSession(current)) {
+      setSession(current);
       setLoadingSession(false);
       return;
     }

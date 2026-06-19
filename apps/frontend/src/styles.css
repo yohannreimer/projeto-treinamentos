@@ -11885,3 +11885,1372 @@ button:focus-visible,
 }
 
 /* ─── Finance visual port ─────────────────────────────────── */
+
+/* ─── Proposals generator ─────────────────────────────────── */
+.proposals-page {
+  --proposal-red: #c0281c;
+  --proposal-red-deep: #a8221a;
+  --proposal-dark: #1a1a1a;
+  --proposal-soft-dark: #242424;
+  --proposal-muted: #888888;
+  --proposal-paper: #ffffff;
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 420px minmax(0, 1fr);
+  background: #e8e8e8;
+  color: #eeeeee;
+  font-family: 'IBM Plex Sans', 'Inter', sans-serif;
+}
+
+.proposals-page button,
+.proposals-page input,
+.proposals-page textarea,
+.proposals-page select {
+  font: inherit;
+}
+
+.proposals-page .proposals-sidebar {
+  background: var(--proposal-dark);
+  color: #eeeeee;
+  padding: 28px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  overflow-y: auto;
+  max-height: 100vh;
+  position: sticky;
+  top: 0;
+}
+
+.proposals-page .proposals-sidebar > header span {
+  color: var(--proposal-red);
+  display: block;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+
+.proposals-page .proposals-sidebar h1 {
+  color: #ffffff;
+  font-size: 1.25rem;
+  line-height: 1.2;
+  margin: 0;
+}
+
+.proposals-page .proposal-panel {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 16px;
+  display: grid;
+  gap: 10px;
+}
+
+.proposals-page .proposal-panel h2,
+.proposals-page .proposal-custom-form h3,
+.proposals-page .proposal-side-editor h3 {
+  color: var(--proposal-red);
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  margin: 0 0 2px;
+  text-transform: uppercase;
+}
+
+.proposals-page .proposal-panel label,
+.proposals-page .proposal-service-controls label,
+.proposals-page .proposal-custom-form label,
+.proposals-page .proposal-side-editor label {
+  color: #aaaaaa;
+  display: grid;
+  gap: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+.proposals-page .proposal-panel input,
+.proposals-page .proposal-panel textarea,
+.proposals-page .proposal-panel select,
+.proposals-page .proposal-service-controls input,
+.proposals-page .proposal-service-controls textarea,
+.proposals-page .proposal-custom-form input,
+.proposals-page .proposal-custom-form textarea,
+.proposals-page .proposal-side-editor input,
+.proposals-page .proposal-side-editor textarea {
+  width: 100%;
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 5px;
+  padding: 7px 10px;
+  outline: none;
+  font-size: 0.82rem;
+  min-width: 0;
+}
+
+.proposals-page .proposal-panel input:focus,
+.proposals-page .proposal-panel textarea:focus,
+.proposals-page .proposal-panel select:focus,
+.proposals-page .proposal-service-controls input:focus,
+.proposals-page .proposal-service-controls textarea:focus,
+.proposals-page .proposal-custom-form input:focus,
+.proposals-page .proposal-custom-form textarea:focus,
+.proposals-page .proposal-side-editor input:focus,
+.proposals-page .proposal-side-editor textarea:focus {
+  border-color: var(--proposal-red);
+  background: rgba(255, 255, 255, 0.11);
+  box-shadow: 0 0 0 2px rgba(192, 40, 28, 0.22);
+}
+
+.proposals-page .proposal-panel textarea,
+.proposals-page .proposal-service-controls textarea,
+.proposals-page .proposal-custom-form textarea,
+.proposals-page .proposal-side-editor textarea {
+  min-height: 66px;
+  resize: vertical;
+}
+
+.proposals-page .proposal-panel select {
+  color-scheme: dark;
+}
+
+.proposals-page .proposal-panel-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.proposals-page .proposal-panel-title-row > div {
+  display: flex;
+  gap: 6px;
+}
+
+.proposals-page .proposal-panel-title-row button,
+.proposals-page .proposal-custom-actions button {
+  color: #aaaaaa;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 5px 9px;
+}
+
+.proposals-page .proposal-panel-title-row button:hover,
+.proposals-page .proposal-custom-actions button:hover {
+  color: #ffffff;
+  border-color: var(--proposal-red);
+}
+
+.proposals-page .proposal-services-panel {
+  gap: 8px;
+}
+
+.proposals-page .proposal-service-card {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  padding: 10px 12px;
+  transition: border-color 150ms ease, background 150ms ease;
+}
+
+.proposals-page .proposal-service-card.is-selected {
+  background: rgba(192, 40, 28, 0.08);
+  border-color: var(--proposal-red);
+}
+
+.proposals-page .proposal-product-card.is-selected {
+  background: rgba(74, 120, 190, 0.1);
+  border-color: rgba(116, 154, 214, 0.75);
+}
+
+.proposals-page .proposal-exchange-card {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+}
+
+.proposals-page .proposal-exchange-card small {
+  color: #aaaaaa;
+  font-family: 'IBM Plex Mono', 'DM Mono', monospace;
+  font-size: 0.66rem;
+  line-height: 1.4;
+}
+
+.proposals-page .proposal-service-card-header {
+  align-items: flex-start;
+  display: flex;
+  gap: 8px;
+}
+
+.proposals-page .proposal-service-check {
+  align-items: flex-start;
+  cursor: pointer;
+  display: flex;
+  flex: 1;
+  gap: 8px;
+  min-width: 0;
+}
+
+.proposals-page .proposal-service-check input {
+  accent-color: var(--proposal-red);
+  flex: 0 0 auto;
+  height: 16px;
+  margin-top: 2px;
+  width: 16px;
+}
+
+.proposals-page .proposal-service-check > span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.proposals-page .proposal-service-name {
+  color: #dddddd;
+  display: block;
+  font-size: 0.76rem;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.proposals-page .proposal-service-name small {
+  background: var(--proposal-red);
+  border-radius: 3px;
+  color: #ffffff;
+  display: inline-block;
+  font-size: 0.56rem;
+  letter-spacing: 0.05em;
+  margin-left: 6px;
+  padding: 1px 5px;
+  vertical-align: middle;
+}
+
+.proposals-page .proposal-service-price {
+  color: var(--proposal-muted);
+  font-family: 'IBM Plex Mono', 'DM Mono', monospace;
+  font-size: 0.68rem;
+}
+
+.proposals-page .proposal-service-edit,
+.proposals-page .proposal-service-delete,
+.proposals-page .proposal-reset-service {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 4px;
+  color: #777777;
+  cursor: pointer;
+  flex: 0 0 auto;
+  font-size: 0.68rem;
+  padding: 3px 8px;
+}
+
+.proposals-page .proposal-service-edit:hover,
+.proposals-page .proposal-service-delete:hover,
+.proposals-page .proposal-reset-service:hover {
+  color: #ffffff;
+  border-color: var(--proposal-red);
+}
+
+.proposals-page .proposal-service-delete {
+  border: 0;
+  font-size: 1rem;
+  line-height: 1;
+  padding-inline: 4px;
+}
+
+.proposals-page .proposal-service-controls {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+}
+
+.proposals-page .proposal-service-control-grid,
+.proposals-page .proposal-custom-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 1fr 1fr;
+}
+
+.proposals-page .proposal-reset-service {
+  justify-self: start;
+  text-decoration: underline;
+}
+
+.proposals-page .proposal-add-module {
+  background: transparent;
+  border: 1px dashed rgba(255, 255, 255, 0.25);
+  border-radius: 6px;
+  color: #aaaaaa;
+  cursor: pointer;
+  font-size: 0.76rem;
+  margin-top: 4px;
+  padding: 8px 12px;
+  text-align: left;
+  width: 100%;
+}
+
+.proposals-page .proposal-add-module:hover {
+  border-color: var(--proposal-red);
+  color: #ffffff;
+}
+
+.proposals-page .proposal-custom-form {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(192, 40, 28, 0.4);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 14px;
+}
+
+.proposals-page .proposal-custom-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.proposals-page .proposal-custom-actions button {
+  line-height: 1.15;
+  min-height: 32px;
+  white-space: normal;
+}
+
+.proposals-page .proposal-custom-actions button:first-child {
+  color: #ffffff;
+  background: var(--proposal-red);
+  border-color: var(--proposal-red);
+}
+
+.proposals-page .proposal-custom-actions button:first-child:hover,
+.proposals-page .proposal-print:hover {
+  background: var(--proposal-red-deep);
+}
+
+.proposals-page .proposal-side-editor {
+  background: rgba(255, 255, 255, 0.055);
+  border: 1px solid rgba(192, 40, 28, 0.48);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.proposals-page .proposal-side-editor > strong {
+  color: #ffffff;
+  font-size: 0.82rem;
+  line-height: 1.3;
+}
+
+.proposals-page .proposal-side-editor-heading {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.proposals-page .proposal-side-editor-heading span {
+  color: #9fb8e0;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.proposals-page .proposal-side-editor-heading button {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 4px;
+  color: #999999;
+  cursor: pointer;
+  font-size: 0.68rem;
+  padding: 4px 8px;
+}
+
+.proposals-page .proposal-side-editor-heading button:hover {
+  border-color: var(--proposal-red);
+  color: #ffffff;
+}
+
+.proposals-page .proposal-editor-block {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  display: grid;
+  gap: 8px;
+  padding-top: 12px;
+}
+
+.proposals-page .proposal-editor-block small {
+  color: #dddddd;
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.proposals-page .proposal-editor-check {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.proposals-page .proposal-editor-check input {
+  flex: 0 0 16px;
+  height: 16px;
+  width: 16px;
+}
+
+.proposals-page .proposal-side-editor .proposal-custom-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+}
+
+.proposals-page .proposal-side-editor .proposal-custom-actions button {
+  justify-self: stretch;
+  width: 100%;
+}
+
+.proposals-page .proposal-money-row {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(76px, 1fr) 76px auto;
+}
+
+.proposals-page .proposal-money-row label {
+  display: block;
+}
+
+.proposals-page .proposal-money-row input {
+  font-family: 'IBM Plex Mono', 'DM Mono', monospace;
+}
+
+.proposals-page .proposal-money-row span {
+  color: #777777;
+  font-size: 0.72rem;
+}
+
+.proposals-page .proposal-target-discount {
+  background: rgba(192, 40, 28, 0.12);
+  border: 1px solid rgba(192, 40, 28, 0.38);
+  border-radius: 5px;
+  color: #e07070;
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.proposals-page .proposal-target-discount:hover {
+  background: rgba(192, 40, 28, 0.24);
+  color: #ffffff;
+}
+
+.proposals-page .proposal-snap-message {
+  color: #aaaaaa;
+  font-size: 0.68rem;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.proposals-page .proposal-discount-subtitle {
+  color: #9fb8e0;
+  font-size: 0.64rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  margin-top: 2px;
+  text-transform: uppercase;
+}
+
+.proposals-page .proposal-totals {
+  background: rgba(192, 40, 28, 0.15);
+  border: 1px solid rgba(192, 40, 28, 0.3);
+  border-radius: 8px;
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+}
+
+.proposals-page .proposal-totals-group {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  display: grid;
+  gap: 6px;
+  padding-bottom: 8px;
+}
+
+.proposals-page .proposal-totals-row {
+  align-items: baseline;
+  color: #cccccc;
+  display: flex;
+  font-size: 0.76rem;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.proposals-page .proposal-totals-row strong {
+  color: inherit;
+  font-family: 'IBM Plex Mono', 'DM Mono', monospace;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-align: right;
+}
+
+.proposals-page .proposal-totals-row-main {
+  border-top: 1px solid rgba(255, 255, 255, 0.15);
+  color: #ffffff;
+  font-size: 0.94rem;
+  font-weight: 800;
+  margin-top: 4px;
+  padding-top: 8px;
+}
+
+.proposals-page .proposal-totals-row-soft {
+  color: #dbe7ff;
+}
+
+.proposals-page .proposal-print {
+  background: var(--proposal-red);
+  border: 0;
+  border-radius: 6px;
+  color: #ffffff;
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  padding: 12px 20px;
+  width: 100%;
+}
+
+.proposals-page .proposals-preview-wrap {
+  background: #e8e8e8;
+  min-width: 0;
+  overflow: auto;
+  padding: 24px 32px;
+}
+
+.proposals-page .proposal-document {
+  background: var(--proposal-paper);
+  box-shadow: 0 4px 32px rgba(0, 0, 0, 0.18);
+  color: #111111;
+  font-family: Arial, sans-serif;
+  font-size: 9pt;
+  line-height: 1.45;
+  margin: 0 auto 40px;
+  max-width: 720px;
+  padding: 0;
+  position: relative;
+}
+
+.proposals-page .proposal-main-page,
+.proposals-page .proposal-requirements-page {
+  min-height: 297mm;
+  padding: 14mm 16mm 20mm;
+  position: relative;
+}
+
+.proposals-page .proposal-document-header {
+  align-items: center;
+  border-bottom: 2px solid var(--proposal-red);
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 14px;
+  padding-bottom: 8px;
+}
+
+.proposals-page .proposal-document-header img {
+  display: block;
+  height: 52px;
+  max-width: 260px;
+  object-fit: contain;
+}
+
+.proposals-page .proposal-number {
+  color: #555555;
+  font-size: 8pt;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+}
+
+.proposals-page .proposal-date {
+  color: #666666;
+  font-size: 8pt;
+  text-align: right;
+}
+
+.proposals-page .proposal-client-box {
+  background: #f8f8f8;
+  border-left: 3px solid var(--proposal-red);
+  display: grid;
+  gap: 3px;
+  margin: 14px 0;
+  padding: 10px 12px;
+}
+
+.proposals-page .proposal-client-box > strong {
+  font-size: 10pt;
+}
+
+.proposals-page .proposal-client-box span {
+  color: #444444;
+  font-size: 8.5pt;
+}
+
+.proposals-page .proposal-greeting {
+  margin: 0 0 12px;
+}
+
+.proposals-page .proposal-greeting strong {
+  display: block;
+  font-size: 10pt;
+  margin-bottom: 6px;
+}
+
+.proposals-page .proposal-document h2 {
+  font-size: 9pt;
+  margin: 14px 0 6px;
+  text-decoration: underline;
+}
+
+.proposals-page .proposal-document p {
+  margin: 0 0 6px;
+}
+
+.proposals-page .proposal-empty {
+  color: #aaaaaa;
+  font-size: 8pt;
+  font-style: italic;
+  margin-top: 12px;
+}
+
+.proposals-page .proposal-services-table {
+  border-collapse: collapse;
+  font-size: 8pt;
+  margin-top: 8px;
+  table-layout: fixed;
+  width: 100%;
+  word-wrap: break-word;
+}
+
+.proposals-page .proposal-services-table th {
+  background: var(--proposal-red);
+  color: #ffffff;
+  font-size: 8pt;
+  padding: 5px 7px;
+  text-align: left;
+}
+
+.proposals-page .proposal-services-table th:nth-child(2),
+.proposals-page .proposal-services-table th:nth-child(3),
+.proposals-page .proposal-services-table th:nth-child(4),
+.proposals-page .proposal-products-table th:nth-child(5),
+.proposals-page .proposal-services-table td:nth-child(2),
+.proposals-page .proposal-services-table td:nth-child(3),
+.proposals-page .proposal-services-table td:nth-child(4),
+.proposals-page .proposal-products-table td:nth-child(5) {
+  text-align: center;
+}
+
+.proposals-page .proposal-products-table th:nth-child(2),
+.proposals-page .proposal-products-table th:nth-child(4) {
+  width: 13%;
+}
+
+.proposals-page .proposal-products-table th:nth-child(3) {
+  width: 8%;
+}
+
+.proposals-page .proposal-products-table th:nth-child(5) {
+  width: 14%;
+}
+
+.proposals-page .proposal-services-table th:nth-child(2),
+.proposals-page .proposal-services-table th:nth-child(4) {
+  width: 14%;
+}
+
+.proposals-page .proposal-services-table th:nth-child(3) {
+  width: 10%;
+}
+
+.proposals-page .proposal-services-table td {
+  border-bottom: 1px solid #eeeeee;
+  padding: 5px 7px;
+  vertical-align: top;
+}
+
+.proposals-page .proposal-services-table td:nth-child(2),
+.proposals-page .proposal-services-table td:nth-child(3),
+.proposals-page .proposal-services-table td:nth-child(4),
+.proposals-page .proposal-products-table td:nth-child(5) {
+  white-space: nowrap;
+}
+
+.proposals-page .proposal-services-table tr:nth-child(even) td {
+  background: #fafafa;
+}
+
+.proposals-page .proposal-services-table td > strong {
+  display: block;
+  font-style: italic;
+}
+
+.proposals-page .proposal-services-table td > span {
+  color: #555555;
+  display: block;
+  font-size: 7.5pt;
+  line-height: 1.4;
+  margin-top: 2px;
+  white-space: pre-line;
+}
+
+.proposals-page .proposal-services-table .proposal-days-row td {
+  background: #f0f0f0;
+  color: #333333;
+  font-size: 8pt;
+}
+
+.proposals-page .proposal-days-row td:first-child,
+.proposals-page .proposal-discount-row td:first-child,
+.proposals-page .proposal-total-row td:first-child,
+.proposals-page .proposal-tax-row td:first-child {
+  text-align: right;
+}
+
+.proposals-page .proposal-services-table .proposal-discount-row td {
+  background: #333333;
+  color: #ffffff;
+  font-size: 8.5pt;
+  font-weight: 700;
+}
+
+.proposals-page .proposal-services-table .proposal-total-row td {
+  background: #1a1a1a;
+  color: #ffffff;
+  font-size: 9pt;
+  font-weight: 700;
+}
+
+.proposals-page .proposal-services-table .proposal-tax-row td {
+  background: var(--proposal-red);
+  color: #ffffff;
+  font-size: 9.5pt;
+  font-weight: 700;
+}
+
+.proposals-page .proposal-summary-table {
+  border-collapse: collapse;
+  font-size: 8.5pt;
+  margin-top: 8px;
+  width: 100%;
+}
+
+.proposals-page .proposal-summary-table td {
+  border-bottom: 1px solid #e7e7e7;
+  padding: 7px 9px;
+}
+
+.proposals-page .proposal-summary-table td:last-child {
+  font-family: Arial, sans-serif;
+  font-weight: 700;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.proposals-page .proposal-summary-table tr:last-child td {
+  background: var(--proposal-red);
+  color: #ffffff;
+  font-size: 9.5pt;
+  font-weight: 700;
+}
+
+.proposals-page .proposal-notes {
+  color: #444444;
+  font-size: 8pt;
+  line-height: 1.6;
+  margin-top: 14px;
+}
+
+.proposals-page .proposal-commercial,
+.proposals-page .proposal-tax-copy,
+.proposals-page .proposal-validity,
+.proposals-page .proposal-kind-regards {
+  font-size: 8.5pt;
+}
+
+.proposals-page .proposal-commercial {
+  margin-top: 14px;
+}
+
+.proposals-page .proposal-commercial > strong {
+  display: block;
+  margin-bottom: 4px;
+  text-decoration: underline;
+}
+
+.proposals-page .proposal-tax-copy {
+  border-top: 1px solid #cccccc;
+  margin-top: 10px;
+  padding-top: 8px;
+}
+
+.proposals-page .proposal-validity {
+  line-height: 1.7;
+  margin-top: 10px;
+}
+
+.proposals-page .proposal-kind-regards {
+  margin-top: 12px;
+}
+
+.proposals-page .proposal-acceptance {
+  border: 1px solid #999999;
+  font-size: 8pt;
+  line-height: 2;
+  margin: 14px 0 0 auto;
+  padding: 8px 16px;
+  width: max-content;
+}
+
+.proposals-page .proposal-signatures {
+  display: grid;
+  gap: 20px;
+  grid-template-columns: 1fr 1fr;
+  margin-top: 24px;
+}
+
+.proposals-page .proposal-signatures div {
+  display: grid;
+  font-size: 8pt;
+  gap: 4px;
+}
+
+.proposals-page .proposal-signatures span:nth-of-type(2)::after,
+.proposals-page .proposal-holand-signature strong::after {
+  border-bottom: 1px solid #555555;
+  content: "";
+  display: block;
+  margin-top: 20px;
+  width: 80%;
+}
+
+.proposals-page .proposal-signatures i {
+  color: #555555;
+  font-size: 7.5pt;
+}
+
+.proposals-page .proposal-holand-signature {
+  grid-column: 1 / -1;
+  justify-items: center;
+  margin-top: 10px;
+  text-align: center;
+}
+
+.proposals-page .proposal-holand-signature strong::after {
+  margin-inline: auto;
+  width: 180px;
+}
+
+.proposals-page .proposal-main-page > footer,
+.proposals-page .proposal-requirements-page > footer {
+  border-top: 1px solid #cccccc;
+  bottom: 10mm;
+  color: #888888;
+  font-size: 7pt;
+  left: 16mm;
+  padding-top: 5px;
+  position: absolute;
+  right: 16mm;
+  text-align: center;
+}
+
+.proposals-page .proposal-requirements-page {
+  border-top: 18px solid #e8e8e8;
+  page-break-before: always;
+}
+
+.proposals-page .proposal-requirements-header {
+  align-items: center;
+  border-bottom: 2px solid var(--proposal-red);
+  display: grid;
+  gap: 2px;
+  grid-template-columns: 1fr auto;
+  margin-bottom: 16px;
+  padding-bottom: 10px;
+}
+
+.proposals-page .proposal-requirements-header img {
+  grid-row: span 2;
+  height: 46px;
+  max-width: 230px;
+  object-fit: contain;
+}
+
+.proposals-page .proposal-requirements-header span {
+  color: #333333;
+  font-size: 8pt;
+  font-weight: 700;
+  text-align: right;
+}
+
+.proposals-page .proposal-requirements-header small {
+  color: #777777;
+  font-size: 7.5pt;
+  text-align: right;
+}
+
+.proposals-page .proposal-requirements-page h2 {
+  color: #111111;
+  font-size: 13pt;
+  margin: 0 0 6px;
+  text-decoration: none;
+}
+
+.proposals-page .proposal-requirements-page > p {
+  color: #555555;
+  font-size: 8.5pt;
+  margin-bottom: 16px;
+}
+
+.proposals-page .proposal-requirements-section {
+  border: 1px solid #dedede;
+  border-radius: 4px;
+  margin-top: 12px;
+  overflow: hidden;
+}
+
+.proposals-page .proposal-requirements-section h3 {
+  background: var(--proposal-red);
+  color: #ffffff;
+  font-size: 8.5pt;
+  letter-spacing: 0.06em;
+  margin: 0;
+  padding: 7px 9px;
+  text-transform: uppercase;
+}
+
+.proposals-page .proposal-requirements-section dl {
+  display: grid;
+  gap: 0;
+  margin: 0;
+}
+
+.proposals-page .proposal-requirements-section dl div {
+  display: grid;
+  grid-template-columns: 155px 1fr;
+}
+
+.proposals-page .proposal-requirements-section dt,
+.proposals-page .proposal-requirements-section dd {
+  border-top: 1px solid #eeeeee;
+  margin: 0;
+  padding: 8px 9px;
+}
+
+.proposals-page .proposal-requirements-section dt {
+  background: #f8f8f8;
+  font-weight: 700;
+}
+
+.proposals-page .proposal-requirements-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.proposals-page .proposal-requirements-table th,
+.proposals-page .proposal-requirements-table td {
+  border-top: 1px solid #eeeeee;
+  padding: 7px 9px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.proposals-page .proposal-requirements-table th {
+  background: #f6f6f6;
+  font-size: 8pt;
+}
+
+.proposals-page .proposal-requirements-table td:first-child {
+  font-weight: 700;
+  width: 24%;
+}
+
+.proposals-page .proposal-requirements-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 1fr 1fr;
+}
+
+.proposals-page .proposal-requirements-section ul {
+  color: #333333;
+  margin: 0;
+  padding: 10px 12px 10px 24px;
+}
+
+.proposals-page .proposal-requirements-section li {
+  margin-bottom: 6px;
+}
+
+.proposals-page .proposal-requirements-signature-block {
+  margin-top: 28px;
+}
+
+@media (max-width: 980px) {
+  .proposals-page {
+    grid-template-columns: 1fr;
+  }
+
+  .proposals-page .proposals-sidebar {
+    max-height: none;
+    position: static;
+  }
+
+  .proposals-page .proposals-preview-wrap {
+    padding: 18px;
+  }
+}
+
+@media (max-width: 560px) {
+  .proposals-page .proposals-sidebar {
+    padding: 20px 16px;
+  }
+
+  .proposals-page .proposal-service-control-grid,
+  .proposals-page .proposal-custom-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .proposals-page .proposal-document {
+    font-size: 8pt;
+  }
+
+  .proposals-page .proposal-main-page,
+  .proposals-page .proposal-requirements-page {
+    min-height: auto;
+    padding: 18mm 8mm 24mm;
+  }
+
+  .proposals-page .proposal-requirements-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .proposals-page .proposal-signatures {
+    grid-template-columns: 1fr;
+  }
+}
+
+@page {
+  margin: 0;
+  size: A4;
+}
+
+@media print {
+  html,
+  body {
+    background: #ffffff;
+    margin: 0;
+    padding: 0;
+  }
+
+  body:has(.proposals-page) .app-shell {
+    display: block;
+    min-height: auto;
+  }
+
+  body:has(.proposals-page) .sidebar,
+  body:has(.proposals-page) .workspace-topbar,
+  body:has(.proposals-page) .proposals-sidebar {
+    display: none !important;
+  }
+
+  body:has(.proposals-page) .workspace,
+  body:has(.proposals-page) .main-content {
+    display: block;
+    margin: 0;
+    min-height: auto;
+    overflow: visible;
+    padding: 0;
+  }
+
+  .proposals-page {
+    background: #ffffff;
+    display: block;
+    margin: 0 auto;
+    min-height: auto;
+    overflow: visible;
+    width: 210mm;
+  }
+
+  .proposals-page * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  body:has(.proposals-page) .proposals-preview-wrap {
+    background: #ffffff;
+    display: block;
+    margin: 0;
+    overflow: visible;
+    padding: 0;
+  }
+
+  .proposals-page .proposal-document {
+    box-shadow: none;
+    font-size: 8pt;
+    line-height: 1.35;
+    margin: 0;
+    max-width: none;
+    min-height: 0;
+    padding: 0;
+    width: 210mm;
+  }
+
+  .proposals-page .proposal-main-page,
+  .proposals-page .proposal-requirements-page {
+    box-sizing: border-box;
+    min-height: 297mm;
+    overflow: hidden;
+    padding: 8mm 14mm 16mm;
+    position: relative;
+    width: 210mm;
+  }
+
+  .proposals-page .proposal-main-page:has(+ .proposal-requirements-page) {
+    break-after: page;
+    page-break-after: always;
+  }
+
+  .proposals-page .proposal-document-header {
+    margin-bottom: 8px;
+    padding-bottom: 5px;
+  }
+
+  .proposals-page .proposal-document-header img {
+    height: 38px;
+    max-width: 220px;
+  }
+
+  .proposals-page .proposal-number,
+  .proposals-page .proposal-date {
+    font-size: 7pt;
+  }
+
+  .proposals-page .proposal-client-box {
+    gap: 2px;
+    margin: 8px 0;
+    padding: 7px 10px;
+  }
+
+  .proposals-page .proposal-client-box > strong {
+    font-size: 8.5pt;
+  }
+
+  .proposals-page .proposal-client-box span,
+  .proposals-page .proposal-greeting,
+  .proposals-page .proposal-commercial,
+  .proposals-page .proposal-tax-copy,
+  .proposals-page .proposal-validity,
+  .proposals-page .proposal-kind-regards {
+    font-size: 7.5pt;
+  }
+
+  .proposals-page .proposal-greeting {
+    margin-bottom: 7px;
+  }
+
+  .proposals-page .proposal-greeting strong {
+    font-size: 8.5pt;
+    margin-bottom: 3px;
+  }
+
+  .proposals-page .proposal-document h2 {
+    font-size: 8pt;
+    margin: 8px 0 4px;
+  }
+
+  .proposals-page .proposal-document p {
+    margin-bottom: 4px;
+  }
+
+  .proposals-page .proposal-services-table {
+    font-size: 7.2pt;
+    margin-top: 4px;
+  }
+
+  .proposals-page .proposal-services-table th {
+    font-size: 7.3pt;
+    padding: 4px 5px;
+  }
+
+  .proposals-page .proposal-services-table td {
+    padding: 4px 5px;
+  }
+
+  .proposals-page .proposal-services-table td > span {
+    font-size: 6.8pt;
+    line-height: 1.25;
+  }
+
+  .proposals-page .proposal-summary-table {
+    font-size: 7.5pt;
+    margin-top: 5px;
+  }
+
+  .proposals-page .proposal-summary-table td {
+    padding: 5px 7px;
+  }
+
+  .proposals-page .proposal-summary-table tr:last-child td,
+  .proposals-page .proposal-services-table .proposal-total-row td,
+  .proposals-page .proposal-services-table .proposal-tax-row td {
+    font-size: 8pt;
+  }
+
+  .proposals-page .proposal-notes {
+    font-size: 7pt;
+    line-height: 1.3;
+    margin-top: 7px;
+  }
+
+  .proposals-page .proposal-commercial {
+    margin-top: 7px;
+  }
+
+  .proposals-page .proposal-tax-copy {
+    margin-top: 6px;
+    padding-top: 5px;
+  }
+
+  .proposals-page .proposal-validity {
+    line-height: 1.4;
+    margin-top: 6px;
+  }
+
+  .proposals-page .proposal-kind-regards {
+    margin-top: 7px;
+  }
+
+  .proposals-page .proposal-acceptance {
+    font-size: 7pt;
+    line-height: 1.45;
+    margin-top: 6px;
+    padding: 5px 12px;
+  }
+
+  .proposals-page .proposal-requirements-page {
+    border-top: 0;
+    break-before: page;
+    page-break-before: always;
+    padding: 9mm 14mm 14mm;
+  }
+
+  .proposals-page .proposal-requirements-header {
+    margin-bottom: 10px;
+    padding-bottom: 6px;
+  }
+
+  .proposals-page .proposal-requirements-header img {
+    height: 36px;
+    max-width: 200px;
+  }
+
+  .proposals-page .proposal-requirements-header span,
+  .proposals-page .proposal-requirements-header small {
+    font-size: 7pt;
+  }
+
+  .proposals-page .proposal-requirements-page h2 {
+    font-size: 11pt;
+    margin-bottom: 4px;
+  }
+
+  .proposals-page .proposal-requirements-page > p {
+    font-size: 7.4pt;
+    margin-bottom: 8px;
+  }
+
+  .proposals-page .proposal-requirements-section {
+    margin-top: 8px;
+  }
+
+  .proposals-page .proposal-requirements-section h3 {
+    font-size: 7.4pt;
+    padding: 5px 7px;
+  }
+
+  .proposals-page .proposal-requirements-section dl div {
+    grid-template-columns: 120px 1fr;
+  }
+
+  .proposals-page .proposal-requirements-section dt,
+  .proposals-page .proposal-requirements-section dd,
+  .proposals-page .proposal-requirements-table th,
+  .proposals-page .proposal-requirements-table td {
+    font-size: 7pt;
+    padding: 5px 7px;
+  }
+
+  .proposals-page .proposal-requirements-grid {
+    gap: 8px;
+  }
+
+  .proposals-page .proposal-requirements-section ul {
+    font-size: 7pt;
+    line-height: 1.32;
+    padding: 7px 10px 7px 22px;
+  }
+
+  .proposals-page .proposal-requirements-section li {
+    margin-bottom: 3px;
+  }
+
+  .proposals-page .proposal-requirements-signature-block {
+    margin-top: 12mm;
+  }
+
+  .proposals-page .proposal-services-table tr,
+  .proposals-page .proposal-signatures {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .proposals-page .proposal-signatures {
+    gap: 10px;
+    margin-top: 10px;
+  }
+
+  .proposals-page .proposal-signatures div {
+    font-size: 7pt;
+    gap: 2px;
+  }
+
+  .proposals-page .proposal-signatures i {
+    font-size: 6.8pt;
+  }
+
+  .proposals-page .proposal-signatures span:nth-of-type(2)::after,
+  .proposals-page .proposal-holand-signature strong::after {
+    margin-top: 10px;
+  }
+
+  .proposals-page .proposal-holand-signature {
+    margin-top: 4px;
+  }
+
+  .proposals-page .proposal-main-page > footer,
+  .proposals-page .proposal-requirements-page > footer {
+    bottom: 5mm;
+    left: 14mm;
+    padding-top: 3px;
+    position: absolute;
+    right: 14mm;
+  }
+}

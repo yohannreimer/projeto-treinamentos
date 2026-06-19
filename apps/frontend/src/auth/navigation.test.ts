@@ -38,3 +38,10 @@ test('planning nav item is visible to calendar or cohort operators', () => {
   expect(visibleNavItemsForUser(user).some((item) => item.to === '/planejar')).toBe(true);
   expect(canAccessPath(user, '/planejar')).toBe(true);
 });
+
+test('proposals nav item is visible to client operators', () => {
+  const proposalsUser = user('custom', ['clients']);
+
+  expect(visibleNavItemsForUser(proposalsUser).map((item) => item.label)).toContain('Propostas');
+  expect(canAccessPath(proposalsUser, '/propostas')).toBe(true);
+});
