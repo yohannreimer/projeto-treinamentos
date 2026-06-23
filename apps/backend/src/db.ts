@@ -2708,6 +2708,79 @@ export function initDb() {
     insertProgram.run('lpr-topsolid-design', 'TopSolid Design', null, nowIso, nowIso);
     insertProgram.run('lpr-topsolid-cam', 'TopSolid CAM', null, nowIso, nowIso);
   }
+
+  // Área de Tarefas
+  db.exec(`
+    create table if not exists task_area (
+      id text primary key,
+      name text not null unique,
+      color text not null default '#6366f1',
+      position integer not null default 0,
+      created_at text not null,
+      updated_at text not null
+    );
+
+    create table if not exists task (
+      id text primary key,
+      title text not null,
+      description text,
+      area_id text not null,
+      assignee_id text not null,
+      assignee_name text not null,
+      due_date text not null,
+      priority text not null default 'Normal',
+      status text not null default 'A_fazer',
+      created_by text not null,
+      created_at text not null,
+      updated_at text not null,
+      foreign key(area_id) references task_area(id)
+    );
+
+    create table if not exists task_checklist_item (
+      id text primary key,
+      task_id text not null,
+      label text not null,
+      completed integer not null default 0,
+      position integer not null default 0,
+      created_at text not null,
+      foreign key(task_id) references task(id) on delete cascade
+    );
+
+    create table if not exists task_comment (
+      id text primary key,
+      task_id text not null,
+      author_id text not null,
+      author_name text not null,
+      body text not null,
+      created_at text not null,
+      foreign key(task_id) references task(id) on delete cascade
+    );
+
+    create index if not exists idx_task_area_id on task(area_id);
+    create index if not exists idx_task_assignee_id on task(assignee_id);
+    create index if not exists idx_task_due_date on task(due_date);
+    create index if not exists idx_task_checklist_task_id on task_checklist_item(task_id);
+    create index if not exists idx_task_comment_task_id on task_comment(task_id);
+  `);
+
+  const defaultTaskAreas = [
+    { id: 'tarea-tecnico', name: 'Técnico', color: '#3b82f6', position: 0 },
+    { id: 'tarea-comercial', name: 'Comercial', color: '#f59e0b', position: 1 },
+    { id: 'tarea-financeiro', name: 'Financeiro', color: '#10b981', position: 2 },
+    { id: 'tarea-interno', name: 'Interno', color: '#6366f1', position: 3 },
+    { id: 'tarea-rh', name: 'RH', color: '#ec4899', position: 4 }
+  ];
+  const existingAreaCount = db.prepare('select count(*) as count from task_area').get() as { count: number };
+  if (existingAreaCount.count === 0) {
+    const insertArea = db.prepare(`
+      insert into task_area (id, name, color, position, created_at, updated_at)
+      values (?, ?, ?, ?, ?, ?)
+    `);
+    const nowIsoSeed = nowDateIso();
+    defaultTaskAreas.forEach((area) => {
+      insertArea.run(area.id, area.name, area.color, area.position, nowIsoSeed, nowIsoSeed);
+    });
+  }
 }
 
 function hasSeed(): boolean {
@@ -2938,78 +3011,6 @@ function seedFinanceDemoData() {
     insertDebt.run(row[0], organizationId, companyId, row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8], row[9], row[10], createdAt, createdAt);
   });
 
-  // Área de Tarefas
-  db.exec(`
-    create table if not exists task_area (
-      id text primary key,
-      name text not null unique,
-      color text not null default '#6366f1',
-      position integer not null default 0,
-      created_at text not null,
-      updated_at text not null
-    );
-
-    create table if not exists task (
-      id text primary key,
-      title text not null,
-      description text,
-      area_id text not null,
-      assignee_id text not null,
-      assignee_name text not null,
-      due_date text not null,
-      priority text not null default 'Normal',
-      status text not null default 'A_fazer',
-      created_by text not null,
-      created_at text not null,
-      updated_at text not null,
-      foreign key(area_id) references task_area(id)
-    );
-
-    create table if not exists task_checklist_item (
-      id text primary key,
-      task_id text not null,
-      label text not null,
-      completed integer not null default 0,
-      position integer not null default 0,
-      created_at text not null,
-      foreign key(task_id) references task(id) on delete cascade
-    );
-
-    create table if not exists task_comment (
-      id text primary key,
-      task_id text not null,
-      author_id text not null,
-      author_name text not null,
-      body text not null,
-      created_at text not null,
-      foreign key(task_id) references task(id) on delete cascade
-    );
-
-    create index if not exists idx_task_area_id on task(area_id);
-    create index if not exists idx_task_assignee_id on task(assignee_id);
-    create index if not exists idx_task_due_date on task(due_date);
-    create index if not exists idx_task_checklist_task_id on task_checklist_item(task_id);
-    create index if not exists idx_task_comment_task_id on task_comment(task_id);
-  `);
-
-  const defaultTaskAreas = [
-    { id: 'tarea-tecnico', name: 'Técnico', color: '#3b82f6', position: 0 },
-    { id: 'tarea-comercial', name: 'Comercial', color: '#f59e0b', position: 1 },
-    { id: 'tarea-financeiro', name: 'Financeiro', color: '#10b981', position: 2 },
-    { id: 'tarea-interno', name: 'Interno', color: '#6366f1', position: 3 },
-    { id: 'tarea-rh', name: 'RH', color: '#ec4899', position: 4 }
-  ];
-  const existingAreaCount = db.prepare('select count(*) as count from task_area').get() as { count: number };
-  if (existingAreaCount.count === 0) {
-    const insertArea = db.prepare(`
-      insert into task_area (id, name, color, position, created_at, updated_at)
-      values (?, ?, ?, ?, ?, ?)
-    `);
-    const nowIsoSeed = nowDateIso();
-    defaultTaskAreas.forEach((area) => {
-      insertArea.run(area.id, area.name, area.color, area.position, nowIsoSeed, nowIsoSeed);
-    });
-  }
 }
 
 function shouldSeedFinanceDemoData() {
