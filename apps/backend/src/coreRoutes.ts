@@ -127,6 +127,48 @@ const internalDocumentDataUrlSchema = z
   .max(INTERNAL_DOCUMENT_DATA_URL_MAX_CHARS)
   .refine((value) => /^data:[a-zA-Z0-9.+-]+\/[a-zA-Z0-9.+-]+;base64,/.test(value), 'Arquivo inválido.');
 
+const TASK_PRIORITY_VALUES = ['Critica', 'Alta', 'Normal', 'Baixa'] as const;
+const TASK_STATUS_VALUES = ['A_fazer', 'Em_andamento', 'Concluida'] as const;
+
+const taskAreaCreateSchema = z.object({
+  name: z.string().min(1).max(60).trim(),
+  color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional()
+});
+
+const taskCreateSchema = z.object({
+  title: z.string().min(1).max(200).trim(),
+  area_id: z.string().min(1),
+  assignee_id: z.string().min(1),
+  assignee_name: z.string().min(1).max(120),
+  due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  priority: z.enum(TASK_PRIORITY_VALUES).optional(),
+  description: z.string().max(5000).nullable().optional()
+});
+
+const taskUpdateSchema = z.object({
+  title: z.string().min(1).max(200).trim().optional(),
+  area_id: z.string().min(1).optional(),
+  assignee_id: z.string().min(1).optional(),
+  assignee_name: z.string().min(1).max(120).optional(),
+  due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  priority: z.enum(TASK_PRIORITY_VALUES).optional(),
+  status: z.enum(TASK_STATUS_VALUES).optional(),
+  description: z.string().max(5000).nullable().optional()
+});
+
+const taskChecklistItemCreateSchema = z.object({
+  label: z.string().min(1).max(200).trim()
+});
+
+const taskChecklistItemUpdateSchema = z.object({
+  label: z.string().min(1).max(200).trim().optional(),
+  completed: z.boolean().optional()
+});
+
+const taskCommentCreateSchema = z.object({
+  body: z.string().min(1).max(2000).trim()
+});
+
 function isHalfDayIncrement(value: number): boolean {
   return Number.isFinite(value) && value > 0 && Math.abs((value * 2) - Math.round(value * 2)) < 0.0001;
 }
@@ -390,6 +432,10 @@ const internalDocumentCreateSchema = z.object({
 const internalDocumentFolderCreateSchema = z.object({
   parent_path: z.string().min(1).max(600),
   name: z.string().trim().min(1).max(120)
+});
+
+const internalDocumentPortalVisibilitySchema = z.object({
+  visible: z.boolean()
 });
 
 const followupEvaluationCreateSchema = z.object({
@@ -1160,6 +1206,11 @@ function normalizeDocumentFolderPath(value?: string | null) {
   return withSlash
     .replace(/\/{2,}/g, '/')
     .replace(/\/$/, '') || '/Interna';
+}
+
+function clientIdFromDocumentFolderPath(value?: string | null) {
+  const match = normalizeDocumentFolderPath(value).match(/^\/Clientes\/([^/]+)(?:\/|$)/);
+  return match?.[1] ?? null;
 }
 
 function documentFolderSegment(name: string) {
@@ -7405,7 +7456,19 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
 
   app.get('/internal-documents', (_req, res) => {
     const rows = db.prepare(`
-      select id, title, category, notes, folder_path, file_name, mime_type, file_size_bytes, created_at, updated_at
+      select
+        id,
+        title,
+        category,
+        notes,
+        folder_path,
+        file_name,
+        mime_type,
+        file_size_bytes,
+        portal_visible,
+        portal_published_at,
+        created_at,
+        updated_at
       from internal_document
       order by date(updated_at) desc, title asc
     `).all();
@@ -7475,6 +7538,59 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
     } catch (error) {
       return res.status(500).json({ message: 'Arquivo corrompido.', detail: errorMessage(error) });
     }
+  });
+
+  app.patch('/internal-documents/:id/portal', (req, res) => {
+    const parsed = internalDocumentPortalVisibilitySchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+
+    const row = db.prepare(`
+      select id, title, folder_path, portal_visible, portal_published_at
+      from internal_document
+      where id = ?
+    `).get(req.params.id) as
+      | { id: string; title: string; folder_path: string | null; portal_visible: number; portal_published_at: string | null }
+      | undefined;
+
+    if (!row) {
+      return res.status(404).json({ message: 'Documento não encontrado.' });
+    }
+
+    const companyId = clientIdFromDocumentFolderPath(row.folder_path);
+    if (!companyId) {
+      return res.status(400).json({ message: 'Só arquivos dentro de uma pasta de cliente podem aparecer no portal.' });
+    }
+
+    const nowIso = new Date().toISOString();
+    const portalPublishedAt = parsed.data.visible ? (row.portal_published_at ?? nowIso) : null;
+    db.prepare(`
+      update internal_document
+      set portal_visible = ?,
+        portal_published_at = ?,
+        updated_at = ?
+      where id = ?
+    `).run(parsed.data.visible ? 1 : 0, portalPublishedAt, nowIso, row.id);
+
+    const updated = db.prepare(`
+      select
+        id,
+        title,
+        category,
+        notes,
+        folder_path,
+        file_name,
+        mime_type,
+        file_size_bytes,
+        portal_visible,
+        portal_published_at,
+        created_at,
+        updated_at
+      from internal_document
+      where id = ?
+    `).get(row.id);
+    return res.json(updated);
   });
   
   app.delete('/internal-documents/:id', (req, res) => {
@@ -10264,5 +10380,311 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
     }
 
     return res.status(400).json({ message: 'Tipo de recurso inválido.' });
+  });
+
+  // ── Task Areas ──────────────────────────────────────────────────────────────
+  app.get('/task-areas', requireInternalAuth, (_req, res) => {
+    const rows = db.prepare(`
+      select id, name, color, position, created_at, updated_at
+      from task_area
+      order by position asc, name asc
+    `).all();
+    return res.json(rows);
+  });
+
+  app.post('/task-areas', requireInternalAuth, (req, res) => {
+    const parsed = taskAreaCreateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+
+    const areaId = uuid('tarea');
+    const nowIso = nowDateIso();
+    const nextPosition = (db.prepare('select coalesce(max(position), -1) + 1 as pos from task_area').get() as { pos: number }).pos;
+
+    db.prepare(`
+      insert into task_area (id, name, color, position, created_at, updated_at)
+      values (?, ?, ?, ?, ?, ?)
+    `).run(areaId, parsed.data.name, parsed.data.color ?? '#6366f1', nextPosition, nowIso, nowIso);
+
+    return res.status(201).json({ id: areaId });
+  });
+
+  // ── Tasks ───────────────────────────────────────────────────────────────────
+  app.get('/tasks', requireInternalAuth, (req, res) => {
+    const { area_id, assignee_id, priority, status, overdue, q } = req.query as Record<string, string | undefined>;
+
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+
+    if (area_id) {
+      conditions.push('t.area_id = ?');
+      params.push(area_id);
+    }
+    if (assignee_id) {
+      conditions.push('t.assignee_id = ?');
+      params.push(assignee_id);
+    }
+    if (priority) {
+      conditions.push('t.priority = ?');
+      params.push(priority);
+    }
+    if (status) {
+      conditions.push('t.status = ?');
+      params.push(status);
+    }
+    if (overdue === 'true') {
+      conditions.push("t.due_date < date('now') and t.status != 'Concluida'");
+    }
+    if (q) {
+      conditions.push('lower(t.title) like lower(?)');
+      params.push(`%${q}%`);
+    }
+
+    const where = conditions.length > 0 ? `where ${conditions.join(' and ')}` : '';
+
+    const tasks = db.prepare(`
+      select
+        t.id, t.title, t.description, t.area_id, t.assignee_id, t.assignee_name,
+        t.due_date, t.priority, t.status, t.created_by, t.created_at, t.updated_at,
+        ta.name as area_name, ta.color as area_color,
+        (select count(*) from task_checklist_item where task_id = t.id) as checklist_total,
+        (select count(*) from task_checklist_item where task_id = t.id and completed = 1) as checklist_done
+      from task t
+      join task_area ta on ta.id = t.area_id
+      ${where}
+      order by
+        case t.priority when 'Critica' then 0 when 'Alta' then 1 when 'Normal' then 2 when 'Baixa' then 3 else 4 end asc,
+        t.due_date asc,
+        t.created_at desc
+    `).all(...params);
+
+    return res.json(tasks);
+  });
+
+  app.post('/tasks', requireInternalAuth, (req, res) => {
+    const parsed = taskCreateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+
+    const area = db.prepare('select id from task_area where id = ?').get(parsed.data.area_id) as { id: string } | undefined;
+    if (!area) {
+      return res.status(404).json({ message: 'Área não encontrada.' });
+    }
+
+    const authCtx = readInternalAuthContext(res);
+    const taskId = uuid('task');
+    const nowIso = nowDateIso();
+
+    db.prepare(`
+      insert into task (id, title, description, area_id, assignee_id, assignee_name, due_date, priority, status, created_by, created_at, updated_at)
+      values (?, ?, ?, ?, ?, ?, ?, ?, 'A_fazer', ?, ?, ?)
+    `).run(
+      taskId,
+      parsed.data.title,
+      parsed.data.description?.trim() || null,
+      parsed.data.area_id,
+      parsed.data.assignee_id,
+      parsed.data.assignee_name,
+      parsed.data.due_date,
+      parsed.data.priority ?? 'Normal',
+      authCtx?.internal_user_id ?? 'unknown',
+      nowIso,
+      nowIso
+    );
+
+    return res.status(201).json({ id: taskId });
+  });
+
+  app.get('/tasks/:id', requireInternalAuth, (req, res) => {
+    const task = db.prepare(`
+      select
+        t.id, t.title, t.description, t.area_id, t.assignee_id, t.assignee_name,
+        t.due_date, t.priority, t.status, t.created_by, t.created_at, t.updated_at,
+        ta.name as area_name, ta.color as area_color
+      from task t
+      join task_area ta on ta.id = t.area_id
+      where t.id = ?
+    `).get(req.params.id) as Record<string, unknown> | undefined;
+
+    if (!task) {
+      return res.status(404).json({ message: 'Tarefa não encontrada.' });
+    }
+
+    const checklist = db.prepare(`
+      select id, label, completed, position, created_at
+      from task_checklist_item
+      where task_id = ?
+      order by position asc, created_at asc
+    `).all(req.params.id);
+
+    const comments = db.prepare(`
+      select id, author_id, author_name, body, created_at
+      from task_comment
+      where task_id = ?
+      order by created_at asc
+    `).all(req.params.id);
+
+    return res.json({ ...task, checklist, comments });
+  });
+
+  app.patch('/tasks/:id', requireInternalAuth, (req, res) => {
+    const parsed = taskUpdateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+
+    const task = db.prepare('select id from task where id = ?').get(req.params.id) as { id: string } | undefined;
+    if (!task) {
+      return res.status(404).json({ message: 'Tarefa não encontrada.' });
+    }
+
+    if (parsed.data.area_id) {
+      const area = db.prepare('select id from task_area where id = ?').get(parsed.data.area_id) as { id: string } | undefined;
+      if (!area) {
+        return res.status(404).json({ message: 'Área não encontrada.' });
+      }
+    }
+
+    const fields: string[] = [];
+    const params: unknown[] = [];
+
+    if (parsed.data.title !== undefined) { fields.push('title = ?'); params.push(parsed.data.title); }
+    if (parsed.data.area_id !== undefined) { fields.push('area_id = ?'); params.push(parsed.data.area_id); }
+    if (parsed.data.assignee_id !== undefined) { fields.push('assignee_id = ?'); params.push(parsed.data.assignee_id); }
+    if (parsed.data.assignee_name !== undefined) { fields.push('assignee_name = ?'); params.push(parsed.data.assignee_name); }
+    if (parsed.data.due_date !== undefined) { fields.push('due_date = ?'); params.push(parsed.data.due_date); }
+    if (parsed.data.priority !== undefined) { fields.push('priority = ?'); params.push(parsed.data.priority); }
+    if (parsed.data.status !== undefined) { fields.push('status = ?'); params.push(parsed.data.status); }
+    if (parsed.data.description !== undefined) { fields.push('description = ?'); params.push(parsed.data.description); }
+
+    if (fields.length === 0) {
+      return res.status(400).json({ message: 'Nenhum campo para atualizar.' });
+    }
+
+    fields.push('updated_at = ?');
+    params.push(nowDateIso());
+    params.push(req.params.id);
+
+    db.prepare(`update task set ${fields.join(', ')} where id = ?`).run(...params);
+
+    return res.json({ ok: true });
+  });
+
+  app.delete('/tasks/:id', requireInternalAuth, (req, res) => {
+    const task = db.prepare('select id from task where id = ?').get(req.params.id) as { id: string } | undefined;
+    if (!task) {
+      return res.status(404).json({ message: 'Tarefa não encontrada.' });
+    }
+    db.prepare('delete from task where id = ?').run(req.params.id);
+    return res.json({ ok: true });
+  });
+
+  // ── Task Checklist ───────────────────────────────────────────────────────────
+  app.post('/tasks/:id/checklist', requireInternalAuth, (req, res) => {
+    const task = db.prepare('select id from task where id = ?').get(req.params.id) as { id: string } | undefined;
+    if (!task) {
+      return res.status(404).json({ message: 'Tarefa não encontrada.' });
+    }
+
+    const parsed = taskChecklistItemCreateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+
+    const itemId = uuid('tcho');
+    const nowIso = nowDateIso();
+    const nextPos = (db.prepare('select coalesce(max(position), -1) + 1 as pos from task_checklist_item where task_id = ?').get(req.params.id) as { pos: number }).pos;
+
+    db.prepare(`
+      insert into task_checklist_item (id, task_id, label, completed, position, created_at)
+      values (?, ?, ?, 0, ?, ?)
+    `).run(itemId, req.params.id, parsed.data.label, nextPos, nowIso);
+
+    return res.status(201).json({ id: itemId });
+  });
+
+  app.patch('/tasks/:id/checklist/:itemId', requireInternalAuth, (req, res) => {
+    const item = db.prepare('select id from task_checklist_item where id = ? and task_id = ?').get(req.params.itemId, req.params.id) as { id: string } | undefined;
+    if (!item) {
+      return res.status(404).json({ message: 'Item não encontrado.' });
+    }
+
+    const parsed = taskChecklistItemUpdateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+
+    const fields: string[] = [];
+    const params: unknown[] = [];
+
+    if (parsed.data.label !== undefined) { fields.push('label = ?'); params.push(parsed.data.label); }
+    if (parsed.data.completed !== undefined) { fields.push('completed = ?'); params.push(parsed.data.completed ? 1 : 0); }
+
+    if (fields.length === 0) {
+      return res.status(400).json({ message: 'Nenhum campo para atualizar.' });
+    }
+
+    params.push(req.params.itemId);
+    db.prepare(`update task_checklist_item set ${fields.join(', ')} where id = ?`).run(...params);
+
+    return res.json({ ok: true });
+  });
+
+  app.delete('/tasks/:id/checklist/:itemId', requireInternalAuth, (req, res) => {
+    const item = db.prepare('select id from task_checklist_item where id = ? and task_id = ?').get(req.params.itemId, req.params.id) as { id: string } | undefined;
+    if (!item) {
+      return res.status(404).json({ message: 'Item não encontrado.' });
+    }
+    db.prepare('delete from task_checklist_item where id = ?').run(req.params.itemId);
+    return res.json({ ok: true });
+  });
+
+  // ── Task Comments ────────────────────────────────────────────────────────────
+  app.get('/tasks/:id/comments', requireInternalAuth, (req, res) => {
+    const task = db.prepare('select id from task where id = ?').get(req.params.id) as { id: string } | undefined;
+    if (!task) {
+      return res.status(404).json({ message: 'Tarefa não encontrada.' });
+    }
+
+    const comments = db.prepare(`
+      select id, author_id, author_name, body, created_at
+      from task_comment
+      where task_id = ?
+      order by created_at asc
+    `).all(req.params.id);
+
+    return res.json(comments);
+  });
+
+  app.post('/tasks/:id/comments', requireInternalAuth, (req, res) => {
+    const task = db.prepare('select id from task where id = ?').get(req.params.id) as { id: string } | undefined;
+    if (!task) {
+      return res.status(404).json({ message: 'Tarefa não encontrada.' });
+    }
+
+    const parsed = taskCommentCreateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json(parsed.error.flatten());
+    }
+
+    const authCtx = readInternalAuthContext(res);
+    const commentId = uuid('tcmt');
+    const nowIso = nowDateIso();
+
+    db.prepare(`
+      insert into task_comment (id, task_id, author_id, author_name, body, created_at)
+      values (?, ?, ?, ?, ?, ?)
+    `).run(
+      commentId,
+      req.params.id,
+      authCtx?.internal_user_id ?? 'unknown',
+      authCtx?.display_name ?? authCtx?.username ?? 'Usuário',
+      parsed.data.body,
+      nowIso
+    );
+
+    return res.status(201).json({ id: commentId });
   });
 }
