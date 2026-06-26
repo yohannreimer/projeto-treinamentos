@@ -38,6 +38,64 @@ type CalendarActivityUpsertPayload = {
   hours_scope?: CalendarActivityHoursScope;
 };
 
+export type TaskArea = {
+  id: string;
+  name: string;
+  color: string;
+  position: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TaskSummary = {
+  id: string;
+  title: string;
+  description: string | null;
+  area_id: string;
+  area_name: string;
+  area_color: string;
+  assignee_id: string;
+  assignee_name: string;
+  due_date: string;
+  priority: 'Critica' | 'Alta' | 'Normal' | 'Baixa';
+  status: 'A_fazer' | 'Em_andamento' | 'Concluida';
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+  checklist_total: number;
+  checklist_done: number;
+};
+
+export type TaskChecklistItem = {
+  id: string;
+  label: string;
+  completed: number;
+  position: number;
+  created_at: string;
+};
+
+export type TaskComment = {
+  id: string;
+  author_id: string;
+  author_name: string;
+  body: string;
+  created_at: string;
+};
+
+export type TaskDetail = TaskSummary & {
+  checklist: TaskChecklistItem[];
+  comments: TaskComment[];
+};
+
+export type TaskListFilters = {
+  area_id?: string;
+  assignee_id?: string;
+  priority?: string;
+  status?: string;
+  overdue?: boolean;
+  q?: string;
+};
+
 export class ApiRequestError extends Error {
   status: number;
   body: unknown;
@@ -190,6 +248,10 @@ export const api = {
     }),
   removePlanningWorkspaceClient: (workspaceId: string, companyId: string) =>
     req<PlanningWorkspaceDetail>(`/planning/workspaces/${workspaceId}/clients/${companyId}`, {
+      method: 'DELETE'
+    }),
+  deletePlanningCohort: (workspaceId: string, cohortId: string) =>
+    req<PlanningWorkspaceDetail & { ok?: boolean }>(`/planning/workspaces/${workspaceId}/cohorts/${cohortId}`, {
       method: 'DELETE'
     }),
   createPlanningCohort: (workspaceId: string, payload: {
@@ -492,6 +554,11 @@ export const api = {
   deleteInternalDocument: (id: string, confirmation_phrase?: string) =>
     req(withConfirmation(`/internal-documents/${id}`, confirmation_phrase), {
       method: 'DELETE'
+    }),
+  updateInternalDocumentPortalVisibility: (id: string, payload: { visible: boolean }) =>
+    req(`/internal-documents/${id}/portal`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload)
     }),
   internalDocumentDownloadUrl: (id: string) => `${BASE_URL}/internal-documents/${id}/download`,
   licenseAlertsSummary: (options?: { silent?: boolean }) => req('/licenses/alerts-summary', { silent: options?.silent }),
@@ -909,5 +976,59 @@ export const api = {
     expires_at: string | null;
   }) => req('/api/internal/share-links', { method: 'POST', body: JSON.stringify(payload) }),
   revokeShareLink: (id: string) =>
-    req(`/api/internal/share-links/${id}`, { method: 'DELETE' })
+    req(`/api/internal/share-links/${id}`, { method: 'DELETE' }),
+
+  taskAreas: () =>
+    req<TaskArea[]>('/task-areas'),
+  createTaskArea: (payload: { name: string; color?: string }) =>
+    req<{ id: string }>('/task-areas', { method: 'POST', body: JSON.stringify(payload) }),
+
+  tasks: (filters?: TaskListFilters) => {
+    const params = new URLSearchParams();
+    if (filters?.area_id) params.set('area_id', filters.area_id);
+    if (filters?.assignee_id) params.set('assignee_id', filters.assignee_id);
+    if (filters?.priority) params.set('priority', filters.priority);
+    if (filters?.status) params.set('status', filters.status);
+    if (filters?.overdue) params.set('overdue', 'true');
+    if (filters?.q) params.set('q', filters.q);
+    const qs = params.toString();
+    return req<TaskSummary[]>(`/tasks${qs ? `?${qs}` : ''}`);
+  },
+  task: (id: string) =>
+    req<TaskDetail>(`/tasks/${id}`),
+  createTask: (payload: {
+    title: string;
+    area_id: string;
+    assignee_id: string;
+    assignee_name: string;
+    due_date: string;
+    priority?: string;
+    description?: string | null;
+  }) =>
+    req<{ id: string }>('/tasks', { method: 'POST', body: JSON.stringify(payload) }),
+  updateTask: (id: string, payload: Partial<{
+    title: string;
+    area_id: string;
+    assignee_id: string;
+    assignee_name: string;
+    due_date: string;
+    priority: string;
+    status: string;
+    description: string | null;
+  }>) =>
+    req<{ ok: boolean }>(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  deleteTask: (id: string) =>
+    req<{ ok: boolean }>(`/tasks/${id}`, { method: 'DELETE' }),
+
+  addTaskChecklistItem: (taskId: string, label: string) =>
+    req<{ id: string }>(`/tasks/${taskId}/checklist`, { method: 'POST', body: JSON.stringify({ label }) }),
+  updateTaskChecklistItem: (taskId: string, itemId: string, payload: { label?: string; completed?: boolean }) =>
+    req<{ ok: boolean }>(`/tasks/${taskId}/checklist/${itemId}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  deleteTaskChecklistItem: (taskId: string, itemId: string) =>
+    req<{ ok: boolean }>(`/tasks/${taskId}/checklist/${itemId}`, { method: 'DELETE' }),
+
+  taskComments: (taskId: string) =>
+    req<TaskComment[]>(`/tasks/${taskId}/comments`),
+  addTaskComment: (taskId: string, body: string) =>
+    req<{ id: string }>(`/tasks/${taskId}/comments`, { method: 'POST', body: JSON.stringify({ body }) })
 };

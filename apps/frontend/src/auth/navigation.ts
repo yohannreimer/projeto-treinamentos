@@ -37,6 +37,7 @@ export const APP_NAV_ITEMS: AppNavItem[] = [
       'finance.billing'
     ]
   },
+  { to: '/tarefas', label: 'Tarefas', permissions: ['tasks'] },
   { to: '/documentacao', label: 'Documentação', permissions: ['docs'] },
   { to: '/admin', label: 'Administração', permissions: ['admin'] }
 ];

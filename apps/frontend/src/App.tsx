@@ -17,6 +17,7 @@ import { RecruitmentPage } from './pages/RecruitmentPage';
 import { LoginPage } from './pages/LoginPage';
 import { AdminPage } from './pages/AdminPage';
 import { InternalDocsPage } from './pages/InternalDocsPage';
+import { TasksPage } from './pages/TasksPage';
 import { PublicDocPage } from './pages/PublicDocPage';
 import { FollowupEvaluationPage } from './pages/FollowupEvaluationPage';
 import { FinanceWorkspace } from './finance/FinanceWorkspace';
@@ -228,6 +229,14 @@ function OperationsRoutes({ user, defaultRoute }: { user: InternalSessionUser; d
         element={(
           <ProtectedRoute user={user} permissions={['license_programs']} fallback={defaultRoute}>
             <LicenseProgramsPage />
+          </ProtectedRoute>
+        )}
+      />
+      <Route
+        path="/tarefas"
+        element={(
+          <ProtectedRoute user={user} permissions={['tasks']} fallback={defaultRoute}>
+            <TasksPage />
           </ProtectedRoute>
         )}
       />
