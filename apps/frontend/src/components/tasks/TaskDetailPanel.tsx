@@ -10,6 +10,7 @@ type Props = {
   onClose: () => void;
   onEdit: (task: TaskSummary) => void;
   onUpdated: () => void;
+  onDeleted: () => void;
 };
 
 const PRIORITY_LABELS: Record<TaskSummary['priority'], string> = {
@@ -23,9 +24,10 @@ function isOverdue(task: TaskSummary): boolean {
   return task.status !== 'Concluida' && task.due_date < new Date().toISOString().slice(0, 10);
 }
 
-export function TaskDetailPanel({ task, onClose, onEdit, onUpdated }: Props) {
+export function TaskDetailPanel({ task, onClose, onEdit, onUpdated, onDeleted }: Props) {
   const [detail, setDetail] = useState<TaskDetail | null>(null);
   const [concluding, setConcluding] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -55,6 +57,18 @@ export function TaskDetailPanel({ task, onClose, onEdit, onUpdated }: Props) {
   async function handleStatusChange(status: TaskSummary['status']) {
     await api.updateTask(task.id, { status });
     onUpdated();
+  }
+
+  async function handleDelete() {
+    if (deleting) return;
+    if (!window.confirm(`Excluir a tarefa "${task.title}"? Essa ação não pode ser desfeita.`)) return;
+    setDeleting(true);
+    try {
+      await api.deleteTask(task.id);
+      onDeleted();
+    } finally {
+      setDeleting(false);
+    }
   }
 
   const overdue = isOverdue(task);
@@ -164,6 +178,14 @@ export function TaskDetailPanel({ task, onClose, onEdit, onUpdated }: Props) {
             {concluding ? '...' : 'Concluir'}
           </button>
         )}
+        <button
+          onClick={handleDelete}
+          disabled={deleting}
+          title="Excluir tarefa"
+          style={{ padding: '7px 10px', background: '#ef444422', border: '1px solid #ef4444', borderRadius: 5, cursor: 'pointer', color: '#ef4444', fontWeight: 600, fontSize: '0.82rem' }}
+        >
+          {deleting ? '...' : 'Excluir'}
+        </button>
       </div>
     </div>
   );

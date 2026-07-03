@@ -152,6 +152,11 @@ export function TasksPage() {
     await loadData();
   }
 
+  async function handleTaskDeleted() {
+    setSelectedId(null);
+    await loadData();
+  }
+
   async function handleStatusChange(task: TaskSummary, status: TaskSummary['status']) {
     await api.updateTask(task.id, { status });
     await loadData();
@@ -311,6 +316,7 @@ export function TasksPage() {
             onClose={() => setSelectedId(null)}
             onEdit={handleOpenEdit}
             onUpdated={handleTaskUpdated}
+            onDeleted={handleTaskDeleted}
           />
         )}
       </div>
