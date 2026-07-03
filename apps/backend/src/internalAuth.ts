@@ -45,6 +45,7 @@ export type InternalAuthContext = {
   permissions: InternalPermissionKey[];
   organization_id: string | null;
   preferences: InternalUserPreferences;
+  technician_id: string | null;
 };
 
 export type InternalUserPreferences = {
@@ -63,6 +64,7 @@ export type InternalUserDto = {
   last_login_at: string | null;
   created_at: string;
   updated_at: string;
+  technician_id: string | null;
 };
 
 export type InternalAuditLogDto = {
@@ -95,6 +97,7 @@ type InternalSessionRow = {
   permissions_json: string | null;
   preferences_json: string | null;
   organization_id: string | null;
+  technician_id: string | null;
 };
 
 type InternalUserRow = {
@@ -110,6 +113,7 @@ type InternalUserRow = {
   last_login_at: string | null;
   created_at: string;
   updated_at: string;
+  technician_id: string | null;
 };
 
 const SESSION_TOKEN_BYTES = 32;
@@ -196,7 +200,8 @@ function rowToDto(row: InternalUserRow): InternalUserDto {
     is_active: Number(row.is_active) === 1,
     last_login_at: row.last_login_at,
     created_at: row.created_at,
-    updated_at: row.updated_at
+    updated_at: row.updated_at,
+    technician_id: row.technician_id
   };
 }
 
@@ -253,7 +258,7 @@ export function resolvePermissionsForRole(role: InternalRole, explicit?: unknown
 
 function readInternalUserByUsername(username: string): InternalUserRow | null {
   const row = db.prepare(`
-    select id, username, display_name, role, permissions_json, preferences_json, organization_id, password_hash, is_active, last_login_at, created_at, updated_at
+    select id, username, display_name, role, permissions_json, preferences_json, organization_id, password_hash, is_active, last_login_at, created_at, updated_at, technician_id
     from internal_user
     where username = ?
     limit 1
@@ -263,7 +268,7 @@ function readInternalUserByUsername(username: string): InternalUserRow | null {
 
 function readInternalUserById(userId: string): InternalUserRow | null {
   const row = db.prepare(`
-    select id, username, display_name, role, permissions_json, preferences_json, organization_id, password_hash, is_active, last_login_at, created_at, updated_at
+    select id, username, display_name, role, permissions_json, preferences_json, organization_id, password_hash, is_active, last_login_at, created_at, updated_at, technician_id
     from internal_user
     where id = ?
     limit 1
@@ -283,7 +288,8 @@ function readInternalSessionByToken(token: string): InternalSessionRow | null {
       u.role,
       u.permissions_json,
       u.preferences_json,
-      u.organization_id
+      u.organization_id,
+      u.technician_id
     from internal_session s
     join internal_user u on u.id = s.internal_user_id
     where s.token_hash = ?
@@ -304,7 +310,8 @@ function buildAuthContextFromSessionRow(row: InternalSessionRow): InternalAuthCo
     role,
     permissions: resolvePermissionsForRole(role, explicit),
     organization_id: row.organization_id,
-    preferences: parsePreferencesJson(row.preferences_json)
+    preferences: parsePreferencesJson(row.preferences_json),
+    technician_id: row.technician_id
   };
 }
 
@@ -929,7 +936,8 @@ export function createInternalSessionForCredentials(username: string, password: 
     role: normalizeRole(user.role),
     permissions: resolvePermissionsForRole(normalizeRole(user.role), parsePermissionsJson(user.permissions_json)),
     organization_id: user.organization_id,
-    preferences: parsePreferencesJson(user.preferences_json)
+    preferences: parsePreferencesJson(user.preferences_json),
+    technician_id: user.technician_id
   };
 
   return {
@@ -946,7 +954,7 @@ export function logoutInternalSessionByToken(token: string): void {
 
 export function listInternalUsers(): InternalUserDto[] {
   const rows = db.prepare(`
-    select id, username, display_name, role, permissions_json, preferences_json, organization_id, password_hash, is_active, last_login_at, created_at, updated_at
+    select id, username, display_name, role, permissions_json, preferences_json, organization_id, password_hash, is_active, last_login_at, created_at, updated_at, technician_id
     from internal_user
     order by username collate nocase asc
   `).all() as InternalUserRow[];
@@ -978,6 +986,7 @@ export function createInternalUser(payload: {
   permissions?: unknown;
   preferences?: unknown;
   is_active?: boolean;
+  technician_id?: string | null;
 }): InternalUserDto {
   const username = payload.username.trim();
   if (!username) {
@@ -991,8 +1000,8 @@ export function createInternalUser(payload: {
 
   db.prepare(`
     insert into internal_user (
-      id, username, display_name, password_hash, role, permissions_json, preferences_json, organization_id, is_active, last_login_at, created_at, updated_at
-    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, null, ?, ?)
+      id, username, display_name, password_hash, role, permissions_json, preferences_json, organization_id, is_active, last_login_at, created_at, updated_at, technician_id
+    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, null, ?, ?, ?)
   `).run(
     id,
     username,
@@ -1004,7 +1013,8 @@ export function createInternalUser(payload: {
     'org-holand',
     payload.is_active === false ? 0 : 1,
     nowIso,
-    nowIso
+    nowIso,
+    payload.technician_id || null
   );
 
   const inserted = readInternalUserById(id);
@@ -1024,6 +1034,7 @@ export function updateInternalUser(
     permissions?: unknown;
     preferences?: unknown;
     is_active?: boolean;
+    technician_id?: string | null;
   }
 ): InternalUserDto {
   const current = readInternalUserById(userId);
@@ -1066,6 +1077,10 @@ export function updateInternalUser(
   if (typeof payload.is_active === 'boolean') {
     fields.push('is_active = ?');
     values.push(payload.is_active ? 1 : 0);
+  }
+  if (typeof payload.technician_id !== 'undefined') {
+    fields.push('technician_id = ?');
+    values.push(payload.technician_id || null);
   }
 
   if (fields.length === 0) {

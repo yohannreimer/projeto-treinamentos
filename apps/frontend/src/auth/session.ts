@@ -35,6 +35,7 @@ export type InternalSessionUser = {
   preferences?: {
     calendar_vivid_mode: boolean;
   };
+  technician_id?: string | null;
 };
 
 export type InternalSessionData = {
@@ -84,7 +85,8 @@ function normalizeUser(raw: unknown): InternalSessionUser | null {
     display_name: typeof source.display_name === 'string' ? source.display_name : null,
     role: normalizeRole(source.role),
     permissions: normalizePermissions(source.permissions),
-    preferences: normalizeUserPreferences(source.preferences)
+    preferences: normalizeUserPreferences(source.preferences),
+    technician_id: typeof source.technician_id === 'string' ? source.technician_id : null
   };
 }
 

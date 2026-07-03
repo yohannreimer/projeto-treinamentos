@@ -228,7 +228,6 @@ export function ClientDetailPage() {
   const [showClientDataSection, setShowClientDataSection] = useState(false);
   const [showPortalAccessSection, setShowPortalAccessSection] = useState(false);
   const [showHoursBankSection, setShowHoursBankSection] = useState(false);
-  const [showFollowupSection, setShowFollowupSection] = useState(false);
   const [showJourneySection, setShowJourneySection] = useState(true);
   const [showOptionalsSection, setShowOptionalsSection] = useState(true);
   const [showHistorySection, setShowHistorySection] = useState(true);
@@ -1040,55 +1039,40 @@ export function ClientDetailPage() {
 
       {!data ? null : (
         <>
-          <Section
-            title="Avaliação de acompanhamento"
-            action={(
-              <button
-                type="button"
-                className="section-collapse-btn"
-                onClick={() => setShowFollowupSection((prev) => !prev)}
-                aria-expanded={showFollowupSection}
-                aria-label={showFollowupSection ? 'Minimizar avaliação de acompanhamento' : 'Expandir avaliação de acompanhamento'}
-              >
-                {showFollowupSection ? '−' : '+'}
-              </button>
-            )}
-          >
-            {showFollowupSection ? (
-              <div className="followup-admin-grid">
-                <div className="form form-spacious">
-                  <p className="form-hint">Gere um link rápido para o cliente avaliar um acompanhamento, reunião ou check-in.</p>
-                  <label>
-                    Título
-                    <input value={followupTitle} onChange={(event) => setFollowupTitle(event.target.value)} />
-                  </label>
-                  <label>
-                    Contexto para o cliente
-                    <textarea rows={3} value={followupNotes} onChange={(event) => setFollowupNotes(event.target.value)} placeholder="Ex.: Avalie o acompanhamento feito hoje sobre implantação e próximos passos." />
-                  </label>
-                  <div className="actions actions-compact">
-                    <button type="button" onClick={() => void createFollowupEvaluation()} disabled={creatingFollowup}>
-                      {creatingFollowup ? 'Gerando...' : 'Gerar link e copiar'}
-                    </button>
-                  </div>
-                </div>
-
-                <div className="followup-admin-list">
-                  {followupEvaluations.length === 0 ? (
-                    <p className="muted">Nenhuma avaliação de acompanhamento criada para este cliente.</p>
-                  ) : followupEvaluations.slice(0, 5).map((row) => (
-                    <article key={row.id} className="followup-admin-item">
-                      <div>
-                        <strong>{row.title}</strong>
-                        <span>{row.status} {row.rating ? `· nota ${row.rating}/5` : ''}</span>
-                        {row.respondent_name ? <small>Respondido por {row.respondent_name}</small> : null}
-                      </div>
-                      <button type="button" onClick={() => void copyFollowupLink(row)}>Copiar link</button>
-                    </article>
-                  ))}
+          <Section title="Avaliação de acompanhamento">
+            <div className="followup-admin-grid">
+              <div className="form form-spacious">
+                <p className="form-hint">Gere um link rápido para o cliente avaliar um acompanhamento, reunião ou check-in.</p>
+                <label>
+                  Título
+                  <input value={followupTitle} onChange={(event) => setFollowupTitle(event.target.value)} />
+                </label>
+                <label>
+                  Contexto para o cliente
+                  <textarea rows={3} value={followupNotes} onChange={(event) => setFollowupNotes(event.target.value)} placeholder="Ex.: Avalie o acompanhamento feito hoje sobre implantação e próximos passos." />
+                </label>
+                <div className="actions actions-compact">
+                  <button type="button" onClick={() => void createFollowupEvaluation()} disabled={creatingFollowup}>
+                    {creatingFollowup ? 'Gerando...' : 'Gerar link e copiar'}
+                  </button>
                 </div>
               </div>
-            ) : null}
+
+              <div className="followup-admin-list">
+                {followupEvaluations.length === 0 ? (
+                  <p className="muted">Nenhuma avaliação de acompanhamento criada para este cliente.</p>
+                ) : followupEvaluations.slice(0, 5).map((row) => (
+                  <article key={row.id} className="followup-admin-item">
+                    <div>
+                      <strong>{row.title}</strong>
+                      <span>{row.status} {row.rating ? `· nota ${row.rating}/5` : ''}</span>
+                      {row.respondent_name ? <small>Respondido por {row.respondent_name}</small> : null}
+                    </div>
+                    <button type="button" onClick={() => void copyFollowupLink(row)}>Copiar link</button>
+                  </article>
+                ))}
+              </div>
+            </div>
           </Section>
 
           <Section

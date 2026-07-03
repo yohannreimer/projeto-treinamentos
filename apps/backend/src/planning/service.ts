@@ -33,9 +33,16 @@ type PublishedCohortLink = {
   id: string;
 };
 
-function publishedBlockDurationDays(period: string, encounters: PlanningEncounterPublishRow[]): number {
-  const divisor = period === 'Meio_periodo' ? 2 : 1;
-  return Math.max(1, Math.ceil(encounters.length / divisor));
+function publishedEncounterDurationDays(encounter: PlanningEncounterPublishRow): number {
+  const start = timeToMinutes(encounter.start_time);
+  const end = timeToMinutes(encounter.end_time);
+  if (start === null || end === null || end <= start) return 0.5;
+  return end - start >= 6 * 60 ? 1 : 0.5;
+}
+
+function publishedBlockDurationDays(encounters: PlanningEncounterPublishRow[]): number {
+  const durationDays = encounters.reduce((total, encounter) => total + publishedEncounterDurationDays(encounter), 0);
+  return Math.max(0.5, durationDays);
 }
 
 function cohortCodeExists(code: string, excludeCohortId?: string): boolean {
@@ -440,7 +447,7 @@ export function publishPlanningWorkspace(workspaceId: string): {
       db.prepare(`
         insert into cohort_module_block (id, cohort_id, module_id, order_in_cohort, start_day_offset, duration_days)
         values (?, ?, ?, 1, 1, ?)
-      `).run(uuid('blk'), cohortId, cohort.module_id, publishedBlockDurationDays(cohort.period, encounters));
+      `).run(uuid('blk'), cohortId, cohort.module_id, publishedBlockDurationDays(encounters));
 
       db.prepare('delete from cohort_schedule_day where cohort_id = ?').run(cohortId);
       const insertScheduleDay = db.prepare(`

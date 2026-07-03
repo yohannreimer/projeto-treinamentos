@@ -85,21 +85,25 @@ describe('InternalDocsPage', () => {
     folders?: unknown[];
     companies?: unknown[];
     modules?: unknown[];
+    companyModules?: unknown[];
     pages?: unknown[];
     shareLinks?: unknown[];
-    action?: Response;
+    action?: Response | Response[];
   }) {
-    // loadAll() faz 4 chamadas paralelas + 1 extra silenciosa para doc-pages
+    // loadAll() faz 5 chamadas paralelas + 2 extras silenciosas para doc-pages/share-links
     // + 1 para a ação do usuário
-    vi.stubGlobal('fetch', vi.fn()
+    const fetchMock = vi.fn()
       .mockResolvedValueOnce(emptyJson(options?.rows ?? rows))          // /internal-documents
       .mockResolvedValueOnce(emptyJson(options?.folders ?? []))         // /internal-document-folders
       .mockResolvedValueOnce(emptyJson(options?.companies ?? []))       // /companies
       .mockResolvedValueOnce(emptyJson(options?.modules ?? []))         // /modules
+      .mockResolvedValueOnce(emptyJson(options?.companyModules ?? []))  // /internal-documents/company-modules
       .mockResolvedValueOnce(emptyJson(options?.pages ?? []))           // /api/internal/doc-pages
-      .mockResolvedValueOnce(emptyJson(options?.shareLinks ?? []))      // /api/internal/share-links
-      .mockResolvedValueOnce(options?.action ?? makePdfBlob())          // ação do usuário
-    );
+      .mockResolvedValueOnce(emptyJson(options?.shareLinks ?? []));     // /api/internal/share-links
+
+    const actions = Array.isArray(options?.action) ? options.action : [options?.action ?? makePdfBlob()];
+    actions.forEach((response) => fetchMock.mockResolvedValueOnce(response));
+    vi.stubGlobal('fetch', fetchMock);
   }
 
   test('downloads internal documents with the internal auth token', async () => {
@@ -122,9 +126,9 @@ describe('InternalDocsPage', () => {
 
     await user.click(await screen.findByRole('button', { name: /Download/i }));
 
-    // 4 chamadas de loadAll + doc-pages + share-links + download = 7
-    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(7));
-    const downloadRequest = vi.mocked(fetch).mock.calls[6];
+    // 5 chamadas de loadAll + doc-pages + share-links + download = 8
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(8));
+    const downloadRequest = vi.mocked(fetch).mock.calls[7];
     expect(downloadRequest[0]).toBe('http://localhost:4000/internal-documents/doc-1/download');
     expect((downloadRequest[1]?.headers as Headers).get('Authorization')).toBe('Bearer token-documentos');
     expect(anchorClick).toHaveBeenCalledTimes(1);
@@ -142,8 +146,8 @@ describe('InternalDocsPage', () => {
     await user.click(await screen.findByRole('button', { name: /Visualizar/i }));
 
     // 4 chamadas de loadAll + doc-pages + share-links + preview = 7
-    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(7));
-    const previewRequest = vi.mocked(fetch).mock.calls[6];
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(8));
+    const previewRequest = vi.mocked(fetch).mock.calls[7];
     expect(previewRequest[0]).toBe('http://localhost:4000/internal-documents/doc-1/download');
     expect((previewRequest[1]?.headers as Headers).get('Authorization')).toBe('Bearer token-documentos');
     expect(screen.getByRole('dialog', { name: /Certificado - Metal Forte/i })).toBeInTheDocument();
@@ -206,6 +210,61 @@ describe('InternalDocsPage', () => {
     await waitFor(() => {
       expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     });
+  });
+
+  test('publishes a selected client file to the portal', async () => {
+    const clientFile = {
+      id: 'doc-client-portal',
+      title: 'Digital Twin Linha A',
+      category: 'Digital Twin',
+      notes: 'Arquivo técnico liberado ao cliente',
+      folder_path: '/Clientes/company-1/modulos/module-1',
+      file_name: 'digital-twin-linha-a.step',
+      mime_type: 'application/octet-stream',
+      file_size_bytes: 2048,
+      portal_visible: 0,
+      portal_published_at: null,
+      created_at: '2026-06-15',
+      updated_at: '2026-06-15'
+    };
+    setupFetchMock({
+      rows: [clientFile],
+      companies,
+      modules: [{ id: 'module-1', code: 'M01', name: 'Digital Twin' }],
+      companyModules: [{ company_id: 'company-1', module_id: 'module-1' }],
+      action: [
+        emptyJson({
+          id: 'share-client-file',
+          resource_type: 'document',
+          resource_id: 'doc-client-portal',
+          token: 'token-client-file',
+          allow_download: true,
+          expires_at: null,
+          created_at: '2026-06-15'
+        }),
+        emptyJson({ ...clientFile, portal_visible: 1, portal_published_at: '2026-06-15T12:00:00.000Z' })
+      ]
+    });
+    const user = userEvent.setup();
+
+    render(<InternalDocsPage />);
+
+    await user.click(await screen.findByRole('button', { name: /Clientes/i }));
+    await user.click(await screen.findByRole('button', { name: /Agile2 Consultoria LTDA/i }));
+    await user.click(await screen.findByRole('button', { name: /Módulos/i }));
+    await user.click(await screen.findByRole('button', { name: /Digital Twin/i }));
+    await user.click(await screen.findByTitle('Compartilhar'));
+    await user.click(screen.getByTitle('Fechar'));
+    await user.click(await screen.findByRole('button', { name: /Adicionar ao portal/i }));
+
+    await waitFor(() => {
+      expect(vi.mocked(fetch).mock.calls.some(([url, init]) =>
+        String(url).endsWith('/internal-documents/doc-client-portal/portal')
+        && init?.method === 'PATCH'
+        && String(init.body).includes('"visible":true')
+      )).toBe(true);
+    });
+    expect(await screen.findByRole('status')).toHaveTextContent('Arquivo adicionado ao portal.');
   });
 
   test('collapses the selected sidebar folder when clicked again', async () => {

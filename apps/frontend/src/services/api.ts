@@ -837,6 +837,7 @@ export const api = {
       last_login_at: string | null;
       created_at: string;
       updated_at: string;
+      technician_id: string | null;
     }> }>('/admin/internal-users'),
   createAdminInternalUser: (payload: {
     username: string;
@@ -848,6 +849,7 @@ export const api = {
       calendar_vivid_mode?: boolean;
     };
     is_active?: boolean;
+    technician_id?: string | null;
   }) =>
     req('/admin/internal-users', {
       method: 'POST',
@@ -865,6 +867,7 @@ export const api = {
         calendar_vivid_mode?: boolean;
       };
       is_active?: boolean;
+      technician_id?: string | null;
     }
   ) =>
     req(`/admin/internal-users/${id}`, {

@@ -157,6 +157,7 @@ export function InternalDocsPage() {
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [previewingId, setPreviewingId] = useState<string | null>(null);
+  const [portalFileUpdatingId, setPortalFileUpdatingId] = useState<string | null>(null);
   const [previewDocument, setPreviewDocument] = useState<PreviewDocument>(null);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -348,6 +349,26 @@ export function InternalDocsPage() {
       setMessage('Documento removido.');
       await loadAll();
     } catch (err) { setError((err as Error).message); }
+  }
+
+  function canTogglePortalFile(row: InternalDocumentRow) {
+    return Boolean(selectedCompanyIdFromPath(fileFolderPath(row)));
+  }
+
+  async function toggleDocumentPortalVisibility(row: InternalDocumentRow) {
+    setPortalFileUpdatingId(row.id);
+    setError(''); setMessage('');
+    try {
+      const nextVisible = !Boolean(row.portal_visible);
+      const updated = await api.updateInternalDocumentPortalVisibility(row.id, { visible: nextVisible }) as InternalDocumentRow;
+      setRows((cur) => cur.map((item) => item.id === updated.id ? updated : item));
+      setDetailItem((cur) => cur?.type === 'file' && cur.row.id === updated.id ? { type: 'file', row: updated } : cur);
+      setMessage(nextVisible ? 'Arquivo adicionado ao portal.' : 'Arquivo removido do portal.');
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setPortalFileUpdatingId(null);
+    }
   }
 
   // ── Page handlers ────────────────────────────────────────────────────────
@@ -637,6 +658,9 @@ export function InternalDocsPage() {
           onEditPage={openEditPage}
           onShareFile={openShareForFile}
           onDeletePage={(page) => void deletePage(page)}
+          onTogglePortalFile={(row) => void toggleDocumentPortalVisibility(row)}
+          canTogglePortalFile={canTogglePortalFile}
+          portalFileUpdatingId={portalFileUpdatingId}
           onFileDrop={(files) => void handleFileDrop(files)}
           onGenerateLink={openShareForSelectedDetail}
         />

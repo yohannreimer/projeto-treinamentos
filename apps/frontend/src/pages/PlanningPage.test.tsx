@@ -28,6 +28,7 @@ vi.mock('../services/api', () => ({
     deletePlanningWorkspace: vi.fn(),
     addPlanningWorkspaceClients: vi.fn(),
     removePlanningWorkspaceClient: vi.fn(),
+    deletePlanningCohort: vi.fn(),
     createPlanningCohort: vi.fn(),
     addPlanningCohortEncounters: vi.fn(),
     planningSuggestions: vi.fn(),
@@ -384,6 +385,51 @@ describe('PlanningPage', () => {
     expect(screen.getByRole('button', { name: 'Fechar configuração do módulo' })).toBeInTheDocument();
   });
 
+  test('removes a planned module from the planning workspace', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const initialDetail = detail('pln-1', 'Carteira Maio', 'Delta Ferramentaria', [
+      { id: 'ple-1', time: '08:00', notes: 'Dia errado' }
+    ]);
+
+    vi.mocked(api.planningWorkspaces)
+      .mockResolvedValueOnce({
+        workspaces: [{ id: 'pln-1', name: 'Carteira Maio', status: 'Rascunho', client_count: 1, encounter_count: 1 }]
+      })
+      .mockResolvedValueOnce({
+        workspaces: [{ id: 'pln-1', name: 'Carteira Maio', status: 'Rascunho', client_count: 1, encounter_count: 0 }]
+      });
+    vi.mocked(api.planningWorkspace).mockResolvedValue(initialDetail);
+    vi.mocked(api.companies).mockResolvedValue([{ id: 'pln-1-client', name: 'Delta Ferramentaria' }]);
+    vi.mocked(api.modules).mockResolvedValue([
+      {
+        id: 'pln-1-module',
+        code: 'NR-10',
+        category: 'Treinamento',
+        name: 'Seguranca eletrica',
+        duration_days: 3,
+        profile: 'Tecnico',
+        is_mandatory: 1,
+        delivery_mode: 'ministrado',
+        client_hours_policy: 'consome'
+      }
+    ]);
+    vi.mocked(api.deletePlanningCohort).mockResolvedValue({
+      ...initialDetail,
+      workspace: { ...initialDetail.workspace, updated_at: '2026-05-08' },
+      cohorts: []
+    });
+
+    render(<PlanningPage />);
+
+    await user.click(await screen.findByRole('button', { name: /Seguranca eletrica/i }));
+    await user.click(screen.getByRole('button', { name: 'Excluir módulo planejado' }));
+
+    expect(window.confirm).toHaveBeenCalledWith('Excluir este módulo planejado? Ele não será publicado como turma.');
+    expect(api.deletePlanningCohort).toHaveBeenCalledWith('pln-1', 'pln-1-cohort');
+    expect(await screen.findByRole('status')).toHaveTextContent('Módulo removido do planejamento');
+  });
+
   test('allows collapsing every client and removing a client from the workspace', async () => {
     const user = userEvent.setup();
 
@@ -449,7 +495,7 @@ describe('PlanningPage', () => {
     expect(await screen.findByText('Cliente removido do planejamento.')).toBeInTheDocument();
   });
 
-  test('opens publish confirmation and blocks incomplete cohorts', async () => {
+  test('opens publish confirmation for planned encounter counts shorter than the module default', async () => {
     const user = userEvent.setup();
     const initialDetail = {
       ...detail('pln-1', 'Carteira Maio', 'Delta Ferramentaria', [
@@ -487,8 +533,8 @@ describe('PlanningPage', () => {
     await user.click(await screen.findByRole('button', { name: 'Publicar turmas' }));
 
     expect(screen.getByRole('dialog', { name: 'Confirmar publicação do planejamento' })).toBeInTheDocument();
-    expect(screen.getByText(/Delta Ferramentaria.*Seguranca eletrica.*falta 1 encontro/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Confirmar publicação' })).toBeDisabled();
+    expect(screen.queryByText(/falta 1 encontro/i)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Confirmar publicação' })).not.toBeDisabled();
     expect(api.validatePlanningWorkspace).not.toHaveBeenCalled();
     expect(api.publishPlanningWorkspace).not.toHaveBeenCalled();
   });

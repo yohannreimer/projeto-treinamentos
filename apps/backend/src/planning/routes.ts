@@ -479,6 +479,53 @@ export function registerPlanningRoutes(app: Express) {
     }
   });
 
+  app.delete('/planning/workspaces/:workspaceId/cohorts/:cohortId', (req, res) => {
+    const cohort = db.prepare(`
+      select pc.id, pc.status, pw.status as workspace_status
+      from planning_cohort pc
+      join planning_workspace pw on pw.id = pc.workspace_id
+      where pc.id = ?
+        and pc.workspace_id = ?
+    `).get(req.params.cohortId, req.params.workspaceId) as {
+      id: string;
+      status: string;
+      workspace_status: string;
+    } | undefined;
+    if (!cohort) return res.status(404).json({ message: 'Turma planejada não encontrada.' });
+
+    const now = nowDateIso();
+    const nextWorkspaceStatus = cohort.workspace_status === 'Publicado'
+      ? 'Alteracao_pendente'
+      : cohort.workspace_status;
+    const tx = db.transaction(() => {
+      db.prepare(`
+        update planning_encounter
+        set status = 'Cancelado',
+            updated_at = ?
+        where workspace_id = ?
+          and planning_cohort_id = ?
+          and status <> 'Cancelado'
+      `).run(now, req.params.workspaceId, cohort.id);
+      db.prepare(`
+        update planning_cohort
+        set status = 'Cancelado',
+            technician_id = null,
+            updated_at = ?
+        where id = ?
+          and workspace_id = ?
+      `).run(now, cohort.id, req.params.workspaceId);
+      db.prepare('update planning_workspace set status = ?, updated_at = ? where id = ?')
+        .run(nextWorkspaceStatus, now, req.params.workspaceId);
+    });
+
+    try {
+      tx();
+      return res.json({ ok: true, ...readWorkspace(req.params.workspaceId) });
+    } catch (error) {
+      return res.status(400).json({ message: 'Não foi possível excluir módulo planejado.', detail: errorMessage(error) });
+    }
+  });
+
   app.post('/planning/workspaces/:workspaceId/cohorts/:cohortId/encounters', (req, res) => {
     const parsed = addPlanningEncountersSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json(parsed.error.flatten());

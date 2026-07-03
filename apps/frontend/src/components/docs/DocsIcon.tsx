@@ -17,6 +17,7 @@ export type DocsIconName =
   | 'trash'
   | 'download'
   | 'eye'
+  | 'eye-off'
   | 'copy'
   | 'link'
   | 'lock'
@@ -173,6 +174,14 @@ export function DocsIcon({ name, size = 16 }: { name: DocsIconName; size?: numbe
         <svg {...props}>
           <path d="M1.5 8c1.8-4 11.2-4 13 0-1.8 4-11.2 4-13 0z" />
           <circle cx="8" cy="8" r="2" />
+        </svg>
+      );
+    case 'eye-off':
+      return (
+        <svg {...props}>
+          <path d="M2 2l12 12" />
+          <path d="M5.2 5.2C3.5 5.8 2.2 6.8 1.5 8c1.8 4 11.2 4 13 0-.5-1.2-1.5-2.1-2.8-2.7" />
+          <path d="M6.7 6.7A2 2 0 0 0 9.3 9.3" />
         </svg>
       );
     case 'copy':

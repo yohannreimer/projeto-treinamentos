@@ -1542,6 +1542,7 @@ export function initDb() {
   ensureColumn('internal_user', 'is_active', 'is_active integer not null default 1');
   ensureColumn('internal_user', 'last_login_at', 'last_login_at text');
   ensureColumn('internal_user', 'preferences_json', "preferences_json text not null default '{}'");
+  ensureColumn('internal_user', 'technician_id', 'technician_id text references technician(id) on delete set null');
   ensureColumn('technician', 'calendar_color', 'calendar_color text');
 
   const financialAccountColumns = readTableColumns('financial_account');

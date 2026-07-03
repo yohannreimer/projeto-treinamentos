@@ -3,24 +3,13 @@ import { api } from '../../services/api';
 import type { TaskSummary, TaskDetail } from '../../services/api';
 import { TaskChecklist } from './TaskChecklist';
 import { TaskComments } from './TaskComments';
+import { StatusSelect } from './StatusSelect';
 
 type Props = {
   task: TaskSummary;
   onClose: () => void;
   onEdit: (task: TaskSummary) => void;
   onUpdated: () => void;
-};
-
-const STATUS_LABELS: Record<TaskSummary['status'], string> = {
-  A_fazer: 'A fazer',
-  Em_andamento: 'Em andamento',
-  Concluida: 'Concluída'
-};
-
-const STATUS_COLORS: Record<TaskSummary['status'], string> = {
-  A_fazer: '#3b82f6',
-  Em_andamento: '#f59e0b',
-  Concluida: '#10b981'
 };
 
 const PRIORITY_LABELS: Record<TaskSummary['priority'], string> = {
@@ -63,6 +52,11 @@ export function TaskDetailPanel({ task, onClose, onEdit, onUpdated }: Props) {
     }
   }
 
+  async function handleStatusChange(status: TaskSummary['status']) {
+    await api.updateTask(task.id, { status });
+    onUpdated();
+  }
+
   const overdue = isOverdue(task);
 
   return (
@@ -71,18 +65,18 @@ export function TaskDetailPanel({ task, onClose, onEdit, onUpdated }: Props) {
       style={{
         width: 300,
         flexShrink: 0,
-        borderLeft: '1px solid var(--border)',
+        borderLeft: '1px solid var(--line)',
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
-        background: 'var(--bg-primary)'
+        background: 'var(--surface)'
       }}
     >
       {/* Panel header */}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '8px 12px', borderBottom: '1px solid var(--border)' }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '8px 12px', borderBottom: '1px solid var(--line)' }}>
         <button
           onClick={onClose}
-          style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', fontSize: '1.1rem', padding: '2px 6px' }}
+          style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--ink-soft)', fontSize: '1.1rem', padding: '2px 6px' }}
           title="Fechar"
         >
           ✕
@@ -100,23 +94,21 @@ export function TaskDetailPanel({ task, onClose, onEdit, onUpdated }: Props) {
                 {PRIORITY_LABELS[task.priority]}
               </span>
             )}
-            <span style={{ background: 'var(--bg-secondary)', borderRadius: 4, padding: '2px 8px', fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
+            <span style={{ background: 'var(--surface-muted)', borderRadius: 4, padding: '2px 8px', fontSize: '0.72rem', color: 'var(--ink-soft)' }}>
               {task.area_name}
             </span>
-            <span style={{ background: `${STATUS_COLORS[task.status]}22`, color: STATUS_COLORS[task.status], borderRadius: 10, padding: '2px 8px', fontSize: '0.72rem' }}>
-              {STATUS_LABELS[task.status]}
-            </span>
+            <StatusSelect status={task.status} onChange={(status) => void handleStatusChange(status)} />
           </div>
         </div>
 
         {/* Metadata */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, fontSize: '0.8rem' }}>
           <div>
-            <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 2, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Responsável</div>
+            <div style={{ fontSize: '0.7rem', color: 'var(--ink-soft)', marginBottom: 2, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Responsável</div>
             <div style={{ fontWeight: 600 }}>{task.assignee_name}</div>
           </div>
           <div>
-            <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginBottom: 2, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Prazo</div>
+            <div style={{ fontSize: '0.7rem', color: 'var(--ink-soft)', marginBottom: 2, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Prazo</div>
             <div style={{ fontWeight: 600, color: overdue ? '#ef4444' : 'inherit' }}>
               {task.due_date.split('-').reverse().join('/')}
               {overdue && <span style={{ marginLeft: 4, fontSize: '0.85em' }}>· Atrasado</span>}
@@ -126,13 +118,13 @@ export function TaskDetailPanel({ task, onClose, onEdit, onUpdated }: Props) {
 
         {/* Description */}
         <div>
-          <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Descrição</div>
+          <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--ink-soft)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Descrição</div>
           {task.description ? (
-            <div style={{ fontSize: '0.8rem', lineHeight: 1.5, color: 'var(--text-secondary)', background: 'var(--bg-secondary)', borderRadius: 5, padding: '8px 10px', whiteSpace: 'pre-wrap' }}>
+            <div style={{ fontSize: '0.8rem', lineHeight: 1.5, color: 'var(--ink-soft)', background: 'var(--surface-muted)', borderRadius: 5, padding: '8px 10px', whiteSpace: 'pre-wrap' }}>
               {task.description}
             </div>
           ) : (
-            <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', fontStyle: 'italic' }}>Sem descrição</div>
+            <div style={{ fontSize: '0.78rem', color: 'var(--ink-soft)', fontStyle: 'italic' }}>Sem descrição</div>
           )}
         </div>
 
@@ -156,10 +148,10 @@ export function TaskDetailPanel({ task, onClose, onEdit, onUpdated }: Props) {
       </div>
 
       {/* Actions */}
-      <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', display: 'flex', gap: 8 }}>
+      <div style={{ padding: '12px 16px', borderTop: '1px solid var(--line)', display: 'flex', gap: 8 }}>
         <button
           onClick={() => onEdit(task)}
-          style={{ flex: 1, padding: '7px', background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 5, cursor: 'pointer', color: 'var(--text-primary)', fontWeight: 500, fontSize: '0.82rem' }}
+          style={{ flex: 1, padding: '7px', background: 'var(--surface-muted)', border: '1px solid var(--line)', borderRadius: 5, cursor: 'pointer', color: 'var(--ink)', fontWeight: 500, fontSize: '0.82rem' }}
         >
           Editar
         </button>

@@ -399,6 +399,7 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
   const [isCreatingWorkspace, setIsCreatingWorkspace] = useState(false);
   const [deletingWorkspaceId, setDeletingWorkspaceId] = useState<string | null>(null);
   const [isCreatingCohort, setIsCreatingCohort] = useState(false);
+  const [deletingCohortId, setDeletingCohortId] = useState<string | null>(null);
   const [isSuggesting, setIsSuggesting] = useState(false);
   const [movingCalendarItem, setMovingCalendarItem] = useState<string | null>(null);
   const [message, setMessage] = useState('');
@@ -612,7 +613,11 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
 
   const selectedWorkspace = planningDetail?.workspace ?? null;
   const clients = planningDetail?.clients ?? [];
-  const cohorts = planningDetail?.cohorts ?? [];
+  const allCohorts = planningDetail?.cohorts ?? [];
+  const cohorts = useMemo(
+    () => allCohorts.filter((cohort) => cohort.status !== 'Cancelado'),
+    [allCohorts]
+  );
   const clientRows = useMemo(() => {
     const byId = new Map<string, CatalogCompany>();
     clients.forEach((client) => {
@@ -739,24 +744,8 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
     return () => window.removeEventListener('keydown', handleDeleteSelectedEncounter);
   }, [isSelectedEncounterAllocated, planningDetail, selectedEncounter, selectedCohort, hasPendingWorkspaceEncounterSave]);
 
-  function expectedEncounterCountForCohort(cohort: PlanningCohort) {
-    const module = modules.find((item) => item.id === cohort.module_id);
-    return defaultEncounterCount(module, cohort.period);
-  }
-
   const publishIssues = useMemo<PublishIssue[]>(() => {
     return cohorts.flatMap((cohort) => {
-      if (cohort.status === 'Cancelado') return [];
-      const expectedCount = expectedEncounterCountForCohort(cohort);
-      const activeEncounters = cohort.encounters.filter((encounter) => encounter.status !== 'Cancelado');
-      const actualCount = activeEncounters.length;
-      if (actualCount >= expectedCount) return [];
-      return [{
-        cohortId: cohort.id,
-        message: `${cohort.company_name} · ${moduleDisplayLabel(cohort.module_name)}: falta ${expectedCount - actualCount} encontro(s)`
-      }];
-    }).concat(cohorts.flatMap((cohort) => {
-      if (cohort.status === 'Cancelado') return [];
       const pendingCount = cohort.encounters.filter((encounter) => (
         encounter.status !== 'Cancelado' && !encounterHasAllocation(cohort, encounter)
       )).length;
@@ -765,8 +754,8 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
         cohortId: `${cohort.id}-pending`,
         message: `${cohort.company_name} · ${moduleDisplayLabel(cohort.module_name)}: ${pendingCount} encontro(s) sem encaixe no calendário`
       }];
-    }));
-  }, [cohorts, modules]);
+    });
+  }, [cohorts]);
   const publishReadyCohorts = cohorts.filter((cohort) => cohort.status !== 'Cancelado' && cohort.encounters.some((encounter) => encounter.status !== 'Cancelado'));
 
   function buildPendingDraftEncounters(source = composer) {
@@ -781,11 +770,23 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
 
   function selectModule(companyId: string, moduleId: string) {
     const module = modules.find((item) => item.id === moduleId);
+    const plannedCohort = cohorts.find((cohort) => cohort.company_id === companyId && cohort.module_id === moduleId);
+    const activeEncounters = plannedCohort?.encounters.filter((encounter) => encounter.status !== 'Cancelado') ?? [];
+    const firstEncounter = activeEncounters[0];
     setExpandedClientId(companyId);
     setActiveModule({ companyId, moduleId });
-    setComposer(emptyComposer(module));
-    const plannedCohort = cohorts.find((cohort) => cohort.company_id === companyId && cohort.module_id === moduleId);
-    const firstEncounter = plannedCohort?.encounters.find((encounter) => encounter.status !== 'Cancelado');
+    setComposer({
+      ...emptyComposer(module),
+      ...(plannedCohort ? {
+        encounterCount: Math.max(1, activeEncounters.length),
+        period: plannedCohort.period,
+        technicianId: plannedCohort.technician_id ?? firstEncounter?.technician_id ?? '',
+        startDate: firstEncounter?.day_date ?? rangeStartDate,
+        startTime: firstEncounter?.start_time ?? emptyComposer(module).startTime,
+        endTime: firstEncounter?.end_time ?? emptyComposer(module).endTime,
+        deliveryMode: plannedCohort.delivery_mode
+      } : {})
+    });
     if (firstEncounter) selectEncounter(firstEncounter.id);
   }
 
@@ -912,6 +913,40 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
     }
   }
 
+  async function deletePlannedCohort(cohort: PlanningCohort) {
+    if (!planningDetail) return;
+    if (!window.confirm('Excluir este módulo planejado? Ele não será publicado como turma.')) return;
+
+    const workspaceId = planningDetail.workspace.id;
+    try {
+      setDeletingCohortId(cohort.id);
+      setError('');
+      setMessage('');
+      const detail = await api.deletePlanningCohort(workspaceId, cohort.id);
+      if (selectedWorkspaceIdRef.current !== workspaceId) return;
+      await reloadWorkspaceList(workspaceId);
+      setPlanningDetail(detail);
+      setActiveModule(null);
+      const nextSelectedEncounterStillExists = detail.cohorts.some((item) => (
+        item.status !== 'Cancelado' &&
+        item.encounters.some((encounter) => encounter.status !== 'Cancelado' && encounter.id === selectedEncounterIdRef.current)
+      ));
+      if (!nextSelectedEncounterStillExists) {
+        const nextEncounter = detail.cohorts
+          .filter((item) => item.status !== 'Cancelado')
+          .flatMap((item) => item.encounters)
+          .find((encounter) => encounter.status !== 'Cancelado');
+        selectEncounter(nextEncounter?.id ?? '');
+      }
+      setMessage('Módulo removido do planejamento.');
+    } catch (requestError) {
+      setMessage('');
+      setError(planningErrorMessage(requestError, 'Falha ao excluir módulo planejado.'));
+    } finally {
+      setDeletingCohortId((currentId) => (currentId === cohort.id ? null : currentId));
+    }
+  }
+
   async function autoAllocateAndCreateModule() {
     if (!activeModule || !activeCompany || !activeModuleTemplate || technicians.length === 0) return;
 
@@ -1000,7 +1035,7 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
   async function addMissingPendingEncounters(cohort: PlanningCohort) {
     if (!planningDetail) return;
 
-    const missingCount = Math.max(0, expectedEncounterCountForCohort(cohort) - cohort.encounters.filter((encounter) => encounter.status !== 'Cancelado').length);
+    const missingCount = Math.max(0, composer.encounterCount - cohort.encounters.filter((encounter) => encounter.status !== 'Cancelado').length);
     if (missingCount === 0) return;
 
     const workspaceId = planningDetail.workspace.id;
@@ -1251,6 +1286,47 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
       if (selectedWorkspaceIdRef.current !== savingWorkspaceId) return;
       setMessage('');
       setError(planningErrorMessage(requestError, 'Falha ao tirar encontro do mapa.'));
+    } finally {
+      setSavingEncounters((currentSavingEncounters) => currentSavingEncounters.filter((currentSavingEncounter) => (
+        currentSavingEncounter.workspaceId !== savingWorkspaceId ||
+        currentSavingEncounter.encounterId !== savingEncounterId
+      )));
+    }
+  }
+
+  async function cancelSelectedEncounter() {
+    if (hasPendingWorkspaceEncounterSave || !planningDetail || !selectedEncounter) return;
+    if (!window.confirm('Excluir este encontro planejado?')) return;
+
+    const savingWorkspaceId = planningDetail.workspace.id;
+    const savingEncounterId = selectedEncounter.id;
+    try {
+      setSavingEncounters((currentSavingEncounters) => [
+        ...currentSavingEncounters,
+        { workspaceId: savingWorkspaceId, encounterId: savingEncounterId }
+      ]);
+      setError('');
+      setMessage('');
+      const updatedDetail = await api.updatePlanningEncounter(savingWorkspaceId, savingEncounterId, {
+        technician_id: selectedEncounter.technician_id,
+        day_date: selectedEncounter.day_date,
+        start_time: selectedEncounter.start_time,
+        end_time: selectedEncounter.end_time,
+        status: 'Cancelado',
+        notes: selectedEncounter.notes ?? null
+      });
+      if (selectedWorkspaceIdRef.current !== savingWorkspaceId) return;
+      setPlanningDetail(updatedDetail);
+      const nextEncounter = updatedDetail.cohorts
+        .filter((cohort) => cohort.status !== 'Cancelado')
+        .flatMap((cohort) => cohort.encounters)
+        .find((encounter) => encounter.status !== 'Cancelado');
+      selectEncounter(nextEncounter?.id ?? '');
+      setMessage('Encontro excluído do planejamento.');
+    } catch (requestError) {
+      if (selectedWorkspaceIdRef.current !== savingWorkspaceId) return;
+      setMessage('');
+      setError(planningErrorMessage(requestError, 'Falha ao excluir encontro.'));
     } finally {
       setSavingEncounters((currentSavingEncounters) => currentSavingEncounters.filter((currentSavingEncounter) => (
         currentSavingEncounter.workspaceId !== savingWorkspaceId ||
@@ -1559,7 +1635,8 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
       cohort.module_id === activeModule.moduleId
     ));
     const validEncounters = plannedCohort?.encounters.filter((encounter) => encounter.status !== 'Cancelado') ?? [];
-    const missingEncounterCount = plannedCohort ? Math.max(0, expectedEncounterCountForCohort(plannedCohort) - validEncounters.length) : 0;
+    const missingEncounterCount = plannedCohort ? Math.max(0, composer.encounterCount - validEncounters.length) : 0;
+    const isDeletingPlannedCohort = plannedCohort ? deletingCohortId === plannedCohort.id : false;
     const visual = plannedCohort
       ? cohortVisuals.get(plannedCohort.id) ?? { index: 0, color: '#ef2f0f', softColor: '#fff0ec' }
       : null;
@@ -1654,6 +1731,15 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
           >
             {isCreatingCohort ? 'Gerando...' : plannedCohort && missingEncounterCount > 0 ? `Gerar ${missingEncounterCount} pendente(s)` : plannedCohort ? 'Gerar outra turma' : 'Gerar encontros'}
           </button>
+          {plannedCohort ? (
+            <button
+              type="button"
+              disabled={isDeletingPlannedCohort || hasPendingWorkspaceEncounterSave}
+              onClick={() => void deletePlannedCohort(plannedCohort)}
+            >
+              {isDeletingPlannedCohort ? 'Excluindo...' : 'Excluir módulo planejado'}
+            </button>
+          ) : null}
         </div>
 
         {validEncounters.length > 0 ? (
@@ -2220,6 +2306,9 @@ export function PlanningPage({ detailReloadKey = 0 }: PlanningPageProps = {}) {
                 Tirar do mapa
               </button>
             ) : null}
+            <button type="button" disabled={hasPendingWorkspaceEncounterSave} onClick={() => void cancelSelectedEncounter()}>
+              Excluir encontro
+            </button>
             <button type="button" disabled={hasPendingWorkspaceEncounterSave} onClick={saveSelectedEncounter}>
               {isSavingSelectedEncounter ? 'Salvando...' : hasPendingWorkspaceEncounterSave ? 'Aguardando salvamento' : 'Salvar encontro'}
             </button>

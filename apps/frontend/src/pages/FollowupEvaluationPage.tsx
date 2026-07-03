@@ -97,7 +97,7 @@ export function FollowupEvaluationPage() {
             {error ? <p className="error">{error}</p> : null}
             <label>
               Respondido por
-              <input value={respondentName} onChange={(event) => setRespondentName(event.target.value)} placeholder="Seu nome" required />
+              <input value={respondentName} onChange={(event) => setRespondentName(event.target.value)} placeholder="Seu nome" />
             </label>
             <fieldset>
               <legend>Como você avalia o acompanhamento?</legend>
@@ -112,15 +112,15 @@ export function FollowupEvaluationPage() {
             </fieldset>
             <label>
               O que funcionou bem neste acompanhamento?
-              <textarea rows={4} value={whatWorked} onChange={(event) => setWhatWorked(event.target.value)} placeholder="Conte rapidamente o que ajudou." />
+              <textarea rows={4} value={whatWorked} onChange={(event) => setWhatWorked(event.target.value)} />
             </label>
             <label>
               O que podemos melhorar?
-              <textarea rows={4} value={whatToImprove} onChange={(event) => setWhatToImprove(event.target.value)} placeholder="Aponte algo que pode ficar mais claro, rápido ou útil." />
+              <textarea rows={4} value={whatToImprove} onChange={(event) => setWhatToImprove(event.target.value)} />
             </label>
             <label>
               Qual deve ser a próxima prioridade?
-              <textarea rows={3} value={nextPriority} onChange={(event) => setNextPriority(event.target.value)} placeholder="Ex.: próximo módulo, dúvida, reunião ou ajuste." />
+              <textarea rows={3} value={nextPriority} onChange={(event) => setNextPriority(event.target.value)} />
             </label>
             <button type="submit" disabled={saving}>{saving ? 'Enviando...' : 'Enviar avaliação'}</button>
           </form>

@@ -470,7 +470,8 @@ const internalUserCreateSchema = z.object({
   preferences: z.object({
     calendar_vivid_mode: z.boolean().optional().default(false)
   }).optional(),
-  is_active: z.boolean().optional().default(true)
+  is_active: z.boolean().optional().default(true),
+  technician_id: z.string().nullable().optional()
 });
 
 const internalUserUpdateSchema = z.object({
@@ -482,7 +483,8 @@ const internalUserUpdateSchema = z.object({
   preferences: z.object({
     calendar_vivid_mode: z.boolean().optional().default(false)
   }).optional(),
-  is_active: z.boolean().optional()
+  is_active: z.boolean().optional(),
+  technician_id: z.string().nullable().optional()
 });
 
 const kanbanBoardReorderSchema = z.object({
@@ -3545,7 +3547,8 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
         role: session.user.role,
         permissions: session.user.permissions,
         organization_id: session.user.organization_id,
-        preferences: session.user.preferences
+        preferences: session.user.preferences,
+        technician_id: session.user.technician_id
       }
     });
   });
@@ -3563,7 +3566,8 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
         role: context.role,
         permissions: context.permissions,
         organization_id: context.organization_id,
-        preferences: context.preferences
+        preferences: context.preferences,
+        technician_id: context.technician_id
       }
     });
   });
@@ -9416,7 +9420,8 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
         role: parsed.data.role as InternalRole,
         permissions: parsed.data.permissions,
         preferences: parsed.data.preferences,
-        is_active: parsed.data.is_active
+        is_active: parsed.data.is_active,
+        technician_id: parsed.data.technician_id ?? null
       });
       return res.status(201).json(created);
     } catch (error) {
@@ -9441,7 +9446,8 @@ export function registerCoreRoutes(app: Express, options: RegisterCoreRoutesOpti
         role: parsed.data.role as InternalRole | undefined,
         permissions: parsed.data.permissions,
         preferences: parsed.data.preferences,
-        is_active: parsed.data.is_active
+        is_active: parsed.data.is_active,
+        technician_id: parsed.data.technician_id
       });
       return res.json(updated);
     } catch (error) {

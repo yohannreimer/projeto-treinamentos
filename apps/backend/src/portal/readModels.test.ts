@@ -151,6 +151,79 @@ test('GET /portal/api/planning returns only authenticated company modules', asyn
   }
 });
 
+test('GET /portal/api/files returns only published internal documents for the authenticated company', async () => {
+  const { app, dbPath } = await createPortalReadModelsFixture('portal-readmodels-files');
+
+  try {
+    const nowIso = new Date().toISOString();
+    db.prepare(`
+      insert into internal_document (
+        id, title, category, notes, folder_path, file_name, mime_type, file_data_base64,
+        file_size_bytes, portal_visible, portal_published_at, created_at, updated_at
+      )
+      values
+        (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?),
+        (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?),
+        (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, null, ?, ?)
+    `).run(
+      'doc-portal-visible',
+      'Digital Twin Linha A',
+      'Digital Twin',
+      'Modelo liberado',
+      '/Clientes/comp-readmodels/modulos/mod-01',
+      'digital-twin.step',
+      'text/plain',
+      `data:text/plain;base64,${Buffer.from('arquivo do cliente').toString('base64')}`,
+      17,
+      nowIso,
+      nowIso,
+      nowIso,
+      'doc-other-company',
+      'Arquivo de outro cliente',
+      'Digital Twin',
+      null,
+      '/Clientes/comp-other/modulos/mod-01',
+      'outro.step',
+      'text/plain',
+      `data:text/plain;base64,${Buffer.from('outro cliente').toString('base64')}`,
+      13,
+      nowIso,
+      nowIso,
+      nowIso,
+      'doc-hidden',
+      'Arquivo oculto',
+      'Digital Twin',
+      null,
+      '/Clientes/comp-readmodels/modulos/mod-01',
+      'oculto.step',
+      'text/plain',
+      `data:text/plain;base64,${Buffer.from('oculto').toString('base64')}`,
+      6,
+      nowIso,
+      nowIso
+    );
+
+    const token = await loginPortal(app);
+    const listRes = await request(app)
+      .get('/portal/api/files')
+      .set('Authorization', `Bearer ${token}`);
+
+    assert.equal(listRes.status, 200);
+    assert.deepEqual(listRes.body.items.map((item: { id: string }) => item.id), ['doc-portal-visible']);
+    assert.equal(listRes.body.items[0].download_url, '/portal/api/files/doc-portal-visible/download');
+
+    const downloadRes = await request(app)
+      .get('/portal/api/files/doc-portal-visible/download')
+      .set('Authorization', `Bearer ${token}`);
+
+    assert.equal(downloadRes.status, 200);
+    assert.equal(downloadRes.headers['content-type'], 'text/plain; charset=utf-8');
+    assert.equal(downloadRes.text, 'arquivo do cliente');
+  } finally {
+    cleanupDbFiles(dbPath);
+  }
+});
+
 test('portal planning applies admin curation (hidden modules + date override)', async () => {
   const { app, dbPath } = await createPortalReadModelsFixture('portal-readmodels-admin-curation');
 

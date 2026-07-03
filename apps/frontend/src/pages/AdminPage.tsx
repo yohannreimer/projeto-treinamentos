@@ -31,6 +31,7 @@ type InternalUserRow = {
   last_login_at: string | null;
   created_at: string;
   updated_at: string;
+  technician_id: string | null;
 };
 type AdminTechnicianRow = {
   id: string;
@@ -176,6 +177,7 @@ export function AdminPage() {
   const [newInternalRole, setNewInternalRole] = useState<InternalRole>('junior');
   const [newInternalPermissions, setNewInternalPermissions] = useState<InternalPermission[]>(ROLE_PRESETS.junior);
   const [newInternalCalendarVividMode, setNewInternalCalendarVividMode] = useState(false);
+  const [newInternalTechnicianId, setNewInternalTechnicianId] = useState('');
   const [creatingInternalUser, setCreatingInternalUser] = useState(false);
   const [editInternalDisplayName, setEditInternalDisplayName] = useState('');
   const [editInternalPassword, setEditInternalPassword] = useState('');
@@ -183,6 +185,7 @@ export function AdminPage() {
   const [editInternalPermissions, setEditInternalPermissions] = useState<InternalPermission[]>([]);
   const [editInternalActive, setEditInternalActive] = useState(true);
   const [editInternalCalendarVividMode, setEditInternalCalendarVividMode] = useState(false);
+  const [editInternalTechnicianId, setEditInternalTechnicianId] = useState('');
   const [savingInternalUser, setSavingInternalUser] = useState(false);
   const [adminTechnicians, setAdminTechnicians] = useState<AdminTechnicianRow[]>([]);
   const [technicianColorDrafts, setTechnicianColorDrafts] = useState<Record<string, string>>({});
@@ -346,6 +349,7 @@ export function AdminPage() {
     setEditInternalPermissions(selectedInternalUser.permissions ?? []);
     setEditInternalActive(Boolean(selectedInternalUser.is_active));
     setEditInternalCalendarVividMode(Boolean(selectedInternalUser.preferences?.calendar_vivid_mode));
+    setEditInternalTechnicianId(selectedInternalUser.technician_id ?? '');
   }, [selectedInternalUser]);
 
   async function handleImport() {
@@ -572,12 +576,14 @@ export function AdminPage() {
         preferences: {
           calendar_vivid_mode: newInternalCalendarVividMode
         },
-        is_active: true
+        is_active: true,
+        technician_id: newInternalTechnicianId || null
       });
       setNewInternalUsername('');
       setNewInternalDisplayName('');
       setNewInternalPassword('');
       setNewInternalCalendarVividMode(false);
+      setNewInternalTechnicianId('');
       applyRolePresetToNew('junior');
       setMessage('Usuário interno criado com sucesso.');
       loadCatalog();
@@ -603,7 +609,8 @@ export function AdminPage() {
         preferences: {
           calendar_vivid_mode: editInternalCalendarVividMode
         },
-        is_active: editInternalActive
+        is_active: editInternalActive,
+        technician_id: editInternalTechnicianId || null
       });
       setEditInternalPassword('');
       setMessage('Usuário interno atualizado.');
@@ -780,6 +787,16 @@ export function AdminPage() {
                 </label>
               </div>
               <label>
+                Técnico vinculado
+                <select value={newInternalTechnicianId} onChange={(event) => setNewInternalTechnicianId(event.target.value)}>
+                  <option value="">Nenhum</option>
+                  {adminTechnicians.map((technician) => (
+                    <option key={technician.id} value={technician.id}>{technician.name}</option>
+                  ))}
+                </select>
+                <p className="form-hint">Define quais tarefas aparecem em "Minhas tarefas" para este usuário.</p>
+              </label>
+              <label>
                 Senha inicial
                 <input
                   type="password"
@@ -862,6 +879,16 @@ export function AdminPage() {
                       </select>
                     </label>
                   </div>
+                  <label>
+                    Técnico vinculado
+                    <select value={editInternalTechnicianId} onChange={(event) => setEditInternalTechnicianId(event.target.value)}>
+                      <option value="">Nenhum</option>
+                      {adminTechnicians.map((technician) => (
+                        <option key={technician.id} value={technician.id}>{technician.name}</option>
+                      ))}
+                    </select>
+                    <p className="form-hint">Define quais tarefas aparecem em "Minhas tarefas" para este usuário.</p>
+                  </label>
                   <label>
                     Nova senha (opcional)
                     <input

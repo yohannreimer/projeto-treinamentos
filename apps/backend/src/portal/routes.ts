@@ -139,6 +139,19 @@ type PortalCertificateRecord = {
   status_label: string;
 };
 
+type PortalDocumentRecord = {
+  id: string;
+  title: string;
+  category: string | null;
+  notes: string | null;
+  folder_path: string | null;
+  file_name: string;
+  mime_type: string;
+  file_size_bytes: number;
+  portal_published_at: string | null;
+  updated_at: string;
+};
+
 function buildLoginThrottleKey(ip: string, userAgent: string, slug: string, username: string) {
   return `${ip}::${userAgent}::${slug.trim().toLowerCase()}::${username.trim().toLowerCase()}`;
 }
@@ -303,108 +316,6 @@ function evaluationDocumentKey(companyId: string, cohortId: string | null, modul
   return `PESQUISA_CERTIFICADO:${companyId}:${cohortId ?? 'sem-turma'}:${moduleId}${participantSuffix}`;
 }
 
-function escapeHtml(value: string | number | boolean | null | undefined): string {
-  return String(value ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-const certificateEvaluationQuestionLabels: Record<string, string> = {
-  q1: 'O instrutor demonstrou domínio técnico do conteúdo do curso?',
-  q2: 'O instrutor explicou os conceitos de forma clara e objetiva?',
-  q3: 'O instrutor foi paciente e disponível para tirar dúvidas?',
-  q4: 'O ritmo das aulas foi adequado?',
-  q5: 'O instrutor estimulou a participação e a prática dos alunos?',
-  q6: 'Qual foi o principal ponto forte do instrutor?',
-  q7: 'O que o instrutor poderia melhorar?',
-  q8: 'O conteúdo do curso atendeu às suas expectativas?',
-  q9: 'Os temas abordados foram relevantes para sua realidade profissional?',
-  q10: 'O nível de dificuldade do curso foi adequado?',
-  q11: 'As aulas práticas foram suficientes?',
-  q12: 'A sequência dos tópicos foi lógica e bem organizada?',
-  q13: 'Você se sente mais confiante para aplicar o conteúdo após o curso?',
-  q14: 'O material didático foi de boa qualidade?',
-  q15: 'Os exercícios práticos foram úteis e bem elaborados?',
-  q16: 'O ambiente, laboratório ou licenças do software funcionaram bem?',
-  q17: 'No geral, como você avalia o curso?',
-  q18: 'Recomendaria este curso para outros colegas?',
-  q19: 'Qual foi o tópico mais útil do curso?',
-  q20: 'Qual tópico você achou menos útil ou precisa de mais aprofundamento?',
-  q21: 'O que mais você gostou no curso?',
-  q22: 'O que podemos melhorar para as próximas turmas?',
-  q23: 'Sugestões de novos temas ou módulos que gostaria de ver?'
-};
-
-function buildCertificateEvaluationHtml(args: {
-  documentKey: string;
-  companyName: string;
-  moduleName: string;
-  cohortLabel: string | null;
-  respondentName: string;
-  submittedAt: string;
-  answers: Record<string, string | number | boolean | null>;
-}) {
-  const answerRows = Object.entries(args.answers)
-    .filter(([, value]) => String(value ?? '').trim().length > 0)
-    .sort(([left], [right]) => left.localeCompare(right, 'pt-BR', { numeric: true }))
-    .map(([key, value]) => `
-      <article class="answer">
-        <span>${escapeHtml(key.toUpperCase())}</span>
-        <div>
-          <strong>${escapeHtml(certificateEvaluationQuestionLabels[key] ?? key.toUpperCase())}</strong>
-          <p>${escapeHtml(value)}</p>
-        </div>
-      </article>
-    `).join('');
-
-  return `<!doctype html>
-<html lang="pt-BR">
-<head>
-  <meta charset="utf-8" />
-  <title>${escapeHtml(`Pesquisa - ${args.companyName} - ${args.moduleName}`)}</title>
-  <style>
-    * { box-sizing: border-box; }
-    body { margin: 0; background: #eef4f8; color: #172530; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-    main { width: min(920px, calc(100% - 32px)); margin: 32px auto; border: 1px solid #d7e0e7; border-radius: 12px; background: #fff; overflow: hidden; box-shadow: 0 22px 70px rgba(21,28,34,.14); }
-    header { padding: 28px; border-bottom: 1px solid #d7e0e7; background: #f8fafb; }
-    .brand { color: #e7482c; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
-    h1 { margin: 10px 0 8px; font-size: 28px; line-height: 1.12; }
-    header p { margin: 0; color: #526678; font-weight: 700; }
-    .summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 20px 28px; border-bottom: 1px solid #edf2f6; }
-    .summary div { border: 1px solid #dfe7ee; border-radius: 8px; padding: 12px; }
-    .summary span { display: block; color: #6a7a88; font-size: 12px; font-weight: 900; text-transform: uppercase; }
-    .summary strong { display: block; margin-top: 4px; overflow-wrap: anywhere; }
-    .answers { display: grid; gap: 10px; padding: 24px 28px 30px; }
-    .answer { display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 12px; border: 1px solid #dfe7ee; border-radius: 8px; padding: 12px; }
-    .answer > span { display: grid; place-items: center; height: 38px; border-radius: 6px; background: #eef4f8; color: #456276; font-weight: 900; }
-    .answer strong { display: block; }
-    .answer p { margin: 6px 0 0; color: #34495a; overflow-wrap: anywhere; }
-    @media print { body { background: #fff; } main { width: 100%; margin: 0; border: 0; box-shadow: none; } }
-    @media (max-width: 680px) { main { width: 100%; margin: 0; border-radius: 0; } .summary, .answer { grid-template-columns: 1fr; } }
-  </style>
-</head>
-<body>
-  <main>
-    <header>
-      <div class="brand">Holand · Pesquisa de satisfação</div>
-      <h1>${escapeHtml(args.moduleName)}</h1>
-      <p>${escapeHtml(args.companyName)} · ${escapeHtml(args.cohortLabel ?? 'Jornada do cliente')}</p>
-    </header>
-    <section class="summary">
-      <div><span>Respondido por</span><strong>${escapeHtml(args.respondentName)}</strong></div>
-      <div><span>Enviado em</span><strong>${escapeHtml(new Date(args.submittedAt).toLocaleString('pt-BR'))}</strong></div>
-      <div><span>Chave</span><strong>${escapeHtml(args.documentKey)}</strong></div>
-      <div><span>Total de respostas</span><strong>${Object.keys(args.answers).length}</strong></div>
-    </section>
-    <section class="answers">${answerRows || '<p>Sem respostas registradas.</p>'}</section>
-  </main>
-</body>
-</html>`;
-}
-
 function upsertCertificateEvaluationDocument(args: {
   documentKey: string;
   companyName: string;
@@ -414,7 +325,6 @@ function upsertCertificateEvaluationDocument(args: {
   answers: Record<string, string | number | boolean | null>;
 }) {
   const nowIso = new Date().toISOString();
-  const folderPath = `/Clientes/${args.documentKey.split(':')[1]}/Pesquisa%20de%20satisfacao`;
   const answerLines = Object.entries(args.answers)
     .sort(([left], [right]) => left.localeCompare(right, 'pt-BR', { numeric: true }))
     .map(([key, value]) => `${key}: ${value ?? ''}`);
@@ -431,12 +341,15 @@ function upsertCertificateEvaluationDocument(args: {
     'Respostas:',
     ...answerLines
   ].join('\n');
-  const html = buildCertificateEvaluationHtml({
-    ...args,
-    submittedAt: nowIso
-  });
-  const htmlBuffer = Buffer.from(html, 'utf8');
-  const fileContent = `data:text/html;base64,${htmlBuffer.toString('base64')}`;
+  const fileContent = `data:application/json;base64,${Buffer.from(JSON.stringify({
+    document_key: args.documentKey,
+    company_name: args.companyName,
+    cohort: args.cohortLabel,
+    module_name: args.moduleName,
+    respondent_name: args.respondentName,
+    submitted_at: nowIso,
+    answers: args.answers
+  }, null, 2), 'utf8').toString('base64')}`;
   const existing = db.prepare(`
     select id
     from internal_document
@@ -448,17 +361,16 @@ function upsertCertificateEvaluationDocument(args: {
   if (existing) {
     db.prepare(`
       update internal_document
-      set title = ?, category = ?, notes = ?, folder_path = ?, file_name = ?, mime_type = ?, file_data_base64 = ?, file_size_bytes = ?, updated_at = ?
+      set title = ?, category = ?, notes = ?, file_name = ?, mime_type = ?, file_data_base64 = ?, file_size_bytes = ?, updated_at = ?
       where id = ?
     `).run(
       title,
       'Pesquisas de Satisfação',
       notes,
-      folderPath,
-      `${title}.html`,
-      'text/html',
+      `${title}.json`,
+      'application/json',
       fileContent,
-      htmlBuffer.length,
+      Buffer.byteLength(fileContent),
       nowIso,
       existing.id
     );
@@ -467,20 +379,19 @@ function upsertCertificateEvaluationDocument(args: {
 
   db.prepare(`
     insert into internal_document (
-      id, title, category, notes, folder_path, file_name, mime_type, file_data_base64,
+      id, title, category, notes, file_name, mime_type, file_data_base64,
       file_size_bytes, created_at, updated_at
     )
-    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     uuid('doc'),
     title,
     'Pesquisas de Satisfação',
     notes,
-    folderPath,
-    `${title}.html`,
-    'text/html',
+    `${title}.json`,
+    'application/json',
     fileContent,
-    htmlBuffer.length,
+    Buffer.byteLength(fileContent),
     nowIso,
     nowIso
   );
@@ -789,6 +700,30 @@ function decodeAttachmentDataUrl(dataUrl: string) {
     mimeType,
     fileSizeBytes: binary.length
   };
+}
+
+function decodePortalDocumentDataUrl(dataUrl: string) {
+  const match = dataUrl.match(/^data:([a-zA-Z0-9.+-]+\/[a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=\s]+)$/);
+  if (!match) {
+    throw new Error('Arquivo inválido.');
+  }
+
+  return {
+    mimeType: match[1] ?? 'application/octet-stream',
+    buffer: Buffer.from((match[2] ?? '').replace(/\s+/g, ''), 'base64')
+  };
+}
+
+function normalizePortalDocumentFolderPath(value?: string | null) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '/Interna';
+  const withSlash = raw.startsWith('/') ? raw : `/${raw}`;
+  return withSlash.replace(/\/{2,}/g, '/').replace(/\/$/, '') || '/Interna';
+}
+
+function portalDocumentBelongsToCompany(folderPath: string | null | undefined, companyId: string) {
+  const normalized = normalizePortalDocumentFolderPath(folderPath);
+  return normalized === `/Clientes/${companyId}` || normalized.startsWith(`/Clientes/${companyId}/`);
 }
 
 type PortalClientDisplaySettings = {
@@ -2521,6 +2456,80 @@ export function registerPortalRoutes(app: Express) {
     } catch (error) {
       return res.status(500).json({
         message: 'Erro ao gerar certificado.',
+        detail: error instanceof Error ? error.message : String(error)
+      });
+    }
+  });
+
+  router.get('/files', requirePortalAuth, (_req, res) => {
+    const context = getPortalContextOrNull(res);
+    if (!context) {
+      return res.status(401).json({ message: 'Sessão inválida ou expirada.' });
+    }
+
+    const companyRoot = `/Clientes/${context.company_id}`;
+    const rows = db.prepare(`
+      select
+        id,
+        title,
+        category,
+        notes,
+        folder_path,
+        file_name,
+        mime_type,
+        file_size_bytes,
+        portal_published_at,
+        updated_at
+      from internal_document
+      where portal_visible = 1
+        and (folder_path = ? or folder_path like ?)
+      order by datetime(coalesce(portal_published_at, updated_at)) desc, title asc
+    `).all(companyRoot, `${companyRoot}/%`) as PortalDocumentRecord[];
+
+    const items = rows.map((row) => ({
+      id: row.id,
+      title: row.title,
+      category: row.category,
+      notes: row.notes,
+      folder_path: row.folder_path,
+      file_name: row.file_name,
+      mime_type: row.mime_type,
+      file_size_bytes: row.file_size_bytes,
+      published_at: row.portal_published_at ?? row.updated_at,
+      download_url: `/portal/api/files/${encodeURIComponent(row.id)}/download`
+    }));
+
+    return res.status(200).json({ items });
+  });
+
+  router.get('/files/:documentId/download', requirePortalAuth, (req, res) => {
+    const context = getPortalContextOrNull(res);
+    if (!context) {
+      return res.status(401).json({ message: 'Sessão inválida ou expirada.' });
+    }
+
+    const row = db.prepare(`
+      select id, folder_path, file_name, mime_type, file_data_base64
+      from internal_document
+      where id = ?
+        and portal_visible = 1
+      limit 1
+    `).get(req.params.documentId) as
+      | { id: string; folder_path: string | null; file_name: string; mime_type: string; file_data_base64: string }
+      | undefined;
+
+    if (!row || !portalDocumentBelongsToCompany(row.folder_path, context.company_id)) {
+      return res.status(404).json({ message: 'Arquivo não encontrado.' });
+    }
+
+    try {
+      const decoded = decodePortalDocumentDataUrl(row.file_data_base64);
+      res.setHeader('Content-Type', row.mime_type || decoded.mimeType || 'application/octet-stream');
+      res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(row.file_name)}`);
+      return res.status(200).send(decoded.buffer);
+    } catch (error) {
+      return res.status(500).json({
+        message: 'Arquivo corrompido.',
         detail: error instanceof Error ? error.message : String(error)
       });
     }

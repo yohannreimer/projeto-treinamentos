@@ -47,13 +47,13 @@ export function TaskChecklist({ taskId, items, onChanged }: Props) {
 
   return (
     <div>
-      <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.04em', display: 'flex', justifyContent: 'space-between' }}>
+      <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--ink-soft)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.04em', display: 'flex', justifyContent: 'space-between' }}>
         <span>Checklist</span>
         {items.length > 0 && <span style={{ fontWeight: 400 }}>{done}/{items.length}</span>}
       </div>
 
       {items.length === 0 && !showInput && (
-        <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', fontStyle: 'italic', marginBottom: 6 }}>Sem itens</div>
+        <div style={{ fontSize: '0.78rem', color: 'var(--ink-soft)', fontStyle: 'italic', marginBottom: 6 }}>Sem itens</div>
       )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
@@ -64,14 +64,14 @@ export function TaskChecklist({ taskId, items, onChanged }: Props) {
               checked={item.completed === 1}
               onChange={() => handleToggle(item)}
               disabled={toggling === item.id}
-              style={{ accentColor: 'var(--accent)', width: 14, height: 14, flexShrink: 0, cursor: 'pointer' }}
+              style={{ accentColor: 'var(--brand)', width: 14, height: 14, flexShrink: 0, cursor: 'pointer' }}
             />
-            <span style={{ flex: 1, textDecoration: item.completed === 1 ? 'line-through' : 'none', color: item.completed === 1 ? 'var(--text-secondary)' : 'inherit' }}>
+            <span style={{ flex: 1, textDecoration: item.completed === 1 ? 'line-through' : 'none', color: item.completed === 1 ? 'var(--ink-soft)' : 'inherit' }}>
               {item.label}
             </span>
             <button
               onClick={() => handleDelete(item.id)}
-              style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', fontSize: '0.8em', padding: '0 2px', opacity: 0.6 }}
+              style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--ink-soft)', fontSize: '0.8em', padding: '0 2px', opacity: 0.6 }}
               title="Remover item"
             >
               ✕
@@ -89,12 +89,12 @@ export function TaskChecklist({ taskId, items, onChanged }: Props) {
             onChange={(e) => setNewLabel(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') void handleAdd(); if (e.key === 'Escape') { setShowInput(false); setNewLabel(''); } }}
             placeholder="Novo item..."
-            style={{ flex: 1, padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '0.8rem' }}
+            style={{ flex: 1, padding: '4px 8px', borderRadius: 4, border: '1px solid var(--line)', background: 'var(--surface-muted)', color: 'var(--ink)', fontSize: '0.8rem' }}
           />
           <button
             onClick={handleAdd}
             disabled={adding || !newLabel.trim()}
-            style={{ padding: '4px 10px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.8rem' }}
+            style={{ padding: '4px 10px', background: 'var(--brand)', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.8rem' }}
           >
             {adding ? '...' : 'Ok'}
           </button>
@@ -102,7 +102,7 @@ export function TaskChecklist({ taskId, items, onChanged }: Props) {
       ) : (
         <button
           onClick={() => setShowInput(true)}
-          style={{ marginTop: 6, background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--accent)', fontSize: '0.78rem', padding: 0 }}
+          style={{ marginTop: 6, background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--brand)', fontSize: '0.78rem', padding: 0 }}
         >
           + Adicionar item
         </button>

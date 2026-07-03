@@ -5,6 +5,7 @@ import type {
   PortalCertificateEvaluation,
   PortalCertificateEvaluationSubmitPayload,
   PortalCertificateItem,
+  PortalFileItem,
   PortalHoursSummary,
   PortalLoginPayload,
   PortalLoginResponse,
@@ -120,6 +121,8 @@ export const portalApi = {
       }, { token, onUnauthorized }),
     certificates: () =>
       portalReq<{ items: PortalCertificateItem[] }>('/portal/api/certificates', {}, { token, onUnauthorized }),
+    files: () =>
+      portalReq<{ items: PortalFileItem[] }>('/portal/api/files', {}, { token, onUnauthorized }),
     certificateEvaluation: (certificateId: string, participantId?: string | null) =>
       portalReq<PortalCertificateEvaluation>(
         `/portal/api/certificates/${encodeURIComponent(certificateId)}/evaluation${participantId ? `?participant_id=${encodeURIComponent(participantId)}` : ''}`,

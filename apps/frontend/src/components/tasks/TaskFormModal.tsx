@@ -120,18 +120,18 @@ export function TaskFormModal({ areas, editingTask, onSave, onClose }: Props) {
     }
   }
 
-  const labelStyle: React.CSSProperties = { fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4, display: 'block' };
-  const inputStyle: React.CSSProperties = { width: '100%', padding: '7px 10px', borderRadius: 5, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: '0.85rem', boxSizing: 'border-box' };
+  const labelStyle: React.CSSProperties = { fontSize: '0.78rem', fontWeight: 600, color: 'var(--ink-soft)', marginBottom: 4, display: 'block' };
+  const inputStyle: React.CSSProperties = { width: '100%', padding: '7px 10px', borderRadius: 5, border: '1px solid var(--line)', background: 'var(--surface-muted)', color: 'var(--ink)', fontSize: '0.85rem', boxSizing: 'border-box' };
 
   return (
     <div
       style={{ position: 'fixed', inset: 0, background: '#00000066', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div style={{ background: 'var(--bg-primary)', borderRadius: 10, padding: 24, width: 440, maxWidth: '95vw', boxShadow: '0 8px 32px #0005' }}>
+      <div style={{ background: 'var(--surface)', borderRadius: 10, padding: 24, width: 440, maxWidth: '95vw', boxShadow: '0 8px 32px #0005' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
           <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700 }}>{editingTask ? 'Editar tarefa' : 'Nova tarefa'}</h2>
-          <button onClick={onClose} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', fontSize: '1.2rem' }}>✕</button>
+          <button onClick={onClose} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--ink-soft)', fontSize: '1.2rem' }}>✕</button>
         </div>
 
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -192,10 +192,10 @@ export function TaskFormModal({ areas, editingTask, onSave, onClose }: Props) {
           {error && <div style={{ color: '#ef4444', fontSize: '0.8rem' }}>{error}</div>}
 
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
-            <button type="button" onClick={onClose} style={{ padding: '8px 18px', background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 6, cursor: 'pointer', fontSize: '0.85rem' }}>
+            <button type="button" onClick={onClose} style={{ padding: '8px 18px', background: 'var(--surface-muted)', border: '1px solid var(--line)', borderRadius: 6, cursor: 'pointer', fontSize: '0.85rem' }}>
               Cancelar
             </button>
-            <button type="submit" disabled={saving} style={{ padding: '8px 18px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' }}>
+            <button type="submit" disabled={saving} style={{ padding: '8px 18px', background: 'var(--brand)', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' }}>
               {saving ? 'Salvando...' : (editingTask ? 'Salvar' : 'Criar tarefa')}
             </button>
           </div>
