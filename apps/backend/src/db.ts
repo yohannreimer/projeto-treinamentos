@@ -2434,6 +2434,7 @@ export function initDb() {
         'calendar',
         'cohorts',
         'clients',
+        'proposals',
         'technicians',
         'implementation',
         'support',

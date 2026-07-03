@@ -6,6 +6,7 @@ export const INTERNAL_PERMISSION_KEYS = [
   'calendar',
   'cohorts',
   'clients',
+  'proposals',
   'technicians',
   'implementation',
   'support',

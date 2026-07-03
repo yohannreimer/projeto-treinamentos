@@ -156,6 +156,7 @@ export function InternalDocsPage() {
   const [newFolderPanelOpen, setNewFolderPanelOpen] = useState(false);
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [portalFileUpdatingId, setPortalFileUpdatingId] = useState<string | null>(null);
   const [previewingId, setPreviewingId] = useState<string | null>(null);
   const [portalFileUpdatingId, setPortalFileUpdatingId] = useState<string | null>(null);
   const [previewDocument, setPreviewDocument] = useState<PreviewDocument>(null);
@@ -351,19 +352,25 @@ export function InternalDocsPage() {
     } catch (err) { setError((err as Error).message); }
   }
 
-  function canTogglePortalFile(row: InternalDocumentRow) {
-    return Boolean(selectedCompanyIdFromPath(fileFolderPath(row)));
+  function canTogglePortalFile(row: InternalDocumentRow): boolean {
+    return fileFolderPath(row).startsWith(`${CLIENTS_PATH}/`);
   }
 
   async function toggleDocumentPortalVisibility(row: InternalDocumentRow) {
+    if (!canTogglePortalFile(row)) {
+      setError('Apenas arquivos vinculados a clientes podem aparecer no portal.');
+      return;
+    }
     setPortalFileUpdatingId(row.id);
-    setError(''); setMessage('');
+    setError('');
+    setMessage('');
     try {
-      const nextVisible = !Boolean(row.portal_visible);
-      const updated = await api.updateInternalDocumentPortalVisibility(row.id, { visible: nextVisible }) as InternalDocumentRow;
-      setRows((cur) => cur.map((item) => item.id === updated.id ? updated : item));
-      setDetailItem((cur) => cur?.type === 'file' && cur.row.id === updated.id ? { type: 'file', row: updated } : cur);
-      setMessage(nextVisible ? 'Arquivo adicionado ao portal.' : 'Arquivo removido do portal.');
+      const updated = await api.updateInternalDocumentPortalVisibility(row.id, {
+        visible: !Boolean(row.portal_visible)
+      }) as InternalDocumentRow;
+      setRows((cur) => cur.map((item) => item.id === updated.id ? { ...item, ...updated } : item));
+      setDetailItem((cur) => cur?.type === 'file' && cur.row.id === updated.id ? { type: 'file', row: { ...cur.row, ...updated } } : cur);
+      setMessage(updated.portal_visible ? 'Arquivo adicionado ao portal.' : 'Arquivo removido do portal.');
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -657,12 +664,15 @@ export function InternalDocsPage() {
           onDeleteFile={(row) => void deleteDocument(row)}
           onEditPage={openEditPage}
           onShareFile={openShareForFile}
+          onTogglePortalFile={(row) => void toggleDocumentPortalVisibility(row)}
           onDeletePage={(page) => void deletePage(page)}
           onTogglePortalFile={(row) => void toggleDocumentPortalVisibility(row)}
           canTogglePortalFile={canTogglePortalFile}
           portalFileUpdatingId={portalFileUpdatingId}
           onFileDrop={(files) => void handleFileDrop(files)}
           onGenerateLink={openShareForSelectedDetail}
+          canTogglePortalFile={canTogglePortalFile}
+          portalFileUpdatingId={portalFileUpdatingId}
         />
       </div>
 

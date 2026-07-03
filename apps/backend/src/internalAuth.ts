@@ -10,6 +10,7 @@ export const INTERNAL_PERMISSION_KEYS = [
   'calendar',
   'cohorts',
   'clients',
+  'proposals',
   'technicians',
   'implementation',
   'support',
@@ -35,6 +36,11 @@ const FINANCE_PERMISSION_KEYS = new Set<InternalPermissionKey>([
   'finance.reconcile',
   'finance.close',
   'finance.billing'
+]);
+const INTERMEDIARIO_EXCLUDED_PERMISSION_KEYS = new Set<InternalPermissionKey>([
+  'admin',
+  'proposals',
+  ...FINANCE_PERMISSION_KEYS
 ]);
 
 export type InternalAuthContext = {
@@ -127,7 +133,7 @@ const INTERNAL_AUDIT_RETENTION_DAYS = 30;
 
 const ROLE_PERMISSION_PRESETS: Record<InternalRole, InternalPermissionKey[]> = {
   supremo: [...INTERNAL_PERMISSION_KEYS],
-  intermediario: INTERNAL_PERMISSION_KEYS.filter((item) => item !== 'admin' && !FINANCE_PERMISSION_KEYS.has(item)),
+  intermediario: INTERNAL_PERMISSION_KEYS.filter((item) => !INTERMEDIARIO_EXCLUDED_PERMISSION_KEYS.has(item)),
   junior: ['calendar', 'cohorts', 'implementation', 'support', 'licenses', 'docs'],
   custom: []
 };
@@ -368,6 +374,7 @@ function permissionLabel(value: string): string {
     calendar: 'Calendário',
     cohorts: 'Turmas',
     clients: 'Clientes',
+    proposals: 'Propostas',
     technicians: 'Técnicos',
     implementation: 'Implementação',
     support: 'Suporte',
