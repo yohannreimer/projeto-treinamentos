@@ -1263,31 +1263,32 @@ export function CalendarPage() {
               return <div key={cell.key} className="calendar-day-cell calendar-day-cell-empty" aria-hidden="true" />;
             }
 
-            const cohortEvents = (cohortEventsByDate[cell.date] ?? []).sort((a, b) => {
+            const date = cell.date;
+            const cohortEvents = (cohortEventsByDate[date] ?? []).sort((a, b) => {
               if (a.code === b.code) return a.day_index - b.day_index;
               return a.code.localeCompare(b.code);
             });
-            const dayActivities = activitiesByDate[cell.date] ?? [];
+            const dayActivities = activitiesByDate[date] ?? [];
             const totalItems = cohortEvents.length + dayActivities.length;
-            const isSelected = selectedDate === cell.date;
+            const isSelected = selectedDate === date;
             const hasHoliday = cell.holidays.length > 0;
 
             return (
               <div
                 key={cell.key}
                 className={`calendar-day-cell ${cell.inMonth ? '' : 'outside'} ${isSelected ? 'selected' : ''} ${cell.isWeekend ? 'weekend' : ''} ${hasHoliday ? 'holiday' : ''} ${cell.isToday ? 'today' : ''}`}
-                onClick={() => openDayPanel(cell.date)}
+                onClick={() => openDayPanel(date)}
                 onKeyDown={(domEvent) => {
                   if (domEvent.key === 'Enter' || domEvent.key === ' ') {
                     domEvent.preventDefault();
-                    openDayPanel(cell.date);
+                    openDayPanel(date);
                   }
                 }}
                 role="button"
                 tabIndex={0}
               >
                 <div className="calendar-day-top">
-                  <span className="calendar-day-number">{Number(cell.date.slice(-2))}</span>
+                  <span className="calendar-day-number">{Number(date.slice(-2))}</span>
                   <small>{totalItems} item(ns)</small>
                 </div>
 
@@ -1306,14 +1307,14 @@ export function CalendarPage() {
                         style={calendarCardStyle(event.technician_calendar_color)}
                         onClick={(domEvent) => {
                           domEvent.stopPropagation();
-                          openCohort(event, cell.date);
+                          openCohort(event, date);
                         }}
                         role="button"
                         tabIndex={0}
                         onKeyDown={(domEvent) => {
                           if (domEvent.key === 'Enter' || domEvent.key === ' ') {
                             domEvent.preventDefault();
-                            openCohort(event, cell.date);
+                            openCohort(event, date);
                           }
                         }}
                       >
@@ -1339,19 +1340,19 @@ export function CalendarPage() {
                   })}
                   {dayActivities.slice(0, 2).map((activity) => (
                     <div
-                      key={`activity-${activity.id}-${cell.date}`}
+                      key={`activity-${activity.id}-${date}`}
                       className="calendar-activity-card"
                       style={calendarCardStyle(activity.primary_technician_calendar_color ?? activity.technician_colors[0])}
                       onClick={(domEvent) => {
                         domEvent.stopPropagation();
-                        openDayPanel(cell.date);
+                        openDayPanel(date);
                       }}
                       role="button"
                       tabIndex={0}
                       onKeyDown={(domEvent) => {
                         if (domEvent.key === 'Enter' || domEvent.key === ' ') {
                           domEvent.preventDefault();
-                          openDayPanel(cell.date);
+                          openDayPanel(date);
                         }
                       }}
                     >

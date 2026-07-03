@@ -158,7 +158,6 @@ export function InternalDocsPage() {
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [portalFileUpdatingId, setPortalFileUpdatingId] = useState<string | null>(null);
   const [previewingId, setPreviewingId] = useState<string | null>(null);
-  const [portalFileUpdatingId, setPortalFileUpdatingId] = useState<string | null>(null);
   const [previewDocument, setPreviewDocument] = useState<PreviewDocument>(null);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -666,13 +665,10 @@ export function InternalDocsPage() {
           onShareFile={openShareForFile}
           onTogglePortalFile={(row) => void toggleDocumentPortalVisibility(row)}
           onDeletePage={(page) => void deletePage(page)}
-          onTogglePortalFile={(row) => void toggleDocumentPortalVisibility(row)}
           canTogglePortalFile={canTogglePortalFile}
           portalFileUpdatingId={portalFileUpdatingId}
           onFileDrop={(files) => void handleFileDrop(files)}
           onGenerateLink={openShareForSelectedDetail}
-          canTogglePortalFile={canTogglePortalFile}
-          portalFileUpdatingId={portalFileUpdatingId}
         />
       </div>
 
