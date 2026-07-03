@@ -67,8 +67,18 @@ export function TasksPage() {
     void loadData();
   }, [loadData]);
 
-  const currentTechnicianId = useMemo(() => {
-    return internalSessionStore.read()?.user.technician_id ?? null;
+  const [currentTechnicianId, setCurrentTechnicianId] = useState<string | null>(
+    () => internalSessionStore.read()?.user.technician_id ?? null
+  );
+
+  useEffect(() => {
+    void api.internalMe().then(({ user }) => {
+      setCurrentTechnicianId(user.technician_id ?? null);
+      const session = internalSessionStore.read();
+      if (session) {
+        internalSessionStore.save({ ...session, user: { ...session.user, ...user } });
+      }
+    }).catch(() => {});
   }, []);
 
   const overdueCount = useMemo(() => tasks.filter(isOverdue).length, [tasks]);

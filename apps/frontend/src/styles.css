@@ -11889,6 +11889,17 @@ button:focus-visible,
   background: var(--surface-muted) !important;
 }
 
+.status-select-native {
+  -webkit-appearance: none !important;
+  -moz-appearance: none !important;
+  appearance: none !important;
+  background-image: none !important;
+}
+
+.status-select-native::-ms-expand {
+  display: none;
+}
+
 /* ─── Finance visual port ─────────────────────────────────── */
 
 /* ─── Proposals generator ─────────────────────────────────── */

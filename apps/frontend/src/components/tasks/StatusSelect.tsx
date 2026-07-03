@@ -36,9 +36,11 @@ export function StatusSelect({ status, onChange, onClick, size = 'md' }: Props) 
         value={status}
         onClick={onClick}
         onChange={(e) => onChange(e.target.value as TaskSummary['status'])}
+        className="status-select-native"
         style={{
           appearance: 'none',
           WebkitAppearance: 'none',
+          MozAppearance: 'none',
           border: `1px solid ${color}55`,
           backgroundColor: `${color}18`,
           color,
