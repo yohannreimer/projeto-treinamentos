@@ -64,8 +64,8 @@ const DUMMY_PASSWORD_HASH = 'scrypt:00112233445566778899aabbccddeeff:5232aa4cb85
 const ISO_DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const PORTAL_ATTACHMENT_MAX_BYTES = 20_000_000;
 const PORTAL_ATTACHMENT_DATA_URL_MAX_CHARS = 30_000_000;
-const INTERNAL_DOCUMENT_MAX_BYTES = 100_000_000;
-const INTERNAL_DOCUMENT_DATA_URL_MAX_CHARS = 140_000_000;
+export const INTERNAL_DOCUMENT_MAX_BYTES = 1_000_000_000;
+export const INTERNAL_DOCUMENT_DATA_URL_MAX_CHARS = 1_333_334_000;
 const IMPLEMENTATION_KANBAN_DEFAULT_COLUMNS = [
   { id: 'kcol-todo', title: 'A fazer', color: '#7b8ea8' },
   { id: 'kcol-doing', title: 'Em andamento', color: '#b17613' },
@@ -1196,7 +1196,7 @@ function validateInternalDocumentDataUrl(dataUrl: string): { mimeType: string; b
     throw new Error('Arquivo inválido.');
   }
   if (decoded.buffer.length > INTERNAL_DOCUMENT_MAX_BYTES) {
-    throw new Error('Arquivo excede 100 MB.');
+    throw new Error('Arquivo excede 1 GB.');
   }
   return decoded;
 }

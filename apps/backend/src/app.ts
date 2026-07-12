@@ -35,7 +35,7 @@ export function createApp(options: CreateAppOptions = {}) {
   const app = express();
   app.set('trust proxy', process.env.TRUST_PROXY?.trim() || 'loopback, linklocal, uniquelocal');
   app.use(cors());
-  app.use(express.json({ limit: '150mb' }));
+  app.use(express.json({ limit: '1500mb' }));
   registerCoreRoutes(app, { enforceInternalAuth });
   registerPlanningRoutes(app);
   registerFinanceRoutes(app);

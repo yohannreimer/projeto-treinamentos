@@ -163,20 +163,30 @@ describe('InternalDocsPage', () => {
     expect(css).toMatch(/\.dv2-grid--list\s+\.dv2-file-card/);
   });
 
-  test('uploads arbitrary file types up to the document limit', async () => {
+  test('uploads arbitrary file types up to the 1 GB document limit', async () => {
     setupFetchMock({ rows: [], companies, pages: [], action: emptyJson({ id: 'doc-new' }) });
     const user = userEvent.setup();
 
     render(<InternalDocsPage />);
 
-    await user.click(await screen.findByRole('button', { name: /Clientes/i }));
-    await user.click(await screen.findByRole('button', { name: /Agile2 Consultoria LTDA/i }));
-    await user.click(await screen.findByRole('button', { name: /Documentos do cliente/i }));
+    const sidebar = document.querySelector('.dv2-sidebar');
+    if (!(sidebar instanceof HTMLElement)) {
+      throw new Error('Sidebar de documentação não encontrada.');
+    }
+
+    await user.click(await within(sidebar).findByRole('button', { name: /Clientes/i }));
+    await user.click(await within(sidebar).findByRole('button', { name: /Agile2 Consultoria LTDA/i }));
+    await user.click(await within(sidebar).findByRole('button', { name: /Documentos do cliente/i }));
     await user.click(screen.getByRole('button', { name: /Novo/i }));
     await user.click(screen.getByRole('button', { name: /Enviar arquivo/i }));
 
     const customFile = new File(['conteudo'], 'arquivo.yrdnegocios', { type: '' });
-    await user.upload(screen.getByLabelText(/Arquivo/i), customFile);
+    Object.defineProperty(customFile, 'size', { value: 1_000_000_000 });
+    await user.upload(screen.getByLabelText(/Arquivo/i, { selector: 'input' }), customFile);
+
+    await waitFor(() => {
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    });
     await user.click(screen.getByRole('button', { name: /Salvar na pasta/i }));
 
     await waitFor(() => {
@@ -192,6 +202,24 @@ describe('InternalDocsPage', () => {
     expect(body.file_name).toBe('arquivo.yrdnegocios');
     expect(body.mime_type).toBe('application/octet-stream');
     expect(body.file_data_base64).toMatch(/^data:application\/octet-stream;base64,/);
+  });
+
+  test('rejects documentation files larger than 1 GB before uploading', async () => {
+    setupFetchMock({ rows: [], companies, pages: [] });
+    const user = userEvent.setup();
+    const tooLargeFile = new File(['x'], 'grande.zip', { type: 'application/zip' });
+    Object.defineProperty(tooLargeFile, 'size', { value: 1_000_000_001 });
+
+    render(<InternalDocsPage />);
+
+    await user.click(await screen.findByRole('button', { name: /Novo/i }));
+    await user.click(screen.getByRole('button', { name: /Enviar arquivo/i }));
+    await user.upload(screen.getByLabelText(/Arquivo/i, { selector: 'input' }), tooLargeFile);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Arquivo muito grande. Limite de 1 GB.');
+    expect(vi.mocked(fetch).mock.calls.some(([url, init]) =>
+      String(url).endsWith('/internal-documents') && init?.method === 'POST'
+    )).toBe(false);
   });
 
   test('shows folder share errors as temporary toast alerts', async () => {

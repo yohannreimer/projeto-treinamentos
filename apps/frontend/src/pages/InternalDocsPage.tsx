@@ -56,7 +56,7 @@ type PreviewDocument = {
 // Helpers
 // ────────────────────────────────────────────────────────────────────────────
 
-const MAX_DOC_UPLOAD_BYTES = 100_000_000;
+const MAX_DOC_UPLOAD_BYTES = 1_000_000_000;
 const DEFAULT_FILE_MIME_TYPE = 'application/octet-stream';
 
 function toDataUrl(file: File): Promise<string> {
@@ -77,7 +77,7 @@ function normalizeFileDataUrl(dataUrl: string, mimeType: string): string {
 
 async function fileDraftFromFile(file: File): Promise<NonNullable<FileDraft>> {
   if (file.size > MAX_DOC_UPLOAD_BYTES) {
-    throw new Error('Arquivo muito grande. Limite de 100 MB.');
+    throw new Error('Arquivo muito grande. Limite de 1 GB.');
   }
   const mimeType = file.type || DEFAULT_FILE_MIME_TYPE;
   const dataUrl = await toDataUrl(file);
@@ -566,7 +566,7 @@ export function InternalDocsPage() {
               </label>
               <label className="form-label dv2-create-file">
                 <span>Arquivo</span>
-                <strong>Qualquer tipo, até 100 MB</strong>
+                <strong>Qualquer tipo, até 1 GB</strong>
                 <input ref={fileInputRef} type="file" onChange={onPickFile} />
               </label>
               {fileDraft && (
