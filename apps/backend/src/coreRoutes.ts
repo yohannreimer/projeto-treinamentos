@@ -3425,6 +3425,9 @@ function resolveRequiredPermissionsForRequest(req: Request): InternalPermissionK
   if (pathname.startsWith('/license-programs')) {
     return ['licenses', 'license_programs'];
   }
+  if (pathname.startsWith('/proposals')) {
+    return ['proposals'];
+  }
   if (pathname.startsWith('/internal-documents') || pathname.startsWith('/internal-document-folders')) {
     return ['docs'];
   }

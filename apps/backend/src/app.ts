@@ -5,6 +5,7 @@ import { registerCoreRoutes } from './coreRoutes.js';
 import { registerFinanceRoutes } from './finance/routes.js';
 import { registerPlanningRoutes } from './planning/routes.js';
 import { registerPortalRoutes } from './portal/routes.js';
+import { registerProposalRoutes } from './proposals/routes.js';
 
 export type CreateAppOptions = {
   forceDbRefresh?: boolean;
@@ -37,6 +38,7 @@ export function createApp(options: CreateAppOptions = {}) {
   app.use(cors());
   app.use(express.json({ limit: '1500mb' }));
   registerCoreRoutes(app, { enforceInternalAuth });
+  registerProposalRoutes(app);
   registerPlanningRoutes(app);
   registerFinanceRoutes(app);
   registerPortalRoutes(app);
