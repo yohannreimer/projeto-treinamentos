@@ -8,6 +8,8 @@ import type {
   PlanningWorkspaceDetail
 } from '../types';
 import { internalSessionStore, type InternalPermission, type InternalRole, type InternalSessionUser } from '../auth/session';
+import type { ProposalDocumentV1 } from '../proposals/proposalDocument';
+import type { ProposalService } from '../proposals/proposalData';
 
 const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
 const BASE_URL = env?.VITE_API_BASE_URL ?? `http://${window.location.hostname}:4000`;
@@ -95,6 +97,28 @@ export type TaskListFilters = {
   overdue?: boolean;
   q?: string;
 };
+
+export type ProposalSummary = {
+  id: string;
+  number: string;
+  client_company_name: string;
+  created_by: string;
+  updated_by: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SavedProposal = ProposalSummary & {
+  document: ProposalDocumentV1;
+};
+
+export type ProposalWritePayload = {
+  number: string;
+  client_company_name: string;
+  document: ProposalDocumentV1;
+};
+
+export type ProposalCatalogServicePayload = Omit<ProposalService, 'id' | 'custom'>;
 
 export class ApiRequestError extends Error {
   status: number;
@@ -950,6 +974,37 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload)
     }),
+
+  proposals: (q?: string) =>
+    req<{ items: ProposalSummary[] }>(`/proposals${q ? `?q=${encodeURIComponent(q)}` : ''}`),
+  proposal: (id: string) =>
+    req<SavedProposal>(`/proposals/${id}`),
+  createProposal: (payload: ProposalWritePayload) =>
+    req<{ id: string; updated_at: string }>('/proposals', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  updateProposal: (id: string, payload: ProposalWritePayload) =>
+    req<{ id: string; updated_at: string }>(`/proposals/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    }),
+  deleteProposal: (id: string) =>
+    req<{ ok: boolean }>(`/proposals/${id}`, { method: 'DELETE' }),
+  proposalCatalogServices: () =>
+    req<{ items: ProposalService[] }>('/proposals/catalog/services'),
+  createProposalCatalogService: (payload: ProposalCatalogServicePayload) =>
+    req<ProposalService>('/proposals/catalog/services', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }),
+  updateProposalCatalogService: (id: string, payload: ProposalCatalogServicePayload) =>
+    req<ProposalService>(`/proposals/catalog/services/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    }),
+  deleteProposalCatalogService: (id: string) =>
+    req<{ ok: boolean }>(`/proposals/catalog/services/${id}`, { method: 'DELETE' }),
 
   // ── Doc Pages ──────────────────────────────────────────────────────────
   docPages: () => req('/api/internal/doc-pages'),
