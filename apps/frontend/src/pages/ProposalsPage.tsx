@@ -1,8 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import holandLogo from "../assets/holand-horizontal.svg";
 import {
-  DEFAULT_OBSERVATIONS,
   DEFAULT_EXCHANGE_RATE,
   DEFAULT_TAX_PERCENT,
   DEFAULT_VALIDITY_DAYS,
@@ -21,40 +20,33 @@ import {
   formatUsdCurrency,
 } from "../proposals/proposalMath";
 import {
+  restoreProposalDocument,
+  type ClientFields,
+  type ProposalDocumentV1,
+  type ProposalFields,
+  type ProposalProductSessionEdits,
+  type RestoredProposalDocument,
+} from "../proposals/proposalDocument";
+import { SavedProposalsPanel } from "../proposals/SavedProposalsPanel";
+import {
   loadProposalConfig,
   loadProposalCustomProducts,
-  loadProposalCustomServices,
   loadProposalObservations,
   loadProposalProductEdits,
   loadProposalRepresentatives,
   loadProposalServiceEdits,
   saveProposalConfig,
   saveProposalCustomProducts,
-  saveProposalCustomServices,
   saveProposalObservations,
   saveProposalProductEdits,
   saveProposalRepresentatives,
   saveProposalServiceEdits,
+  type ProposalConfig,
   type ProposalProductEdits,
   type ProposalRepresentative,
   type ProposalServiceEdits,
 } from "../proposals/proposalStorage";
-
-type ClientFields = {
-  companyName: string;
-  address: string;
-  cep: string;
-  cnpj: string;
-  contact: string;
-  email: string;
-};
-
-type ProposalFields = {
-  number: string;
-  date: string;
-  validityDays: string;
-  modality: string;
-};
+import { api, type ProposalSummary } from "../services/api";
 
 type CustomModuleDraft = {
   code: string;
@@ -77,18 +69,6 @@ type RepresentativeDraft = {
 };
 
 type ActiveEditor = { kind: "product" | "service"; id: string } | null;
-
-type ProposalProductSessionEdit = {
-  name: string;
-  unitValueUsd: number;
-  quantity: number;
-  description: string;
-  maintenanceEnabled: boolean;
-  maintenancePercent: number;
-  maintenanceYears: number;
-};
-
-type ProposalProductSessionEdits = Record<string, ProposalProductSessionEdit>;
 
 type EditableProposalService = ProposalService & {
   displayName: string;
@@ -199,6 +179,53 @@ const DEFAULT_REPRESENTATIVES: ProposalRepresentative[] = [
   },
 ];
 
+function createEmptyProposalDocument(
+  config: Partial<ProposalConfig>,
+  representative: ProposalRepresentative,
+): ProposalDocumentV1 {
+  return {
+    version: 1,
+    client: { ...EMPTY_CLIENT },
+    proposal: {
+      number: "P23005_OS",
+      date: todayInputValue(),
+      validityDays: String(DEFAULT_VALIDITY_DAYS),
+      modality: "Presencial e Online",
+    },
+    selectedServiceIds: [],
+    selectedProductIds: [],
+    serviceSnapshots: [],
+    productSnapshots: [],
+    proposalCustomServices: [],
+    proposalCustomProducts: [],
+    proposalServiceEdits: {},
+    proposalProductEdits: {},
+    taxPercent: config.taxPercent ?? String(DEFAULT_TAX_PERCENT),
+    exchangeRate: config.exchangeRate ?? String(DEFAULT_EXCHANGE_RATE.toFixed(2)),
+    softwareDiscountPercent: config.softwareDiscountPercent ?? "0",
+    discountPercent: "0",
+    targetTotal: String(SNAP_TOTAL_TARGET),
+    selectedRepresentative: representative,
+    includeRequirementsTerm: false,
+    snapToTarget: false,
+    serviceTargetTotal: null,
+    observations: loadProposalObservations(),
+  };
+}
+
+function canonicalizeRestoredDocument(
+  document: ProposalDocumentV1,
+  restored: RestoredProposalDocument,
+): ProposalDocumentV1 {
+  return {
+    ...document,
+    proposalCustomServices: restored.proposalCustomServices,
+    proposalCustomProducts: restored.proposalCustomProducts,
+    proposalServiceEdits: restored.proposalServiceEdits,
+    proposalProductEdits: restored.proposalProductEdits,
+  };
+}
+
 function todayInputValue(): string {
   const today = new Date();
   const year = today.getFullYear();
@@ -231,7 +258,11 @@ function buildEditableServices(
   serviceEdits: ProposalServiceEdits,
   proposalServiceEdits: ProposalServiceEdits,
 ): EditableProposalService[] {
-  return [...PROPOSAL_SERVICES, ...catalogCustomServices, ...proposalCustomServices].map((service) => {
+  const uniqueServices = [...new Map(
+    [...PROPOSAL_SERVICES, ...catalogCustomServices, ...proposalCustomServices]
+      .map((service) => [service.id, service] as const),
+  ).values()];
+  return uniqueServices.map((service) => {
     const catalogEdit = serviceEdits[service.id];
     const proposalEdit = proposalServiceEdits[service.id];
     const edit = proposalEdit ?? catalogEdit;
@@ -1087,14 +1118,10 @@ function ProposalPreview({
 
 export function ProposalsPage() {
   const [savedConfig] = useState(() => loadProposalConfig());
-  const [client, setClient] = useState<ClientFields>(EMPTY_CLIENT);
-  const [proposal, setProposal] = useState<ProposalFields>(() => ({
-    number: "P23005_OS",
-    date: todayInputValue(),
-    validityDays: String(DEFAULT_VALIDITY_DAYS),
-    modality: "Presencial e Online",
-  }));
-  const [customServices, setCustomServices] = useState<ProposalService[]>(() => loadProposalCustomServices());
+  const [initialDocument] = useState(() => createEmptyProposalDocument(savedConfig, DEFAULT_REPRESENTATIVES[0]));
+  const [client, setClient] = useState<ClientFields>(initialDocument.client);
+  const [proposal, setProposal] = useState<ProposalFields>(initialDocument.proposal);
+  const [customServices, setCustomServices] = useState<ProposalService[]>([]);
   const [proposalCustomServices, setProposalCustomServices] = useState<ProposalService[]>([]);
   const [customProducts, setCustomProducts] = useState<ProposalProduct[]>(() => loadProposalCustomProducts());
   const [proposalCustomProducts, setProposalCustomProducts] = useState<ProposalProduct[]>([]);
@@ -1109,20 +1136,51 @@ export function ProposalsPage() {
   const [isAddingCustomProduct, setIsAddingCustomProduct] = useState(false);
   const [customDraft, setCustomDraft] = useState<CustomModuleDraft>(EMPTY_CUSTOM_MODULE);
   const [customProductDraft, setCustomProductDraft] = useState<CustomProductDraft>(EMPTY_CUSTOM_PRODUCT);
-  const [taxPercent, setTaxPercent] = useState(() => savedConfig.taxPercent ?? String(DEFAULT_TAX_PERCENT));
-  const [exchangeRate, setExchangeRate] = useState(() => savedConfig.exchangeRate ?? String(DEFAULT_EXCHANGE_RATE.toFixed(2)));
-  const [softwareDiscountPercent, setSoftwareDiscountPercent] = useState(() => savedConfig.softwareDiscountPercent ?? "0");
-  const [discountPercent, setDiscountPercent] = useState("0");
-  const [targetTotal, setTargetTotal] = useState(String(SNAP_TOTAL_TARGET));
+  const [taxPercent, setTaxPercent] = useState(initialDocument.taxPercent);
+  const [exchangeRate, setExchangeRate] = useState(initialDocument.exchangeRate);
+  const [softwareDiscountPercent, setSoftwareDiscountPercent] = useState(initialDocument.softwareDiscountPercent);
+  const [discountPercent, setDiscountPercent] = useState(initialDocument.discountPercent);
+  const [targetTotal, setTargetTotal] = useState(initialDocument.targetTotal);
   const [customRepresentatives, setCustomRepresentatives] = useState<ProposalRepresentative[]>(() => loadProposalRepresentatives());
   const [selectedRepresentativeId, setSelectedRepresentativeId] = useState(DEFAULT_REPRESENTATIVES[0].id);
   const [isAddingRepresentative, setIsAddingRepresentative] = useState(false);
   const [representativeDraft, setRepresentativeDraft] = useState<RepresentativeDraft>(EMPTY_REPRESENTATIVE_DRAFT);
-  const [includeRequirementsTerm, setIncludeRequirementsTerm] = useState(false);
-  const [snapToTarget, setSnapToTarget] = useState(false);
+  const [includeRequirementsTerm, setIncludeRequirementsTerm] = useState(initialDocument.includeRequirementsTerm);
+  const [snapToTarget, setSnapToTarget] = useState(initialDocument.snapToTarget);
   const [serviceTargetTotal, setServiceTargetTotal] = useState<number | undefined>();
   const [snapMessage, setSnapMessage] = useState("");
-  const [observations, setObservations] = useState(() => loadProposalObservations());
+  const [observations, setObservations] = useState(initialDocument.observations);
+  const [savedProposals, setSavedProposals] = useState<ProposalSummary[]>([]);
+  const [proposalSearch, setProposalSearch] = useState("");
+  const [proposalsLoading, setProposalsLoading] = useState(true);
+  const [proposalOperationError, setProposalOperationError] = useState("");
+  const [proposalOperationStatus, setProposalOperationStatus] = useState("");
+  const [savingProposal, setSavingProposal] = useState(false);
+  const [activeProposalId, setActiveProposalId] = useState<string | null>(null);
+  const [baselineDocumentJson, setBaselineDocumentJson] = useState(() => JSON.stringify(initialDocument));
+
+  useEffect(() => {
+    let active = true;
+    Promise.allSettled([api.proposals(), api.proposalCatalogServices()]).then(([proposalsResult, servicesResult]) => {
+      if (!active) return;
+      const errors: string[] = [];
+      if (proposalsResult.status === "fulfilled") {
+        setSavedProposals(proposalsResult.value.items);
+      } else {
+        errors.push(proposalsResult.reason instanceof Error ? proposalsResult.reason.message : "Não foi possível carregar as propostas.");
+      }
+      if (servicesResult.status === "fulfilled") {
+        setCustomServices(servicesResult.value.items);
+      } else {
+        errors.push(servicesResult.reason instanceof Error ? servicesResult.reason.message : "Não foi possível carregar os módulos compartilhados.");
+      }
+      setProposalOperationError(errors.join(" "));
+      setProposalsLoading(false);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const services = useMemo(
     () => buildEditableServices(customServices, proposalCustomServices, serviceEdits, proposalServiceEdits),
@@ -1138,6 +1196,82 @@ export function ProposalsPage() {
   const selectedProducts = useMemo(() => products.filter((product) => selectedProductIds.has(product.id)), [products, selectedProductIds]);
   const activeProduct = activeEditor?.kind === "product" ? products.find((product) => product.id === activeEditor.id) : undefined;
   const activeService = activeEditor?.kind === "service" ? services.find((service) => service.id === activeEditor.id) : undefined;
+  const currentDocument = useMemo<ProposalDocumentV1>(() => ({
+    version: 1,
+    client,
+    proposal,
+    selectedServiceIds: [...selectedIds],
+    selectedProductIds: [...selectedProductIds],
+    serviceSnapshots: selectedServices.map((service) => ({
+      id: service.id,
+      code: service.code,
+      name: service.displayName,
+      valuePerDay: service.valuePerDay,
+      defaultDurationDays: service.durationDays,
+      description: service.displayDescription,
+      custom: service.custom,
+    })),
+    productSnapshots: selectedProducts.map((product) => ({
+      id: product.id,
+      code: product.code,
+      name: product.displayName,
+      unitValueUsd: product.unitValueUsd,
+      defaultQuantity: product.quantity,
+      description: product.displayDescription,
+      custom: product.custom,
+      quantity: product.quantity,
+      maintenanceEnabled: product.maintenanceEnabled,
+      maintenancePercent: product.maintenancePercent,
+      maintenanceYears: product.maintenanceYears,
+    })),
+    proposalCustomServices,
+    proposalCustomProducts,
+    proposalServiceEdits,
+    proposalProductEdits,
+    taxPercent,
+    exchangeRate,
+    softwareDiscountPercent,
+    discountPercent,
+    targetTotal,
+    selectedRepresentative,
+    includeRequirementsTerm,
+    snapToTarget,
+    serviceTargetTotal: serviceTargetTotal ?? null,
+    observations,
+  }), [
+    client,
+    proposal,
+    selectedIds,
+    selectedProductIds,
+    selectedServices,
+    selectedProducts,
+    proposalCustomServices,
+    proposalCustomProducts,
+    proposalServiceEdits,
+    proposalProductEdits,
+    taxPercent,
+    exchangeRate,
+    softwareDiscountPercent,
+    discountPercent,
+    targetTotal,
+    selectedRepresentative,
+    includeRequirementsTerm,
+    snapToTarget,
+    serviceTargetTotal,
+    observations,
+  ]);
+  const currentDocumentJson = JSON.stringify(currentDocument);
+  const hasUnsavedChanges = currentDocumentJson !== baselineDocumentJson;
+
+  useEffect(() => {
+    if (!hasUnsavedChanges) return;
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warnBeforeUnload);
+    return () => window.removeEventListener("beforeunload", warnBeforeUnload);
+  }, [hasUnsavedChanges]);
   const totals = calculateProposalTotals({
     selectedProducts: selectedProducts.map((product) => ({
       id: product.id,
@@ -1158,6 +1292,130 @@ export function ProposalsPage() {
     snapTo54000: snapToTarget,
     serviceTargetTotal,
   });
+
+  function applyDocument(document: ProposalDocumentV1): ProposalDocumentV1 {
+    const restored = restoreProposalDocument(
+      document,
+      [...PROPOSAL_SERVICES, ...customServices],
+      [...PROPOSAL_PRODUCTS, ...customProducts],
+    );
+    setClient(restored.client);
+    setProposal(restored.proposal);
+    setSelectedIds(restored.selectedServiceIds);
+    setSelectedProductIds(restored.selectedProductIds);
+    setProposalCustomServices(restored.proposalCustomServices);
+    setProposalCustomProducts(restored.proposalCustomProducts);
+    setProposalServiceEdits(restored.proposalServiceEdits);
+    setProposalProductEdits(restored.proposalProductEdits);
+    setTaxPercent(restored.taxPercent);
+    setExchangeRate(restored.exchangeRate);
+    setSoftwareDiscountPercent(restored.softwareDiscountPercent);
+    setDiscountPercent(restored.discountPercent);
+    setTargetTotal(restored.targetTotal);
+    setIncludeRequirementsTerm(restored.includeRequirementsTerm);
+    setSnapToTarget(restored.snapToTarget);
+    setServiceTargetTotal(restored.serviceTargetTotal ?? undefined);
+    setObservations(restored.observations);
+
+    const representative = restored.selectedRepresentative ?? DEFAULT_REPRESENTATIVES[0];
+    if (!DEFAULT_REPRESENTATIVES.some((item) => item.id === representative.id)) {
+      setCustomRepresentatives((previous) => (
+        previous.some((item) => item.id === representative.id) ? previous : [...previous, representative]
+      ));
+    }
+    setSelectedRepresentativeId(representative.id);
+    setActiveEditor(null);
+    setIsAddingCustom(false);
+    setIsAddingCustomProduct(false);
+    setIsAddingRepresentative(false);
+    setCustomDraft(EMPTY_CUSTOM_MODULE);
+    setCustomProductDraft(EMPTY_CUSTOM_PRODUCT);
+    setRepresentativeDraft(EMPTY_REPRESENTATIVE_DRAFT);
+    setSnapMessage("");
+    return canonicalizeRestoredDocument(document, restored);
+  }
+
+  async function saveCurrentProposal() {
+    setSavingProposal(true);
+    setProposalOperationError("");
+    setProposalOperationStatus("");
+    const payload = {
+      number: proposal.number.trim(),
+      client_company_name: client.companyName.trim(),
+      document: currentDocument,
+    };
+
+    try {
+      const result = activeProposalId
+        ? await api.updateProposal(activeProposalId, payload)
+        : await api.createProposal(payload);
+      const id = activeProposalId ?? result.id;
+      setActiveProposalId(id);
+      setBaselineDocumentJson(currentDocumentJson);
+      setProposalOperationStatus("Proposta salva.");
+      setSavedProposals((previous) => {
+        const existing = previous.find((item) => item.id === id);
+        const summary: ProposalSummary = {
+          id,
+          number: payload.number,
+          client_company_name: payload.client_company_name,
+          created_by: existing?.created_by ?? "",
+          updated_by: existing?.updated_by ?? "",
+          created_at: existing?.created_at ?? result.updated_at,
+          updated_at: result.updated_at,
+        };
+        return [summary, ...previous.filter((item) => item.id !== id)];
+      });
+      try {
+        const refreshed = await api.proposals();
+        setSavedProposals(refreshed.items);
+      } catch {
+        // A gravação foi confirmada; o resumo local permanece até o próximo carregamento.
+      }
+    } catch (error) {
+      setProposalOperationError(error instanceof Error ? error.message : "Não foi possível salvar a proposta.");
+    } finally {
+      setSavingProposal(false);
+    }
+  }
+
+  async function openSavedProposal(id: string) {
+    if (hasUnsavedChanges && !window.confirm("Descartar alterações não salvas?")) return;
+    setProposalOperationError("");
+    setProposalOperationStatus("");
+    try {
+      const saved = await api.proposal(id);
+      const canonicalDocument = applyDocument(saved.document);
+      setActiveProposalId(id);
+      setBaselineDocumentJson(JSON.stringify(canonicalDocument));
+      setProposalOperationStatus("Proposta aberta.");
+    } catch (error) {
+      setProposalOperationError(error instanceof Error ? error.message : "Não foi possível abrir a proposta.");
+    }
+  }
+
+  function resetToNewProposal(skipConfirmation = false) {
+    if (!skipConfirmation && hasUnsavedChanges && !window.confirm("Descartar alterações não salvas?")) return;
+    const empty = createEmptyProposalDocument(savedConfig, DEFAULT_REPRESENTATIVES[0]);
+    const canonicalDocument = applyDocument(empty);
+    setActiveProposalId(null);
+    setBaselineDocumentJson(JSON.stringify(canonicalDocument));
+    setProposalOperationStatus("Nova proposta iniciada.");
+    setProposalOperationError("");
+  }
+
+  async function deleteSavedProposal(id: string) {
+    if (!window.confirm("Excluir esta proposta permanentemente?")) return;
+    setProposalOperationError("");
+    try {
+      await api.deleteProposal(id);
+      setSavedProposals((previous) => previous.filter((item) => item.id !== id));
+      if (activeProposalId === id) resetToNewProposal(true);
+      setProposalOperationStatus("Proposta excluída.");
+    } catch (error) {
+      setProposalOperationError(error instanceof Error ? error.message : "Não foi possível excluir a proposta.");
+    }
+  }
 
   function resetTargetDiscount() {
     setSnapToTarget(false);
@@ -1241,9 +1499,67 @@ export function ProposalsPage() {
     });
   }
 
-  function saveServiceAsDefault(id: string) {
+  async function saveServiceAsDefault(id: string) {
     const service = services.find((item) => item.id === id);
     if (!service) return;
+
+    setProposalOperationError("");
+    if (customServices.some((item) => item.id === id)) {
+      try {
+        const updated = await api.updateProposalCatalogService(id, {
+          code: service.code,
+          name: service.displayName,
+          valuePerDay: service.valuePerDay,
+          defaultDurationDays: service.durationDays,
+          description: service.displayDescription,
+        });
+        setCustomServices((previous) => previous.map((item) => item.id === id ? updated : item));
+        setProposalServiceEdits((previous) => {
+          const next = { ...previous };
+          delete next[id];
+          return next;
+        });
+        setProposalOperationStatus("Módulo atualizado no catálogo compartilhado.");
+      } catch (error) {
+        setProposalOperationError(error instanceof Error ? error.message : "Não foi possível atualizar o módulo.");
+      }
+      return;
+    }
+
+    if (proposalCustomServices.some((item) => item.id === id)) {
+      try {
+        const persisted = await api.createProposalCatalogService({
+          code: service.code,
+          name: service.displayName,
+          valuePerDay: service.valuePerDay,
+          defaultDurationDays: service.durationDays,
+          description: service.displayDescription,
+        });
+        setCustomServices((previous) => [...previous, persisted]);
+        setProposalCustomServices((previous) => previous.filter((item) => item.id !== id));
+        setSelectedIds((previous) => {
+          if (!previous.has(id)) return previous;
+          const next = new Set(previous);
+          next.delete(id);
+          next.add(persisted.id);
+          return next;
+        });
+        setProposalServiceEdits((previous) => {
+          const next = { ...previous };
+          delete next[id];
+          return next;
+        });
+        setActiveEditor((previous) => (
+          previous?.kind === "service" && previous.id === id
+            ? { kind: "service", id: persisted.id }
+            : previous
+        ));
+        setProposalOperationStatus("Módulo salvo no catálogo compartilhado.");
+      } catch (error) {
+        setProposalOperationError(error instanceof Error ? error.message : "Não foi possível salvar o módulo no catálogo.");
+      }
+      return;
+    }
 
     setServiceEdits((previous) => {
       const next = {
@@ -1258,24 +1574,7 @@ export function ProposalsPage() {
       saveProposalServiceEdits(next);
       return next;
     });
-
-    if (proposalCustomServices.some((item) => item.id === id)) {
-      const catalogService: ProposalService = {
-        id,
-        code: service.code,
-        name: service.displayName,
-        valuePerDay: service.valuePerDay,
-        defaultDurationDays: service.durationDays,
-        description: service.displayDescription,
-        custom: true,
-      };
-      setCustomServices((previous) => {
-        const next = [...previous, catalogService];
-        saveProposalCustomServices(next);
-        return next;
-      });
-      setProposalCustomServices((previous) => previous.filter((item) => item.id !== id));
-    }
+    setProposalOperationStatus("Padrão salvo neste navegador.");
   }
 
   function saveProductAsDefault(id: string) {
@@ -1314,34 +1613,44 @@ export function ProposalsPage() {
     }
   }
 
-  function createCustomService(persist: boolean) {
+  async function createCustomService(persist: boolean) {
     const name = customDraft.name.trim();
     if (!name) return;
 
     const valuePerDay = Math.max(0, numericValue(customDraft.valuePerDay, 1000));
     const durationDays = positiveIntegerValue(customDraft.days, 1);
-    const service: ProposalService = {
-      id: `custom_${Date.now()}`,
-      code: customDraft.code.trim(),
-      name,
-      valuePerDay,
-      defaultDurationDays: durationDays,
-      description: customDraft.description.trim(),
-      custom: true,
-    };
-
     resetTargetDiscount();
-    if (persist) {
-      setCustomServices((previous) => {
-        const next = [...previous, service];
-        saveProposalCustomServices(next);
-        return next;
-      });
-    } else {
-      setProposalCustomServices((previous) => [...previous, service]);
+    if (!persist) {
+      setProposalCustomServices((previous) => [...previous, {
+        id: `custom_${Date.now()}`,
+        code: customDraft.code.trim(),
+        name,
+        valuePerDay,
+        defaultDurationDays: durationDays,
+        description: customDraft.description.trim(),
+        custom: true,
+      }]);
+      setCustomDraft(EMPTY_CUSTOM_MODULE);
+      setIsAddingCustom(false);
+      return;
     }
-    setCustomDraft(EMPTY_CUSTOM_MODULE);
-    setIsAddingCustom(false);
+
+    setProposalOperationError("");
+    try {
+      const persisted = await api.createProposalCatalogService({
+        code: customDraft.code.trim(),
+        name,
+        valuePerDay,
+        defaultDurationDays: durationDays,
+        description: customDraft.description.trim(),
+      });
+      setCustomServices((previous) => [...previous, persisted]);
+      setCustomDraft(EMPTY_CUSTOM_MODULE);
+      setIsAddingCustom(false);
+      setProposalOperationStatus("Módulo salvo no catálogo compartilhado.");
+    } catch (error) {
+      setProposalOperationError(error instanceof Error ? error.message : "Não foi possível salvar o módulo.");
+    }
   }
 
   function createCustomProduct(persist: boolean) {
@@ -1372,15 +1681,20 @@ export function ProposalsPage() {
     setIsAddingCustomProduct(false);
   }
 
-  function deleteCustomService(id: string) {
+  async function deleteCustomService(id: string) {
     if (!window.confirm("Excluir este módulo permanentemente?")) return;
 
     resetTargetDiscount();
-    setCustomServices((previous) => {
-      const next = previous.filter((service) => service.id !== id);
-      saveProposalCustomServices(next);
-      return next;
-    });
+    setProposalOperationError("");
+    if (customServices.some((item) => item.id === id)) {
+      try {
+        await api.deleteProposalCatalogService(id);
+      } catch (error) {
+        setProposalOperationError(error instanceof Error ? error.message : "Não foi possível excluir o módulo.");
+        return;
+      }
+    }
+    setCustomServices((previous) => previous.filter((service) => service.id !== id));
     setProposalCustomServices((previous) => previous.filter((service) => service.id !== id));
     setSelectedIds((previous) => {
       const next = new Set(previous);
@@ -1398,6 +1712,7 @@ export function ProposalsPage() {
       delete next[id];
       return next;
     });
+    setProposalOperationStatus("Módulo excluído.");
   }
 
   function deleteCustomProduct(id: string) {
@@ -1554,6 +1869,21 @@ export function ProposalsPage() {
           <span>Holand Automação</span>
           <h1>Gerador de Propostas</h1>
         </header>
+
+        <SavedProposalsPanel
+          items={savedProposals}
+          query={proposalSearch}
+          activeId={activeProposalId}
+          loading={proposalsLoading}
+          saving={savingProposal}
+          error={proposalOperationError}
+          status={proposalOperationStatus}
+          onQueryChange={setProposalSearch}
+          onNew={() => resetToNewProposal()}
+          onSave={saveCurrentProposal}
+          onOpen={openSavedProposal}
+          onDelete={deleteSavedProposal}
+        />
 
         <section className="proposal-panel">
           <h2>Dados do Cliente</h2>

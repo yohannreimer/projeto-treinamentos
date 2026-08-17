@@ -3,18 +3,16 @@ import {
   loadProposalObservations,
   loadProposalProductEdits,
   loadProposalServiceEdits,
-  loadProposalCustomServices,
   loadProposalCustomProducts,
   loadProposalRepresentatives,
   saveProposalConfig,
   saveProposalObservations,
   saveProposalProductEdits,
   saveProposalServiceEdits,
-  saveProposalCustomServices,
   saveProposalCustomProducts,
   saveProposalRepresentatives,
 } from "./proposalStorage";
-import { DEFAULT_OBSERVATIONS, type ProposalProduct, type ProposalService } from "./proposalData";
+import { DEFAULT_OBSERVATIONS, type ProposalProduct } from "./proposalData";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -39,23 +37,6 @@ describe("proposalStorage", () => {
   it("saves and loads config", () => {
     saveProposalConfig({ taxPercent: "13.5", exchangeRate: "5.75", softwareDiscountPercent: "8" });
     expect(loadProposalConfig()).toEqual({ taxPercent: "13.5", exchangeRate: "5.75", softwareDiscountPercent: "8" });
-  });
-
-  it("saves and loads custom services", () => {
-    const services: ProposalService[] = [
-      {
-        id: "custom_1",
-        code: "X",
-        name: "Servico customizado",
-        valuePerDay: 1000,
-        defaultDurationDays: 1,
-        description: "Descricao",
-        custom: true,
-      },
-    ];
-
-    saveProposalCustomServices(services);
-    expect(loadProposalCustomServices()).toEqual(services);
   });
 
   it("saves and loads custom products", () => {
@@ -123,14 +104,12 @@ describe("proposalStorage", () => {
 
   it("falls back when saved JSON is malformed", () => {
     localStorage.setItem("holand_config", "{");
-    localStorage.setItem("holand_custom_services", "{");
     localStorage.setItem("holand_custom_products", "{");
     localStorage.setItem("holand_representatives", "{");
     localStorage.setItem("holand_service_edits", "{");
     localStorage.setItem("holand_product_edits", "{");
 
     expect(loadProposalConfig()).toEqual({});
-    expect(loadProposalCustomServices()).toEqual([]);
     expect(loadProposalCustomProducts()).toEqual([]);
     expect(loadProposalRepresentatives()).toEqual([]);
     expect(loadProposalServiceEdits()).toEqual({});
@@ -139,30 +118,19 @@ describe("proposalStorage", () => {
 
   it("falls back when saved JSON has the wrong shape", () => {
     localStorage.setItem("holand_config", JSON.stringify("oops"));
-    localStorage.setItem("holand_custom_services", JSON.stringify({}));
     localStorage.setItem("holand_custom_products", JSON.stringify({}));
     localStorage.setItem("holand_representatives", JSON.stringify({}));
     localStorage.setItem("holand_service_edits", JSON.stringify([]));
     localStorage.setItem("holand_product_edits", JSON.stringify([]));
 
     expect(loadProposalConfig()).toEqual({});
-    expect(loadProposalCustomServices()).toEqual([]);
     expect(loadProposalCustomProducts()).toEqual([]);
     expect(loadProposalRepresentatives()).toEqual([]);
     expect(loadProposalServiceEdits()).toEqual({});
     expect(loadProposalProductEdits()).toEqual({});
   });
 
-  it("falls back when saved custom services or service edits contain invalid entries", () => {
-    const validService: ProposalService = {
-      id: "custom_1",
-      code: "X",
-      name: "Servico customizado",
-      valuePerDay: 1000,
-      defaultDurationDays: 1,
-      description: "Descricao",
-      custom: true,
-    };
+  it("falls back when saved service edits contain invalid entries", () => {
     const validEdit = {
       name: "Nome editado",
       valuePerDay: 2000,
@@ -171,15 +139,10 @@ describe("proposalStorage", () => {
     };
 
     localStorage.setItem(
-      "holand_custom_services",
-      JSON.stringify([validService, { ...validService, valuePerDay: "1000" }]),
-    );
-    localStorage.setItem(
       "holand_service_edits",
       JSON.stringify({ s1: validEdit, s2: { ...validEdit, durationDays: "4" } }),
     );
 
-    expect(loadProposalCustomServices()).toEqual([]);
     expect(loadProposalServiceEdits()).toEqual({});
   });
 
@@ -250,14 +213,12 @@ describe("proposalStorage", () => {
 
     expect(() => loadProposalObservations()).not.toThrow();
     expect(() => loadProposalConfig()).not.toThrow();
-    expect(() => loadProposalCustomServices()).not.toThrow();
     expect(() => loadProposalCustomProducts()).not.toThrow();
     expect(() => loadProposalRepresentatives()).not.toThrow();
     expect(() => loadProposalServiceEdits()).not.toThrow();
     expect(() => loadProposalProductEdits()).not.toThrow();
     expect(loadProposalObservations()).toBe(DEFAULT_OBSERVATIONS);
     expect(loadProposalConfig()).toEqual({});
-    expect(loadProposalCustomServices()).toEqual([]);
     expect(loadProposalCustomProducts()).toEqual([]);
     expect(loadProposalRepresentatives()).toEqual([]);
     expect(loadProposalServiceEdits()).toEqual({});
@@ -271,7 +232,6 @@ describe("proposalStorage", () => {
 
     expect(() => saveProposalObservations("Observacao comercial")).not.toThrow();
     expect(() => saveProposalConfig({ taxPercent: "13.5" })).not.toThrow();
-    expect(() => saveProposalCustomServices([])).not.toThrow();
     expect(() => saveProposalCustomProducts([])).not.toThrow();
     expect(() => saveProposalRepresentatives([])).not.toThrow();
     expect(() => saveProposalServiceEdits({})).not.toThrow();

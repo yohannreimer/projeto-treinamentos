@@ -2,13 +2,83 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
+import { PROPOSAL_SERVICES } from "../proposals/proposalData";
+import type { ProposalDocumentV1 } from "../proposals/proposalDocument";
+import { api, type ProposalSummary } from "../services/api";
 import { ProposalsPage } from "./ProposalsPage";
+
+vi.mock("../services/api", () => ({
+  api: {
+    proposals: vi.fn(),
+    proposal: vi.fn(),
+    createProposal: vi.fn(),
+    updateProposal: vi.fn(),
+    deleteProposal: vi.fn(),
+    proposalCatalogServices: vi.fn(),
+    createProposalCatalogService: vi.fn(),
+    updateProposalCatalogService: vi.fn(),
+    deleteProposalCatalogService: vi.fn(),
+  },
+}));
+
+const savedSummary: ProposalSummary = {
+  id: "proposal-1",
+  number: "P-001",
+  client_company_name: "Cliente salvo",
+  created_by: "user-1",
+  updated_by: "user-1",
+  created_at: "2026-06-17T10:00:00.000Z",
+  updated_at: "2026-06-17T11:00:00.000Z",
+};
+
+const savedDocument: ProposalDocumentV1 = {
+  version: 1,
+  client: { companyName: "Cliente salvo", address: "Rua A", cep: "", cnpj: "", contact: "Ana", email: "" },
+  proposal: { number: "P-001", date: "2026-06-17", validityDays: "15", modality: "Presencial" },
+  selectedServiceIds: [PROPOSAL_SERVICES[0].id],
+  selectedProductIds: [],
+  serviceSnapshots: [PROPOSAL_SERVICES[0]],
+  productSnapshots: [],
+  proposalCustomServices: [],
+  proposalCustomProducts: [],
+  proposalServiceEdits: {},
+  proposalProductEdits: {},
+  taxPercent: "12",
+  exchangeRate: "5.80",
+  softwareDiscountPercent: "0",
+  discountPercent: "0",
+  targetTotal: "54000",
+  selectedRepresentative: {
+    id: "leonardo_holand",
+    name: "Leonardo Holand",
+    role: "Diretor Comercial da Holand Automação de Engenharias Ltda",
+  },
+  includeRequirementsTerm: false,
+  snapToTarget: false,
+  serviceTargetTotal: null,
+  observations: "Observação salva",
+};
 
 describe("ProposalsPage", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     localStorage.clear();
     vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.setSystemTime(new Date("2026-06-17T12:00:00-03:00"));
+    vi.mocked(api.proposals).mockResolvedValue({ items: [] });
+    vi.mocked(api.proposalCatalogServices).mockResolvedValue({ items: [] });
+    vi.mocked(api.createProposalCatalogService).mockImplementation(async (payload) => ({
+      id: "shared-service-1",
+      ...payload,
+      custom: true,
+    }));
+    vi.mocked(api.updateProposalCatalogService).mockImplementation(async (id, payload) => ({
+      id,
+      ...payload,
+      custom: true,
+    }));
+    vi.mocked(api.deleteProposalCatalogService).mockResolvedValue({ ok: true });
+    vi.mocked(api.deleteProposal).mockResolvedValue({ ok: true });
   });
 
   afterEach(() => {
@@ -29,6 +99,67 @@ describe("ProposalsPage", () => {
     expect(within(preview).getByText("Selecione software ou serviços no painel ao lado.")).toBeInTheDocument();
     expect(within(preview).getByText("P23005_OS")).toBeInTheDocument();
     expect(within(preview).getByText("Joinville, 17 de Junho de 2026")).toBeInTheDocument();
+  });
+
+  test("creates on first manual save and updates the same proposal afterwards", async () => {
+    vi.mocked(api.createProposal).mockResolvedValue({ id: "proposal-1", updated_at: "2026-06-17T12:00:00.000Z" });
+    vi.mocked(api.updateProposal).mockResolvedValue({ id: "proposal-1", updated_at: "2026-06-17T12:05:00.000Z" });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<ProposalsPage />);
+
+    await user.clear(screen.getByLabelText("Número da Proposta"));
+    await user.type(screen.getByLabelText("Número da Proposta"), "P-900");
+    await user.type(screen.getByLabelText("Razão Social"), "Cliente Persistido");
+    await user.click(screen.getByRole("button", { name: "Salvar proposta" }));
+
+    expect(await screen.findByText("Proposta salva.")).toBeInTheDocument();
+    expect(api.createProposal).toHaveBeenCalledTimes(1);
+
+    await user.type(screen.getByLabelText("Contato"), "Maria");
+    await user.click(screen.getByRole("button", { name: "Salvar proposta" }));
+    expect(api.updateProposal).toHaveBeenCalledWith(
+      "proposal-1",
+      expect.objectContaining({ number: "P-900", client_company_name: "Cliente Persistido" }),
+    );
+  });
+
+  test("opens a saved proposal and restores fields and selections", async () => {
+    vi.mocked(api.proposals).mockResolvedValue({ items: [savedSummary] });
+    vi.mocked(api.proposal).mockResolvedValue({ ...savedSummary, document: savedDocument });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<ProposalsPage />);
+
+    await user.click(await screen.findByRole("button", { name: "Abrir P-001" }));
+
+    expect(screen.getByLabelText("Razão Social")).toHaveValue("Cliente salvo");
+    expect(screen.getByLabelText("Contato")).toHaveValue("Ana");
+    expect(screen.getByRole("checkbox", { name: `Selecionar ${PROPOSAL_SERVICES[0].name}` })).toBeChecked();
+  });
+
+  test("keeps edited fields when saving fails", async () => {
+    vi.mocked(api.createProposal).mockRejectedValue(new Error("Falha de conexão com a API."));
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<ProposalsPage />);
+
+    await user.type(screen.getByLabelText("Razão Social"), "Não perder");
+    await user.click(screen.getByRole("button", { name: "Salvar proposta" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Falha de conexão");
+    expect(screen.getByLabelText("Razão Social")).toHaveValue("Não perder");
+  });
+
+  test("asks before replacing unsaved changes", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    vi.mocked(api.proposals).mockResolvedValue({ items: [savedSummary] });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<ProposalsPage />);
+
+    await user.type(screen.getByLabelText("Razão Social"), "Rascunho");
+    await user.click(await screen.findByRole("button", { name: "Abrir P-001" }));
+
+    expect(window.confirm).toHaveBeenCalledWith("Descartar alterações não salvas?");
+    expect(api.proposal).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Razão Social")).toHaveValue("Rascunho");
   });
 
   test("selecting Treinamento TopSolid'Design 7 - Básico updates totals and preview", async () => {
@@ -176,6 +307,13 @@ describe("ProposalsPage", () => {
     await user.type(screen.getByLabelText("Dias padrão do módulo personalizado"), "2");
     await user.type(screen.getByLabelText("Descrição do módulo personalizado"), "Ajustes e rotinas sob medida.");
     await user.click(screen.getByRole("button", { name: "Salvar módulo no catálogo" }));
+    expect(api.createProposalCatalogService).toHaveBeenCalledWith({
+      code: "020102090",
+      name: "Treinamento Robodrill Especial",
+      valuePerDay: 1500,
+      defaultDurationDays: 2,
+      description: "Ajustes e rotinas sob medida.",
+    });
     await user.click(screen.getByRole("checkbox", { name: "Selecionar Treinamento Robodrill Especial" }));
 
     const totals = screen.getByRole("region", { name: "Totais da proposta" });
@@ -186,6 +324,25 @@ describe("ProposalsPage", () => {
     const preview = screen.getByRole("region", { name: "Prévia da proposta" });
     expect(within(preview).getByText("020102090 - Treinamento Robodrill Especial")).toBeInTheDocument();
     expect(within(preview).getByText("Ajustes e rotinas sob medida.")).toBeInTheDocument();
+  });
+
+  test("loads shared custom modules for every user entering the page", async () => {
+    vi.mocked(api.proposalCatalogServices).mockResolvedValue({
+      items: [{
+        id: "shared-module",
+        code: "MOD-SHARED",
+        name: "Treinamento Compartilhado",
+        valuePerDay: 1900,
+        defaultDurationDays: 2,
+        description: "Disponível para toda a equipe.",
+        custom: true,
+      }],
+    });
+
+    render(<ProposalsPage />);
+
+    expect(api.proposalCatalogServices).toHaveBeenCalledTimes(1);
+    expect(await screen.findByRole("checkbox", { name: "Selecionar Treinamento Compartilhado" })).toBeInTheDocument();
   });
 
   test("creating and selecting a custom product updates software preview", async () => {

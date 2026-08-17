@@ -1,4 +1,4 @@
-import { DEFAULT_OBSERVATIONS, type ProposalProduct, type ProposalService } from "./proposalData";
+import { DEFAULT_OBSERVATIONS, type ProposalProduct } from "./proposalData";
 
 export type ProposalConfig = {
   taxPercent: string;
@@ -31,7 +31,6 @@ export type ProposalRepresentative = {
 
 const OBSERVATIONS_KEY = "holand_obs";
 const CONFIG_KEY = "holand_config";
-const CUSTOM_SERVICES_KEY = "holand_custom_services";
 const CUSTOM_PRODUCTS_KEY = "holand_custom_products";
 const REPRESENTATIVES_KEY = "holand_representatives";
 const SERVICE_EDITS_KEY = "holand_service_edits";
@@ -56,22 +55,6 @@ function writeJson<T>(key: string, value: T): void {
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-function isProposalService(value: unknown): value is ProposalService {
-  if (!isPlainObject(value)) {
-    return false;
-  }
-
-  return (
-    typeof value.id === "string" &&
-    typeof value.code === "string" &&
-    typeof value.name === "string" &&
-    typeof value.valuePerDay === "number" &&
-    typeof value.defaultDurationDays === "number" &&
-    typeof value.description === "string" &&
-    (value.custom === undefined || typeof value.custom === "boolean")
-  );
 }
 
 function isProposalProduct(value: unknown): value is ProposalProduct {
@@ -175,19 +158,6 @@ export function loadProposalConfig(): Partial<ProposalConfig> {
 
 export function saveProposalConfig(value: ProposalConfig): void {
   writeJson(CONFIG_KEY, value);
-}
-
-export function loadProposalCustomServices(): ProposalService[] {
-  const parsed = readJson(CUSTOM_SERVICES_KEY);
-  if (!Array.isArray(parsed)) {
-    return [];
-  }
-
-  return parsed.every(isProposalService) ? parsed : [];
-}
-
-export function saveProposalCustomServices(value: ProposalService[]): void {
-  writeJson(CUSTOM_SERVICES_KEY, value);
 }
 
 export function loadProposalCustomProducts(): ProposalProduct[] {

@@ -97,12 +97,26 @@ test('creates, lists, reads, updates and deletes a shared proposal', async () =>
   });
   assert.equal(created.status, 201);
 
-  const listed = await request(app).get('/proposals?q=Cliente').set(auth);
+  const now = new Date().toISOString();
+  db.prepare(`
+    insert into internal_user (
+      id, username, display_name, password_hash, role, permissions_json,
+      organization_id, is_active, created_at, updated_at
+    ) select 'iuser-proposals-reader', 'proposals-reader', 'Leitor comercial', ?,
+      'custom', '["proposals"]', organization_id, 1, ?, ?
+    from internal_user where username = 'holand'
+  `).run(hashInternalPassword('Senha123!'), now, now);
+  const readerLogin = await request(app)
+    .post('/auth/login')
+    .send({ username: 'proposals-reader', password: 'Senha123!' });
+  const readerAuth = { Authorization: `Bearer ${readerLogin.body.token}` };
+
+  const listed = await request(app).get('/proposals?q=Cliente').set(readerAuth);
   assert.equal(listed.status, 200);
   assert.equal(listed.body.items.length, 1);
   assert.equal(listed.body.items[0].client_company_name, 'Cliente A');
 
-  const read = await request(app).get(`/proposals/${created.body.id}`).set(auth);
+  const read = await request(app).get(`/proposals/${created.body.id}`).set(readerAuth);
   assert.deepEqual(read.body.document, proposalDocument);
 
   const updated = await request(app).put(`/proposals/${created.body.id}`).set(auth).send({
@@ -142,7 +156,21 @@ test('shares catalog services and validates proposal documents', async () => {
   });
   assert.equal(service.status, 201);
 
-  const list = await request(app).get('/proposals/catalog/services').set(auth);
+  const now = new Date().toISOString();
+  db.prepare(`
+    insert into internal_user (
+      id, username, display_name, password_hash, role, permissions_json,
+      organization_id, is_active, created_at, updated_at
+    ) select 'iuser-proposals-peer', 'proposals-peer', 'Colega comercial', ?,
+      'custom', '["proposals"]', organization_id, 1, ?, ?
+    from internal_user where username = 'holand'
+  `).run(hashInternalPassword('Senha123!'), now, now);
+  const peerLogin = await request(app)
+    .post('/auth/login')
+    .send({ username: 'proposals-peer', password: 'Senha123!' });
+  const peerAuth = { Authorization: `Bearer ${peerLogin.body.token}` };
+
+  const list = await request(app).get('/proposals/catalog/services').set(peerAuth);
   assert.equal(list.body.items[0].name, 'Módulo X');
 
   const edit = await request(app).put(`/proposals/catalog/services/${service.body.id}`).set(auth).send({

@@ -11964,6 +11964,183 @@ button:focus-visible,
   gap: 10px;
 }
 
+.proposals-page .proposal-saved-panel {
+  background:
+    linear-gradient(145deg, rgba(192, 40, 28, 0.11), transparent 42%),
+    rgba(255, 255, 255, 0.045);
+  border-color: rgba(255, 255, 255, 0.12);
+  gap: 12px;
+}
+
+.proposals-page .proposal-saved-heading {
+  align-items: flex-start;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.proposals-page .proposal-saved-eyebrow {
+  color: #777777;
+  display: block;
+  font-family: 'IBM Plex Mono', 'DM Mono', monospace;
+  font-size: 0.58rem;
+  letter-spacing: 0.12em;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+}
+
+.proposals-page .proposal-saved-count {
+  border: 1px solid rgba(192, 40, 28, 0.45);
+  border-radius: 999px;
+  color: #e4776e;
+  font-family: 'IBM Plex Mono', 'DM Mono', monospace;
+  font-size: 0.62rem;
+  line-height: 1;
+  padding: 5px 7px;
+}
+
+.proposals-page .proposal-primary-actions {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 1fr 1.25fr;
+}
+
+.proposals-page .proposal-primary-actions button {
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 0.7rem;
+  font-weight: 800;
+  min-height: 36px;
+  padding: 8px 10px;
+}
+
+.proposals-page .proposal-primary-actions .proposal-new {
+  background: rgba(255, 255, 255, 0.055);
+  color: #d0d0d0;
+}
+
+.proposals-page .proposal-primary-actions .proposal-save {
+  background: var(--proposal-red);
+  border-color: var(--proposal-red);
+  color: #ffffff;
+}
+
+.proposals-page .proposal-primary-actions button:hover:not(:disabled) {
+  border-color: #e05a4f;
+  color: #ffffff;
+}
+
+.proposals-page .proposal-primary-actions .proposal-save:hover:not(:disabled) {
+  background: var(--proposal-red-deep);
+}
+
+.proposals-page .proposal-primary-actions button:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
+.proposals-page .proposal-primary-actions button:focus-visible,
+.proposals-page .proposal-saved-open:focus-visible,
+.proposals-page .proposal-saved-delete:focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: 2px;
+}
+
+.proposals-page .proposal-saved-search input {
+  background-image: linear-gradient(90deg, rgba(255, 255, 255, 0.03), transparent);
+}
+
+.proposals-page .proposal-saved-list {
+  display: grid;
+  gap: 6px;
+  max-height: 270px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.proposals-page .proposal-saved-list article {
+  align-items: stretch;
+  background: rgba(0, 0, 0, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 6px;
+  display: flex;
+  overflow: hidden;
+  transition: border-color 140ms ease, background 140ms ease;
+}
+
+.proposals-page .proposal-saved-list article:hover,
+.proposals-page .proposal-saved-list article.is-active {
+  background: rgba(192, 40, 28, 0.09);
+  border-color: rgba(192, 40, 28, 0.72);
+}
+
+.proposals-page .proposal-saved-open {
+  background: transparent;
+  border: 0;
+  color: #dddddd;
+  cursor: pointer;
+  display: grid;
+  flex: 1;
+  gap: 2px;
+  min-width: 0;
+  padding: 9px 10px;
+  text-align: left;
+}
+
+.proposals-page .proposal-saved-open strong {
+  font-size: 0.74rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.proposals-page .proposal-saved-code {
+  color: #e4776e;
+  font-family: 'IBM Plex Mono', 'DM Mono', monospace;
+  font-size: 0.61rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.proposals-page .proposal-saved-open small {
+  color: #777777;
+  font-size: 0.61rem;
+}
+
+.proposals-page .proposal-saved-delete {
+  background: transparent;
+  border: 0;
+  border-left: 1px solid rgba(255, 255, 255, 0.07);
+  color: #777777;
+  cursor: pointer;
+  font-size: 1rem;
+  padding: 0 10px;
+}
+
+.proposals-page .proposal-saved-delete:hover {
+  background: rgba(192, 40, 28, 0.18);
+  color: #ffffff;
+}
+
+.proposals-page .proposal-operation-message,
+.proposals-page .proposal-saved-empty {
+  color: #999999;
+  font-size: 0.67rem;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.proposals-page .proposal-operation-message {
+  border-left: 2px solid #548c70;
+  padding-left: 8px;
+}
+
+.proposals-page .proposal-operation-message.is-error {
+  border-left-color: #df5348;
+  color: #ff9b94;
+}
+
 .proposals-page .proposal-panel h2,
 .proposals-page .proposal-custom-form h3,
 .proposals-page .proposal-side-editor h3 {
