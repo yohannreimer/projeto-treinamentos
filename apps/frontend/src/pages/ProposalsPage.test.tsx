@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
@@ -59,6 +59,17 @@ const savedDocument: ProposalDocumentV1 = {
   observations: "Observação salva",
 };
 
+async function addSoftwareFromCatalog(
+  user: ReturnType<typeof userEvent.setup>,
+  query: string,
+  productName: string | RegExp,
+) {
+  await user.click(screen.getByRole("button", { name: "Adicionar software do catálogo" }));
+  await user.type(screen.getByRole("searchbox", { name: "Buscar software" }), query);
+  await user.click(screen.getByRole("button", { name: productName }));
+  await user.click(screen.getByRole("button", { name: "Concluir seleção" }));
+}
+
 describe("ProposalsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -99,6 +110,37 @@ describe("ProposalsPage", () => {
     expect(within(preview).getByText("Selecione software ou serviços no painel ao lado.")).toBeInTheDocument();
     expect(within(preview).getByText("P23005_OS")).toBeInTheDocument();
     expect(within(preview).getByText("Joinville, 17 de Junho de 2026")).toBeInTheDocument();
+  });
+
+  test("opens software catalog while keeping proposal preview mounted", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<ProposalsPage />);
+
+    await user.click(screen.getByRole("button", { name: "Adicionar software do catálogo" }));
+    expect(screen.getByRole("region", { name: "Catálogo de software" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Prévia da proposta" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Serviços" })).not.toBeInTheDocument();
+
+    await user.type(screen.getByRole("searchbox", { name: "Buscar software" }), "Ext/Cam M2 Milling 7");
+    await user.click(screen.getByRole("button", { name: /Adicionar Ext\/Cam M2 Milling 7 - Módulo - 0500/ }));
+    expect(within(screen.getByRole("region", { name: "Prévia da proposta" })).getByText(/Ext\/Cam M2 Milling 7 - Módulo - 0500/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Concluir seleção" }));
+    expect(screen.getByRole("heading", { name: "Serviços" })).toBeInTheDocument();
+    expect(screen.getByText("Ext/Cam M2 Milling 7 - Módulo - 0500")).toBeInTheDocument();
+  });
+
+  test("returns focus to the catalog trigger after Escape", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<ProposalsPage />);
+    const trigger = screen.getByRole("button", { name: "Adicionar software do catálogo" });
+
+    await user.click(trigger);
+    await user.keyboard("{Escape}");
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Adicionar software do catálogo" })).toHaveFocus(),
+    );
   });
 
   test("creates on first manual save and updates the same proposal afterwards", async () => {
@@ -184,7 +226,7 @@ describe("ProposalsPage", () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     render(<ProposalsPage />);
 
-    await user.click(screen.getByRole("checkbox", { name: "Selecionar TopSolid'Pdm Server 7" }));
+    await addSoftwareFromCatalog(user, "1120", /Adicionar TopSolid’Pdm Server 7 - Módulo - 1120/);
 
     const totals = screen.getByRole("region", { name: "Totais da proposta" });
     expect(within(totals).getByText("US$ 1,000.00")).toBeInTheDocument();
@@ -192,7 +234,7 @@ describe("ProposalsPage", () => {
 
     const preview = screen.getByRole("region", { name: "Prévia da proposta" });
     expect(within(preview).getByText("II – Software / Licenças")).toBeInTheDocument();
-    expect(within(preview).getByText("1120 – TopSolid'Pdm Server 7")).toBeInTheDocument();
+    expect(within(preview).getByText("1120 – TopSolid’Pdm Server 7 - Módulo - 1120")).toBeInTheDocument();
     expect(within(preview).getAllByText("US$ 1,000.00").length).toBeGreaterThan(0);
     expect(within(preview).getAllByText("R$ 5.800,00").length).toBeGreaterThan(0);
     expect(within(preview).getByText("III – Resumo Financeiro")).toBeInTheDocument();
@@ -202,11 +244,11 @@ describe("ProposalsPage", () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     render(<ProposalsPage />);
 
-    await user.click(screen.getByRole("checkbox", { name: "Selecionar TopSolid'Pdm Server 7" }));
-    await user.click(screen.getByRole("button", { name: "Editar TopSolid'Pdm Server 7" }));
+    await addSoftwareFromCatalog(user, "1120", /Adicionar TopSolid’Pdm Server 7 - Módulo - 1120/);
+    await user.click(screen.getByRole("button", { name: "Editar TopSolid’Pdm Server 7 - Módulo - 1120" }));
     expect(screen.getByRole("region", { name: "Editor de produto" })).toBeInTheDocument();
-    await user.clear(screen.getByLabelText("Quantidade nesta proposta de TopSolid'Pdm Server 7"));
-    await user.type(screen.getByLabelText("Quantidade nesta proposta de TopSolid'Pdm Server 7"), "2");
+    await user.clear(screen.getByLabelText("Quantidade nesta proposta de TopSolid’Pdm Server 7 - Módulo - 1120"));
+    await user.type(screen.getByLabelText("Quantidade nesta proposta de TopSolid’Pdm Server 7 - Módulo - 1120"), "2");
     await user.clear(screen.getByLabelText("Cotação USD para BRL"));
     await user.type(screen.getByLabelText("Cotação USD para BRL"), "6");
     await user.clear(screen.getByLabelText("Desconto de software"));
@@ -222,33 +264,37 @@ describe("ProposalsPage", () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     const { unmount } = render(<ProposalsPage />);
 
-    await user.click(screen.getByRole("button", { name: "Editar TopSolid'Pdm Server 7" }));
-    await user.clear(screen.getByLabelText("Quantidade nesta proposta de TopSolid'Pdm Server 7"));
-    await user.type(screen.getByLabelText("Quantidade nesta proposta de TopSolid'Pdm Server 7"), "3");
-    await user.clear(screen.getByLabelText("Valor USD nesta proposta de TopSolid'Pdm Server 7"));
-    await user.type(screen.getByLabelText("Valor USD nesta proposta de TopSolid'Pdm Server 7"), "1200");
+    await addSoftwareFromCatalog(user, "1120", /Adicionar TopSolid’Pdm Server 7 - Módulo - 1120/);
+    await user.click(screen.getByRole("button", { name: "Editar TopSolid’Pdm Server 7 - Módulo - 1120" }));
+    await user.clear(screen.getByLabelText("Quantidade nesta proposta de TopSolid’Pdm Server 7 - Módulo - 1120"));
+    await user.type(screen.getByLabelText("Quantidade nesta proposta de TopSolid’Pdm Server 7 - Módulo - 1120"), "3");
+    await user.clear(screen.getByLabelText("Valor USD nesta proposta de TopSolid’Pdm Server 7 - Módulo - 1120"));
+    await user.type(screen.getByLabelText("Valor USD nesta proposta de TopSolid’Pdm Server 7 - Módulo - 1120"), "1200");
     await user.click(screen.getByRole("button", { name: "Salvar produto como padrão" }));
 
     unmount();
     render(<ProposalsPage />);
 
-    expect(screen.getByText("US$ 1,200.00 · qtd 1")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Adicionar software do catálogo" }));
+    await user.type(screen.getByRole("searchbox", { name: "Buscar software" }), "1120");
+    const addButton = screen.getByRole("button", { name: /Adicionar TopSolid’Pdm Server 7 - Módulo - 1120/ });
+    expect(within(addButton.closest("article")!).getByText("US$ 1,200.00")).toBeInTheDocument();
   });
 
   test("maintenance is optional per proposal and increases software unit value simply", async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     render(<ProposalsPage />);
 
-    await user.click(screen.getByRole("checkbox", { name: "Selecionar TopSolid'Design Pro 7" }));
-    await user.click(screen.getByRole("button", { name: "Editar TopSolid'Design Pro 7" }));
-    await user.click(screen.getByLabelText("Ativar manutenção de TopSolid'Design Pro 7"));
-    await user.clear(screen.getByLabelText("Percentual anual de manutenção de TopSolid'Design Pro 7"));
-    await user.type(screen.getByLabelText("Percentual anual de manutenção de TopSolid'Design Pro 7"), "10");
-    await user.clear(screen.getByLabelText("Anos de manutenção de TopSolid'Design Pro 7"));
-    await user.type(screen.getByLabelText("Anos de manutenção de TopSolid'Design Pro 7"), "3");
+    await addSoftwareFromCatalog(user, "0030", /Adicionar TopSolid’Design Pro 7 - Módulo - 0030/);
+    await user.click(screen.getByRole("button", { name: "Editar TopSolid’Design Pro 7 - Módulo - 0030" }));
+    await user.click(screen.getByLabelText("Ativar manutenção de TopSolid’Design Pro 7 - Módulo - 0030"));
+    await user.clear(screen.getByLabelText("Percentual anual de manutenção de TopSolid’Design Pro 7 - Módulo - 0030"));
+    await user.type(screen.getByLabelText("Percentual anual de manutenção de TopSolid’Design Pro 7 - Módulo - 0030"), "10");
+    await user.clear(screen.getByLabelText("Anos de manutenção de TopSolid’Design Pro 7 - Módulo - 0030"));
+    await user.type(screen.getByLabelText("Anos de manutenção de TopSolid’Design Pro 7 - Módulo - 0030"), "3");
 
     const preview = screen.getByRole("region", { name: "Prévia da proposta" });
-    expect(within(preview).getByText("0030 – TopSolid'Design Pro 7 + 3 anos de manutenção")).toBeInTheDocument();
+    expect(within(preview).getByText("0030 – TopSolid’Design Pro 7 - Módulo - 0030 + 3 anos de manutenção")).toBeInTheDocument();
     expect(within(preview).getAllByText("US$ 8,450.00").length).toBeGreaterThan(0);
     expect(within(preview).getAllByText("R$ 49.010,00").length).toBeGreaterThan(0);
   });
@@ -257,7 +303,7 @@ describe("ProposalsPage", () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     render(<ProposalsPage />);
 
-    await user.click(screen.getByRole("checkbox", { name: "Selecionar TopSolid'Pdm Server 7" }));
+    await addSoftwareFromCatalog(user, "1120", /Adicionar TopSolid’Pdm Server 7 - Módulo - 1120/);
     await user.click(screen.getByRole("checkbox", { name: "Selecionar Treinamento TopSolid'Design 7 - Básico" }));
     await user.click(screen.getByRole("button", { name: "Editar Treinamento TopSolid'Design 7 - Básico" }));
     await user.clear(screen.getByLabelText("Valor por dia nesta proposta de Treinamento TopSolid'Design 7 - Básico"));
@@ -356,7 +402,7 @@ describe("ProposalsPage", () => {
     await user.type(screen.getByLabelText("Valor USD do produto personalizado"), "2500");
     await user.type(screen.getByLabelText("Descrição do produto personalizado"), "Licença adicional sob medida.");
     await user.click(screen.getByRole("button", { name: "Adicionar produto nesta proposta" }));
-    await user.click(screen.getByRole("checkbox", { name: "Selecionar TopSolid Add-on Especial" }));
+    await addSoftwareFromCatalog(user, "TopSolid Add-on Especial", "Adicionar TopSolid Add-on Especial");
 
     const preview = screen.getByRole("region", { name: "Prévia da proposta" });
     expect(within(preview).getByText("9000 – TopSolid Add-on Especial")).toBeInTheDocument();

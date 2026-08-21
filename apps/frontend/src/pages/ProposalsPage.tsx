@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import holandLogo from "../assets/holand-horizontal.svg";
 import {
@@ -8,6 +8,7 @@ import {
   PROPOSAL_PRODUCTS,
   PROPOSAL_SERVICES,
   SNAP_TOTAL_TARGET,
+  type EditableProposalProduct,
   type ProposalProduct,
   type ProposalService,
 } from "../proposals/proposalData";
@@ -28,6 +29,9 @@ import {
   type RestoredProposalDocument,
 } from "../proposals/proposalDocument";
 import { SavedProposalsPanel } from "../proposals/SavedProposalsPanel";
+import { SoftwareCatalogExplorer } from "../proposals/SoftwareCatalogExplorer";
+import { SoftwareSelectionSummary } from "../proposals/SoftwareSelectionSummary";
+import { mergeSoftwareCatalog, type SoftwareCatalogProduct } from "../proposals/softwareCatalog";
 import {
   loadProposalConfig,
   loadProposalCustomProducts,
@@ -74,17 +78,6 @@ type EditableProposalService = ProposalService & {
   displayName: string;
   durationDays: number;
   displayDescription: string;
-};
-
-type EditableProposalProduct = ProposalProduct & {
-  displayName: string;
-  quantity: number;
-  displayDescription: string;
-  maintenanceEnabled: boolean;
-  maintenancePercent: number;
-  maintenanceYears: number;
-  effectiveUnitValueUsd: number;
-  maintenanceLabel: string;
 };
 
 type TotalsSummaryProps = {
@@ -1158,6 +1151,8 @@ export function ProposalsPage() {
   const [savingProposal, setSavingProposal] = useState(false);
   const [activeProposalId, setActiveProposalId] = useState<string | null>(null);
   const [baselineDocumentJson, setBaselineDocumentJson] = useState(() => JSON.stringify(initialDocument));
+  const [isSoftwareCatalogOpen, setIsSoftwareCatalogOpen] = useState(false);
+  const catalogTriggerRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     let active = true;
@@ -1190,6 +1185,24 @@ export function ProposalsPage() {
     () => buildEditableProducts(customProducts, proposalCustomProducts, productEdits, proposalProductEdits),
     [customProducts, proposalCustomProducts, productEdits, proposalProductEdits],
   );
+  const catalogEntries = useMemo(() => {
+    const editableById = new Map(products.map((product) => [product.id, product]));
+    const withEdits = (items: ProposalProduct[]) => items.map((item) => {
+      const editable = editableById.get(item.id);
+      if (!editable) return item;
+      return {
+        ...item,
+        name: editable.displayName,
+        unitValueUsd: editable.unitValueUsd,
+        description: editable.displayDescription,
+      };
+    });
+    return mergeSoftwareCatalog(
+      withEdits(PROPOSAL_PRODUCTS) as SoftwareCatalogProduct[],
+      withEdits(customProducts),
+      withEdits(proposalCustomProducts),
+    );
+  }, [customProducts, products, proposalCustomProducts]);
   const representatives = useMemo(() => [...DEFAULT_REPRESENTATIVES, ...customRepresentatives], [customRepresentatives]);
   const selectedRepresentative = representatives.find((representative) => representative.id === selectedRepresentativeId) ?? DEFAULT_REPRESENTATIVES[0];
   const selectedServices = useMemo(() => services.filter((service) => selectedIds.has(service.id)), [selectedIds, services]);
@@ -1332,6 +1345,7 @@ export function ProposalsPage() {
     setCustomProductDraft(EMPTY_CUSTOM_PRODUCT);
     setRepresentativeDraft(EMPTY_REPRESENTATIVE_DRAFT);
     setSnapMessage("");
+    setIsSoftwareCatalogOpen(false);
     return canonicalizeRestoredDocument(document, restored);
   }
 
@@ -1456,6 +1470,11 @@ export function ProposalsPage() {
       return next;
     });
   }
+
+  const closeSoftwareCatalog = useCallback(() => {
+    setIsSoftwareCatalogOpen(false);
+    requestAnimationFrame(() => catalogTriggerRef.current?.focus());
+  }, []);
 
   function openEditor(kind: "product" | "service", id: string) {
     setActiveEditor((previous) => (previous?.kind === kind && previous.id === id ? null : { kind, id }));
@@ -1863,7 +1882,7 @@ export function ProposalsPage() {
   }
 
   return (
-    <div className="proposals-page">
+    <div className={`proposals-page${isSoftwareCatalogOpen ? " is-software-catalog-open" : ""}`}>
       <aside className="proposals-sidebar">
         <header>
           <span>Holand Automação</span>
@@ -1885,6 +1904,16 @@ export function ProposalsPage() {
           onDelete={deleteSavedProposal}
         />
 
+        {isSoftwareCatalogOpen ? (
+          <SoftwareCatalogExplorer
+            products={catalogEntries}
+            selectedIds={selectedProductIds}
+            softwareSubtotalUsd={totals.software.totalUsd}
+            onToggle={toggleProductSelected}
+            onDone={closeSoftwareCatalog}
+          />
+        ) : (
+          <>
         <section className="proposal-panel">
           <h2>Dados do Cliente</h2>
           <label>
@@ -1940,26 +1969,6 @@ export function ProposalsPage() {
         <section className="proposal-panel proposal-services-panel proposal-products-panel">
           <div className="proposal-panel-title-row">
             <h2>Software / Produtos</h2>
-            <div>
-              <button
-                type="button"
-                onClick={() => {
-                  resetTargetDiscount();
-                  setSelectedProductIds(new Set(products.map((product) => product.id)));
-                }}
-              >
-                Todos
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  resetTargetDiscount();
-                  setSelectedProductIds(new Set());
-                }}
-              >
-                Nenhum
-              </button>
-            </div>
           </div>
 
           <div className="proposal-exchange-card">
@@ -1983,6 +1992,14 @@ export function ProposalsPage() {
               </small>
             ) : null}
           </div>
+
+          <SoftwareSelectionSummary
+            products={selectedProducts}
+            onOpenCatalog={() => setIsSoftwareCatalogOpen(true)}
+            onEdit={(id) => openEditor("product", id)}
+            onRemove={toggleProductSelected}
+            openButtonRef={catalogTriggerRef}
+          />
 
           <button type="button" className="proposal-add-module" onClick={() => setIsAddingCustomProduct(true)}>
             Adicionar produto personalizado
@@ -2050,17 +2067,6 @@ export function ProposalsPage() {
             />
           ) : null}
 
-          {products.map((product) => (
-            <ProductCard
-              key={product.id}
-              product={product}
-              selected={selectedProductIds.has(product.id)}
-              onToggleSelected={toggleProductSelected}
-              onOpenEditor={(id) => openEditor("product", id)}
-              active={activeEditor?.kind === "product" && activeEditor.id === product.id}
-              onDeleteCustom={deleteCustomProduct}
-            />
-          ))}
         </section>
 
         <section className="proposal-panel proposal-services-panel">
@@ -2304,6 +2310,8 @@ export function ProposalsPage() {
         <button type="button" className="proposal-print" onClick={() => window.print()}>
           Imprimir / Salvar PDF
         </button>
+          </>
+        )}
       </aside>
 
       <main className="proposals-preview-wrap">
