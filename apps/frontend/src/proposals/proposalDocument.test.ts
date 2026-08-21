@@ -67,6 +67,7 @@ describe('proposalDocument', () => {
       unitValueUsd: 450,
       description: 'Produto preservado da proposta antiga.',
       custom: false,
+      defaultQuantity: 1,
       quantity: 2,
       maintenanceEnabled: false,
       maintenancePercent: 0,
