@@ -12412,7 +12412,7 @@ button:focus-visible,
   align-items: center;
   display: grid;
   gap: 12px;
-  grid-template-columns: auto minmax(140px, auto) minmax(220px, 1fr);
+  grid-template-columns: auto minmax(140px, auto) auto minmax(220px, 1fr);
   padding: 16px;
 }
 
@@ -12444,6 +12444,29 @@ button:focus-visible,
   color: #ffffff;
   font-size: 1rem;
   margin: 2px 0 0;
+}
+
+.proposals-page .proposal-catalog-new-product {
+  background: rgba(192, 40, 28, 0.12);
+  border: 1px solid rgba(224, 67, 54, 0.48);
+  border-radius: 6px;
+  color: #f29a92;
+  cursor: pointer;
+  font-size: 0.62rem;
+  font-weight: 800;
+  padding: 8px 10px;
+  white-space: nowrap;
+}
+
+.proposals-page .proposal-catalog-new-product:hover:not(:disabled) {
+  background: rgba(192, 40, 28, 0.24);
+  color: #ffffff;
+}
+
+.proposals-page .proposal-catalog-new-product:disabled,
+.proposals-page .proposal-catalog-product-menu:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
 }
 
 .proposals-page .proposal-catalog-search {
@@ -12613,6 +12636,40 @@ button:focus-visible,
   gap: 6px;
 }
 
+.proposals-page .proposal-catalog-search-groups {
+  display: grid;
+  gap: 18px;
+}
+
+.proposals-page .proposal-catalog-result-family-group {
+  display: grid;
+  gap: 9px;
+}
+
+.proposals-page .proposal-catalog-result-family {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  color: #f3f3f3;
+  font-size: 0.77rem;
+  letter-spacing: 0.03em;
+  margin: 0;
+  padding: 0 2px 8px;
+}
+
+.proposals-page .proposal-catalog-result-group {
+  display: grid;
+  gap: 6px;
+}
+
+.proposals-page .proposal-catalog-result-subfamily {
+  color: #ca6f67;
+  font-family: 'IBM Plex Mono', 'DM Mono', monospace;
+  font-size: 0.55rem;
+  letter-spacing: 0.08em;
+  margin: 0;
+  padding: 1px 2px;
+  text-transform: uppercase;
+}
+
 .proposals-page .proposal-catalog-product {
   align-items: center;
   background: rgba(255, 255, 255, 0.025);
@@ -12691,6 +12748,12 @@ button:focus-visible,
   text-align: right;
 }
 
+.proposals-page .proposal-catalog-product-action > div {
+  display: grid;
+  gap: 5px;
+  grid-template-columns: 28px minmax(0, 1fr);
+}
+
 .proposals-page .proposal-catalog-product-action button,
 .proposals-page .proposal-catalog-more {
   background: rgba(255, 255, 255, 0.06);
@@ -12706,6 +12769,21 @@ button:focus-visible,
 .proposals-page .proposal-catalog-product-action button[aria-pressed='true'] {
   background: var(--proposal-red);
   border-color: var(--proposal-red);
+  color: #ffffff;
+}
+
+.proposals-page .proposal-catalog-product-action .proposal-catalog-product-menu {
+  align-items: center;
+  display: inline-flex;
+  font-family: 'IBM Plex Mono', 'DM Mono', monospace;
+  font-size: 0.8rem;
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.proposals-page .proposal-catalog-product-action .proposal-catalog-product-menu:hover:not(:disabled) {
+  border-color: rgba(224, 67, 54, 0.64);
   color: #ffffff;
 }
 
@@ -12756,6 +12834,211 @@ button:focus-visible,
   font-size: 0.69rem;
   font-weight: 800;
   padding: 9px 13px;
+}
+
+.proposal-catalog-modal-backdrop {
+  align-items: center;
+  background: rgba(6, 6, 6, 0.82);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: 24px;
+  position: fixed;
+  z-index: 1200;
+}
+
+.proposal-catalog-modal {
+  background:
+    linear-gradient(135deg, rgba(192, 40, 28, 0.08), transparent 36%),
+    #202020;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 10px;
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.58);
+  color: #d4d4d4;
+  max-height: calc(100vh - 48px);
+  max-width: 680px;
+  overflow-y: auto;
+  position: relative;
+  width: 100%;
+}
+
+.proposal-catalog-modal > header {
+  align-items: flex-start;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+  display: flex;
+  justify-content: space-between;
+  padding: 18px 20px 15px;
+}
+
+.proposal-catalog-modal > header span {
+  color: #ca4035;
+  font-family: 'IBM Plex Mono', 'DM Mono', monospace;
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.proposal-catalog-modal > header h2 {
+  color: #ffffff;
+  font-size: 1.16rem;
+  margin: 3px 0 0;
+}
+
+.proposal-catalog-modal button,
+.proposal-catalog-modal input,
+.proposal-catalog-modal select,
+.proposal-catalog-modal textarea {
+  font: inherit;
+}
+
+.proposal-catalog-modal > header button {
+  background: transparent;
+  border: 0;
+  color: #8b8b8b;
+  cursor: pointer;
+  font-size: 1.35rem;
+  line-height: 1;
+  padding: 2px 4px;
+}
+
+.proposal-catalog-modal form {
+  display: grid;
+  gap: 13px;
+  grid-template-columns: 1fr 1fr;
+  padding: 18px 20px 20px;
+}
+
+.proposal-catalog-modal label {
+  color: #9a9a9a;
+  display: grid;
+  font-size: 0.66rem;
+  font-weight: 700;
+  gap: 5px;
+}
+
+.proposal-catalog-modal .is-wide {
+  grid-column: 1 / -1;
+}
+
+.proposal-catalog-modal input,
+.proposal-catalog-modal select,
+.proposal-catalog-modal textarea {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 6px;
+  color: #f1f1f1;
+  outline: none;
+  padding: 9px 10px;
+  width: 100%;
+}
+
+.proposal-catalog-modal select {
+  color-scheme: dark;
+}
+
+.proposal-catalog-modal textarea {
+  min-height: 92px;
+  resize: vertical;
+}
+
+.proposal-catalog-modal input:focus,
+.proposal-catalog-modal select:focus,
+.proposal-catalog-modal textarea:focus {
+  border-color: #c83227;
+  box-shadow: 0 0 0 2px rgba(200, 50, 39, 0.18);
+}
+
+.proposal-catalog-modal .proposal-catalog-modal-check {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.proposal-catalog-modal .proposal-catalog-modal-check input {
+  accent-color: #c83227;
+  height: 16px;
+  width: 16px;
+}
+
+.proposal-catalog-modal-error {
+  background: rgba(192, 40, 28, 0.12);
+  border: 1px solid rgba(224, 67, 54, 0.38);
+  border-radius: 6px;
+  color: #ffaaa2;
+  font-size: 0.68rem;
+  margin: 0;
+  padding: 9px 10px;
+}
+
+.proposal-catalog-modal form > footer {
+  align-items: center;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 1fr auto auto;
+  margin-top: 3px;
+  padding-top: 15px;
+}
+
+.proposal-catalog-modal form > footer button,
+.proposal-catalog-modal [role='alertdialog'] button {
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 6px;
+  color: #d2d2d2;
+  cursor: pointer;
+  font-size: 0.67rem;
+  font-weight: 800;
+  padding: 8px 11px;
+}
+
+.proposal-catalog-modal form > footer button[type='submit'] {
+  background: #c83227;
+  border-color: #c83227;
+  color: #ffffff;
+}
+
+.proposal-catalog-modal .is-danger {
+  border-color: rgba(224, 67, 54, 0.46);
+  color: #f3928a;
+  justify-self: start;
+}
+
+.proposal-catalog-modal button:disabled {
+  cursor: wait;
+  opacity: 0.48;
+}
+
+.proposal-catalog-modal [role='alertdialog'] {
+  background: #252525;
+  border: 1px solid rgba(224, 67, 54, 0.5);
+  border-radius: 8px;
+  box-shadow: 0 18px 55px rgba(0, 0, 0, 0.66);
+  left: 50%;
+  padding: 18px;
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(390px, calc(100% - 36px));
+}
+
+.proposal-catalog-modal [role='alertdialog'] strong {
+  color: #ffffff;
+  font-size: 0.85rem;
+}
+
+.proposal-catalog-modal [role='alertdialog'] p {
+  color: #a5a5a5;
+  font-size: 0.7rem;
+  line-height: 1.5;
+  margin: 7px 0 15px;
+}
+
+.proposal-catalog-modal [role='alertdialog'] > div {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
 }
 
 .proposals-page .proposal-catalog button:focus-visible,
@@ -13593,6 +13876,11 @@ button:focus-visible,
     grid-template-columns: auto 1fr;
   }
 
+  .proposals-page .proposal-catalog-new-product {
+    grid-column: 2;
+    justify-self: end;
+  }
+
   .proposals-page .proposal-catalog-search {
     grid-column: 1 / -1;
   }
@@ -13651,6 +13939,11 @@ button:focus-visible,
     padding: 13px;
   }
 
+  .proposals-page .proposal-catalog-new-product {
+    grid-column: 2;
+    justify-self: stretch;
+  }
+
   .proposals-page .proposal-catalog-search {
     grid-column: 1 / -1;
   }
@@ -13689,8 +13982,38 @@ button:focus-visible,
     justify-content: space-between;
   }
 
-  .proposals-page .proposal-catalog-product-action button {
+  .proposals-page .proposal-catalog-product-action button:not(.proposal-catalog-product-menu) {
     min-width: 110px;
+  }
+
+  .proposal-catalog-modal-backdrop {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .proposal-catalog-modal {
+    border-bottom: 0;
+    border-radius: 12px 12px 0 0;
+    max-height: 92vh;
+  }
+
+  .proposal-catalog-modal form {
+    grid-template-columns: 1fr;
+    padding: 16px;
+  }
+
+  .proposal-catalog-modal .is-wide {
+    grid-column: auto;
+  }
+
+  .proposal-catalog-modal form > footer {
+    grid-column: auto;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .proposal-catalog-modal form > footer > span,
+  .proposal-catalog-modal form > footer .is-danger {
+    grid-column: 1 / -1;
   }
 
   .proposals-page .proposal-catalog-footer {
