@@ -26,6 +26,17 @@ export type ProposalProduct = {
   catalog?: ProposalProductCatalogMetadata;
 };
 
+export type EditableProposalProduct = ProposalProduct & {
+  displayName: string;
+  quantity: number;
+  displayDescription: string;
+  maintenanceEnabled: boolean;
+  maintenancePercent: number;
+  maintenanceYears: number;
+  effectiveUnitValueUsd: number;
+  maintenanceLabel: string;
+};
+
 export const DEFAULT_TAX_PERCENT = 12;
 export const DEFAULT_EXCHANGE_RATE = 5.8;
 export const DEFAULT_VALIDITY_DAYS = 11;
