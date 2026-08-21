@@ -13942,6 +13942,7 @@ button:focus-visible,
   .proposals-page .proposal-catalog-new-product {
     grid-column: 2;
     justify-self: stretch;
+    min-height: 44px;
   }
 
   .proposals-page .proposal-catalog-search {
@@ -13983,7 +13984,13 @@ button:focus-visible,
   }
 
   .proposals-page .proposal-catalog-product-action button:not(.proposal-catalog-product-menu) {
+    min-height: 44px;
     min-width: 110px;
+  }
+
+  .proposals-page .proposal-catalog-product-action .proposal-catalog-product-menu {
+    min-height: 44px;
+    min-width: 44px;
   }
 
   .proposal-catalog-modal-backdrop {
@@ -14009,6 +14016,10 @@ button:focus-visible,
   .proposal-catalog-modal form > footer {
     grid-column: auto;
     grid-template-columns: 1fr 1fr;
+  }
+
+  .proposal-catalog-modal button {
+    min-height: 44px;
   }
 
   .proposal-catalog-modal form > footer > span,
@@ -14037,6 +14048,12 @@ button:focus-visible,
 
   .proposals-page .proposal-signatures {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .proposals-page .proposal-catalog-product {
+    transition: none;
   }
 }
 
