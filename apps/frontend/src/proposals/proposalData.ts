@@ -8,6 +8,13 @@ export type ProposalService = {
   custom?: boolean;
 };
 
+export type ProposalProductCatalogMetadata = {
+  family: string;
+  subfamily: string;
+  folder: string;
+  reviewStatus: "" | "REVISAR";
+};
+
 export type ProposalProduct = {
   id: string;
   code: string;
@@ -16,6 +23,7 @@ export type ProposalProduct = {
   defaultQuantity: number;
   description: string;
   custom?: boolean;
+  catalog?: ProposalProductCatalogMetadata;
 };
 
 export const DEFAULT_TAX_PERCENT = 12;
