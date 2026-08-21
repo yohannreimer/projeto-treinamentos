@@ -58,4 +58,40 @@ describe('proposalDocument', () => {
     const restored = restoreProposalDocument(document, [{ ...sharedSnapshot, valuePerDay: 3000 }], []);
     expect(restored.proposalServiceEdits['shared-1'].valuePerDay).toBe(1000);
   });
+
+  test('rehydrates a legacy selected product that is no longer in the current price list', () => {
+    const legacyProduct = {
+      id: 'p9',
+      code: 'ADM-FLOAT',
+      name: 'Admin / Float',
+      unitValueUsd: 450,
+      description: 'Produto preservado da proposta antiga.',
+      custom: false,
+      quantity: 2,
+      maintenanceEnabled: false,
+      maintenancePercent: 0,
+      maintenanceYears: 0,
+    };
+    const legacyDocument: ProposalDocumentV1 = {
+      ...document,
+      selectedServiceIds: [],
+      serviceSnapshots: [],
+      selectedProductIds: ['p9'],
+      productSnapshots: [legacyProduct],
+    };
+
+    const restored = restoreProposalDocument(legacyDocument, [], []);
+
+    expect([...restored.selectedProductIds]).toEqual(['p9']);
+    expect(restored.proposalCustomProducts).toEqual([expect.objectContaining({ id: 'p9', name: 'Admin / Float' })]);
+    expect(restored.proposalProductEdits.p9).toEqual({
+      name: 'Admin / Float',
+      unitValueUsd: 450,
+      quantity: 2,
+      description: 'Produto preservado da proposta antiga.',
+      maintenanceEnabled: false,
+      maintenancePercent: 0,
+      maintenanceYears: 0,
+    });
+  });
 });

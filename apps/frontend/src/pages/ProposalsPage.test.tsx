@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { PROPOSAL_SERVICES } from "../proposals/proposalData";
 import type { ProposalDocumentV1 } from "../proposals/proposalDocument";
-import { api, type ProposalSummary } from "../services/api";
+import { api, type ProposalSummary, type ProposalWritePayload } from "../services/api";
 import { ProposalsPage } from "./ProposalsPage";
 
 vi.mock("../services/api", () => ({
@@ -163,6 +163,42 @@ describe("ProposalsPage", () => {
       "proposal-1",
       expect.objectContaining({ number: "P-900", client_company_name: "Cliente Persistido" }),
     );
+  });
+
+  test("manually saves and reopens a proposal with a generated catalog product", async () => {
+    const camSummary: ProposalSummary = { ...savedSummary, number: "P-CAM" };
+    let savedPayload: ProposalWritePayload | undefined;
+    vi.mocked(api.proposals)
+      .mockResolvedValueOnce({ items: [] })
+      .mockResolvedValue({ items: [camSummary] });
+    vi.mocked(api.createProposal).mockImplementation(async (payload) => {
+      savedPayload = payload;
+      return { id: camSummary.id, updated_at: camSummary.updated_at };
+    });
+    vi.mocked(api.proposal).mockImplementation(async () => ({
+      ...camSummary,
+      document: savedPayload!.document,
+    }));
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<ProposalsPage />);
+
+    await user.clear(screen.getByLabelText("Número da Proposta"));
+    await user.type(screen.getByLabelText("Número da Proposta"), "P-CAM");
+    await addSoftwareFromCatalog(user, "0500", /Adicionar Ext\/Cam M2 Milling 7 - Módulo - 0500/);
+    await user.click(screen.getByRole("button", { name: "Salvar proposta" }));
+
+    expect(await screen.findByText("Proposta salva.")).toBeInTheDocument();
+    expect(savedPayload?.document.selectedProductIds).toContain("p4");
+    expect(savedPayload?.document.productSnapshots).toEqual([
+      expect.objectContaining({ id: "p4", code: "0500", name: "Ext/Cam M2 Milling 7 - Módulo - 0500" }),
+    ]);
+
+    await user.click(screen.getByRole("button", { name: "Nova proposta" }));
+    expect(screen.queryByText("Ext/Cam M2 Milling 7 - Módulo - 0500")).not.toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "Abrir P-CAM" }));
+
+    expect(screen.getByText("Ext/Cam M2 Milling 7 - Módulo - 0500")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Prévia da proposta" })).getByText(/Ext\/Cam M2 Milling 7 - Módulo - 0500/)).toBeInTheDocument();
   });
 
   test("opens a saved proposal and restores fields and selections", async () => {
