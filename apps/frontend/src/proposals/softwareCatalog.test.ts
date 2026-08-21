@@ -4,7 +4,9 @@ import {
   buildCatalogTree,
   displayCatalogFamily,
   displayCatalogSubfamily,
+  groupSoftwareCatalogResults,
   mergeSoftwareCatalog,
+  PRIMARY_SUBFAMILY,
   querySoftwareCatalog,
   SOFTWARE_CATALOG_PAGE_SIZE,
   type SoftwareCatalogProduct,
@@ -76,6 +78,7 @@ describe('softwareCatalog', () => {
 
     expect(tree.map((family) => family.name)).toEqual(['Design', 'CAM', 'Interfaces']);
     expect(tree.find((family) => family.name === 'CAM')?.subfamilies.map((item) => item.name)).toEqual([
+      PRIMARY_SUBFAMILY,
       'Milling',
       'Turning',
       'Extensões',
@@ -113,5 +116,103 @@ describe('softwareCatalog', () => {
     expect(result.items).toHaveLength(50);
     expect(result.hasMore).toBe(true);
     expect(result.total).toBe(51);
+  });
+
+  test.each(['TopSolid Design', 'TopSolid Design Standard'])(
+    'matches punctuation-insensitive tokens: %s',
+    (query) => {
+      const designProduct: SoftwareCatalogProduct = {
+        id: 'design-standard',
+        code: '0020',
+        name: 'TopSolid’Design Standard 7 - Módulo - 0020',
+        unitValueUsd: 5000,
+        defaultQuantity: 1,
+        description: 'Aplicativo principal para projeto',
+        catalog: {
+          family: 'Design',
+          subfamily: 'PDM',
+          folder: 'PDM',
+          reviewStatus: '',
+          isPrimary: true,
+        },
+      };
+      const result = querySoftwareCatalog(mergeSoftwareCatalog([designProduct], [], []), {
+        query,
+        family: 'CAM',
+        subfamily: 'Milling',
+        limit: 50,
+      });
+
+      expect(result.items.map((item) => item.name)).toContain(designProduct.name);
+    },
+  );
+
+  test('ranks name matches before description-only matches', () => {
+    const entries = mergeSoftwareCatalog([
+      {
+        ...official[0],
+        id: 'description-match',
+        name: 'Produto complementar',
+        description: 'Compatível com Design',
+      },
+      {
+        ...official[0],
+        id: 'name-match',
+        name: 'Design principal',
+        description: '',
+        catalog: { ...official[0].catalog, isPrimary: true },
+      },
+    ], [], []);
+    const result = querySoftwareCatalog(entries, {
+      query: 'design',
+      family: 'Todos',
+      subfamily: 'Todos',
+      limit: 50,
+    });
+
+    expect(result.items.map((item) => item.id)).toEqual(['name-match', 'description-match']);
+  });
+
+  test('puts Produtos principais first and groups global results by hierarchy', () => {
+    const entries = mergeSoftwareCatalog([
+      {
+        ...official[0],
+        id: 'design-primary',
+        name: 'Design principal',
+        catalog: {
+          family: 'Design',
+          subfamily: 'PDM',
+          folder: 'Pacotes',
+          reviewStatus: '',
+          isPrimary: true,
+        },
+      },
+      {
+        ...official[0],
+        id: 'design-extension',
+        name: 'Extensão Design',
+        catalog: {
+          family: 'Design',
+          subfamily: 'Extensões',
+          folder: 'Extensões',
+          reviewStatus: '',
+          isPrimary: false,
+        },
+      },
+    ], [], []);
+    const tree = buildCatalogTree(entries);
+    const result = querySoftwareCatalog(entries, {
+      query: 'design',
+      family: 'Todos',
+      subfamily: 'Todos',
+      limit: 50,
+    });
+    const groups = groupSoftwareCatalogResults(result.items);
+
+    expect(tree[0].subfamilies[0].name).toBe(PRIMARY_SUBFAMILY);
+    expect(groups.map((group) => [group.family, group.subfamily])).toEqual([
+      ['Design', PRIMARY_SUBFAMILY],
+      ['Design', 'Extensões'],
+    ]);
   });
 });

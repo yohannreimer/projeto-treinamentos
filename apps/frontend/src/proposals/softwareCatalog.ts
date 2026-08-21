@@ -1,6 +1,7 @@
 import type { ProposalProduct, ProposalProductCatalogMetadata } from './proposalData';
 
 export const SOFTWARE_CATALOG_PAGE_SIZE = 50;
+export const PRIMARY_SUBFAMILY = 'Produtos principais';
 
 export const SOFTWARE_CATALOG_FAMILY_ORDER = [
   'Design',
@@ -62,11 +63,18 @@ export type SoftwareCatalogQueryResult = {
   hasMore: boolean;
 };
 
+export type SoftwareCatalogResultGroup = {
+  family: string;
+  subfamily: string;
+  items: SoftwareCatalogEntry[];
+};
+
 export function normalizeCatalogText(value: string): string {
   return value
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLocaleLowerCase('pt-BR')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -88,14 +96,25 @@ function toEntry(product: ProposalProduct, source: SoftwareCatalogSource): Softw
     subfamily: 'Produtos personalizados',
     folder: 'Personalizados',
     reviewStatus: '',
+    isPrimary: false,
   };
-  const path: [string, string, string] = [metadata.family, metadata.subfamily, metadata.folder];
+  const shownSubfamily = metadata.isPrimary ? PRIMARY_SUBFAMILY : metadata.subfamily;
+  const path: [string, string, string] = [metadata.family, shownSubfamily, metadata.folder];
 
   return {
     ...product,
+    catalog: metadata,
     source,
     path,
-    searchText: normalizeCatalogText([product.code, product.name, product.description, ...path].join(' ')),
+    searchText: normalizeCatalogText([
+      product.code,
+      product.name,
+      product.description,
+      metadata.family,
+      metadata.subfamily,
+      metadata.folder,
+      shownSubfamily,
+    ].join(' ')),
   };
 }
 
@@ -122,6 +141,8 @@ function compareFamilies(left: string, right: string): number {
 }
 
 function compareSubfamilies(family: string, left: string, right: string): number {
+  if (left === PRIMARY_SUBFAMILY && right !== PRIMARY_SUBFAMILY) return -1;
+  if (right === PRIMARY_SUBFAMILY && left !== PRIMARY_SUBFAMILY) return 1;
   if (family !== 'CAM') return left.localeCompare(right, 'pt-BR');
   const orderDifference = orderIndex(CAM_SUBFAMILY_ORDER, left) - orderIndex(CAM_SUBFAMILY_ORDER, right);
   return orderDifference || left.localeCompare(right, 'pt-BR');
@@ -133,6 +154,9 @@ export function buildCatalogTree(entries: SoftwareCatalogEntry[]): SoftwareCatal
   for (const entry of entries) {
     const [familyName, subfamilyName, folderName] = entry.path;
     const subfamilies = families.get(familyName) ?? new Map<string, Map<string, number>>();
+    if (!subfamilies.has(PRIMARY_SUBFAMILY)) {
+      subfamilies.set(PRIMARY_SUBFAMILY, new Map());
+    }
     const folders = subfamilies.get(subfamilyName) ?? new Map<string, number>();
     folders.set(folderName, (folders.get(folderName) ?? 0) + 1);
     subfamilies.set(subfamilyName, folders);
@@ -169,8 +193,9 @@ export function querySoftwareCatalog(
   options: SoftwareCatalogQuery,
 ): SoftwareCatalogQueryResult {
   const query = normalizeCatalogText(options.query);
+  const tokens = query.split(' ').filter(Boolean);
   const matches = entries.filter((entry) => {
-    if (query) return entry.searchText.includes(query);
+    if (query) return tokens.every((token) => entry.searchText.includes(token));
     const [family, subfamily, folder] = entry.path;
     if (hasHierarchyFilter(options.family) && family !== options.family) return false;
     if (hasHierarchyFilter(options.subfamily) && subfamily !== options.subfamily) return false;
@@ -178,9 +203,47 @@ export function querySoftwareCatalog(
     return true;
   });
 
+  if (query) {
+    matches.sort((left, right) => {
+      const relevanceDifference = catalogRelevance(right, query, tokens) - catalogRelevance(left, query, tokens);
+      if (relevanceDifference) return relevanceDifference;
+      const primaryDifference = Number(Boolean(right.catalog?.isPrimary)) - Number(Boolean(left.catalog?.isPrimary));
+      if (primaryDifference) return primaryDifference;
+      return left.name.localeCompare(right.name, 'pt-BR');
+    });
+  }
+
   return {
     items: matches.slice(0, Math.max(0, options.limit)),
     total: matches.length,
     hasMore: matches.length > options.limit,
   };
+}
+
+function catalogRelevance(entry: SoftwareCatalogEntry, query: string, tokens: string[]): number {
+  const code = normalizeCatalogText(entry.code);
+  const name = normalizeCatalogText(entry.name);
+  if (code === query) return 500;
+  if (name === query) return 400;
+  if (name.startsWith(query)) return 300;
+  if (tokens.every((token) => name.includes(token))) return 200;
+  return 100;
+}
+
+export function groupSoftwareCatalogResults(
+  items: SoftwareCatalogEntry[],
+): SoftwareCatalogResultGroup[] {
+  const groups = new Map<string, SoftwareCatalogResultGroup>();
+  for (const item of items) {
+    const [family, subfamily] = item.path;
+    const key = `${family}\u0000${subfamily}`;
+    const group = groups.get(key) ?? { family, subfamily, items: [] };
+    group.items.push(item);
+    groups.set(key, group);
+  }
+
+  return [...groups.values()].sort((left, right) => (
+    compareFamilies(left.family, right.family)
+      || compareSubfamilies(left.family, left.subfamily, right.subfamily)
+  ));
 }
