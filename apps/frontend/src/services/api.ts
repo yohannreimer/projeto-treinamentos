@@ -9,7 +9,7 @@ import type {
 } from '../types';
 import { internalSessionStore, type InternalPermission, type InternalRole, type InternalSessionUser } from '../auth/session';
 import type { ProposalDocumentV1 } from '../proposals/proposalDocument';
-import type { ProposalService } from '../proposals/proposalData';
+import type { ProposalProduct, ProposalProductCatalogMetadata, ProposalService } from '../proposals/proposalData';
 
 const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
 const BASE_URL = env?.VITE_API_BASE_URL ?? `http://${window.location.hostname}:4000`;
@@ -119,6 +119,27 @@ export type ProposalWritePayload = {
 };
 
 export type ProposalCatalogServicePayload = Omit<ProposalService, 'id' | 'custom'>;
+
+export type ProposalCatalogProductSource = 'official' | 'custom';
+
+export type ProposalCatalogProduct = Omit<ProposalProduct, 'catalog'> & {
+  catalog: ProposalProductCatalogMetadata & { isPrimary: boolean };
+};
+
+export type ProposalCatalogProductRecord = {
+  id: string;
+  source: ProposalCatalogProductSource;
+  archived: boolean;
+  product: ProposalCatalogProduct | null;
+  updatedAt: string;
+};
+
+export type ProposalCatalogProductWrite = {
+  source: ProposalCatalogProductSource;
+  product: ProposalCatalogProduct;
+};
+
+export type ProposalCatalogProductCreate = Omit<ProposalCatalogProduct, 'id' | 'custom'>;
 
 export class ApiRequestError extends Error {
   status: number;
@@ -1005,6 +1026,23 @@ export const api = {
     }),
   deleteProposalCatalogService: (id: string) =>
     req<{ ok: boolean }>(`/proposals/catalog/services/${id}`, { method: 'DELETE' }),
+  proposalCatalogProducts: () =>
+    req<{ items: ProposalCatalogProductRecord[] }>('/proposals/catalog/products'),
+  createProposalCatalogProduct: (product: ProposalCatalogProductCreate) =>
+    req<ProposalCatalogProductRecord>('/proposals/catalog/products', {
+      method: 'POST',
+      body: JSON.stringify(product)
+    }),
+  updateProposalCatalogProduct: (id: string, payload: ProposalCatalogProductWrite) =>
+    req<ProposalCatalogProductRecord>(`/proposals/catalog/products/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    }),
+  archiveProposalCatalogProduct: (id: string, payload: ProposalCatalogProductWrite) =>
+    req<ProposalCatalogProductRecord>(`/proposals/catalog/products/${id}`, {
+      method: 'DELETE',
+      body: JSON.stringify(payload)
+    }),
 
   // ── Doc Pages ──────────────────────────────────────────────────────────
   docPages: () => req('/api/internal/doc-pages'),

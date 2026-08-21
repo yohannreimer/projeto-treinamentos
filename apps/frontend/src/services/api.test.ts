@@ -87,4 +87,45 @@ describe('proposal api', () => {
     expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:4000/proposals/catalog/services');
     expect(fetchMock.mock.calls[1][1]).toMatchObject({ method: 'POST' });
   });
+
+  test('uses shared product catalog endpoints', async () => {
+    const product = {
+      id: 'p3',
+      code: '0030',
+      name: 'Design Pro',
+      unitValueUsd: 9000,
+      defaultQuantity: 1,
+      description: '',
+      custom: false,
+      catalog: {
+        family: 'Design',
+        subfamily: "TopSolid'Design",
+        folder: 'Pacotes Design',
+        reviewStatus: '' as const,
+        isPrimary: true,
+      },
+    };
+    const record = {
+      id: 'p3',
+      source: 'official' as const,
+      archived: false,
+      updatedAt: '2026-08-21T12:00:00.000Z',
+      product,
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [record] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(record), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...record, archived: true }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await api.proposalCatalogProducts();
+    await api.updateProposalCatalogProduct('p3', { source: 'official', product });
+    await api.archiveProposalCatalogProduct('p3', { source: 'official', product });
+
+    expect(fetchMock.mock.calls.map((call) => [call[0], call[1]?.method])).toEqual([
+      ['http://localhost:4000/proposals/catalog/products', undefined],
+      ['http://localhost:4000/proposals/catalog/products/p3', 'PUT'],
+      ['http://localhost:4000/proposals/catalog/products/p3', 'DELETE'],
+    ]);
+  });
 });

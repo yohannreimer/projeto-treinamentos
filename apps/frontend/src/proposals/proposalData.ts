@@ -13,6 +13,7 @@ export type ProposalProductCatalogMetadata = {
   subfamily: string;
   folder: string;
   reviewStatus: "" | "REVISAR";
+  isPrimary?: boolean;
 };
 
 export type ProposalProduct = {
