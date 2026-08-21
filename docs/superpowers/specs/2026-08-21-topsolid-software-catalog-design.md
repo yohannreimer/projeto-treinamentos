@@ -76,13 +76,13 @@ Cada produto oficial terá:
 
 Todos os 450 registros de `Catalogo_App` serão importados. Os dois registros marcados como `REVISAR` continuarão disponíveis, mas receberão um indicador visual discreto para evitar que a pendência cadastral passe despercebida.
 
-O catálogo oficial e os produtos personalizados compartilhados continuarão sendo fontes separadas:
+O catálogo oficial e os produtos personalizados continuarão sendo fontes separadas:
 
 - **oficiais:** arquivo versionado gerado da planilha;
-- **personalizados compartilhados:** API e armazenamento já existentes;
+- **personalizados do navegador:** catálogo local já existente;
 - **personalizados somente da proposta:** snapshots mantidos dentro do documento salvo.
 
-Na interface, as três fontes serão combinadas em um único modelo de leitura. Produtos personalizados aparecerão em **Personalizados** e também nos resultados da busca.
+Na interface, as três fontes serão combinadas em um único modelo de leitura. Produtos personalizados aparecerão em **Personalizados** e também nos resultados da busca. O compartilhamento pela API continuará restrito aos módulos personalizados de serviços, conforme o comportamento existente.
 
 ## Persistência e compatibilidade
 
@@ -116,7 +116,7 @@ O arquivo atual da página de propostas já concentra várias responsabilidades.
 
 - Busca vazia: mostra a família e subfamília atuais.
 - Busca sem resultado: mostra mensagem clara e preserva os produtos selecionados.
-- Falha ao carregar personalizados compartilhados: mantém o catálogo oficial disponível e mostra o erro já usado pelo fluxo de personalizados.
+- Falha ao carregar módulos personalizados compartilhados: mantém o catálogo oficial de software disponível e mostra o erro já usado pelo fluxo de serviços.
 - Falha ao criar ou editar personalizado: preserva os campos digitados e não fecha o formulário.
 - Item `REVISAR`: mostra o indicador cadastral sem impedir a seleção.
 - Proposta antiga com snapshot ausente no catálogo: continua reconstruída a partir do snapshot, como produto específico daquela proposta.
