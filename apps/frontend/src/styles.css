@@ -11918,6 +11918,10 @@ button:focus-visible,
   font-family: 'IBM Plex Sans', 'Inter', sans-serif;
 }
 
+.proposals-page.is-software-catalog-open {
+  grid-template-columns: minmax(640px, 0.95fr) minmax(460px, 1.05fr);
+}
+
 .proposals-page button,
 .proposals-page input,
 .proposals-page textarea,
@@ -12274,6 +12278,489 @@ button:focus-visible,
   font-family: 'IBM Plex Mono', 'DM Mono', monospace;
   font-size: 0.66rem;
   line-height: 1.4;
+}
+
+.proposals-page .proposal-software-summary {
+  display: grid;
+  gap: 8px;
+}
+
+.proposals-page .proposal-software-summary-heading > div {
+  align-items: baseline;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.proposals-page .proposal-software-summary-heading strong {
+  color: #dddddd;
+  font-size: 0.72rem;
+}
+
+.proposals-page .proposal-software-summary-heading small,
+.proposals-page .proposal-software-summary-empty {
+  color: #777777;
+  font-size: 0.65rem;
+  margin: 0;
+}
+
+.proposals-page .proposal-software-summary-list {
+  display: grid;
+  gap: 6px;
+}
+
+.proposals-page .proposal-software-summary-item {
+  align-items: center;
+  background: rgba(74, 120, 190, 0.08);
+  border: 1px solid rgba(116, 154, 214, 0.28);
+  border-radius: 6px;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  padding: 9px 10px;
+}
+
+.proposals-page .proposal-software-summary-item > div:first-child {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.proposals-page .proposal-software-summary-item > div:first-child > strong {
+  color: #e6e6e6;
+  font-size: 0.7rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.proposals-page .proposal-software-summary-item > div:first-child > span {
+  color: #8ea5c8;
+  font-family: 'IBM Plex Mono', 'DM Mono', monospace;
+  font-size: 0.61rem;
+}
+
+.proposals-page .proposal-software-code {
+  color: #8ea5c8;
+}
+
+.proposals-page .proposal-software-custom-badge {
+  background: rgba(192, 40, 28, 0.22);
+  border-radius: 3px;
+  color: #ef8c83;
+  font-size: 0.52rem;
+  letter-spacing: 0.06em;
+  margin-left: 6px;
+  padding: 2px 4px;
+}
+
+.proposals-page .proposal-software-summary-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 4px;
+}
+
+.proposals-page .proposal-software-summary-actions button {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+  color: #8c8c8c;
+  cursor: pointer;
+  font-size: 0.61rem;
+  padding: 4px 6px;
+}
+
+.proposals-page .proposal-software-summary-actions button:hover {
+  border-color: var(--proposal-red);
+  color: #ffffff;
+}
+
+.proposals-page .proposal-software-open-catalog {
+  background: rgba(192, 40, 28, 0.12);
+  border: 1px solid rgba(192, 40, 28, 0.48);
+  border-radius: 6px;
+  color: #ef8c83;
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 800;
+  padding: 9px 12px;
+  text-align: left;
+  width: 100%;
+}
+
+.proposals-page .proposal-software-open-catalog:hover {
+  background: rgba(192, 40, 28, 0.22);
+  color: #ffffff;
+}
+
+.proposals-page .proposal-catalog {
+  background: #202020;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  display: grid;
+  grid-template-rows: auto auto minmax(420px, 1fr) auto;
+  min-height: min(760px, calc(100vh - 180px));
+  overflow: hidden;
+}
+
+.proposals-page .proposal-catalog button,
+.proposals-page .proposal-catalog input {
+  font: inherit;
+}
+
+.proposals-page .proposal-catalog-header {
+  align-items: center;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: auto minmax(140px, auto) minmax(220px, 1fr);
+  padding: 16px;
+}
+
+.proposals-page .proposal-catalog-back {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  color: #cccccc;
+  cursor: pointer;
+  display: flex;
+  font-size: 1rem;
+  height: 34px;
+  justify-content: center;
+  width: 34px;
+}
+
+.proposals-page .proposal-catalog-header > div > span {
+  color: var(--proposal-red);
+  display: block;
+  font-family: 'IBM Plex Mono', 'DM Mono', monospace;
+  font-size: 0.56rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.proposals-page .proposal-catalog-header h2 {
+  color: #ffffff;
+  font-size: 1rem;
+  margin: 2px 0 0;
+}
+
+.proposals-page .proposal-catalog-search {
+  display: grid;
+  gap: 4px;
+}
+
+.proposals-page .proposal-catalog-search span {
+  color: #8b8b8b;
+  font-size: 0.59rem;
+  font-weight: 700;
+}
+
+.proposals-page .proposal-catalog-search input {
+  background: rgba(255, 255, 255, 0.075);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 6px;
+  color: #ffffff;
+  min-width: 0;
+  outline: none;
+  padding: 8px 10px;
+  width: 100%;
+}
+
+.proposals-page .proposal-catalog-search input:focus {
+  border-color: var(--proposal-red);
+  box-shadow: 0 0 0 2px rgba(192, 40, 28, 0.2);
+}
+
+.proposals-page .proposal-catalog-families {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  padding: 8px 12px;
+  scrollbar-width: thin;
+}
+
+.proposals-page .proposal-catalog-families button {
+  align-items: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: #8e8e8e;
+  cursor: pointer;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 7px;
+  padding: 6px 9px;
+}
+
+.proposals-page .proposal-catalog-families button[aria-pressed='true'] {
+  background: rgba(192, 40, 28, 0.16);
+  border-color: rgba(192, 40, 28, 0.44);
+  color: #ffffff;
+}
+
+.proposals-page .proposal-catalog-families strong {
+  font-size: 0.66rem;
+}
+
+.proposals-page .proposal-catalog-families small {
+  color: #646464;
+  font-family: 'IBM Plex Mono', 'DM Mono', monospace;
+  font-size: 0.57rem;
+}
+
+.proposals-page .proposal-catalog-body {
+  display: grid;
+  grid-template-columns: 165px minmax(0, 1fr);
+  min-height: 0;
+}
+
+.proposals-page .proposal-catalog-subfamilies {
+  background: rgba(0, 0, 0, 0.12);
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  overflow-y: auto;
+  padding: 12px 8px;
+}
+
+.proposals-page .proposal-catalog-subfamilies button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  color: #8e8e8e;
+  cursor: pointer;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  padding: 7px 8px;
+  text-align: left;
+}
+
+.proposals-page .proposal-catalog-subfamilies button[aria-pressed='true'] {
+  background: rgba(255, 255, 255, 0.075);
+  color: #ffffff;
+}
+
+.proposals-page .proposal-catalog-subfamilies span {
+  font-size: 0.65rem;
+  line-height: 1.25;
+}
+
+.proposals-page .proposal-catalog-subfamilies small {
+  color: #606060;
+  font-family: 'IBM Plex Mono', 'DM Mono', monospace;
+  font-size: 0.56rem;
+}
+
+.proposals-page .proposal-catalog-results {
+  min-width: 0;
+  overflow-y: auto;
+  padding: 14px;
+}
+
+.proposals-page .proposal-catalog-results-header {
+  align-items: flex-end;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.proposals-page .proposal-catalog-results-header span {
+  color: #6f6f6f;
+  font-family: 'IBM Plex Mono', 'DM Mono', monospace;
+  font-size: 0.56rem;
+}
+
+.proposals-page .proposal-catalog-results-header h3 {
+  color: #e8e8e8;
+  font-size: 0.82rem;
+  margin: 3px 0 0;
+}
+
+.proposals-page .proposal-catalog-folders {
+  display: flex;
+  gap: 5px;
+  margin-bottom: 10px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.proposals-page .proposal-catalog-folders button {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 999px;
+  color: #888888;
+  cursor: pointer;
+  flex: 0 0 auto;
+  font-size: 0.58rem;
+  padding: 5px 8px;
+}
+
+.proposals-page .proposal-catalog-folders button[aria-pressed='true'] {
+  border-color: rgba(192, 40, 28, 0.6);
+  color: #f0a099;
+}
+
+.proposals-page .proposal-catalog-product-list {
+  display: grid;
+  gap: 6px;
+}
+
+.proposals-page .proposal-catalog-product {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: 7px;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+  padding: 10px 11px;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+
+.proposals-page .proposal-catalog-product:hover,
+.proposals-page .proposal-catalog-product.is-selected {
+  background: rgba(192, 40, 28, 0.07);
+  border-color: rgba(192, 40, 28, 0.46);
+}
+
+.proposals-page .proposal-catalog-product-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.proposals-page .proposal-catalog-product-title {
+  align-items: center;
+  display: flex;
+  gap: 7px;
+}
+
+.proposals-page .proposal-catalog-product-title strong {
+  color: #dedede;
+  font-size: 0.68rem;
+  line-height: 1.3;
+}
+
+.proposals-page .proposal-catalog-product-title span {
+  background: #7a5e18;
+  border-radius: 3px;
+  color: #ffdc78;
+  font-size: 0.48rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  padding: 2px 4px;
+}
+
+.proposals-page .proposal-catalog-product-copy p {
+  color: #8d8d8d;
+  display: -webkit-box;
+  font-size: 0.6rem;
+  line-height: 1.4;
+  margin: 0;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.proposals-page .proposal-catalog-product-copy small {
+  color: #5f5f5f;
+  font-family: 'IBM Plex Mono', 'DM Mono', monospace;
+  font-size: 0.52rem;
+}
+
+.proposals-page .proposal-catalog-product-action {
+  align-items: flex-end;
+  display: grid;
+  flex: 0 0 112px;
+  gap: 6px;
+  justify-items: stretch;
+}
+
+.proposals-page .proposal-catalog-product-action > strong {
+  color: #a9bad4;
+  font-family: 'IBM Plex Mono', 'DM Mono', monospace;
+  font-size: 0.64rem;
+  text-align: right;
+}
+
+.proposals-page .proposal-catalog-product-action button,
+.proposals-page .proposal-catalog-more {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 5px;
+  color: #b7b7b7;
+  cursor: pointer;
+  font-size: 0.6rem;
+  font-weight: 700;
+  padding: 6px 8px;
+}
+
+.proposals-page .proposal-catalog-product-action button[aria-pressed='true'] {
+  background: var(--proposal-red);
+  border-color: var(--proposal-red);
+  color: #ffffff;
+}
+
+.proposals-page .proposal-catalog-empty {
+  color: #777777;
+  font-size: 0.7rem;
+  margin: 24px 0;
+  text-align: center;
+}
+
+.proposals-page .proposal-catalog-more {
+  display: block;
+  margin: 10px auto 0;
+}
+
+.proposals-page .proposal-catalog-footer {
+  align-items: center;
+  background: #252525;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  padding: 12px 16px;
+}
+
+.proposals-page .proposal-catalog-footer > div {
+  display: grid;
+  gap: 2px;
+}
+
+.proposals-page .proposal-catalog-footer strong {
+  color: #e7e7e7;
+  font-size: 0.69rem;
+}
+
+.proposals-page .proposal-catalog-footer span {
+  color: #8599b8;
+  font-family: 'IBM Plex Mono', 'DM Mono', monospace;
+  font-size: 0.62rem;
+}
+
+.proposals-page .proposal-catalog-footer button {
+  background: var(--proposal-red);
+  border: 1px solid var(--proposal-red);
+  border-radius: 6px;
+  color: #ffffff;
+  cursor: pointer;
+  font-size: 0.69rem;
+  font-weight: 800;
+  padding: 9px 13px;
+}
+
+.proposals-page .proposal-catalog button:focus-visible,
+.proposals-page .proposal-software-summary button:focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: 2px;
 }
 
 .proposals-page .proposal-service-card-header {
@@ -13096,6 +13583,24 @@ button:focus-visible,
   margin-top: 28px;
 }
 
+@media (max-width: 1200px) and (min-width: 981px) {
+  .proposals-page.is-software-catalog-open {
+    grid-template-columns: minmax(0, 56%) minmax(0, 44%);
+  }
+
+  .proposals-page .proposal-catalog-header {
+    grid-template-columns: auto 1fr;
+  }
+
+  .proposals-page .proposal-catalog-search {
+    grid-column: 1 / -1;
+  }
+
+  .proposals-page .proposal-catalog-body {
+    grid-template-columns: 145px minmax(0, 1fr);
+  }
+}
+
 @media (max-width: 980px) {
   .proposals-page {
     grid-template-columns: 1fr;
@@ -13109,6 +13614,10 @@ button:focus-visible,
   .proposals-page .proposals-preview-wrap {
     padding: 18px;
   }
+
+  .proposals-page .proposal-catalog {
+    min-height: 680px;
+  }
 }
 
 @media (max-width: 560px) {
@@ -13119,6 +13628,72 @@ button:focus-visible,
   .proposals-page .proposal-service-control-grid,
   .proposals-page .proposal-custom-grid {
     grid-template-columns: 1fr;
+  }
+
+  .proposals-page .proposal-software-summary-item {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .proposals-page .proposal-software-summary-actions button {
+    flex: 1;
+  }
+
+  .proposals-page .proposal-catalog {
+    grid-template-rows: auto auto auto auto;
+    min-height: 0;
+  }
+
+  .proposals-page .proposal-catalog-header {
+    grid-template-columns: auto 1fr;
+    padding: 13px;
+  }
+
+  .proposals-page .proposal-catalog-search {
+    grid-column: 1 / -1;
+  }
+
+  .proposals-page .proposal-catalog-body {
+    display: block;
+  }
+
+  .proposals-page .proposal-catalog-subfamilies {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    border-right: 0;
+    flex-direction: row;
+    overflow-x: auto;
+    padding: 8px;
+  }
+
+  .proposals-page .proposal-catalog-subfamilies button {
+    flex: 0 0 auto;
+    gap: 12px;
+  }
+
+  .proposals-page .proposal-catalog-results {
+    max-height: 620px;
+    padding: 11px;
+  }
+
+  .proposals-page .proposal-catalog-product {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .proposals-page .proposal-catalog-product-action {
+    align-items: center;
+    display: flex;
+    flex: auto;
+    justify-content: space-between;
+  }
+
+  .proposals-page .proposal-catalog-product-action button {
+    min-width: 110px;
+  }
+
+  .proposals-page .proposal-catalog-footer {
+    position: sticky;
+    bottom: 0;
   }
 
   .proposals-page .proposal-document {
@@ -13160,7 +13735,8 @@ button:focus-visible,
 
   body:has(.proposals-page) .sidebar,
   body:has(.proposals-page) .workspace-topbar,
-  body:has(.proposals-page) .proposals-sidebar {
+  body:has(.proposals-page) .proposals-sidebar,
+  body:has(.proposals-page) .proposal-catalog {
     display: none !important;
   }
 
