@@ -52,11 +52,32 @@ test('initializes proposal persistence tables', () => {
 
   const tables = db.prepare(`
     select name from sqlite_master
-    where type = 'table' and name in ('proposal', 'proposal_catalog_service')
+    where type = 'table' and name in (
+      'proposal', 'proposal_catalog_product', 'proposal_catalog_service'
+    )
     order by name
   `).all() as Array<{ name: string }>;
 
-  assert.deepEqual(tables.map((row) => row.name), ['proposal', 'proposal_catalog_service']);
+  assert.deepEqual(tables.map((row) => row.name), [
+    'proposal',
+    'proposal_catalog_product',
+    'proposal_catalog_service'
+  ]);
+
+  const columns = db.prepare('pragma table_info(proposal_catalog_product)')
+    .all() as Array<{ name: string }>;
+  assert.deepEqual(columns.map((row) => row.name), [
+    'id',
+    'organization_id',
+    'product_id',
+    'source',
+    'product_json',
+    'is_archived',
+    'created_by',
+    'updated_by',
+    'created_at',
+    'updated_at'
+  ]);
   cleanupDbFiles(dbPath);
 });
 

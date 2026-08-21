@@ -1003,6 +1003,23 @@ export function initDb() {
       foreign key(updated_by) references internal_user(id)
     );
 
+    create table if not exists proposal_catalog_product (
+      id text primary key,
+      organization_id text not null,
+      product_id text not null,
+      source text not null check(source in ('official', 'custom')),
+      product_json text,
+      is_archived integer not null default 0 check(is_archived in (0, 1)),
+      created_by text not null,
+      updated_by text not null,
+      created_at text not null,
+      updated_at text not null,
+      foreign key(organization_id) references organization(id) on delete cascade,
+      foreign key(created_by) references internal_user(id),
+      foreign key(updated_by) references internal_user(id),
+      unique(organization_id, product_id)
+    );
+
     create index if not exists idx_proposal_org_updated
       on proposal(organization_id, updated_at desc);
     create index if not exists idx_proposal_org_number
@@ -1011,6 +1028,8 @@ export function initDb() {
       on proposal(organization_id, client_company_name);
     create index if not exists idx_proposal_catalog_service_org_name
       on proposal_catalog_service(organization_id, name);
+    create index if not exists idx_proposal_catalog_product_org_updated
+      on proposal_catalog_product(organization_id, updated_at desc);
 
     create table if not exists technician (
       id text primary key,
@@ -3165,6 +3184,7 @@ export function seedDb() {
 export function clearAllData() {
   db.exec(`
     delete from proposal;
+    delete from proposal_catalog_product;
     delete from proposal_catalog_service;
     delete from financial_reconciliation_match;
     delete from financial_bank_statement_entry;
