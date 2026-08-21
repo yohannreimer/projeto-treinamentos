@@ -86,7 +86,7 @@ Na interface, as três fontes serão combinadas em um único modelo de leitura. 
 
 ## Persistência e compatibilidade
 
-Os identificadores oficiais atuais usados por propostas existentes serão preservados por um mapa de compatibilidade para os 11 produtos já cadastrados. Assim, reabrir uma proposta antiga continuará encontrando o produto correto no novo catálogo.
+Os identificadores oficiais atuais serão preservados por um mapa de compatibilidade para os oito produtos já cadastrados que também existem na nova planilha. Os três produtos antigos ausentes da planilha — Admin/Float, Float-Lic e Senha Eletrônica — não serão inventados no novo catálogo; propostas antigas que os utilizem continuarão sendo reconstruídas pelos snapshots já salvos.
 
 Ao salvar, a proposta continuará armazenando:
 
@@ -138,7 +138,8 @@ O arquivo atual da página de propostas já concentra várias responsabilidades.
 - nenhum produto fica sem referência, descrição ou preço numérico;
 - as contagens por família conferem com a planilha;
 - os dois registros `REVISAR` preservam essa marcação;
-- os 11 identificadores legados resolvem para os produtos correspondentes.
+- os oito identificadores legados presentes na planilha resolvem para os produtos correspondentes;
+- os três produtos legados ausentes da planilha continuam recuperáveis por snapshot.
 
 ### Interface
 
