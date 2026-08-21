@@ -30,8 +30,15 @@ import {
 } from "../proposals/proposalDocument";
 import { SavedProposalsPanel } from "../proposals/SavedProposalsPanel";
 import { SoftwareCatalogExplorer } from "../proposals/SoftwareCatalogExplorer";
+import { SoftwareCatalogProductModal } from "../proposals/SoftwareCatalogProductModal";
 import { SoftwareSelectionSummary } from "../proposals/SoftwareSelectionSummary";
-import { mergeSoftwareCatalog, type SoftwareCatalogProduct } from "../proposals/softwareCatalog";
+import {
+  mergeSoftwareCatalog,
+  type SoftwareCatalogEntry,
+  type SoftwareCatalogProduct,
+} from "../proposals/softwareCatalog";
+import { resolveSharedSoftwareCatalog } from "../proposals/sharedSoftwareCatalog";
+import { applyTopsolidPrimaryClassification } from "../proposals/topsolidCatalogClassification";
 import {
   loadProposalConfig,
   loadProposalCustomProducts,
@@ -40,9 +47,7 @@ import {
   loadProposalRepresentatives,
   loadProposalServiceEdits,
   saveProposalConfig,
-  saveProposalCustomProducts,
   saveProposalObservations,
-  saveProposalProductEdits,
   saveProposalRepresentatives,
   saveProposalServiceEdits,
   type ProposalConfig,
@@ -50,7 +55,14 @@ import {
   type ProposalRepresentative,
   type ProposalServiceEdits,
 } from "../proposals/proposalStorage";
-import { api, type ProposalSummary } from "../services/api";
+import {
+  api,
+  type ProposalCatalogProduct,
+  type ProposalCatalogProductCreate,
+  type ProposalCatalogProductRecord,
+  type ProposalCatalogProductSource,
+  type ProposalSummary,
+} from "../services/api";
 
 type CustomModuleDraft = {
   code: string;
@@ -73,6 +85,11 @@ type RepresentativeDraft = {
 };
 
 type ActiveEditor = { kind: "product" | "service"; id: string } | null;
+
+type CatalogProductModalState =
+  | { mode: "new" }
+  | { mode: "edit"; product: SoftwareCatalogEntry }
+  | null;
 
 type EditableProposalService = ProposalService & {
   displayName: string;
@@ -276,13 +293,35 @@ function maintenanceLabel(years: number): string {
   return ` + ${years} ${years === 1 ? "ano" : "anos"} de manutenção`;
 }
 
+function catalogProductFromEntry(entry: SoftwareCatalogEntry): ProposalCatalogProduct {
+  return {
+    id: entry.id,
+    code: entry.code,
+    name: entry.name,
+    unitValueUsd: entry.unitValueUsd,
+    defaultQuantity: entry.defaultQuantity,
+    description: entry.description,
+    custom: entry.source !== "official",
+    catalog: {
+      family: entry.catalog?.family ?? entry.path[0],
+      subfamily: entry.catalog?.subfamily ?? entry.path[1],
+      folder: entry.catalog?.folder ?? entry.path[2],
+      reviewStatus: entry.catalog?.reviewStatus ?? "",
+      isPrimary: Boolean(entry.catalog?.isPrimary),
+    },
+  };
+}
+
 function buildEditableProducts(
-  catalogCustomProducts: ProposalProduct[],
+  catalogProducts: ProposalProduct[],
   proposalCustomProducts: ProposalProduct[],
   productEdits: ProposalProductEdits,
   proposalProductEdits: ProposalProductSessionEdits,
 ): EditableProposalProduct[] {
-  return [...PROPOSAL_PRODUCTS, ...catalogCustomProducts, ...proposalCustomProducts].map((product) => {
+  const uniqueProducts = [...new Map(
+    [...catalogProducts, ...proposalCustomProducts].map((product) => [product.id, product] as const),
+  ).values()];
+  return uniqueProducts.map((product) => {
     const catalogEdit = productEdits[product.id];
     const proposalEdit = proposalProductEdits[product.id];
     const displayName = proposalEdit?.name ?? catalogEdit?.name ?? product.name;
@@ -557,12 +596,11 @@ type ProductEditorProps = {
     field: "name" | "quantity" | "unitValueUsd" | "description" | "maintenanceEnabled" | "maintenancePercent" | "maintenanceYears",
     value: string | boolean,
   ) => void;
-  onSaveDefault: (id: string) => void;
   onReset: (id: string) => void;
   onClose: () => void;
 };
 
-function ProductEditorPanel({ product, onEdit, onSaveDefault, onReset, onClose }: ProductEditorProps) {
+function ProductEditorPanel({ product, onEdit, onReset, onClose }: ProductEditorProps) {
   const label = product.displayName || product.name;
 
   return (
@@ -662,11 +700,8 @@ function ProductEditorPanel({ product, onEdit, onSaveDefault, onReset, onClose }
       </div>
 
       <div className="proposal-editor-block">
-        <h3>Padrão do catálogo</h3>
+        <h3>Ações</h3>
         <div className="proposal-custom-actions">
-          <button type="button" onClick={() => onSaveDefault(product.id)}>
-            Salvar produto como padrão
-          </button>
           <button type="button" className="proposal-reset-service" onClick={() => onReset(product.id)}>
             Restaurar nesta proposta
           </button>
@@ -1152,11 +1187,20 @@ export function ProposalsPage() {
   const [activeProposalId, setActiveProposalId] = useState<string | null>(null);
   const [baselineDocumentJson, setBaselineDocumentJson] = useState(() => JSON.stringify(initialDocument));
   const [isSoftwareCatalogOpen, setIsSoftwareCatalogOpen] = useState(false);
+  const [catalogProductRecords, setCatalogProductRecords] = useState<ProposalCatalogProductRecord[]>([]);
+  const [catalogProductsReady, setCatalogProductsReady] = useState(false);
+  const [catalogProductBusy, setCatalogProductBusy] = useState(false);
+  const [catalogProductError, setCatalogProductError] = useState("");
+  const [catalogProductModal, setCatalogProductModal] = useState<CatalogProductModalState>(null);
   const catalogTriggerRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     let active = true;
-    Promise.allSettled([api.proposals(), api.proposalCatalogServices()]).then(([proposalsResult, servicesResult]) => {
+    Promise.allSettled([
+      api.proposals(),
+      api.proposalCatalogServices(),
+      api.proposalCatalogProducts(),
+    ]).then(([proposalsResult, servicesResult, productsResult]) => {
       if (!active) return;
       const errors: string[] = [];
       if (proposalsResult.status === "fulfilled") {
@@ -1168,6 +1212,14 @@ export function ProposalsPage() {
         setCustomServices(servicesResult.value.items);
       } else {
         errors.push(servicesResult.reason instanceof Error ? servicesResult.reason.message : "Não foi possível carregar os módulos compartilhados.");
+      }
+      if (productsResult.status === "fulfilled") {
+        setCatalogProductRecords(productsResult.value.items);
+        setCatalogProductsReady(true);
+        setCustomProducts([]);
+        setProductEdits({});
+      } else {
+        errors.push(productsResult.reason instanceof Error ? productsResult.reason.message : "Não foi possível carregar o catálogo compartilhado de software.");
       }
       setProposalOperationError(errors.join(" "));
       setProposalsLoading(false);
@@ -1181,9 +1233,17 @@ export function ProposalsPage() {
     () => buildEditableServices(customServices, proposalCustomServices, serviceEdits, proposalServiceEdits),
     [customServices, proposalCustomServices, serviceEdits, proposalServiceEdits],
   );
+  const officialCatalogProducts = useMemo(
+    () => applyTopsolidPrimaryClassification(PROPOSAL_PRODUCTS as SoftwareCatalogProduct[]),
+    [],
+  );
+  const resolvedCatalog = useMemo(
+    () => resolveSharedSoftwareCatalog(officialCatalogProducts, customProducts, catalogProductRecords),
+    [catalogProductRecords, customProducts, officialCatalogProducts],
+  );
   const products = useMemo(
-    () => buildEditableProducts(customProducts, proposalCustomProducts, productEdits, proposalProductEdits),
-    [customProducts, proposalCustomProducts, productEdits, proposalProductEdits],
+    () => buildEditableProducts(resolvedCatalog.allProducts, proposalCustomProducts, productEdits, proposalProductEdits),
+    [productEdits, proposalCustomProducts, proposalProductEdits, resolvedCatalog.allProducts],
   );
   const catalogEntries = useMemo(() => {
     const editableById = new Map(products.map((product) => [product.id, product]));
@@ -1197,12 +1257,13 @@ export function ProposalsPage() {
         description: editable.displayDescription,
       };
     });
+    const activeProducts = withEdits(resolvedCatalog.activeProducts);
     return mergeSoftwareCatalog(
-      withEdits(PROPOSAL_PRODUCTS) as SoftwareCatalogProduct[],
-      withEdits(customProducts),
+      activeProducts.filter((item) => !item.custom) as SoftwareCatalogProduct[],
+      activeProducts.filter((item) => item.custom),
       withEdits(proposalCustomProducts),
     );
-  }, [customProducts, products, proposalCustomProducts]);
+  }, [products, proposalCustomProducts, resolvedCatalog.activeProducts]);
   const representatives = useMemo(() => [...DEFAULT_REPRESENTATIVES, ...customRepresentatives], [customRepresentatives]);
   const selectedRepresentative = representatives.find((representative) => representative.id === selectedRepresentativeId) ?? DEFAULT_REPRESENTATIVES[0];
   const selectedServices = useMemo(() => services.filter((service) => selectedIds.has(service.id)), [selectedIds, services]);
@@ -1310,7 +1371,7 @@ export function ProposalsPage() {
     const restored = restoreProposalDocument(
       document,
       [...PROPOSAL_SERVICES, ...customServices],
-      [...PROPOSAL_PRODUCTS, ...customProducts],
+      resolvedCatalog.allProducts,
     );
     setClient(restored.client);
     setProposal(restored.proposal);
@@ -1346,6 +1407,7 @@ export function ProposalsPage() {
     setRepresentativeDraft(EMPTY_REPRESENTATIVE_DRAFT);
     setSnapMessage("");
     setIsSoftwareCatalogOpen(false);
+    setCatalogProductModal(null);
     return canonicalizeRestoredDocument(document, restored);
   }
 
@@ -1464,8 +1526,28 @@ export function ProposalsPage() {
       const next = new Set(previous);
       if (next.has(id)) {
         next.delete(id);
+        setProposalProductEdits((previousEdits) => {
+          const nextEdits = { ...previousEdits };
+          delete nextEdits[id];
+          return nextEdits;
+        });
       } else {
         next.add(id);
+        const product = products.find((item) => item.id === id);
+        if (product) {
+          setProposalProductEdits((previousEdits) => ({
+            ...previousEdits,
+            [id]: {
+              name: product.displayName,
+              unitValueUsd: product.unitValueUsd,
+              quantity: product.quantity,
+              description: product.displayDescription,
+              maintenanceEnabled: product.maintenanceEnabled,
+              maintenancePercent: product.maintenancePercent,
+              maintenanceYears: product.maintenanceYears,
+            },
+          }));
+        }
       }
       return next;
     });
@@ -1596,39 +1678,68 @@ export function ProposalsPage() {
     setProposalOperationStatus("Padrão salvo neste navegador.");
   }
 
-  function saveProductAsDefault(id: string) {
-    const product = products.find((item) => item.id === id);
-    if (!product) return;
+  function replaceCatalogProductRecord(record: ProposalCatalogProductRecord) {
+    setCatalogProductRecords((previous) => [
+      ...previous.filter((item) => item.id !== record.id),
+      record,
+    ]);
+  }
 
-    setProductEdits((previous) => {
-      const next = {
-        ...previous,
-        [id]: {
-          name: product.displayName,
-          unitValueUsd: product.unitValueUsd,
-          description: product.displayDescription,
-        },
-      };
-      saveProposalProductEdits(next);
-      return next;
-    });
+  function catalogSourceForEntry(product: SoftwareCatalogEntry): ProposalCatalogProductSource {
+    return catalogProductRecords.find((item) => item.id === product.id)?.source
+      ?? (product.source === "official" ? "official" : "custom");
+  }
 
-    if (proposalCustomProducts.some((item) => item.id === id)) {
-      const catalogProduct: ProposalProduct = {
-        id,
-        code: product.code,
-        name: product.displayName,
-        unitValueUsd: product.unitValueUsd,
-        defaultQuantity: 1,
-        description: product.displayDescription,
-        custom: true,
-      };
-      setCustomProducts((previous) => {
-        const next = [...previous, catalogProduct];
-        saveProposalCustomProducts(next);
-        return next;
+  async function saveCatalogProduct(payload: ProposalCatalogProductCreate) {
+    setCatalogProductBusy(true);
+    setCatalogProductError("");
+    try {
+      if (catalogProductModal?.mode === "edit") {
+        const current = catalogProductModal.product;
+        const source = catalogSourceForEntry(current);
+        const record = await api.updateProposalCatalogProduct(current.id, {
+          source,
+          product: {
+            id: current.id,
+            ...payload,
+            custom: source === "custom",
+          },
+        });
+        replaceCatalogProductRecord(record);
+        if (current.source === "proposal-only") {
+          setProposalCustomProducts((previous) => previous.filter((item) => item.id !== current.id));
+        }
+        setProposalOperationStatus("Produto atualizado no catálogo compartilhado.");
+      } else {
+        const record = await api.createProposalCatalogProduct(payload);
+        replaceCatalogProductRecord(record);
+        setProposalOperationStatus("Produto criado no catálogo compartilhado.");
+      }
+      setCatalogProductModal(null);
+    } catch (error) {
+      setCatalogProductError(error instanceof Error ? error.message : "Não foi possível salvar o produto.");
+    } finally {
+      setCatalogProductBusy(false);
+    }
+  }
+
+  async function archiveCatalogProduct(product: SoftwareCatalogEntry) {
+    setCatalogProductBusy(true);
+    setCatalogProductError("");
+    try {
+      const source = catalogSourceForEntry(product);
+      const storedProduct = catalogProductRecords.find((item) => item.id === product.id)?.product;
+      const record = await api.archiveProposalCatalogProduct(product.id, {
+        source,
+        product: storedProduct ?? catalogProductFromEntry(product),
       });
-      setProposalCustomProducts((previous) => previous.filter((item) => item.id !== id));
+      replaceCatalogProductRecord(record);
+      setCatalogProductModal(null);
+      setProposalOperationStatus("Produto ocultado do catálogo compartilhado.");
+    } catch (error) {
+      setCatalogProductError(error instanceof Error ? error.message : "Não foi possível ocultar o produto.");
+    } finally {
+      setCatalogProductBusy(false);
     }
   }
 
@@ -1672,7 +1783,7 @@ export function ProposalsPage() {
     }
   }
 
-  function createCustomProduct(persist: boolean) {
+  async function createCustomProduct(persist: boolean) {
     const name = customProductDraft.name.trim();
     if (!name) return;
 
@@ -1687,17 +1798,39 @@ export function ProposalsPage() {
     };
 
     resetTargetDiscount();
-    if (persist) {
-      setCustomProducts((previous) => {
-        const next = [...previous, product];
-        saveProposalCustomProducts(next);
-        return next;
-      });
-    } else {
+    if (!persist) {
       setProposalCustomProducts((previous) => [...previous, product]);
+      setCustomProductDraft(EMPTY_CUSTOM_PRODUCT);
+      setIsAddingCustomProduct(false);
+      return;
     }
-    setCustomProductDraft(EMPTY_CUSTOM_PRODUCT);
-    setIsAddingCustomProduct(false);
+
+    setCatalogProductBusy(true);
+    setProposalOperationError("");
+    try {
+      const record = await api.createProposalCatalogProduct({
+        code: product.code,
+        name: product.name,
+        unitValueUsd: product.unitValueUsd,
+        defaultQuantity: 1,
+        description: product.description,
+        catalog: {
+          family: "Personalizados",
+          subfamily: "Produtos personalizados",
+          folder: "Personalizados",
+          reviewStatus: "",
+          isPrimary: false,
+        },
+      });
+      replaceCatalogProductRecord(record);
+      setProposalOperationStatus("Produto salvo no catálogo compartilhado.");
+      setCustomProductDraft(EMPTY_CUSTOM_PRODUCT);
+      setIsAddingCustomProduct(false);
+    } catch (error) {
+      setProposalOperationError(error instanceof Error ? error.message : "Não foi possível salvar o produto.");
+    } finally {
+      setCatalogProductBusy(false);
+    }
   }
 
   async function deleteCustomService(id: string) {
@@ -1732,34 +1865,6 @@ export function ProposalsPage() {
       return next;
     });
     setProposalOperationStatus("Módulo excluído.");
-  }
-
-  function deleteCustomProduct(id: string) {
-    if (!window.confirm("Excluir este produto personalizado?")) return;
-
-    resetTargetDiscount();
-    setCustomProducts((previous) => {
-      const next = previous.filter((product) => product.id !== id);
-      saveProposalCustomProducts(next);
-      return next;
-    });
-    setProposalCustomProducts((previous) => previous.filter((product) => product.id !== id));
-    setSelectedProductIds((previous) => {
-      const next = new Set(previous);
-      next.delete(id);
-      return next;
-    });
-    setProductEdits((previous) => {
-      const next = { ...previous };
-      delete next[id];
-      saveProposalProductEdits(next);
-      return next;
-    });
-    setProposalProductEdits((previous) => {
-      const next = { ...previous };
-      delete next[id];
-      return next;
-    });
   }
 
   function cancelCustomModule() {
@@ -1909,7 +2014,16 @@ export function ProposalsPage() {
             products={catalogEntries}
             selectedIds={selectedProductIds}
             softwareSubtotalUsd={totals.software.totalUsd}
+            adminDisabled={!catalogProductsReady || catalogProductBusy}
             onToggle={toggleProductSelected}
+            onNewProduct={() => {
+              setCatalogProductError("");
+              setCatalogProductModal({ mode: "new" });
+            }}
+            onEditProduct={(product) => {
+              setCatalogProductError("");
+              setCatalogProductModal({ mode: "edit", product });
+            }}
             onDone={closeSoftwareCatalog}
           />
         ) : (
@@ -2061,7 +2175,6 @@ export function ProposalsPage() {
             <ProductEditorPanel
               product={activeProduct}
               onEdit={editProduct}
-              onSaveDefault={saveProductAsDefault}
               onReset={resetProduct}
               onClose={() => setActiveEditor(null)}
             />
@@ -2330,6 +2443,19 @@ export function ProposalsPage() {
           includeRequirementsTerm={includeRequirementsTerm}
         />
       </main>
+
+      {catalogProductModal ? (
+        <SoftwareCatalogProductModal
+          product={catalogProductModal.mode === "edit" ? catalogProductModal.product : null}
+          busy={catalogProductBusy}
+          error={catalogProductError}
+          onClose={() => {
+            if (!catalogProductBusy) setCatalogProductModal(null);
+          }}
+          onSave={saveCatalogProduct}
+          onArchive={archiveCatalogProduct}
+        />
+      ) : null}
     </div>
   );
 }

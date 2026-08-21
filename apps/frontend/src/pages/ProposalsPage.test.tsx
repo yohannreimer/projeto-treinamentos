@@ -18,6 +18,10 @@ vi.mock("../services/api", () => ({
     createProposalCatalogService: vi.fn(),
     updateProposalCatalogService: vi.fn(),
     deleteProposalCatalogService: vi.fn(),
+    proposalCatalogProducts: vi.fn(),
+    createProposalCatalogProduct: vi.fn(),
+    updateProposalCatalogProduct: vi.fn(),
+    archiveProposalCatalogProduct: vi.fn(),
   },
 }));
 
@@ -78,6 +82,7 @@ describe("ProposalsPage", () => {
     vi.setSystemTime(new Date("2026-06-17T12:00:00-03:00"));
     vi.mocked(api.proposals).mockResolvedValue({ items: [] });
     vi.mocked(api.proposalCatalogServices).mockResolvedValue({ items: [] });
+    vi.mocked(api.proposalCatalogProducts).mockResolvedValue({ items: [] });
     vi.mocked(api.createProposalCatalogService).mockImplementation(async (payload) => ({
       id: "shared-service-1",
       ...payload,
@@ -89,6 +94,27 @@ describe("ProposalsPage", () => {
       custom: true,
     }));
     vi.mocked(api.deleteProposalCatalogService).mockResolvedValue({ ok: true });
+    vi.mocked(api.createProposalCatalogProduct).mockImplementation(async (product) => ({
+      id: "shared-product-1",
+      source: "custom",
+      archived: false,
+      product: { id: "shared-product-1", ...product, custom: true },
+      updatedAt: "2026-06-17T12:00:00.000Z",
+    }));
+    vi.mocked(api.updateProposalCatalogProduct).mockImplementation(async (id, payload) => ({
+      id,
+      source: payload.source,
+      archived: false,
+      product: payload.product,
+      updatedAt: "2026-06-17T12:00:00.000Z",
+    }));
+    vi.mocked(api.archiveProposalCatalogProduct).mockImplementation(async (id, payload) => ({
+      id,
+      source: payload.source,
+      archived: true,
+      product: payload.product,
+      updatedAt: "2026-06-17T12:00:00.000Z",
+    }));
     vi.mocked(api.deleteProposal).mockResolvedValue({ ok: true });
   });
 
@@ -296,25 +322,32 @@ describe("ProposalsPage", () => {
     expect(within(totals).getAllByText("R$ 10.800,00").length).toBeGreaterThan(0);
   });
 
-  test("product quantity is proposal-only but saving value as default persists without quantity", async () => {
+  test("shared catalog edits affect future additions without changing the selected draft snapshot", async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    const { unmount } = render(<ProposalsPage />);
-
-    await addSoftwareFromCatalog(user, "1120", /Adicionar TopSolid’Pdm Server 7 - Módulo - 1120/);
-    await user.click(screen.getByRole("button", { name: "Editar TopSolid’Pdm Server 7 - Módulo - 1120" }));
-    await user.clear(screen.getByLabelText("Quantidade nesta proposta de TopSolid’Pdm Server 7 - Módulo - 1120"));
-    await user.type(screen.getByLabelText("Quantidade nesta proposta de TopSolid’Pdm Server 7 - Módulo - 1120"), "3");
-    await user.clear(screen.getByLabelText("Valor USD nesta proposta de TopSolid’Pdm Server 7 - Módulo - 1120"));
-    await user.type(screen.getByLabelText("Valor USD nesta proposta de TopSolid’Pdm Server 7 - Módulo - 1120"), "1200");
-    await user.click(screen.getByRole("button", { name: "Salvar produto como padrão" }));
-
-    unmount();
     render(<ProposalsPage />);
 
+    await addSoftwareFromCatalog(user, "1120", /Adicionar TopSolid’Pdm Server 7 - Módulo - 1120/);
     await user.click(screen.getByRole("button", { name: "Adicionar software do catálogo" }));
     await user.type(screen.getByRole("searchbox", { name: "Buscar software" }), "1120");
+    await user.click(screen.getByRole("button", { name: /Editar TopSolid’Pdm Server 7 - Módulo - 1120/ }));
+    await user.clear(screen.getByRole("spinbutton", { name: "Valor USD" }));
+    await user.type(screen.getByRole("spinbutton", { name: "Valor USD" }), "1200");
+    await user.click(screen.getByRole("button", { name: "Salvar alterações" }));
+
+    expect(api.updateProposalCatalogProduct).toHaveBeenCalledWith(
+      "p1",
+      expect.objectContaining({
+        source: "official",
+        product: expect.objectContaining({ unitValueUsd: 1200 }),
+      }),
+    );
+    expect(within(screen.getByRole("region", { name: "Prévia da proposta" })).getAllByText("US$ 1,000.00").length).toBeGreaterThan(0);
+
+    await user.click(screen.getByRole("button", { name: /Remover TopSolid’Pdm Server 7 - Módulo - 1120/ }));
     const addButton = screen.getByRole("button", { name: /Adicionar TopSolid’Pdm Server 7 - Módulo - 1120/ });
     expect(within(addButton.closest("article")!).getByText("US$ 1,200.00")).toBeInTheDocument();
+    await user.click(addButton);
+    expect(within(screen.getByRole("region", { name: "Prévia da proposta" })).getAllByText("US$ 1,200.00").length).toBeGreaterThan(0);
   });
 
   test("maintenance is optional per proposal and increases software unit value simply", async () => {
@@ -425,6 +458,59 @@ describe("ProposalsPage", () => {
 
     expect(api.proposalCatalogServices).toHaveBeenCalledTimes(1);
     expect(await screen.findByRole("checkbox", { name: "Selecionar Treinamento Compartilhado" })).toBeInTheDocument();
+  });
+
+  test("creates a shared software product from the catalog modal", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<ProposalsPage />);
+
+    await user.click(screen.getByRole("button", { name: "Adicionar software do catálogo" }));
+    const newProductButton = screen.getByRole("button", { name: "Novo produto" });
+    await waitFor(() => expect(newProductButton).toBeEnabled());
+    await user.click(newProductButton);
+    await user.type(screen.getByRole("textbox", { name: "Nome" }), "TopSolid Produto Compartilhado");
+    await user.type(screen.getByRole("textbox", { name: "Código" }), "SH-01");
+    await user.type(screen.getByRole("spinbutton", { name: "Valor USD" }), "2500");
+    await user.type(screen.getByRole("textbox", { name: "Subfamília" }), "Produtos especiais");
+    await user.type(screen.getByRole("textbox", { name: "Pasta" }), "Compartilhados");
+    await user.type(screen.getByRole("textbox", { name: "Descrição" }), "Disponível para toda a equipe.");
+    await user.click(screen.getByRole("button", { name: "Criar produto" }));
+
+    expect(api.createProposalCatalogProduct).toHaveBeenCalledWith({
+      code: "SH-01",
+      name: "TopSolid Produto Compartilhado",
+      unitValueUsd: 2500,
+      defaultQuantity: 1,
+      description: "Disponível para toda a equipe.",
+      catalog: {
+        family: "Design",
+        subfamily: "Produtos especiais",
+        folder: "Compartilhados",
+        reviewStatus: "",
+        isPrimary: false,
+      },
+    });
+    await user.type(screen.getByRole("searchbox", { name: "Buscar software" }), "Produto Compartilhado");
+    expect(screen.getByText("TopSolid Produto Compartilhado")).toBeInTheDocument();
+  });
+
+  test("archives a product globally while preserving it in the current proposal", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<ProposalsPage />);
+
+    await addSoftwareFromCatalog(user, "1120", /Adicionar TopSolid’Pdm Server 7 - Módulo - 1120/);
+    await user.click(screen.getByRole("button", { name: "Adicionar software do catálogo" }));
+    await user.type(screen.getByRole("searchbox", { name: "Buscar software" }), "1120");
+    await user.click(screen.getByRole("button", { name: /Editar TopSolid’Pdm Server 7 - Módulo - 1120/ }));
+    await user.click(screen.getByRole("button", { name: "Excluir produto" }));
+    await user.click(screen.getByRole("button", { name: "Ocultar produto" }));
+
+    expect(api.archiveProposalCatalogProduct).toHaveBeenCalledWith(
+      "p1",
+      expect.objectContaining({ source: "official", product: expect.objectContaining({ id: "p1" }) }),
+    );
+    expect(screen.queryByRole("button", { name: /Adicionar TopSolid’Pdm Server 7 - Módulo - 1120/ })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Prévia da proposta" })).getByText("1120 – TopSolid’Pdm Server 7 - Módulo - 1120")).toBeInTheDocument();
   });
 
   test("creating and selecting a custom product updates software preview", async () => {

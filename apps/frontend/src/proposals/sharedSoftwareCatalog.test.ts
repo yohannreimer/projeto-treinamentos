@@ -25,7 +25,11 @@ describe('resolveSharedSoftwareCatalog', () => {
       id: official.id,
       source: 'official',
       archived: true,
-      product: { ...official, name: 'Nome preservado' },
+      product: {
+        ...official,
+        name: 'Nome preservado',
+        catalog: { ...official.catalog, isPrimary: true },
+      },
       updatedAt: '2026-08-21T12:00:00.000Z',
     }]);
 
@@ -36,7 +40,11 @@ describe('resolveSharedSoftwareCatalog', () => {
 
   test('shared records win and legacy products cannot replace official ids', () => {
     const legacyCollision = { ...official, name: 'Nome local', custom: true };
-    const shared = { ...official, name: 'Nome compartilhado' };
+    const shared = {
+      ...official,
+      name: 'Nome compartilhado',
+      catalog: { ...official.catalog, isPrimary: true as const },
+    };
     const result = resolveSharedSoftwareCatalog([official], [legacyCollision], [{
       id: official.id,
       source: 'official',
