@@ -2,6 +2,7 @@ import type { Express, Response } from 'express';
 import { z } from 'zod';
 import { db, uuid } from '../db.js';
 import { readInternalAuthContext, requireInternalAuth } from '../internalAuth.js';
+import { registerProposalCatalogProductRoutes } from './catalogProductRoutes.js';
 
 const serviceSchema = z.object({
   id: z.string().min(1).max(120),
@@ -145,6 +146,8 @@ function serializeCatalogService(row: CatalogServiceRow) {
 }
 
 export function registerProposalRoutes(app: Express) {
+  registerProposalCatalogProductRoutes(app);
+
   app.get('/proposals', requireInternalAuth, (req, res) => {
     const context = requireOrganization(res);
     if (!context) return res.status(403).json({ message: 'Organização não configurada.' });

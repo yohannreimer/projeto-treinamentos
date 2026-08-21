@@ -208,6 +208,76 @@ test('shares catalog services and validates proposal documents', async () => {
   cleanupDbFiles(dbPath);
 });
 
+test('shares catalog products and archives without deleting history', async () => {
+  const dbPath = assignTestDbPath('proposal-product-catalog');
+  cleanupDbFiles(dbPath);
+  const app = createApp({ forceDbRefresh: true, enforceInternalAuth: true });
+  const token = await loginAsSupremo(app);
+  const auth = { Authorization: `Bearer ${token}` };
+  const product = {
+    code: 'CUSTOM-1',
+    name: 'Produto compartilhado',
+    unitValueUsd: 1200,
+    defaultQuantity: 1,
+    description: 'Criado no aplicativo',
+    catalog: {
+      family: 'Design',
+      subfamily: 'Extensões',
+      folder: 'Customizados',
+      reviewStatus: '',
+      isPrimary: false
+    }
+  };
+
+  const created = await request(app).post('/proposals/catalog/products').set(auth).send(product);
+  assert.equal(created.status, 201);
+  assert.equal(created.body.source, 'custom');
+  assert.equal(created.body.product.custom, true);
+
+  const now = new Date().toISOString();
+  db.prepare(`
+    insert into internal_user (
+      id, username, display_name, password_hash, role, permissions_json,
+      organization_id, is_active, created_at, updated_at
+    ) select 'iuser-products-peer', 'products-peer', 'Colega de produtos', ?,
+      'custom', '["proposals"]', organization_id, 1, ?, ?
+    from internal_user where username = 'holand'
+  `).run(hashInternalPassword('Senha123!'), now, now);
+  const peerLogin = await request(app)
+    .post('/auth/login')
+    .send({ username: 'products-peer', password: 'Senha123!' });
+  const peerAuth = { Authorization: `Bearer ${peerLogin.body.token}` };
+  const peerList = await request(app).get('/proposals/catalog/products').set(peerAuth);
+  assert.equal(peerList.body.items[0].product.name, 'Produto compartilhado');
+
+  const official = await request(app).put('/proposals/catalog/products/p3').set(auth).send({
+    source: 'official',
+    product: {
+      id: 'p3',
+      ...product,
+      name: 'TopSolid Design Pro revisado',
+      unitValueUsd: 9900
+    }
+  });
+  assert.equal(official.status, 200);
+  assert.equal(official.body.product.id, 'p3');
+  assert.equal(official.body.product.custom, false);
+
+  const listed = await request(app).get('/proposals/catalog/products').set(auth);
+  assert.equal(listed.body.items.length, 2);
+
+  const archived = await request(app)
+    .delete('/proposals/catalog/products/p3')
+    .set(auth)
+    .send({ source: 'official', product: official.body.product });
+  assert.equal(archived.status, 200);
+  assert.equal(archived.body.archived, true);
+  assert.equal((db.prepare(`
+    select count(*) as count from proposal_catalog_product where product_id = 'p3'
+  `).get() as { count: number }).count, 1);
+  cleanupDbFiles(dbPath);
+});
+
 test('isolates proposals by organization', async () => {
   const dbPath = assignTestDbPath('proposal-tenant');
   cleanupDbFiles(dbPath);
@@ -217,6 +287,26 @@ test('isolates proposals by organization', async () => {
   const created = await request(app).post('/proposals').set(auth).send({
     number: 'P-ORG-1', client_company_name: 'Organização 1', document: proposalDocument
   });
+  const sharedProduct = {
+    id: 'p3',
+    code: '0030',
+    name: 'Design Pro Organização 1',
+    unitValueUsd: 9000,
+    defaultQuantity: 1,
+    description: '',
+    custom: false,
+    catalog: {
+      family: 'Design',
+      subfamily: "TopSolid'Design",
+      folder: 'Pacotes Design',
+      reviewStatus: '',
+      isPrimary: true
+    }
+  };
+  assert.equal((await request(app)
+    .put('/proposals/catalog/products/p3')
+    .set(auth)
+    .send({ source: 'official', product: sharedProduct })).status, 200);
 
   const now = new Date().toISOString();
   db.prepare(`
@@ -235,5 +325,17 @@ test('isolates proposals by organization', async () => {
   const otherList = await request(app).get('/proposals').set(otherAuth);
   assert.equal(otherList.body.items.length, 0);
   assert.equal((await request(app).get(`/proposals/${created.body.id}`).set(otherAuth)).status, 404);
+  const otherCatalog = await request(app).get('/proposals/catalog/products').set(otherAuth);
+  assert.deepEqual(otherCatalog.body.items, []);
+  assert.equal((await request(app)
+    .put('/proposals/catalog/products/p3')
+    .set(otherAuth)
+    .send({
+      source: 'official',
+      product: { ...sharedProduct, name: 'Design Pro Organização 2' }
+    })).status, 200);
+  assert.equal((db.prepare(`
+    select count(*) as count from proposal_catalog_product where product_id = 'p3'
+  `).get() as { count: number }).count, 2);
   cleanupDbFiles(dbPath);
 });
