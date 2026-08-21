@@ -5,6 +5,7 @@ import {
   buildCatalogTree,
   displayCatalogFamily,
   displayCatalogSubfamily,
+  groupSoftwareCatalogResults,
   querySoftwareCatalog,
   SOFTWARE_CATALOG_PAGE_SIZE,
   type SoftwareCatalogEntry,
@@ -14,7 +15,10 @@ type SoftwareCatalogExplorerProps = {
   products: SoftwareCatalogEntry[];
   selectedIds: ReadonlySet<string>;
   softwareSubtotalUsd: number;
+  adminDisabled: boolean;
   onToggle: (id: string) => void;
+  onNewProduct: () => void;
+  onEditProduct: (product: SoftwareCatalogEntry) => void;
   onDone: () => void;
 };
 
@@ -22,7 +26,10 @@ export function SoftwareCatalogExplorer({
   products,
   selectedIds,
   softwareSubtotalUsd,
+  adminDisabled,
   onToggle,
+  onNewProduct,
+  onEditProduct,
   onDone,
 }: SoftwareCatalogExplorerProps) {
   const tree = useMemo(() => buildCatalogTree(products), [products]);
@@ -61,6 +68,16 @@ export function SoftwareCatalogExplorer({
     () => querySoftwareCatalog(products, { query, family, subfamily, folder, limit }),
     [family, folder, limit, products, query, subfamily],
   );
+  const resultGroups = useMemo(() => groupSoftwareCatalogResults(result.items), [result.items]);
+  const resultFamilies = useMemo(() => {
+    const families = new Map<string, typeof resultGroups>();
+    for (const group of resultGroups) {
+      const groups = families.get(group.family) ?? [];
+      groups.push(group);
+      families.set(group.family, groups);
+    }
+    return [...families.entries()];
+  }, [resultGroups]);
 
   function updateQuery(value: string) {
     setQuery(value);
@@ -94,6 +111,44 @@ export function SoftwareCatalogExplorer({
       .filter(Boolean)
       .join(' / ');
 
+  function renderProduct(product: SoftwareCatalogEntry) {
+    const isSelected = selectedIds.has(product.id);
+    return (
+      <article key={product.id} className={`proposal-catalog-product${isSelected ? ' is-selected' : ''}`}>
+        <div className="proposal-catalog-product-copy">
+          <div className="proposal-catalog-product-title">
+            <strong>{product.name}</strong>
+            {product.catalog?.reviewStatus === 'REVISAR' ? <span>REVISAR</span> : null}
+          </div>
+          <p>{product.description}</p>
+          <small>{product.path.map((part, index) => index === 0 ? displayCatalogFamily(part) : index === 1 ? displayCatalogSubfamily(product.path[0], part) : part).join(' / ')}</small>
+        </div>
+        <div className="proposal-catalog-product-action">
+          <strong>US$ {formatUsdCurrency(product.unitValueUsd)}</strong>
+          <div>
+            <button
+              type="button"
+              className="proposal-catalog-product-menu"
+              aria-label={`Editar ${product.name}`}
+              disabled={adminDisabled}
+              onClick={() => onEditProduct(product)}
+            >
+              ⋯
+            </button>
+            <button
+              type="button"
+              aria-label={`${isSelected ? 'Remover' : 'Adicionar'} ${product.name}`}
+              aria-pressed={isSelected}
+              onClick={() => onToggle(product.id)}
+            >
+              {isSelected ? 'Adicionado ✓' : '+ Adicionar'}
+            </button>
+          </div>
+        </div>
+      </article>
+    );
+  }
+
   return (
     <section className="proposal-catalog" aria-label="Catálogo de software">
       <header className="proposal-catalog-header">
@@ -104,6 +159,15 @@ export function SoftwareCatalogExplorer({
           <span>Software</span>
           <h2>Adicionar software</h2>
         </div>
+        <button
+          type="button"
+          className="proposal-catalog-new-product"
+          aria-label="Novo produto"
+          disabled={adminDisabled}
+          onClick={onNewProduct}
+        >
+          + Novo produto
+        </button>
         <label className="proposal-catalog-search">
           <span>Buscar software</span>
           <input
@@ -175,34 +239,29 @@ export function SoftwareCatalogExplorer({
             </nav>
           ) : null}
 
-          <div className="proposal-catalog-product-list">
-            {result.items.map((product) => {
-              const isSelected = selectedIds.has(product.id);
-              return (
-                <article key={product.id} className={`proposal-catalog-product${isSelected ? ' is-selected' : ''}`}>
-                  <div className="proposal-catalog-product-copy">
-                    <div className="proposal-catalog-product-title">
-                      <strong>{product.name}</strong>
-                      {product.catalog?.reviewStatus === 'REVISAR' ? <span>REVISAR</span> : null}
-                    </div>
-                    <p>{product.description}</p>
-                    <small>{product.path.map((part, index) => index === 0 ? displayCatalogFamily(part) : index === 1 ? displayCatalogSubfamily(product.path[0], part) : part).join(' / ')}</small>
-                  </div>
-                  <div className="proposal-catalog-product-action">
-                    <strong>US$ {formatUsdCurrency(product.unitValueUsd)}</strong>
-                    <button
-                      type="button"
-                      aria-label={`${isSelected ? 'Remover' : 'Adicionar'} ${product.name}`}
-                      aria-pressed={isSelected}
-                      onClick={() => onToggle(product.id)}
-                    >
-                      {isSelected ? 'Adicionado ✓' : '+ Adicionar'}
-                    </button>
-                  </div>
-                </article>
-              );
-            })}
-          </div>
+          {query ? (
+            <div className="proposal-catalog-search-groups" data-testid="catalog-search-groups">
+              {resultFamilies.map(([familyName, groups]) => (
+                <section className="proposal-catalog-result-family-group" key={familyName}>
+                  <h4 className="proposal-catalog-result-family">{displayCatalogFamily(familyName)}</h4>
+                  {groups.map((group) => (
+                    <section className="proposal-catalog-result-group" key={`${group.family}:${group.subfamily}`}>
+                      <h5 className="proposal-catalog-result-subfamily">
+                        {displayCatalogSubfamily(group.family, group.subfamily)}
+                      </h5>
+                      <div className="proposal-catalog-product-list">
+                        {group.items.map(renderProduct)}
+                      </div>
+                    </section>
+                  ))}
+                </section>
+              ))}
+            </div>
+          ) : (
+            <div className="proposal-catalog-product-list">
+              {result.items.map(renderProduct)}
+            </div>
+          )}
 
           {result.items.length === 0 ? <p className="proposal-catalog-empty">Nenhum software encontrado.</p> : null}
           {result.hasMore ? (
